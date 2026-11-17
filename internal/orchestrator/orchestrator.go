@@ -452,6 +452,19 @@ type session struct {
 	// run worked against were often brought up in a waking phase that is no
 	// longer on screen. Each job records them again from here.
 	services []sandbox.ServiceRun
+	// rewake: somebody asked for this agent while the session was still
+	// registered. Guarded by o.mu.
+	//
+	// A session stays registered until runAgent has returned, and that is
+	// well after it last looked at the backlog: the claim loop has found
+	// nothing, and then the sandbox goes down — `securing`, up to ten seconds
+	// of stopping plus the home going into the store (for a warm agent: the
+	// sandbox being parked). A task created in that
+	// window, or a person pressing "wake", reached EnsureRunning, found the
+	// session and was dropped; the agent went to sleep with work in its
+	// backlog and only the next tick picked it up. Remembered here, the
+	// session's end asks once more instead.
+	rewake bool
 }
 
 // Run starts the dispatch loop: cheap, permanent, no LLM (spec/03).
@@ -1081,9 +1094,14 @@ func (o *Orchestrator) WakeNow(agentID uuid.UUID) {
 }
 
 // EnsureRunning starts an agent session if none is running (idempotent).
+//
+// If one is running, the request is remembered on it rather than dropped: the
+// running session may already be past its last look at the backlog (see
+// session.rewake), and only its end can tell whether there is work left.
 func (o *Orchestrator) EnsureRunning(agentID uuid.UUID) {
 	o.mu.Lock()
-	if _, active := o.sessions[agentID]; active {
+	if s, active := o.sessions[agentID]; active {
+		s.rewake = true
 		o.mu.Unlock()
 		return
 	}
@@ -1104,15 +1122,36 @@ func (o *Orchestrator) EnsureRunning(agentID uuid.UUID) {
 
 	o.nebenlaeufig(func() {
 		defer func() {
-			o.mu.Lock()
-			delete(o.sessions, agentID)
-			o.mu.Unlock()
+			again := o.endSession(agentID, s)
 			cancel()
+			if again {
+				o.EnsureRunning(agentID)
+			}
 		}()
 		if err := o.runAgent(ctx, agentID, s); err != nil && !errors.Is(err, context.Canceled) {
 			o.Log.Error("agent-session", "agent", agentID, "err", err)
 		}
 	})
+}
+
+// endSession unregisters a finished session and says whether a wake arrived
+// while it ran that has to be answered now.
+//
+// Answered with a new EnsureRunning rather than by looking at the backlog
+// here: runAgent already asks whether there is open work, whether the agent
+// was stopped in the meantime and whether a credential is free, and a second
+// copy of those questions would be the one that drifts. Not during a
+// shutdown — the lifecycle new sessions hang off has ended, and the process
+// is waiting for its own work to stop, not for more of it. A kill takes the
+// wish back itself (Kill), so a wake from before the kill is not answered
+// with a session afterwards.
+func (o *Orchestrator) endSession(agentID uuid.UUID, s *session) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.sessions[agentID] == s {
+		delete(o.sessions, agentID)
+	}
+	return s.rewake && o.base().Err() == nil
 }
 
 // SandboxDied reports a sandbox that ended without being asked to — the runner
@@ -3864,6 +3903,13 @@ func (o *Orchestrator) Kill(ctx context.Context, agentID uuid.UUID) error {
 	}
 	o.mu.Lock()
 	s := o.sessions[agentID]
+	if s != nil {
+		// Whatever asked for this agent before the kill is void: the end of
+		// the session must not start the next one (endSession). A wake that
+		// comes after it — a person resuming the agent while its sandbox is
+		// still going down — sets it again and is answered.
+		s.rewake = false
+	}
 	o.mu.Unlock()
 	if s != nil {
 		s.killed = true

@@ -241,6 +241,10 @@ type stackOpts struct {
 	// staleAfter shortens the patience with a busy status nothing backs. Five
 	// minutes is right in production and is not a test.
 	staleAfter time.Duration
+	// tickInterval replaces the stack's 300 ms dispatch tick. A test that has
+	// to show a wake arriving by itself — not swept up by the periodic tick —
+	// sets it far beyond its own runtime.
+	tickInterval time.Duration
 	// platform builds the control-plane target systems (#710) once the
 	// stores exist, before the orchestrator does.
 	platform func(*stack) map[string]orchestrator.PlatformSystem
@@ -385,6 +389,10 @@ func newStackWith(t *testing.T, opts stackOpts) *stack {
 	if opts.provider != nil {
 		provider = opts.provider(s.homeBase, log)
 	}
+	tickInterval := 300 * time.Millisecond
+	if opts.tickInterval > 0 {
+		tickInterval = opts.tickInterval
+	}
 	readyTimeout := 10 * time.Second
 	if opts.readyTimeout > 0 {
 		readyTimeout = opts.readyTimeout
@@ -408,7 +416,7 @@ func newStackWith(t *testing.T, opts stackOpts) *stack {
 		Notify:         notify.New(pool).WithSettings(s.settings),
 		Provider:       provider,
 		DaemonTokenTTL: 5 * time.Minute,
-		TickInterval:   300 * time.Millisecond,
+		TickInterval:   tickInterval,
 		ReadyTimeout:   readyTimeout,
 		StaleAfter:     opts.staleAfter,
 		Log:            log,
