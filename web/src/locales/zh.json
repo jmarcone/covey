@@ -160,7 +160,31 @@
       "output": "输出"
     },
     "byCredential": "按凭据",
-    "credentialHint": "归属之前的运行不在此处；它们仍计入总数。"
+    "credentialHint": "归属之前的运行不在此处；它们仍计入总数。",
+    "insights": {
+      "modelsTitle": "按模型的用量",
+      "modelsHint": "即 Claude Code 在每次运行结束时报告的数据：Opus 运行也会进行少量 Haiku 调用。“引擎”是引擎自身的价格，“标价”是同样的 token 按 covey 价目表计算；若有差异，说明其中之一有误。",
+      "agent": "代理",
+      "model": "模型",
+      "runs": "运行次数",
+      "output": "输出",
+      "cacheRead": "缓存读取",
+      "cacheWrite": "缓存写入",
+      "engine": "引擎",
+      "list": "标价",
+      "total": "合计",
+      "thinkingOf": "其中思考：{{n}}",
+      "drift": "标价与引擎相差：{{pct}} %",
+      "unpriced": "无标价的模型：{{count}}",
+      "without": "无明细的运行：{{count}}（{{usd}}，例如在轮次上限处中断）",
+      "meterTitle": "订阅用量与标价",
+      "meterHint": "每次唤醒时获取的订阅每周用量（服务商数据），对照同一时段记录的标价成本。在固定费用的席位上，美元金额是同样工作通过 API 的费用。",
+      "meter": "每周额度已用",
+      "listCost": "标价成本（累计）",
+      "noReadings": "暂无读数：每当代理在订阅上唤醒时，covey 会记录一次。",
+      "ratio": "每周额度每 1 % ≈ 标价 {{usd}}（+{{dp}} % 对应 {{dc}}）。",
+      "ratioFlat": "本期标价 {{dc}}，用量仍为 {{pct}} %（按整数百分比变化）。"
+    }
   },
   "lang": {
     "label": "语言"

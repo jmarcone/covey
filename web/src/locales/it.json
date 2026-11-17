@@ -160,7 +160,31 @@
       "output": "Uscita"
     },
     "byCredential": "Per credenziale",
-    "credentialHint": "Qui mancano le esecuzioni precedenti all'attribuzione; nel totale contano comunque."
+    "credentialHint": "Qui mancano le esecuzioni precedenti all'attribuzione; nel totale contano comunque.",
+    "insights": {
+      "modelsTitle": "Consumo per modello",
+      "modelsHint": "Come riportato da Claude Code alla fine di ogni esecuzione: un'esecuzione Opus fa anche piccole chiamate a Haiku. «Motore» è il prezzo del motore stesso, «Listino» gli stessi token al listino di covey; uno scarto indica che uno dei due sbaglia.",
+      "agent": "Agente",
+      "model": "Modello",
+      "runs": "Esecuzioni",
+      "output": "Output",
+      "cacheRead": "Cache letta",
+      "cacheWrite": "Cache scritta",
+      "engine": "Motore",
+      "list": "Listino",
+      "total": "Totale",
+      "thinkingOf": "di cui ragionamento: {{n}}",
+      "drift": "Listino vs motore: {{pct}} %",
+      "unpriced": "{{count}} modello/i senza prezzo di listino",
+      "without": "{{count}} esecuzione/i senza dettaglio ({{usd}}, ad es. interrotte al limite di turni)",
+      "meterTitle": "Contatore dell'abbonamento vs listino",
+      "meterHint": "La quota settimanale dell'abbonamento secondo il fornitore, chiesta a ogni risveglio, rispetto al costo a listino registrato nelle stesse ore. Su un posto a tariffa fissa, i dollari sono quanto costerebbe lo stesso lavoro tramite API.",
+      "meter": "Limite settimanale usato",
+      "listCost": "Costo a listino (cumulato)",
+      "noReadings": "Nessuna lettura finora: covey ne registra una a ogni risveglio di un agente su un abbonamento.",
+      "ratio": "≈ {{usd}} di listino per 1 % del limite settimanale ({{dc}} per +{{dp}} %).",
+      "ratioFlat": "{{dc}} di listino nel periodo; il contatore è ancora a {{pct}} % (avanza a punti percentuali interi)."
+    }
   },
   "lang": {
     "label": "Lingua"

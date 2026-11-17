@@ -160,7 +160,31 @@
       "output": "Ausgabe"
     },
     "byCredential": "Nach Credential",
-    "credentialHint": "Läufe von vor der Zuordnung fehlen hier; sie zählen weiter in die Gesamtsumme."
+    "credentialHint": "Läufe von vor der Zuordnung fehlen hier; sie zählen weiter in die Gesamtsumme.",
+    "insights": {
+      "modelsTitle": "Verbrauch je Modell",
+      "modelsHint": "So wie Claude Code es am Ende jedes Laufs gemeldet hat: Ein Opus-Lauf macht auch kleine Haiku-Aufrufe. „Engine“ ist der Preis der Engine selbst, „Liste“ dieselben Tokens mit covey's Liste bepreist — eine Lücke heißt, eins von beiden stimmt nicht.",
+      "agent": "Agent",
+      "model": "Modell",
+      "runs": "Läufe",
+      "output": "Ausgabe",
+      "cacheRead": "Cache gelesen",
+      "cacheWrite": "Cache geschrieben",
+      "engine": "Engine",
+      "list": "Liste",
+      "total": "Summe",
+      "thinkingOf": "davon Denken: {{n}}",
+      "drift": "Liste ggü. Engine: {{pct}} %",
+      "unpriced": "{{count}} Modell(e) ohne Listenpreis",
+      "without": "{{count}} Lauf/Läufe ohne Aufschlüsselung ({{usd}}, z. B. am Turn-Limit abgebrochen)",
+      "meterTitle": "Abo-Zähler ggü. Listenpreis",
+      "meterHint": "Der Wochenanteil des Abos laut Anbieter, bei jedem Wecken abgefragt, gegen die in denselben Stunden gebuchten Listenpreis-Kosten. Auf einem Pauschal-Platz sind die Dollar das, was dieselbe Arbeit über die API gekostet hätte.",
+      "meter": "Wochenlimit verbraucht",
+      "listCost": "Listenpreis-Kosten (kumuliert)",
+      "noReadings": "Noch keine Messwerte: covey hält einen fest, sobald ein Agent auf einem Abo aufwacht.",
+      "ratio": "≈ {{usd}} Listenpreis je 1 % des Wochenlimits ({{dc}} über +{{dp}} %).",
+      "ratioFlat": "{{dc}} Listenpreis in diesem Zeitraum, der Zähler steht noch bei {{pct}} % (er springt in ganzen Prozent)."
+    }
   },
   "lang": {
     "label": "Sprache"

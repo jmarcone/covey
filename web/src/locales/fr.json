@@ -160,7 +160,31 @@
       "output": "Sortie"
     },
     "byCredential": "Par identifiant",
-    "credentialHint": "Les exécutions antérieures à l'attribution manquent ici ; elles comptent tout de même dans le total."
+    "credentialHint": "Les exécutions antérieures à l'attribution manquent ici ; elles comptent tout de même dans le total.",
+    "insights": {
+      "modelsTitle": "Consommation par modèle",
+      "modelsHint": "Tel que Claude Code l'a indiqué à la fin de chaque exécution : une exécution Opus fait aussi de petits appels Haiku. « Moteur » est le prix du moteur lui-même, « Liste » les mêmes jetons au tarif de covey ; un écart signale qu'un des deux se trompe.",
+      "agent": "Agent",
+      "model": "Modèle",
+      "runs": "Exécutions",
+      "output": "Sortie",
+      "cacheRead": "Cache lu",
+      "cacheWrite": "Cache écrit",
+      "engine": "Moteur",
+      "list": "Liste",
+      "total": "Total",
+      "thinkingOf": "dont réflexion : {{n}}",
+      "drift": "Liste vs moteur : {{pct}} %",
+      "unpriced": "{{count}} modèle(s) sans prix catalogue",
+      "without": "{{count}} exécution(s) sans détail ({{usd}}, p. ex. coupées à la limite de tours)",
+      "meterTitle": "Compteur de l'abonnement vs prix catalogue",
+      "meterHint": "La part hebdomadaire de l'abonnement selon le fournisseur, demandée à chaque réveil, face au coût au prix catalogue enregistré sur les mêmes heures. Sur un poste forfaitaire, les dollars sont ce que le même travail coûterait via l'API.",
+      "meter": "Limite hebdomadaire utilisée",
+      "listCost": "Coût au prix catalogue (cumulé)",
+      "noReadings": "Pas encore de relevé : covey en enregistre un à chaque réveil d'un agent sur un abonnement.",
+      "ratio": "≈ {{usd}} de prix catalogue par 1 % de la limite hebdomadaire ({{dc}} pour +{{dp}} %).",
+      "ratioFlat": "{{dc}} de prix catalogue sur la période ; le compteur reste à {{pct}} % (il avance par pourcents entiers)."
+    }
   },
   "lang": {
     "label": "Langue"

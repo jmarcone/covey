@@ -160,7 +160,31 @@
       "output": "Saída"
     },
     "byCredential": "Por credencial",
-    "credentialHint": "Faltam aqui as execuções anteriores à atribuição; continuam a contar para o total."
+    "credentialHint": "Faltam aqui as execuções anteriores à atribuição; continuam a contar para o total.",
+    "insights": {
+      "modelsTitle": "Consumo por modelo",
+      "modelsHint": "Como o Claude Code informou no fim de cada execução: uma execução Opus também faz pequenas chamadas ao Haiku. «Motor» é o preço do próprio motor, «Tabela» os mesmos tokens pela tabela do covey; uma diferença indica que um dos dois está errado.",
+      "agent": "Agente",
+      "model": "Modelo",
+      "runs": "Execuções",
+      "output": "Saída",
+      "cacheRead": "Cache lido",
+      "cacheWrite": "Cache escrito",
+      "engine": "Motor",
+      "list": "Tabela",
+      "total": "Total",
+      "thinkingOf": "dos quais raciocínio: {{n}}",
+      "drift": "Tabela vs motor: {{pct}} %",
+      "unpriced": "{{count}} modelo(s) sem preço de tabela",
+      "without": "{{count}} execução(ões) sem detalhe ({{usd}}, p. ex. cortadas no limite de turnos)",
+      "meterTitle": "Medidor da assinatura vs preço de tabela",
+      "meterHint": "A fatia semanal da assinatura segundo o fornecedor, consultada a cada ativação, face ao custo a preço de tabela registado nas mesmas horas. Num lugar de tarifa fixa, os dólares são o que o mesmo trabalho custaria pela API.",
+      "meter": "Limite semanal usado",
+      "listCost": "Custo a preço de tabela (acumulado)",
+      "noReadings": "Ainda sem leituras: o covey regista uma sempre que um agente acorda numa assinatura.",
+      "ratio": "≈ {{usd}} de preço de tabela por 1 % do limite semanal ({{dc}} para +{{dp}} %).",
+      "ratioFlat": "{{dc}} de preço de tabela neste período; o medidor continua em {{pct}} % (avança em percentagens inteiras)."
+    }
   },
   "lang": {
     "label": "Idioma"

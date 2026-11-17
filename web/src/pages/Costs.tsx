@@ -15,6 +15,7 @@ import {
 } from "../api";
 import { exact, fmtCount, fmtUSD } from "../format";
 import { PriceList } from "../components/PriceList";
+import { CostInsights } from "./CostInsights";
 
 // --- Formatierung -----------------------------------------------------------
 
@@ -624,6 +625,10 @@ export default function Costs() {
           )}
         </div>
       )}
+
+      {/* Cost insights (0142): per model as the engine reported it, and the
+          subscription meter against the list-price cost. Org-wide only. */}
+      {isOrg && <CostInsights days={days} locale={locale} />}
     </div>
   );
 }

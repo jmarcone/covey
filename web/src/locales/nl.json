@@ -160,7 +160,31 @@
       "output": "Uitvoer"
     },
     "byCredential": "Per inloggegeven",
-    "credentialHint": "Runs van vóór de toewijzing ontbreken hier; ze tellen wel mee in het totaal."
+    "credentialHint": "Runs van vóór de toewijzing ontbreken hier; ze tellen wel mee in het totaal.",
+    "insights": {
+      "modelsTitle": "Verbruik per model",
+      "modelsHint": "Zoals Claude Code het aan het eind van elke run meldde: een Opus-run doet ook kleine Haiku-aanroepen. \"Engine\" is de prijs van de engine zelf, \"Lijst\" dezelfde tokens tegen covey's lijst; een verschil betekent dat een van beide niet klopt.",
+      "agent": "Agent",
+      "model": "Model",
+      "runs": "Runs",
+      "output": "Uitvoer",
+      "cacheRead": "Cache gelezen",
+      "cacheWrite": "Cache geschreven",
+      "engine": "Engine",
+      "list": "Lijst",
+      "total": "Totaal",
+      "thinkingOf": "waarvan denken: {{n}}",
+      "drift": "Lijst t.o.v. engine: {{pct}} %",
+      "unpriced": "{{count}} model(len) zonder lijstprijs",
+      "without": "{{count}} run(s) zonder uitsplitsing ({{usd}}, bv. afgebroken op de beurtlimiet)",
+      "meterTitle": "Abonnementsmeter t.o.v. lijstprijs",
+      "meterHint": "Het weekaandeel van het abonnement volgens de aanbieder, bij elke activering opgevraagd, tegenover de lijstprijskosten in dezelfde uren. Op een vaste-prijsplek zijn de dollars wat hetzelfde werk via de API zou kosten.",
+      "meter": "Weeklimiet gebruikt",
+      "listCost": "Lijstprijskosten (cumulatief)",
+      "noReadings": "Nog geen metingen: covey legt er een vast zodra een agent op een abonnement wakker wordt.",
+      "ratio": "≈ {{usd}} lijstprijs per 1 % van de weeklimiet ({{dc}} over +{{dp}} %).",
+      "ratioFlat": "{{dc}} lijstprijs in deze periode; de meter staat nog op {{pct}} % (hij springt in hele procenten)."
+    }
   },
   "lang": {
     "label": "Taal"

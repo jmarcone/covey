@@ -160,7 +160,31 @@
       "output": "Wyjście"
     },
     "byCredential": "Wg poświadczenia",
-    "credentialHint": "Brakuje tu przebiegów sprzed przypisania; w sumie i tak się liczą."
+    "credentialHint": "Brakuje tu przebiegów sprzed przypisania; w sumie i tak się liczą.",
+    "insights": {
+      "modelsTitle": "Zużycie według modelu",
+      "modelsHint": "Tak jak Claude Code podał na końcu każdego przebiegu: przebieg Opus wykonuje też małe wywołania Haiku. „Silnik” to cena samego silnika, „Cennik” te same tokeny wycenione cennikiem covey; różnica oznacza, że coś się nie zgadza.",
+      "agent": "Agent",
+      "model": "Model",
+      "runs": "Przebiegi",
+      "output": "Wyjście",
+      "cacheRead": "Cache odczyt",
+      "cacheWrite": "Cache zapis",
+      "engine": "Silnik",
+      "list": "Cennik",
+      "total": "Suma",
+      "thinkingOf": "w tym myślenie: {{n}}",
+      "drift": "Cennik a silnik: {{pct}} %",
+      "unpriced": "Modele bez ceny katalogowej: {{count}}",
+      "without": "Przebiegi bez rozbicia: {{count}} ({{usd}}, np. przerwane na limicie tur)",
+      "meterTitle": "Licznik subskrypcji a cena katalogowa",
+      "meterHint": "Tygodniowy udział subskrypcji według dostawcy, sprawdzany przy każdym wybudzeniu, wobec kosztu w cenach katalogowych z tych samych godzin. Na stałej opłacie dolary to koszt tej samej pracy przez API.",
+      "meter": "Wykorzystany limit tygodniowy",
+      "listCost": "Koszt w cenach katalogowych (narastająco)",
+      "noReadings": "Brak odczytów: covey zapisuje odczyt, gdy agent budzi się na subskrypcji.",
+      "ratio": "≈ {{usd}} ceny katalogowej na 1 % limitu tygodniowego ({{dc}} przy +{{dp}} %).",
+      "ratioFlat": "{{dc}} ceny katalogowej w tym okresie; licznik wciąż na {{pct}} % (zmienia się o pełne procenty)."
+    }
   },
   "lang": {
     "label": "Język"

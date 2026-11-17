@@ -713,6 +713,10 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/agents/{id}/cost/series", s.agentScoped(anyRole, s.handleCostSeries))
 	mux.Handle("GET /api/v1/cost/org", s.rbac(anyRole, s.handleOrgCost))
 	mux.Handle("GET /api/v1/cost/runs", s.rbac(anyRole, s.handleOrgRunCosts))
+	// Cost insights (0142): usage per model as the engine reported it, and the
+	// provider's subscription meter next to the booked list-price cost.
+	mux.Handle("GET /api/v1/cost/models", s.rbac(anyRole, s.handleModelUsage))
+	mux.Handle("GET /api/v1/cost/subscription", s.rbac(anyRole, s.handleUsageReadings))
 	mux.Handle("GET /api/v1/agents/{id}/cost/runs", s.agentScoped(anyRole, s.handleAgentRunCosts))
 	// The price list: delivery next to the cost, same scope, same period
 	// (spec/17-kpis.md).

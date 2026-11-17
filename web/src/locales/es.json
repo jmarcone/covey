@@ -160,7 +160,31 @@
       "output": "Salida"
     },
     "byCredential": "Por credencial",
-    "credentialHint": "Faltan aquí las ejecuciones anteriores a la atribución; siguen contando en el total."
+    "credentialHint": "Faltan aquí las ejecuciones anteriores a la atribución; siguen contando en el total.",
+    "insights": {
+      "modelsTitle": "Uso por modelo",
+      "modelsHint": "Tal como Claude Code lo informó al final de cada ejecución: una ejecución de Opus también hace pequeñas llamadas a Haiku. «Motor» es el precio del propio motor, «Lista» los mismos tokens con la lista de covey; una diferencia indica que uno de los dos falla.",
+      "agent": "Agente",
+      "model": "Modelo",
+      "runs": "Ejecuciones",
+      "output": "Salida",
+      "cacheRead": "Caché leída",
+      "cacheWrite": "Caché escrita",
+      "engine": "Motor",
+      "list": "Lista",
+      "total": "Total",
+      "thinkingOf": "de ello razonamiento: {{n}}",
+      "drift": "Lista frente a motor: {{pct}} %",
+      "unpriced": "{{count}} modelo(s) sin precio de lista",
+      "without": "{{count}} ejecución(es) sin desglose ({{usd}}, p. ej. cortadas por el límite de turnos)",
+      "meterTitle": "Contador de la suscripción frente a precio de lista",
+      "meterHint": "La cuota semanal de la suscripción según el proveedor, consultada en cada activación, frente al coste a precio de lista registrado en las mismas horas. En una plaza de tarifa plana, los dólares son lo que el mismo trabajo costaría por la API.",
+      "meter": "Límite semanal usado",
+      "listCost": "Coste a precio de lista (acumulado)",
+      "noReadings": "Aún no hay lecturas: covey registra una cada vez que un agente se activa con una suscripción.",
+      "ratio": "≈ {{usd}} de precio de lista por 1 % del límite semanal ({{dc}} para +{{dp}} %).",
+      "ratioFlat": "{{dc}} de precio de lista en este periodo; el contador sigue en {{pct}} % (avanza en porcentajes enteros)."
+    }
   },
   "lang": {
     "label": "Idioma"

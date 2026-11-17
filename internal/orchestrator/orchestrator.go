@@ -2655,7 +2655,13 @@ func (o *Orchestrator) handleDaemonMessage(ctx context.Context, agent agents.Age
 			// the action, where it would read as a permission problem.
 			o.noteTargetRejection(ctx, agent, payload)
 		}
-		_ = o.Obs.Record(ctx, agent.OrgID, agent.ID, &taskID, kind, payload)
+		if kind == observability.KindRuntime {
+			// A Claude Code `result` line also files its usage per model
+			// (cost insights, migration 0142) — in the same statement.
+			_ = o.Obs.RecordRuntime(ctx, agent.OrgID, agent.ID, &taskID, payload)
+		} else {
+			_ = o.Obs.Record(ctx, agent.OrgID, agent.ID, &taskID, kind, payload)
+		}
 		o.events.Publish(Event{Type: "recording", AgentID: agent.ID.String(), OrgID: agent.OrgID,
 			Data: map[string]any{"task_id": taskID.String(), "kind": kind}})
 		return false, nil
@@ -2680,6 +2686,7 @@ func (o *Orchestrator) handleDaemonMessage(ctx context.Context, agent agents.Age
 			return false, nil
 		}
 		o.noteUsage(rep, s.credRuntime, s.credOrd)
+		o.keepUsageReading(ctx, agent.OrgID, rep, s.credRuntime, s.credOrd)
 		return false, nil
 
 	case daemon.TypeRequestCredential:

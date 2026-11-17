@@ -117,6 +117,24 @@ func (o *Orchestrator) noteUsage(rep daemon.UsageReport, runtimeID uuid.UUID, or
 	}
 }
 
+// keepUsageReading files the provider's answer as history (cost insights,
+// migration 0142), next to the in-memory cache that serves the capacity layer.
+// Unsupported answers are kept too, so a credential that cannot be asked is
+// visible as such rather than as a gap.
+func (o *Orchestrator) keepUsageReading(ctx context.Context, orgID uuid.UUID, rep daemon.UsageReport, runtimeID uuid.UUID, ord int) {
+	if o.Obs == nil || runtimeID == uuid.Nil || ord < 0 {
+		return
+	}
+	u := rep.Usage
+	if !rep.Supported {
+		u.WindowPercent, u.WeekPercent = -1, -1
+	}
+	if err := o.Obs.AddUsageReading(ctx, orgID, runtimeID, ord, rep.Supported,
+		u.WindowPercent, u.WeekPercent, u.WindowResets, u.WeekResets, u.Stale, u.Fetched); err != nil {
+		o.Log.Warn("usage reading not kept", "runtime", runtimeID, "ord", ord, "err", err)
+	}
+}
+
 // reportedUtilisation is the capacity layer's view of what the provider said —
 // the share of the current window, if the engine could ask and the answer is
 // recent enough to act on.

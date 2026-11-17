@@ -160,7 +160,31 @@
       "output": "Output"
     },
     "byCredential": "By credential",
-    "credentialHint": "Runs from before the attribution are missing here; they still count towards the total."
+    "credentialHint": "Runs from before the attribution are missing here; they still count towards the total.",
+    "insights": {
+      "modelsTitle": "Usage per model",
+      "modelsHint": "As Claude Code reported it at the end of each run: an Opus run also makes small Haiku calls. \"Engine\" is the engine's own price, \"List\" the same tokens priced with covey's list — a gap means one of them is off.",
+      "agent": "Agent",
+      "model": "Model",
+      "runs": "Runs",
+      "output": "Output",
+      "cacheRead": "Cache read",
+      "cacheWrite": "Cache write",
+      "engine": "Engine",
+      "list": "List",
+      "total": "Total",
+      "thinkingOf": "of which thinking: {{n}}",
+      "drift": "List vs. engine: {{pct}} %",
+      "unpriced": "{{count}} model(s) without a list price",
+      "without": "{{count}} run(s) without a breakdown ({{usd}}, e.g. cut off at the turn limit)",
+      "meterTitle": "Subscription meter vs. list price",
+      "meterHint": "The provider's weekly share for the subscription, asked on every wake, against the list-price cost booked over the same hours. On a flat-rate seat the dollars are what the same work would cost through the API.",
+      "meter": "Weekly limit used",
+      "listCost": "List-price cost (cumulative)",
+      "noReadings": "No readings yet: covey records one whenever an agent wakes on a subscription.",
+      "ratio": "≈ {{usd}} of list price per 1 % of the weekly limit ({{dc}} over +{{dp}} %).",
+      "ratioFlat": "{{dc}} of list price in this window, the meter still at {{pct}} % (it moves in whole percents)."
+    }
   },
   "lang": {
     "label": "Language"
