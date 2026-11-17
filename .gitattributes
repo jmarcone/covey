@@ -1,0 +1,3 @@
+# The workflow fixtures are compared byte for byte with what the editor
+# writes (web/src/pages/workflows/model.test.ts), and the editor writes LF.
+internal/workflow/testdata/*.workflow text eol=lf

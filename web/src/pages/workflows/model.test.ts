@@ -11,11 +11,17 @@ import { autoLayout, durationSeconds, durationText, example, fromWorkflow, layou
 const fixture = resolve(__dirname, "../../../../internal/workflow/testdata/from-editor.workflow");
 const triggersFixture = resolve(__dirname, "../../../../internal/workflow/testdata/from-editor-triggers.workflow");
 
+/* toSource writes LF. A checkout with core.autocrlf (Git for Windows sets it)
+   hands the fixture over with CRLF, and the comparison would fail on the
+   checkout rather than on the format; .gitattributes keeps new checkouts at
+   LF, this keeps the ones made before it. */
+const readFixture = (path: string) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
+
 describe("the workflow pages' model", () => {
   it("writes the example as the fixture the engine's tests parse", () => {
     const src = toSource(example("en"));
     if (process.env.UPDATE_WORKFLOW_FIXTURE) writeFileSync(fixture, src);
-    expect(src).toBe(readFileSync(fixture, "utf8"));
+    expect(src).toBe(readFixture(fixture));
   });
 
   it("writes triggers and actions as the engine reads them", () => {
@@ -29,7 +35,7 @@ describe("the workflow pages' model", () => {
     doc.positions.s = { x: 1500, y: 400 };
     const src = toSource(doc);
     if (process.env.UPDATE_WORKFLOW_FIXTURE) writeFileSync(triggersFixture, src);
-    expect(src).toBe(readFileSync(triggersFixture, "utf8"));
+    expect(src).toBe(readFixture(triggersFixture));
     expect(src).toContain('    only_if: "gitlab:issues:assignee:builder:acme/app"');
     expect(src).toContain('      "state": "closed"');
   });
