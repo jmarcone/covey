@@ -124,6 +124,14 @@ type RunResult struct {
 	CacheReadTokens     int64
 	CacheCreationTokens int64
 	Model               string
+	// Basis says what CostUSD and the token fields cover (Cost.Basis):
+	// CostBasisInvocation for this run's own processes, CostBasisCumulative
+	// when an older Claude Code CLI left only the session's running total.
+	Basis string
+	// SessionTotalUSD is the session's running total after the run as the
+	// engine reported it — a cross-check for CostUSD, never booked. 0 where
+	// the engine has no such figure.
+	SessionTotalUSD float64
 	// Reply is what the run wrote before its status line (#650): for a task
 	// from a conversation, the message itself — the status line's result and
 	// question are a summary of it.

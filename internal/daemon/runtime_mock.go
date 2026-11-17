@@ -79,6 +79,7 @@ func (Mock) Run(ctx context.Context, spec RunSpec, onEvent func(kind string, pay
 		CacheReadTokens:     40000,
 		CacheCreationTokens: 3000,
 		Model:               "mock-model",
+		Basis:               CostBasisInvocation,
 	}
 	if spec.ResumeSessionID != "" {
 		res.SessionID = spec.ResumeSessionID

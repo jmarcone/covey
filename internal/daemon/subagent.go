@@ -157,7 +157,8 @@ func (c *Client) runSubAgent(ctx context.Context, taskID string, req target.SubA
 		_ = c.send(TypeCost, Cost{TaskID: taskID, USD: res.CostUSD,
 			InputTokens: res.InputTokens, OutputTokens: res.OutputTokens,
 			CacheReadTokens: res.CacheReadTokens, CacheCreationTokens: res.CacheCreationTokens,
-			Model: res.Model})
+			Model: res.Model, Basis: res.Basis,
+			SessionID: res.SessionID, SessionTotalUSD: res.SessionTotalUSD})
 	}
 
 	changed, deleted := gitChangesSince(ctx, dir, base)

@@ -376,6 +376,8 @@ func (s *SevenCode) Run(ctx context.Context, spec RunSpec, onEvent func(kind str
 		SessionID:    spec.ResumeSessionID,
 		InputTokens:  out.in,
 		OutputTokens: out.out,
+		// The step counts are this process's own, resumed or not.
+		Basis: CostBasisInvocation,
 	}
 	if res.SessionID == "" {
 		res.SessionID = sevencodeLatestSession(spec)

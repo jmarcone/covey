@@ -66,7 +66,8 @@ func init() {
 			// They are declared here rather than in the HTTP layer so that an
 			// agent on another engine is not offered a control its engine does
 			// not have (spec/12).
-			EffortLevels: []string{"low", "medium", "high", "xhigh", "max"}},
+			EffortLevels: []string{"low", "medium", "high", "xhigh", "max"},
+			ResultUsage:  true},
 		New: func() Runtime { return NewClaudeCode() },
 		Setup: []SetupStep{
 			{
@@ -123,26 +124,81 @@ type streamEvent struct {
 	Message struct {
 		Model string `json:"model"`
 	} `json:"message"`
+	// ModelUsage and SinceLast are the per-model breakdowns of a result line,
+	// and they measure different things. ModelUsage, like total_cost_usd, is
+	// the SESSION's running total: Claude Code stores it in the transcript and
+	// restores it on --resume, so the third run of a session reports all three.
+	// SinceLast (model_usage_since_last_result) is what happened since the
+	// previous result line of the session — this invocation's own spend, over
+	// every model, the side calls to a smaller model included (Usage above
+	// names the main model only). Booking is done from SinceLast; older CLIs
+	// send neither field.
+	ModelUsage map[string]ccModelUsage `json:"modelUsage"`
+	SinceLast  map[string]ccModelUsage `json:"model_usage_since_last_result"`
+}
+
+// ccModelUsage is one model's entry in modelUsage or
+// model_usage_since_last_result. The thinking tokens are already inside
+// OutputTokens (list price × outputTokens reproduces costUSD to the last
+// digit), so they are not read separately — adding them would price thinking
+// twice.
+type ccModelUsage struct {
+	CostUSD              float64 `json:"costUSD"`
+	InputTokens          int64   `json:"inputTokens"`
+	OutputTokens         int64   `json:"outputTokens"`
+	CacheReadInputTokens int64   `json:"cacheReadInputTokens"`
+	// The cache write split by lifetime (the two are priced differently), and
+	// the plain sum, which is all an older CLI sends.
+	CacheCreation5mInputTokens int64 `json:"cacheCreationEphemeral5mInputTokens"`
+	CacheCreation1hInputTokens int64 `json:"cacheCreationEphemeral1hInputTokens"`
+	CacheCreationInputTokens   int64 `json:"cacheCreationInputTokens"`
+	WebSearchRequests          int64 `json:"webSearchRequests"`
+}
+
+// cacheCreation is the entry's cache write: 5 min + 1 h, or the plain sum where
+// the split is missing.
+func (m ccModelUsage) cacheCreation() int64 {
+	if split := m.CacheCreation5mInputTokens + m.CacheCreation1hInputTokens; split > 0 {
+		return split
+	}
+	return m.CacheCreationInputTokens
+}
+
+// tokenSums is the token side of a process over all models.
+type tokenSums struct {
+	input         int64
+	output        int64
+	cacheRead     int64
+	cacheCreation int64
 }
 
 // outcome is the raw result of a single `claude` process, before it is mapped
 // onto a RunResult.
 type outcome struct {
-	sessionID           string
-	resultText          string
-	subtype             string
-	terminal            string
-	model               string
-	numTurns            int
-	isError             bool
-	errors              []string
-	costUSD             float64
-	inputTokens         int64
-	outputTokens        int64
-	cacheReadTokens     int64
-	cacheCreationTokens int64
-	sawResult           bool
-	waitErr             error
+	sessionID  string
+	resultText string
+	subtype    string
+	terminal   string
+	model      string
+	numTurns   int
+	isError    bool
+	errors     []string
+	// deltaUSD and tokens are what THIS process spent, summed over all of its
+	// result lines — never a session's running total (see addResult).
+	deltaUSD float64
+	tokens   tokenSums
+	// lastTotalUSD is the session's running total after the last result line
+	// (or the baseline handed in): what the next result line of the session
+	// is measured against, and the cross-check sent along with the cost.
+	lastTotalUSD float64
+	// haveBaseline says lastTotalUSD is known — 0 for a fresh session, handed
+	// in for the handover, and after every result line.
+	haveBaseline bool
+	// basis is CostBasisInvocation, or CostBasisCumulative when a line could
+	// only be booked as the session's whole running total (see addResult).
+	basis     string
+	sawResult bool
+	waitErr   error
 }
 
 // truncated recognizes the run that ended at the turn limit: Claude Code then
@@ -163,7 +219,7 @@ func (o outcome) truncated() bool {
 // prefix and every cached token after them missed. The turn then wrote the
 // whole conversation into the cache again (measured on 84f8f55e: 63,276
 // cache-write tokens, 0.53 USD for a single turn). Its cost belongs in the
-// billing either way, hence res is updated in summarize().
+// billing either way, hence summarize() adds the turn's own spend to res.
 const maxTurnsSummaryPrompt = `Your run was cut off at the turn limit — you are NOT finished.
 Do not continue working now and do not call any tools. Answer only with a short
 handover state (max. 15 lines, Markdown) in exactly this structure:
@@ -314,7 +370,12 @@ func claudeProjectKey(cwd string) string {
 
 // stream starts a `claude` process, passes every stream-json line 1:1 into the
 // recording and collects the raw result from it.
-func (c *ClaudeCode) stream(ctx context.Context, spec RunSpec, args []string, onEvent func(kind string, payload json.RawMessage)) (outcome, error) {
+//
+// baseline is the session's total_cost_usd before this process: 0 for a fresh
+// session, the main run's last total for the handover, nil when it is not known
+// (a resume from an earlier task). Only a CLI without
+// model_usage_since_last_result needs it, see addResult.
+func (c *ClaudeCode) stream(ctx context.Context, spec RunSpec, args []string, baseline *float64, onEvent func(kind string, payload json.RawMessage)) (outcome, error) {
 	cmd := exec.CommandContext(ctx, c.Binary, args...)
 	// Working directory and home are separate: Claude Code looks for CLAUDE.md,
 	// .claude/agents, skills and commands relative to the cwd — that way a
@@ -336,7 +397,10 @@ func (c *ClaudeCode) stream(ctx context.Context, spec RunSpec, args []string, on
 		return outcome{}, fmt.Errorf("starting claude: %w", err)
 	}
 
-	var out outcome
+	out := outcome{basis: CostBasisInvocation}
+	if baseline != nil {
+		out.lastTotalUSD, out.haveBaseline = *baseline, true
+	}
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 64*1024), 8<<20)
 	for scanner.Scan() {
@@ -362,6 +426,9 @@ func (c *ClaudeCode) stream(ctx context.Context, spec RunSpec, args []string, on
 			out.model = ev.Message.Model
 		}
 		if ev.Type == "result" {
+			// The status fields are the LAST line's: a process can write more
+			// than one result line (a run woken again after its turn limit),
+			// and what it ended with is the later one.
 			out.sawResult = true
 			out.resultText = ev.Result
 			out.subtype = ev.Subtype
@@ -369,11 +436,9 @@ func (c *ClaudeCode) stream(ctx context.Context, spec RunSpec, args []string, on
 			out.numTurns = ev.NumTurns
 			out.isError = ev.IsError
 			out.errors = ev.Errors
-			out.costUSD = ev.TotalCostUSD
-			out.inputTokens = ev.Usage.InputTokens
-			out.outputTokens = ev.Usage.OutputTokens
-			out.cacheReadTokens = ev.Usage.CacheReadTokens
-			out.cacheCreationTokens = ev.Usage.CacheCreationTokens
+			// Money and tokens are summed over EVERY line, each contributing
+			// only what is new since the line before.
+			out.addResult(ev)
 		}
 	}
 	out.waitErr = cmd.Wait()
@@ -383,21 +448,78 @@ func (c *ClaudeCode) stream(ctx context.Context, spec RunSpec, args []string, on
 	return out, nil
 }
 
+// addResult books one result line's own share of the spend.
+//
+// total_cost_usd and modelUsage are the SESSION's running totals, carried
+// across --resume. Booked as they stand, a resumed session is paid again for
+// everything before it, and the handover after a turn limit counts the main
+// run a second time — ×1.95 over one evening's runs.
+//
+// With model_usage_since_last_result (CLI 2.1.x) the line says its own share:
+// the delta per model, over all models, money and tokens alike. Summed over a
+// session's lines it equals the last line's total exactly.
+//
+// Without it (an older CLI) the money is the difference of total_cost_usd to
+// the session's total before the line, and the tokens are the line's usage —
+// per invocation already, but the main model's only. The difference needs the
+// total before; the first line of a resumed process whose caller did not know
+// it has none and books the whole running total. That overcounts, and it is
+// said rather than hidden: basis becomes CostBasisCumulative.
+func (o *outcome) addResult(ev streamEvent) {
+	if ev.SinceLast != nil {
+		for _, m := range ev.SinceLast {
+			o.deltaUSD += m.CostUSD
+			o.tokens.input += m.InputTokens
+			o.tokens.output += m.OutputTokens
+			o.tokens.cacheRead += m.CacheReadInputTokens
+			o.tokens.cacheCreation += m.cacheCreation()
+		}
+	} else {
+		switch {
+		case !o.haveBaseline:
+			o.deltaUSD += ev.TotalCostUSD
+			o.basis = CostBasisCumulative
+		case ev.TotalCostUSD >= o.lastTotalUSD:
+			o.deltaUSD += ev.TotalCostUSD - o.lastTotalUSD
+		default:
+			// Below the baseline: this total does not carry the session's
+			// history (a CLI from before the running total), so it is the
+			// process's own figure.
+			o.deltaUSD += ev.TotalCostUSD
+		}
+		o.tokens.input += ev.Usage.InputTokens
+		o.tokens.output += ev.Usage.OutputTokens
+		o.tokens.cacheRead += ev.Usage.CacheReadTokens
+		o.tokens.cacheCreation += ev.Usage.CacheCreationTokens
+	}
+	o.lastTotalUSD, o.haveBaseline = ev.TotalCostUSD, true
+}
+
 func (c *ClaudeCode) Run(ctx context.Context, spec RunSpec, onEvent func(kind string, payload json.RawMessage)) (RunResult, error) {
 	args, _ := c.buildArgs(spec)
-	out, err := c.stream(ctx, spec, args, onEvent)
+	// A fresh session starts at 0. A resumed one carries a total from runs this
+	// process knows nothing about — nil, and the lines' own deltas decide.
+	var baseline *float64
+	if spec.ResumeSessionID == "" {
+		baseline = new(float64)
+	}
+	out, err := c.stream(ctx, spec, args, baseline, onEvent)
 	if err != nil {
 		return RunResult{}, err
 	}
 
 	res := RunResult{
-		SessionID:           out.sessionID,
-		CostUSD:             out.costUSD,
-		InputTokens:         out.inputTokens,
-		OutputTokens:        out.outputTokens,
-		CacheReadTokens:     out.cacheReadTokens,
-		CacheCreationTokens: out.cacheCreationTokens,
+		SessionID: out.sessionID,
+		// This run's own spend over all models (see addResult). The model
+		// stays the main one: one entry per run.
+		CostUSD:             out.deltaUSD,
+		InputTokens:         out.tokens.input,
+		OutputTokens:        out.tokens.output,
+		CacheReadTokens:     out.tokens.cacheRead,
+		CacheCreationTokens: out.tokens.cacheCreation,
 		Model:               out.model,
+		Basis:               out.basis,
+		SessionTotalUSD:     out.lastTotalUSD,
 	}
 	resultText := out.resultText
 	if out.isError {
@@ -418,7 +540,7 @@ func (c *ClaudeCode) Run(ctx context.Context, spec RunSpec, onEvent func(kind st
 	if out.truncated() {
 		res.Status = "incomplete"
 		res.Error = fmt.Sprintf("turn limit reached (%d turns) — run cut off before it produced a result", out.numTurns)
-		res.Result = c.summarize(ctx, spec, out.sessionID, onEvent, &res)
+		res.Result = c.summarize(ctx, spec, out, onEvent, &res)
 		return res, nil
 	}
 	if out.waitErr != nil && !out.sawResult {
@@ -484,25 +606,41 @@ func (c *ClaudeCode) summaryArgs(spec RunSpec, sessionID string) []string {
 //
 // Best-effort: if the extra run fails (no session ID, timeout, error, the turn
 // cap spent on tool calls), the main run's error text stands — the follow-up
-// task is then created without a handover, but it is created. The cost of the
-// extra run is added to the result so that billing stays complete.
+// task is then created without a handover, but it is created. What the extra
+// run spent is added to the result so that billing stays complete — its OWN
+// spend only: the session's running total already contains the main run, and
+// the main run is booked.
 //
-// It runs with the run's spec, so in the run's directory (runDir) and with its
-// environment: --resume finds the session where the run left it.
-func (c *ClaudeCode) summarize(ctx context.Context, spec RunSpec, sessionID string, onEvent func(kind string, payload json.RawMessage), res *RunResult) string {
-	if sessionID == "" {
+// It runs with the run's spec (summaryArgs), so in the run's directory (runDir)
+// and with its environment: --resume finds the session where the run left it.
+func (c *ClaudeCode) summarize(ctx context.Context, spec RunSpec, main outcome, onEvent func(kind string, payload json.RawMessage), res *RunResult) string {
+	if main.sessionID == "" {
 		return ""
 	}
-	args := c.summaryArgs(spec, sessionID)
+	sspec := spec
+	sspec.ResumeSessionID = main.sessionID
+	sspec.ResumeInput = maxTurnsSummaryPrompt
+	sspec.MaxTurns = maxTurnsSummaryTurns
+	args := c.summaryArgs(spec, main.sessionID)
+	var baseline *float64
+	if main.haveBaseline {
+		baseline = &main.lastTotalUSD
+	}
 	sctx, cancel := context.WithTimeout(ctx, maxTurnsSummaryTimeout)
 	defer cancel()
 
-	out, err := c.stream(sctx, spec, args, onEvent)
-	res.CostUSD += out.costUSD
-	res.InputTokens += out.inputTokens
-	res.OutputTokens += out.outputTokens
-	res.CacheReadTokens += out.cacheReadTokens
-	res.CacheCreationTokens += out.cacheCreationTokens
+	out, err := c.stream(sctx, sspec, args, baseline, onEvent)
+	res.CostUSD += out.deltaUSD
+	res.InputTokens += out.tokens.input
+	res.OutputTokens += out.tokens.output
+	res.CacheReadTokens += out.tokens.cacheRead
+	res.CacheCreationTokens += out.tokens.cacheCreation
+	if out.basis == CostBasisCumulative {
+		res.Basis = CostBasisCumulative
+	}
+	if out.sawResult {
+		res.SessionTotalUSD = out.lastTotalUSD
+	}
 	if res.Model == "" {
 		res.Model = out.model
 	}

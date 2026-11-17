@@ -311,6 +311,7 @@ type Note struct {
 	Content string `json:"content"`
 }
 
+// Cost reports what one run spent: one message per run, after it ended.
 type Cost struct {
 	TaskID       string  `json:"task_id,omitempty"`
 	USD          float64 `json:"usd"`
@@ -323,7 +324,30 @@ type Cost struct {
 	CacheReadTokens     int64  `json:"cache_read_tokens,omitempty"`
 	CacheCreationTokens int64  `json:"cache_creation_tokens,omitempty"`
 	Model               string `json:"model,omitempty"`
+	// Basis says what USD and the tokens cover. CostBasisInvocation: the
+	// run's own processes and nothing else, the figure to book.
+	// CostBasisCumulative: the run resumed a session on a Claude Code CLI that
+	// reports only the session's running total, and the money includes
+	// earlier runs of the same session.
+	//
+	// EMPTY means a daemon from before the field. For claude-code that daemon
+	// sent the session's running total (twice over after a turn limit), and
+	// its tokens were the main model's only; the control plane has to treat
+	// such an entry as cumulative, not as a run's spend.
+	Basis string `json:"basis,omitempty"`
+	// SessionID and SessionTotalUSD name the engine session the run belonged
+	// to and its running total afterwards, as the engine reported it. A
+	// cross-check (the sum of a session's USD should meet the last total),
+	// never a figure to book. Empty/0 where the engine has no sessions.
+	SessionID       string  `json:"session_id,omitempty"`
+	SessionTotalUSD float64 `json:"session_total_usd,omitempty"`
 }
+
+// The values of Cost.Basis.
+const (
+	CostBasisInvocation = "invocation"
+	CostBasisCumulative = "cumulative"
+)
 
 // RequestWiki/InjectWiki broker the agent's wiki tools (covey/wiki_*) and the
 // home working copy into the control plane: search (vector search across the
