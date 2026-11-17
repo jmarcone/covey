@@ -28,6 +28,8 @@ Auf dem Board sind die Spalten frei konfigurierbar; darunter bleiben es diese Zu
 
 Geweckt wird ein Agent von einer neuen Aufgabe, einem Webhook, einem Heartbeat oder von Hand. Dann läuft immer dieselbe Kette: Sandbox hoch → Aufgabe aufnehmen (dabei im Gedächtnis nachschlagen) → arbeiten → Ergebnis festhalten und ins Gedächtnis ablegen → Sandbox runter, Agent schläft.
 
+Ein Wecken, das eintrifft, während die Sandbox noch heruntergefahren wird — eine neue Aufgabe einer Kollegin oder ein Druck auf **Wecken** —, geht nicht verloren: Ist der Lauf zu Ende, wird der Agent noch einmal geweckt und nimmt die Aufgabe auf, ohne auf den nächsten Dispatch-Tick zu warten. Ein getöteter Agent wird so nicht geweckt.
+
 Die Kette ist bewusst kurz. Was länger dauert als ein Lauf, wird nicht durch Warten gelöst, sondern durch `blocked`.
 
 ## Warum blocked der interessante Zustand ist
