@@ -383,8 +383,9 @@ export default function Costs() {
   const { t, i18n } = useTranslation();
   const locale = i18n.language === "de" ? "de-DE" : "en-US";
 
-  const [days, setDays] = useState(30);
-  const [bucket, setBucket] = useState("day");
+  // 24 hours, hourly: the window in which the cost per hour can actually be read.
+  const [days, setDays] = useState(1);
+  const [bucket, setBucket] = useState("hour");
   const [metric, setMetric] = useState<Metric>("cost");
   // The agent filter replaces the scope tabs: none selected = the whole
   // organisation, any combination for the chart; exactly one also narrows the
@@ -527,8 +528,9 @@ export default function Costs() {
         <AgentFilter agents={cells.data?.agents ?? []} selected={selected} onChange={setSelected} />
       </div>
 
-      {/* KPIs */}
-      <div className="flex flex-wrap gap-3 mb-4">
+      {/* KPIs: whole organisation or one agent. With several agents picked
+          they would show a different scope than the chart, so they step aside. */}
+      {selected.size <= 1 && <div className="flex flex-wrap gap-3 mb-4">
         <Kpi label={t("costs.totalCost")} value={fmtUSD(totals.usd)} sub={t("costs.runsN", { count: totals.entries })} />
         <Kpi
           label={t("costs.inputTokens")}
@@ -539,7 +541,7 @@ export default function Costs() {
         />
         <Kpi label={t("costs.outputTokens")} value={fmtCount(totals.output)} sub={exact(totals.output)} />
         <Kpi label={t("costs.totalTokens")} value={fmtCount(totals.input + totals.output)} />
-      </div>
+      </div>}
 
       {/* Diagramm */}
       <div className="card mb-4">

@@ -104,7 +104,7 @@ func (s *Store) ModelUsage(ctx context.Context, orgID uuid.UUID, since time.Time
 		SUM(mu.input_tokens), SUM(mu.output_tokens), SUM(mu.thinking_tokens), SUM(mu.cache_read_tokens),
 		SUM(mu.cache_write_5m_tokens), SUM(mu.cache_write_1h_tokens), SUM(mu.web_search_requests),
 		SUM(mu.engine_usd)::float8
-		FROM model_usage mu JOIN agents a ON a.id = mu.agent_id
+		FROM model_usage_latest mu JOIN agents a ON a.id = mu.agent_id
 		WHERE mu.org_id = $1 AND mu.created_at >= $2
 		GROUP BY 1,2,3,4 ORDER BY SUM(mu.engine_usd) DESC`, orgID, since)
 	if err != nil {
@@ -130,7 +130,7 @@ func (s *Store) ModelUsage(ctx context.Context, orgID uuid.UUID, since time.Time
 	err = s.pool.QueryRow(ctx, `SELECT COUNT(DISTINCT ce.task_id), COALESCE(SUM(ce.usd),0)::float8
 		FROM cost_entries ce JOIN agents a ON a.id = ce.agent_id
 		WHERE a.org_id = $1 AND ce.created_at >= $2 AND ce.task_id IS NOT NULL
-		  AND NOT EXISTS (SELECT 1 FROM model_usage mu WHERE mu.task_id = ce.task_id)`,
+		  AND NOT EXISTS (SELECT 1 FROM model_usage_latest mu WHERE mu.task_id = ce.task_id)`,
 		orgID, since).Scan(&rep.RunsWithout, &rep.USDWithout)
 	return rep, err
 }

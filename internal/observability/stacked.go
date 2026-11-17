@@ -57,6 +57,16 @@ type CostCells struct {
 	Agents  []CellAgent `json:"agents"`
 	Types   []string    `json:"types"`
 	Cells   []CostCell  `json:"cells"`
+	// Subscription is how far the provider's weekly meter moved per period
+	// (percentage points), the third figure beside the two list prices: what
+	// the work really used of a flat-rate seat. Account-wide, so not per agent.
+	Subscription []MeterStep `json:"subscription"`
+}
+
+// MeterStep is the weekly meter's movement within one period.
+type MeterStep struct {
+	Period time.Time `json:"period"`
+	Points float64   `json:"points"`
 }
 
 // CostCellsFor builds the data set for the organisation since `since`.
@@ -114,7 +124,7 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 		SUM(mu.input_tokens), SUM(mu.output_tokens), SUM(mu.cache_read_tokens),
 		SUM(mu.cache_write_5m_tokens), SUM(mu.cache_write_1h_tokens), SUM(mu.web_search_requests),
 		SUM(mu.engine_usd)::float8
-		FROM model_usage mu JOIN agents a ON a.id = mu.agent_id
+		FROM model_usage_latest mu JOIN agents a ON a.id = mu.agent_id
 		WHERE mu.org_id = $1 AND mu.created_at >= $3
 		GROUP BY 1,2,3,4`, orgID, bucket, since)
 	if err != nil {
@@ -182,5 +192,60 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 	}
 	// Costliest first: the palette and the bottom of every bar follow the ranking.
 	sort.Slice(out.Agents, func(i, j int) bool { return out.Agents[i].Reported > out.Agents[j].Reported })
+
+	steps, err := s.meterSteps(ctx, orgID, bucket, since)
+	if err != nil {
+		return out, err
+	}
+	out.Subscription = steps
+	return out, nil
+}
+
+// meterSteps turns the weekly readings into movement per period. Each reading
+// is compared with the one before it (the last one before the window included);
+// a drop means the week was reset, and then the new value is the movement.
+// With several credentials the steps add up, as their seats would.
+func (s *Store) meterSteps(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time) ([]MeterStep, error) {
+	rows, err := s.pool.Query(ctx, `SELECT runtime_id, credential_ord, date_trunc($2, fetched_at), week_percent
+		FROM usage_readings
+		WHERE org_id = $1 AND supported AND week_percent IS NOT NULL
+		  AND fetched_at >= COALESCE((SELECT max(fetched_at) FROM usage_readings
+		      WHERE org_id = $1 AND supported AND week_percent IS NOT NULL AND fetched_at < $3), $3)
+		ORDER BY runtime_id, credential_ord, fetched_at`, orgID, bucket, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	type cred struct {
+		rt  uuid.UUID
+		ord int
+	}
+	last := map[cred]float64{}
+	seen := map[cred]bool{}
+	byPeriod := map[time.Time]float64{}
+	for rows.Next() {
+		var c cred
+		var p time.Time
+		var pct float64
+		if err := rows.Scan(&c.rt, &c.ord, &p, &pct); err != nil {
+			return nil, err
+		}
+		if seen[c] {
+			d := pct - last[c]
+			if d < 0 {
+				d = pct // the week was reset
+			}
+			byPeriod[p] += d
+		}
+		seen[c], last[c] = true, pct
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := []MeterStep{}
+	for p, v := range byPeriod {
+		out = append(out, MeterStep{Period: p, Points: v})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Period.Before(out[j].Period) })
 	return out, nil
 }

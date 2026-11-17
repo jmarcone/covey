@@ -133,6 +133,53 @@ func TestCostCellsReportedAndMeasured(t *testing.T) {
 	admin.expect(http.MethodGet, "/api/v1/cost/cells?days=1&bucket=hour", nil, http.StatusOK)
 }
 
+// A session resumed for a handover reports its usage cumulatively in a second
+// result line: only the session's LAST line counts, or the run is counted twice.
+// And the meter's movement per period becomes the third figure in the cells.
+func TestCumulativeSessionAndMeterSteps(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	agent := s.newSupportAgent("kumuliert")
+	task := uuid.New()
+	first := `{"type":"result","session_id":"same","modelUsage":{"claude-opus-5-5":{"costUSD":5.0,"outputTokens":250000}}}`
+	again := `{"type":"result","session_id":"same","modelUsage":{"claude-opus-5-5":{"costUSD":5.4,"outputTokens":270000}}}`
+	for _, l := range []string{first, again} {
+		if err := s.obs.RecordRuntime(ctx, agent.OrgID, agent.ID, &task, json.RawMessage(l)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rep, err := s.obs.ModelUsage(ctx, agent.OrgID, time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Rows) != 1 || math.Abs(rep.Rows[0].EngineUSD-5.4) > 1e-9 || rep.Rows[0].Output != 270000 {
+		t.Fatalf("want only the session's last line (5.4 USD, 270000 out), got %+v", rep.Rows)
+	}
+
+	rt := uuid.New()
+	base := time.Now().Truncate(time.Hour).Add(-2 * time.Hour)
+	for _, r := range []struct {
+		at  time.Duration
+		pct float64
+	}{{0, 9}, {30 * time.Minute, 10}, {70 * time.Minute, 12}, {100 * time.Minute, 3}} {
+		if err := s.obs.AddUsageReading(ctx, agent.OrgID, rt, 0, true, 1, r.pct, "", "", false, base.Add(r.at)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cells, err := s.obs.CostCellsFor(ctx, agent.OrgID, "hour", base.Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]float64{}
+	for _, st := range cells.Subscription {
+		got[st.Period.UTC().Format("15")] += st.Points
+	}
+	// 9 → 10 in the first hour; 10 → 12, then a reset to 3 (counted as 3) in the second.
+	if got[base.UTC().Format("15")] != 1 || got[base.Add(time.Hour).UTC().Format("15")] != 5 {
+		t.Errorf("meter steps per hour = %v, want 1 then 5", got)
+	}
+}
+
 // The provider's answer is kept as history, and each reading carries the
 // list-price cost booked up to it — the meter read against the bill it would be.
 func TestUsageReadingsCarryTheCostSoFar(t *testing.T) {
