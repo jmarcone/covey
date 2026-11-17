@@ -20,15 +20,29 @@ ALTER TABLE agent_stages
 
 CREATE UNIQUE INDEX agent_stages_agent_key ON agent_stages (agent_id, key) WHERE key IS NOT NULL;
 
--- 1. The seeded columns: exactly the names 0004 and SeedDefaultStages wrote.
---    A board on which someone had renamed one keeps that column as a custom
---    column — it did not take part in auto-follow before either.
-UPDATE agent_stages SET key = CASE name
+-- 1. The seeded columns: the names 0004 and SeedDefaultStages wrote, and only
+--    on a column that came into being with its agent. created_by cannot tell
+--    them apart from a human's column — seeding wrote 'human' too, the default
+--    since 0021 — so the signal is the time: SeedDefaultStages runs right after
+--    the agent is created, in every path that creates one. A column of that
+--    name made later (after the seeded one was renamed or deleted) is a
+--    human's and stays a custom column; so does a renamed default, which did
+--    not take part in auto-follow before either. The two minutes are room for
+--    what the hiring path does between the two inserts, not a guess at a
+--    human's speed.
+--
+--    The keyed columns are marked created_by = 'seed', as SeedDefaultStages
+--    does from now on, so a later migration does not have to guess again.
+UPDATE agent_stages s SET created_by = 'seed', key = CASE s.name
         WHEN 'Backlog'   THEN 'open'
         WHEN 'In Arbeit' THEN 'in_progress'
         WHEN 'Erledigt'  THEN 'done'
     END
-WHERE name IN ('Backlog', 'In Arbeit', 'Erledigt');
+FROM agents a
+WHERE a.id = s.agent_id
+  AND s.name IN ('Backlog', 'In Arbeit', 'Erledigt')
+  AND s.created_at >= a.created_at
+  AND s.created_at < a.created_at + interval '2 minutes';
 
 -- 2. Look-alikes an agent created via set_stage ("Done", "in progress",
 --    "erledigt" …) merge into the keyed column of the same meaning: their
@@ -39,7 +53,8 @@ WHERE name IN ('Backlog', 'In Arbeit', 'Erledigt');
 --    Only created_by = 'agent' is merged. 'human' is never deleted — and that
 --    includes columns from before 0021, which got 'human' as the default even
 --    if an agent made them. An agent without the keyed column of that meaning
---    (a human deleted it) keeps its look-alike as it is.
+--    (a human deleted or renamed it, or made it later) keeps its look-alike as
+--    it is.
 CREATE TEMPORARY TABLE stage_key_labels (key TEXT, label TEXT) ON COMMIT DROP;
 INSERT INTO stage_key_labels (key, label) VALUES
     ('open', 'open'), ('open', 'backlog'), ('open', 'バックログ'), ('open', '待办'),

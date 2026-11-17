@@ -112,7 +112,10 @@ func (t *Task) Redact() {
 // Stage is a freely definable Kanban column of an agent (an overlay on top of
 // the lifecycle state). Order via position, color optional (CSS token).
 // CreatedBy distinguishes the origin: 'agent' columns ("invented" via
-// set_stage) are cleaned up automatically as soon as they are empty.
+// set_stage) are cleaned up automatically as soon as they are empty; 'seed'
+// marks the default columns the platform lays out (SeedDefaultStages, an
+// import); 'human' is everything a person made. Before 0142 seeding wrote
+// 'human' as well, which is why that migration had to go by name and time.
 //
 // Key marks the three default columns (open, in_progress, done) — the ones
 // auto-follow moves tasks into. As long as nobody renamed such a column,
@@ -1061,12 +1064,13 @@ func insertStage(ctx context.Context, q querier, agentID uuid.UUID, name, key *s
 		RETURNING `+stageCols, uuid.New(), agentID, name, key, color, createdBy))
 }
 
-// CreateKeyedStage appends a default column of the given key — the import path,
-// which brings a board along from a bundle. A name that is a label of the key
-// (or empty) leaves the column unnamed, so it shows the reader's language;
-// anything else counts as renamed.
+// CreateKeyedStage appends a default column of the given key — seeding, and the
+// import path, which brings a board along from a bundle. A name that is a label
+// of the key (or empty) leaves the column unnamed, so it shows the reader's
+// language; anything else counts as renamed. The column is recorded as 'seed':
+// the platform laid it out, not a person.
 func (s *Store) CreateKeyedStage(ctx context.Context, agentID uuid.UUID, key, name, color string) (Stage, error) {
-	return insertStage(ctx, s.pool, agentID, customStageName(key, name), &key, color, "human")
+	return insertStage(ctx, s.pool, agentID, customStageName(key, name), &key, color, "seed")
 }
 
 // customStageName is the name to store for a keyed column: nil while the name

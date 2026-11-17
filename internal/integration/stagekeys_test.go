@@ -47,8 +47,9 @@ func stageOf(t *testing.T, s *stack, taskID uuid.UUID) uuid.UUID {
 	return *tk.StageID
 }
 
-// A fresh board: three keyed, unnamed columns. The API names them in English
-// for clients that do not know the key.
+// A fresh board: three keyed, unnamed columns, recorded as 'seed' rather than
+// 'human' so that a later migration can tell them from a person's. The API
+// names them in English for clients that do not know the key.
 func TestFreshBoardIsKeyed(t *testing.T) {
 	s := newStack(t)
 	ctx := context.Background()
@@ -70,8 +71,9 @@ func TestFreshBoardIsKeyed(t *testing.T) {
 		t.Fatalf("board: %+v", stages)
 	}
 	for i, w := range want {
-		if stages[i].Key == nil || *stages[i].Key != w.key || stages[i].Name != w.name || stages[i].Renamed {
-			t.Errorf("column %d = %+v, want key %s, name %q, not renamed", i, stages[i], w.key, w.name)
+		if stages[i].Key == nil || *stages[i].Key != w.key || stages[i].Name != w.name || stages[i].Renamed ||
+			stages[i].CreatedBy != "seed" {
+			t.Errorf("column %d = %+v, want key %s, name %q, not renamed, by seed", i, stages[i], w.key, w.name)
 		}
 	}
 }
@@ -188,6 +190,52 @@ func TestSetStageDoneInARun(t *testing.T) {
 	}
 }
 
+// The board a human saw on main: an agent calls set_stage "Done" while its task
+// is still running. The name did not match "Erledigt", so the call made a
+// column "Done" of its own; the running task sat in it beside an empty
+// "Erledigt", and the column went away again only when the task ended (the
+// terminal transition moves it out, the cleanup deletes the empty column).
+// Now the running task sits in the keyed done column and the board keeps its
+// three columns, during the run and after it.
+func TestSetStageDoneWhileInProgress(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	agent := s.newSupportAgent("mittendrin")
+	if err := s.backlog.SeedDefaultStages(ctx, agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	s.ohneLaeufe(agent.ID)
+	task, err := s.backlog.Create(ctx, s.orgID, agent.ID, "Läuft noch", "", "manual", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed, err := s.backlog.ClaimNext(ctx, agent.ID); err != nil || claimed.ID != task.ID {
+		t.Fatalf("claim: %v %v", claimed.ID, err)
+	}
+	done := stageByKey(t, s, agent.ID, backlog.StageKeyDone)
+	board := func(when string) {
+		t.Helper()
+		stages, _ := s.backlog.ListStages(ctx, agent.ID)
+		if len(stages) != 3 {
+			t.Fatalf("%s: set_stage Done must not add a column, board: %+v", when, stages)
+		}
+		if stageOf(t, s, task.ID) != done.ID {
+			t.Fatalf("%s: the task belongs in the keyed done column", when)
+		}
+	}
+	if _, err := s.backlog.SetTaskStageByName(ctx, agent.ID, task.ID, "Done"); err != nil {
+		t.Fatal(err)
+	}
+	if s.taskState(task.ID) != backlog.StateInProgress {
+		t.Fatalf("set_stage is display only, the task must still run")
+	}
+	board("while running")
+	if _, err := s.backlog.Complete(ctx, task.ID, backlog.StateDone, "ok", ""); err != nil {
+		t.Fatal(err)
+	}
+	board("after the run")
+}
+
 // TestStageKeyMigration takes a board from before 0142 through the migration
 // and back:
 //
@@ -197,6 +245,12 @@ func TestSetStageDoneInARun(t *testing.T) {
 //     without losing a task, Research stays as it was.
 //   - agent B: the same defaults plus a "Done" a human made. It stays, with its
 //     task: the migration never deletes a human column.
+//   - agent C: "Backlog" and "In Arbeit" seeded with the agent; its seeded
+//     "Erledigt" is gone, and a human made a column of that name a day later.
+//     Seeded columns carry created_by 'human' too, so only the time tells
+//     them apart: the later "Erledigt" stays a human column without a key,
+//     and the agent's "Done" stays beside it with its task, because there is
+//     no keyed done column to merge it into.
 //
 // After it, auto-follow runs on the keys. The rollback gives the defaults
 // their German names back and the old name-based auto-follow finds them.
@@ -211,8 +265,10 @@ func TestStageKeyMigration(t *testing.T) {
 	}
 	a := s.newSupportAgent("vorher-a")
 	b := s.newSupportAgent("vorher-b")
+	c := s.newSupportAgent("vorher-c")
 	s.ohneLaeufe(a.ID)
 	s.ohneLaeufe(b.ID)
+	s.ohneLaeufe(c.ID)
 
 	if err := db.MigrateDown(ctx, s.pool, migrations.FS); err != nil {
 		t.Fatal(err)
@@ -256,20 +312,31 @@ func TestStageKeyMigration(t *testing.T) {
 	bDoneHuman := stage(b.ID, "Done", 3, "var(--text-warning)", "human")
 	tHuman := task(b.ID, bDoneHuman, "liegt im menschlichen Done")
 
+	cOpen := stage(c.ID, "Backlog", 0, "var(--text-muted)", "human")
+	cWork := stage(c.ID, "In Arbeit", 1, "var(--text-accent)", "human")
+	cLater := stage(c.ID, "Erledigt", 2, "var(--text-warning)", "human")
+	exec(`UPDATE agent_stages s SET created_at = a.created_at + interval '1 day'
+		FROM agents a WHERE a.id = s.agent_id AND s.id = $1`, cLater)
+	cDoneAgent := stage(c.ID, "Done", 3, "", "agent")
+	tLater := task(c.ID, cLater, "liegt im späteren Erledigt")
+	tDoneAgentC := task(c.ID, cDoneAgent, "liegt in Cs Done")
+
 	if n, err := db.MigrateUp(ctx, s.pool, migrations.FS); err != nil || n != 1 {
 		t.Fatalf("migrate up: %d applied, %v", n, err)
 	}
 
 	// Agent A: keys on the three defaults, unnamed; Research untouched; the
 	// look-alikes gone, their tasks in the keyed columns.
-	for id, key := range map[uuid.UUID]string{aOpen: "open", aWork: "in_progress", aDone: "done"} {
-		var gotKey string
+	for id, key := range map[uuid.UUID]string{
+		aOpen: "open", aWork: "in_progress", aDone: "done", cOpen: "open", cWork: "in_progress",
+	} {
+		var gotKey, by string
 		var name *string
-		if err := s.pool.QueryRow(ctx, "SELECT key, name FROM agent_stages WHERE id=$1", id).Scan(&gotKey, &name); err != nil {
+		if err := s.pool.QueryRow(ctx, "SELECT key, name, created_by FROM agent_stages WHERE id=$1", id).Scan(&gotKey, &name, &by); err != nil {
 			t.Fatal(err)
 		}
-		if gotKey != key || name != nil {
-			t.Errorf("default column %s: key %q, name %v — want key %s, unnamed", id, gotKey, name, key)
+		if gotKey != key || name != nil || by != "seed" {
+			t.Errorf("default column %s: key %q, name %v, by %s — want key %s, unnamed, seed", id, gotKey, name, by, key)
 		}
 	}
 	var rName, rColor, rBy string
@@ -290,7 +357,7 @@ func TestStageKeyMigration(t *testing.T) {
 	for tk, want := range map[uuid.UUID]uuid.UUID{
 		tOpen: aOpen, tDone: aDone, tResearch: aResearch,
 		tDoneAgent1: aDone, tDoneAgent2: aDone, tWorkAgent: aWork,
-		tHuman: bDoneHuman,
+		tHuman: bDoneHuman, tLater: cLater, tDoneAgentC: cDoneAgent,
 	} {
 		if got := stageOf(t, s, tk); got != want {
 			t.Errorf("task %s sits in %s, want %s", tk, got, want)
@@ -310,6 +377,21 @@ func TestStageKeyMigration(t *testing.T) {
 	}
 	if stageByKey(t, s, b.ID, backlog.StageKeyDone).ID != bDone {
 		t.Errorf("Erledigt must be B's keyed done column")
+	}
+
+	// Agent C: the later "Erledigt" is a human's column, untouched; the
+	// agent's "Done" has nothing to merge into and stays.
+	for id, want := range map[uuid.UUID][2]string{
+		cLater: {"Erledigt", "human"}, cDoneAgent: {"Done", "agent"},
+	} {
+		var name, by string
+		var key *string
+		if err := s.pool.QueryRow(ctx, "SELECT name, created_by, key FROM agent_stages WHERE id=$1", id).Scan(&name, &by, &key); err != nil {
+			t.Fatalf("C's column %s must survive: %v", id, err)
+		}
+		if name != want[0] || by != want[1] || key != nil {
+			t.Errorf("C's column %s: %s %s %v — want %s %s, no key", id, name, by, key, want[0], want[1])
+		}
 	}
 
 	// Auto-follow on the keys: dispatch moves into in_progress, completing
@@ -358,11 +440,17 @@ func TestStageKeyMigration(t *testing.T) {
 	}
 	for id, want := range map[uuid.UUID]string{
 		aOpen: "Backlog", aWork: "In Arbeit", aDone: "Erledigt", aResearch: "Research", bDone: "Erledigt", bDoneHuman: "Done",
+		cOpen: "Backlog", cLater: "Erledigt", cDoneAgent: "Done",
 	} {
 		var name string
 		if err := s.pool.QueryRow(ctx, "SELECT name FROM agent_stages WHERE id=$1", id).Scan(&name); err != nil || name != want {
 			t.Errorf("after the rollback column %s is %q (%v), want %q", id, name, err, want)
 		}
+	}
+	var seeded int
+	s.pool.QueryRow(ctx, "SELECT COUNT(*) FROM agent_stages WHERE created_by='seed'").Scan(&seeded)
+	if seeded != 0 {
+		t.Errorf("the code before 0142 knows no 'seed', %d columns still carry it", seeded)
 	}
 	var stepped string
 	s.pool.QueryRow(ctx, "SELECT name FROM agent_stages WHERE id=$1", bErledigt.ID).Scan(&stepped)

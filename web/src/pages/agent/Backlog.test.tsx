@@ -152,6 +152,28 @@ describe("Spalten des Boards", () => {
     expect(stageFetches()).toBe(vorher);
   });
 
+  // What a human saw: a running task in a column "Done" beside an empty
+  // "Erledigt". The server no longer makes that second column (set_stage
+  // "Done" lands in the keyed one); the board shows the keyed done column
+  // under the label of the language, and the running task in it once.
+  it("zeigt eine laufende Aufgabe in genau einer Spalte, der Standardspalte für erledigt", async () => {
+    await act(() => ladeSprache("en"));
+    const done = { ...STAGES[2], name: "Done", renamed: false };
+    mockFetch({
+      ...routen(),
+      "/api/v1/agents/a1/backlog": [{ ...TASK, state: "in_progress", stage_id: "s3" }],
+      "/api/v1/agents/a1/stages": [STAGES[0], STAGES[1], done],
+    });
+    renderWithProviders(<Backlog agentId="a1" canManage onShowRecording={() => {}} />);
+    expect(await screen.findByText(TASK.title)).toBeTruthy();
+    expect(spalten()).toEqual(["Backlog", "In progress", "Done"]);
+    const karten = Array.from(document.querySelectorAll(".kanban .kcol")).map(
+      (col) => col.querySelectorAll(".kh .n")[0]?.textContent,
+    );
+    expect(karten).toEqual(["0", "0", "1"]);
+    expect(screen.getAllByText(TASK.title)).toHaveLength(1);
+  });
+
   it("nennt eine unbenannte Standardspalte so, wie die Sprache sie nennt", () => {
     const t = ((key: string) => `«${key}»`) as unknown as Parameters<typeof stageLabel>[1];
     expect(stageLabel(STAGES[0] as Stage, t)).toBe("«agent.backlog.defaultStage.open»");

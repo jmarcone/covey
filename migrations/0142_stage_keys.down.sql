@@ -23,6 +23,9 @@ UPDATE agent_stages SET name = CASE key
     END
 WHERE name IS NULL;
 
+-- 'seed' is new with 0142; the code before it knows 'agent' and 'human'.
+UPDATE agent_stages SET created_by = 'human' WHERE created_by = 'seed';
+
 DROP INDEX agent_stages_agent_key;
 ALTER TABLE agent_stages
     DROP CONSTRAINT agent_stages_name_or_key,
