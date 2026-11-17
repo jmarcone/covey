@@ -184,6 +184,32 @@
       "noReadings": "Aún no hay lecturas: covey registra una cada vez que un agente se activa con una suscripción.",
       "ratio": "≈ {{usd}} de precio de lista por 1 % del límite semanal ({{dc}} para +{{dp}} %).",
       "ratioFlat": "{{dc}} de precio de lista en este periodo; el contador sigue en {{pct}} % (avanza en porcentajes enteros)."
+    },
+    "filter": {
+      "agents": "Agentes",
+      "all": "Todos",
+      "toggleHint": "Clic: añadir o quitar · doble clic: solo este",
+      "split": "Dividir por",
+      "split_agent": "Agente",
+      "split_type": "Tipo de coste",
+      "split_none": "Ninguno",
+      "source": "Fuente",
+      "reported": "Informado por Claude",
+      "measured": "Cálculo propio",
+      "reportedHint": "Lo que el motor (Claude Code) indicó que costó cada ejecución: la cifra que registra covey.",
+      "measuredHint": "Los tokens brutos de las mismas ejecuciones, valorados por tipo con la lista de precios de covey.",
+      "types": "Tipos de coste",
+      "diff": "Cálculo propio frente a informado: {{pct}} %",
+      "reportedNoTypes": "La cifra informada no tiene tipos de coste (el motor da una cifra por modelo), así que se divide por agente.",
+      "nSelected": "{{count}} agentes"
+    },
+    "stack": {
+      "cache_read": "Caché leída",
+      "cache_write": "Caché escrita",
+      "input": "Entrada (sin caché)",
+      "output": "Salida",
+      "web_search": "Búsqueda web",
+      "unattributed": "Sin desglose"
     }
   },
   "lang": {

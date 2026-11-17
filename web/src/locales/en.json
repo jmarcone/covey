@@ -184,6 +184,32 @@
       "noReadings": "No readings yet: covey records one whenever an agent wakes on a subscription.",
       "ratio": "≈ {{usd}} of list price per 1 % of the weekly limit ({{dc}} over +{{dp}} %).",
       "ratioFlat": "{{dc}} of list price in this window, the meter still at {{pct}} % (it moves in whole percents)."
+    },
+    "filter": {
+      "agents": "Agents",
+      "all": "All",
+      "toggleHint": "Click: add or remove · double-click: only this one",
+      "split": "Split by",
+      "split_agent": "Agent",
+      "split_type": "Cost type",
+      "split_none": "None",
+      "source": "Source",
+      "reported": "Claude-reported",
+      "measured": "Our calculation",
+      "reportedHint": "What the engine (Claude Code) said each run cost — the figure covey books.",
+      "measuredHint": "The same runs' raw tokens priced per token type with covey's list price.",
+      "types": "Cost types",
+      "diff": "Our calculation vs. reported: {{pct}} %",
+      "reportedNoTypes": "The reported figure has no cost types (the engine reports one figure per model), so it stays split by agent.",
+      "nSelected": "{{count}} agents"
+    },
+    "stack": {
+      "cache_read": "Cache read",
+      "cache_write": "Cache write",
+      "input": "Input (uncached)",
+      "output": "Output",
+      "web_search": "Web search",
+      "unattributed": "Not broken down"
     }
   },
   "lang": {

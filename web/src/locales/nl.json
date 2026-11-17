@@ -184,6 +184,32 @@
       "noReadings": "Nog geen metingen: covey legt er een vast zodra een agent op een abonnement wakker wordt.",
       "ratio": "≈ {{usd}} lijstprijs per 1 % van de weeklimiet ({{dc}} over +{{dp}} %).",
       "ratioFlat": "{{dc}} lijstprijs in deze periode; de meter staat nog op {{pct}} % (hij springt in hele procenten)."
+    },
+    "filter": {
+      "agents": "Agents",
+      "all": "Alle",
+      "toggleHint": "Klik: toevoegen of weghalen · dubbelklik: alleen deze",
+      "split": "Verdelen naar",
+      "split_agent": "Agent",
+      "split_type": "Kostensoort",
+      "split_none": "Geen",
+      "source": "Bron",
+      "reported": "Gemeld door Claude",
+      "measured": "Eigen berekening",
+      "reportedHint": "Wat de engine (Claude Code) per run als kosten meldde: het bedrag dat covey boekt.",
+      "measuredHint": "De ruwe tokens van dezelfde runs, per soort geprijsd met covey's lijstprijs.",
+      "types": "Kostensoorten",
+      "diff": "Eigen berekening t.o.v. gemeld: {{pct}} %",
+      "reportedNoTypes": "Het gemelde bedrag kent geen kostensoorten (de engine meldt één bedrag per model) en blijft daarom per agent verdeeld.",
+      "nSelected": "{{count}} agents"
+    },
+    "stack": {
+      "cache_read": "Cache gelezen",
+      "cache_write": "Cache geschreven",
+      "input": "Invoer (niet gecachet)",
+      "output": "Uitvoer",
+      "web_search": "Webzoekopdracht",
+      "unattributed": "Niet uitgesplitst"
     }
   },
   "lang": {

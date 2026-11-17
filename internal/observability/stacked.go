@@ -1,0 +1,186 @@
+package observability
+
+import (
+	"context"
+	"sort"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+// Cost cells: the data behind the combinable cost chart. Every bucket × agent
+// carries two independent figures, so the UI can filter and split them freely
+// without asking again:
+//
+//   - reported: what the engine said the run cost and covey booked
+//     (cost_entries) — Claude Code's own calculation;
+//   - measured: the same runs' raw tokens from the per-model usage, priced per
+//     token type with covey's list — our own calculation. Only this one splits
+//     by cost type: the engine reports one figure per model, not per type.
+//
+// A bucket × agent whose booked cost has no per-model breakdown (a run cut off
+// before Claude Code wrote its result, or older than the backfill could reach)
+// gets the difference as "unattributed", so both figures cover the same runs.
+
+// Cost-type keys of the measured figure.
+const (
+	TypeCacheRead    = "cache_read"
+	TypeCacheWrite   = "cache_write"
+	TypeInput        = "input"
+	TypeOutput       = "output"
+	TypeWebSearch    = "web_search"
+	TypeUnattributed = "unattributed"
+)
+
+// CostTypes in display order (bottom of a bar first).
+var CostTypes = []string{TypeCacheRead, TypeCacheWrite, TypeInput, TypeOutput, TypeWebSearch, TypeUnattributed}
+
+// CellAgent names an agent that appears in the cells.
+type CellAgent struct {
+	ID    uuid.UUID `json:"id"`
+	Label string    `json:"label"`
+	// Reported is the agent's booked total over the window (ranking, legend).
+	Reported float64 `json:"reported_usd"`
+}
+
+// CostCell is one bucket × agent.
+type CostCell struct {
+	Period   time.Time          `json:"period"`
+	AgentID  uuid.UUID          `json:"agent_id"`
+	Reported float64            `json:"reported_usd"`
+	Measured map[string]float64 `json:"measured"` // cost type → USD
+}
+
+// CostCells is the whole data set for the chart.
+type CostCells struct {
+	Periods []time.Time `json:"periods"`
+	Agents  []CellAgent `json:"agents"`
+	Types   []string    `json:"types"`
+	Cells   []CostCell  `json:"cells"`
+}
+
+// CostCellsFor builds the data set for the organisation since `since`.
+func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time) (CostCells, error) {
+	bucket = normalizeBucket(bucket)
+	out := CostCells{Periods: []time.Time{}, Agents: []CellAgent{}, Types: CostTypes, Cells: []CostCell{}}
+	type key struct {
+		p time.Time
+		a uuid.UUID
+	}
+	cells := map[key]*CostCell{}
+	agents := map[uuid.UUID]*CellAgent{}
+	cell := func(p time.Time, a uuid.UUID) *CostCell {
+		k := key{p, a}
+		c, ok := cells[k]
+		if !ok {
+			c = &CostCell{Period: p, AgentID: a, Measured: map[string]float64{}}
+			cells[k] = c
+		}
+		return c
+	}
+
+	// Reported: what was booked per bucket and agent.
+	rows, err := s.pool.Query(ctx, `SELECT date_trunc($2, ce.created_at), a.id, a.display_name, COALESCE(SUM(ce.usd),0)::float8
+		FROM cost_entries ce JOIN agents a ON a.id = ce.agent_id
+		WHERE a.org_id = $1 AND ce.created_at >= $3
+		GROUP BY 1,2,3`, orgID, bucket, since)
+	if err != nil {
+		return out, err
+	}
+	for rows.Next() {
+		var p time.Time
+		var id uuid.UUID
+		var name string
+		var usd float64
+		if err := rows.Scan(&p, &id, &name, &usd); err != nil {
+			rows.Close()
+			return out, err
+		}
+		cell(p, id).Reported += usd
+		ag, ok := agents[id]
+		if !ok {
+			ag = &CellAgent{ID: id, Label: name}
+			agents[id] = ag
+		}
+		ag.Reported += usd
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+
+	// Measured: raw tokens per bucket, agent and model, priced per type.
+	rows, err = s.pool.Query(ctx, `SELECT date_trunc($2, mu.created_at), mu.agent_id, a.display_name, mu.model,
+		SUM(mu.input_tokens), SUM(mu.output_tokens), SUM(mu.cache_read_tokens),
+		SUM(mu.cache_write_5m_tokens), SUM(mu.cache_write_1h_tokens), SUM(mu.web_search_requests),
+		SUM(mu.engine_usd)::float8
+		FROM model_usage mu JOIN agents a ON a.id = mu.agent_id
+		WHERE mu.org_id = $1 AND mu.created_at >= $3
+		GROUP BY 1,2,3,4`, orgID, bucket, since)
+	if err != nil {
+		return out, err
+	}
+	engineInCell := map[key]float64{}
+	for rows.Next() {
+		var p time.Time
+		var id uuid.UUID
+		var name, model string
+		var t ModelTokens
+		var engine float64
+		if err := rows.Scan(&p, &id, &name, &model, &t.Input, &t.Output, &t.CacheRead,
+			&t.CacheWrite5m, &t.CacheWrite1h, &t.WebSearches, &engine); err != nil {
+			rows.Close()
+			return out, err
+		}
+		if _, ok := agents[id]; !ok {
+			agents[id] = &CellAgent{ID: id, Label: name}
+		}
+		c := cell(p, id)
+		engineInCell[key{p, id}] += engine
+		pr, ok := ListPrice(model)
+		if !ok {
+			c.Measured[TypeUnattributed] += engine // unknown model: keep its figure, unsplit
+			continue
+		}
+		c.Measured[TypeCacheRead] += float64(t.CacheRead) * pr.CacheRead / 1e6
+		c.Measured[TypeCacheWrite] += (float64(t.CacheWrite5m)*pr.CacheWrite5m + float64(t.CacheWrite1h)*pr.CacheWrite1h) / 1e6
+		c.Measured[TypeInput] += float64(t.Input) * pr.Input / 1e6
+		c.Measured[TypeOutput] += float64(t.Output) * pr.Output / 1e6
+		if t.WebSearches > 0 {
+			c.Measured[TypeWebSearch] += float64(t.WebSearches) * WebSearchUSD
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+
+	// Booked cost the breakdown does not cover stays visible as its own part.
+	for k, c := range cells {
+		if rest := c.Reported - engineInCell[k]; rest > 0.005 {
+			c.Measured[TypeUnattributed] += rest
+		}
+	}
+
+	periods := map[time.Time]bool{}
+	for _, c := range cells {
+		out.Cells = append(out.Cells, *c)
+		periods[c.Period] = true
+	}
+	for p := range periods {
+		out.Periods = append(out.Periods, p)
+	}
+	sort.Slice(out.Periods, func(i, j int) bool { return out.Periods[i].Before(out.Periods[j]) })
+	sort.Slice(out.Cells, func(i, j int) bool {
+		if !out.Cells[i].Period.Equal(out.Cells[j].Period) {
+			return out.Cells[i].Period.Before(out.Cells[j].Period)
+		}
+		return out.Cells[i].AgentID.String() < out.Cells[j].AgentID.String()
+	})
+	for _, a := range agents {
+		out.Agents = append(out.Agents, *a)
+	}
+	// Costliest first: the palette and the bottom of every bar follow the ranking.
+	sort.Slice(out.Agents, func(i, j int) bool { return out.Agents[i].Reported > out.Agents[j].Reported })
+	return out, nil
+}

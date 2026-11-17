@@ -2,6 +2,21 @@ package httpapi
 
 import "net/http"
 
+// handleCostCells: the data behind the combinable cost chart — per bucket and
+// agent the reported cost (booked, the engine's figure) and the measured cost
+// (raw tokens priced per type with the list). The UI filters and splits it.
+// ?days= and ?bucket= as on the other cost endpoints.
+func (s *Server) handleCostCells(w http.ResponseWriter, r *http.Request) {
+	p := principalFrom(r)
+	bucket, since := costWindow(r)
+	cells, err := s.Obs.CostCellsFor(r.Context(), p.OrgID, bucket, since)
+	if err != nil {
+		mapErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, cells)
+}
+
 // handleModelUsage: the organisation's usage per agent and model as Claude
 // Code reported it (tokens per type, cache writes split by TTL, the engine's
 // own price) next to the same tokens priced with covey's list. ?days= as on

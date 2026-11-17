@@ -184,6 +184,32 @@
       "noReadings": "まだ記録がありません。エージェントがサブスクリプションで起動するたびに covey が記録します。",
       "ratio": "週間上限 1 % あたり定価 ≈ {{usd}}（+{{dp}} % で {{dc}}）。",
       "ratioFlat": "この期間の定価は {{dc}}、使用率はまだ {{pct}} %（整数パーセント単位で変化）。"
+    },
+    "filter": {
+      "agents": "エージェント",
+      "all": "すべて",
+      "toggleHint": "クリック: 追加/除外 · ダブルクリック: これだけ",
+      "split": "分割",
+      "split_agent": "エージェント",
+      "split_type": "コスト種別",
+      "split_none": "なし",
+      "source": "ソース",
+      "reported": "Claude の報告値",
+      "measured": "独自計算",
+      "reportedHint": "各実行についてエンジン（Claude Code）が報告したコスト。covey が記録する値です。",
+      "measuredHint": "同じ実行の生トークンを、種別ごとに covey の定価で計算したもの。",
+      "types": "コスト種別",
+      "diff": "独自計算と報告値の差: {{pct}} %",
+      "reportedNoTypes": "報告値にはコスト種別がありません（エンジンはモデルごとに 1 つの値を報告）。そのためエージェント別のままです。",
+      "nSelected": "{{count}} エージェント"
+    },
+    "stack": {
+      "cache_read": "キャッシュ読取",
+      "cache_write": "キャッシュ書込",
+      "input": "入力（非キャッシュ）",
+      "output": "出力",
+      "web_search": "ウェブ検索",
+      "unattributed": "内訳なし"
     }
   },
   "lang": {

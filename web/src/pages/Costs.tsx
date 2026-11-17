@@ -16,6 +16,7 @@ import {
 import { exact, fmtCount, fmtUSD } from "../format";
 import { PriceList } from "../components/PriceList";
 import { CostInsights } from "./CostInsights";
+import { AgentFilter, CostExplorer, TYPE_COLOR, useCostCells } from "./StackedCostChart";
 
 // --- Formatierung -----------------------------------------------------------
 
@@ -137,8 +138,8 @@ function CostChart({
           return (
             <g key={i} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
               <rect x={padL + i * slot} y={padT} width={slot} height={plotH} fill="transparent" />
-              <rect x={x0} y={inY} width={barW} height={inH} rx={2} fill="var(--text-accent)" opacity={active ? 1 : 0.85} />
-              <rect x={x0} y={outY} width={barW} height={outH} rx={2} fill="var(--clay)" opacity={active ? 1 : 0.85} />
+              <rect x={x0} y={inY} width={barW} height={inH} rx={2} fill={TYPE_COLOR.cache_read} opacity={active ? 1 : 0.85} />
+              <rect x={x0} y={outY} width={barW} height={outH} rx={2} fill={TYPE_COLOR.output} opacity={active ? 1 : 0.85} />
             </g>
           );
         })}
@@ -184,7 +185,7 @@ function CostChart({
           ) : (
             <>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                <span style={{ color: "var(--text-accent)" }}>■ {t("costs.input")}</span>
+                <span style={{ color: TYPE_COLOR.cache_read }}>■ {t("costs.input")}</span>
                 <span style={{ fontWeight: 600 }} title={exact(totalInput(hb))}>{fmtCount(totalInput(hb))}</span>
               </div>
               <div className="muted" style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 11 }}>
@@ -194,7 +195,7 @@ function CostChart({
                 </span>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                <span style={{ color: "var(--clay)" }}>■ {t("costs.output")}</span>
+                <span style={{ color: TYPE_COLOR.output }}>■ {t("costs.output")}</span>
                 <span style={{ fontWeight: 600 }} title={exact(hb.output_tokens)}>{fmtCount(hb.output_tokens)}</span>
               </div>
             </>
@@ -296,10 +297,10 @@ const RANGES: { v: number; bucket: string }[] = [
 function TokenMix({ tokens, locale }: { tokens: Tokens; locale: string }) {
   const { t } = useTranslation();
   const parts = [
-    { key: "cacheRead", value: tokens.cache_read_tokens, color: "var(--text-accent)" },
-    { key: "cacheWrite", value: tokens.cache_creation_tokens, color: "var(--sage, #7a9)" },
-    { key: "inputFresh", value: tokens.input_tokens, color: "var(--muted, #999)" },
-    { key: "output", value: tokens.output_tokens, color: "var(--clay)" },
+    { key: "cacheRead", value: tokens.cache_read_tokens, color: TYPE_COLOR.cache_read },
+    { key: "cacheWrite", value: tokens.cache_creation_tokens, color: TYPE_COLOR.cache_write },
+    { key: "inputFresh", value: tokens.input_tokens, color: TYPE_COLOR.input },
+    { key: "output", value: tokens.output_tokens, color: TYPE_COLOR.output },
   ];
   const sum = parts.reduce((a, p) => a + p.value, 0);
   if (sum === 0) return <div className="muted text-sm">{t("costs.empty")}</div>;
@@ -385,7 +386,12 @@ export default function Costs() {
   const [days, setDays] = useState(30);
   const [bucket, setBucket] = useState("day");
   const [metric, setMetric] = useState<Metric>("cost");
-  const [scope, setScope] = useState<string>("org"); // "org" | agentId
+  // The agent filter replaces the scope tabs: none selected = the whole
+  // organisation, any combination for the chart; exactly one also narrows the
+  // cards below to that agent.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const scope = selected.size === 1 ? [...selected][0] : "org";
+  const cells = useCostCells(days, bucket);
 
   const agents = useQuery({ queryKey: ["agents"], queryFn: () => api<Agent[] | null>("/agents") });
 
@@ -478,7 +484,12 @@ export default function Costs() {
   }, [isOrg, rep, series]);
 
   const agentList = agents.data ?? [];
-  const scopeName = isOrg ? t("costs.wholeOrg") : agentList.find((a) => a.id === scope)?.display_name ?? "";
+  const scopeName =
+    selected.size === 0
+      ? t("costs.wholeOrg")
+      : selected.size === 1
+        ? agentList.find((a) => a.id === scope)?.display_name ?? ""
+        : t("costs.filter.nSelected", { count: selected.size });
 
   const maxAgent = Math.max(1, ...(rep?.agents ?? []).map((a) => a.total_usd));
   const maxModel = Math.max(1, ...(rep?.models ?? []).map((m) => m.total_usd));
@@ -494,11 +505,6 @@ export default function Costs() {
 
       {/* Steuerung */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
-        <Seg
-          value={scope}
-          onChange={setScope}
-          options={[{ v: "org", label: t("costs.scopeOrg") }, ...agentList.map((a) => ({ v: a.id, label: a.display_name }))]}
-        />
         <div style={{ flex: 1 }} />
         <Seg
           value={days}
@@ -515,6 +521,10 @@ export default function Costs() {
             { v: "month", label: t("costs.bMonth") },
           ]}
         />
+      </div>
+
+      <div className="mb-4">
+        <AgentFilter agents={cells.data?.agents ?? []} selected={selected} onChange={setSelected} />
       </div>
 
       {/* KPIs */}
@@ -538,8 +548,8 @@ export default function Costs() {
           <div className="flex items-center gap-3">
             {metric === "tokens" && (
               <div className="flex items-center gap-3 text-xs muted">
-                <span><span style={{ color: "var(--text-accent)" }}>■</span> {t("costs.input")}</span>
-                <span><span style={{ color: "var(--clay)" }}>■</span> {t("costs.output")}</span>
+                <span><span style={{ color: TYPE_COLOR.cache_read }}>■</span> {t("costs.input")}</span>
+                <span><span style={{ color: TYPE_COLOR.output }}>■</span> {t("costs.output")}</span>
               </div>
             )}
             <Seg
@@ -549,7 +559,11 @@ export default function Costs() {
             />
           </div>
         </div>
-        <CostChart data={series} metric={metric} bucket={bucket} locale={locale} />
+        {metric === "cost" ? (
+          <CostExplorer data={cells.data} selected={selected} fmtPeriod={(p) => fmtPeriod(p, bucket, locale)} />
+        ) : (
+          <CostChart data={series} metric={metric} bucket={bucket} locale={locale} />
+        )}
       </div>
 
       {/* Price list + cost types + priciest runs: they hold for every scope */}

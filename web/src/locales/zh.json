@@ -184,6 +184,32 @@
       "noReadings": "暂无读数：每当代理在订阅上唤醒时，covey 会记录一次。",
       "ratio": "每周额度每 1 % ≈ 标价 {{usd}}（+{{dp}} % 对应 {{dc}}）。",
       "ratioFlat": "本期标价 {{dc}}，用量仍为 {{pct}} %（按整数百分比变化）。"
+    },
+    "filter": {
+      "agents": "代理",
+      "all": "全部",
+      "toggleHint": "单击：添加或移除 · 双击：仅此一个",
+      "split": "拆分方式",
+      "split_agent": "代理",
+      "split_type": "成本类型",
+      "split_none": "无",
+      "source": "来源",
+      "reported": "Claude 报告值",
+      "measured": "自行计算",
+      "reportedHint": "引擎（Claude Code）报告的每次运行成本，即 covey 记账的数字。",
+      "measuredHint": "同样运行的原始 token，按类型以 covey 标价计算。",
+      "types": "成本类型",
+      "diff": "自行计算与报告值相差：{{pct}} %",
+      "reportedNoTypes": "报告值没有成本类型（引擎每个模型只报告一个数字），因此仍按代理拆分。",
+      "nSelected": "{{count}} 个代理"
+    },
+    "stack": {
+      "cache_read": "缓存读取",
+      "cache_write": "缓存写入",
+      "input": "输入（未缓存）",
+      "output": "输出",
+      "web_search": "网页搜索",
+      "unattributed": "未拆分"
     }
   },
   "lang": {

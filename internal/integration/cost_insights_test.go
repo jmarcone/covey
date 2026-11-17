@@ -83,6 +83,56 @@ func TestModelUsageFromResultLine(t *testing.T) {
 	}
 }
 
+// The chart's cells carry both figures for the same runs: the booked (reported)
+// cost and the measured one split by cost type — and a booking without a
+// breakdown shows up as "unattributed" rather than disappearing.
+func TestCostCellsReportedAndMeasured(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	admin := login(t, s, "admin@test.local", "admin-passwort")
+	agent := s.newSupportAgent("kosten-zellen")
+	task := uuid.New()
+
+	if err := s.obs.RecordRuntime(ctx, agent.OrgID, agent.ID, &task, json.RawMessage(resultLine)); err != nil {
+		t.Fatal(err)
+	}
+	// What covey books for that run, plus a second run without any breakdown.
+	if err := s.obs.AddCost(ctx, agent.ID, &task, 1.3991645, observability.Tokens{Output: 34212}, "claude-opus-5-5", uuid.Nil, -1); err != nil {
+		t.Fatal(err)
+	}
+	other := uuid.New()
+	if err := s.obs.AddCost(ctx, agent.ID, &other, 2.5, observability.Tokens{Output: 10}, "claude-opus-5-5", uuid.Nil, -1); err != nil {
+		t.Fatal(err)
+	}
+
+	cells, err := s.obs.CostCellsFor(ctx, agent.OrgID, "day", time.Now().Add(-24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cells.Cells) != 1 || len(cells.Agents) != 1 {
+		t.Fatalf("cells = %d, agents = %d, want 1/1", len(cells.Cells), len(cells.Agents))
+	}
+	c := cells.Cells[0]
+	if math.Abs(c.Reported-3.8991645) > 1e-6 {
+		t.Errorf("reported = %v, want 3.8991645", c.Reported)
+	}
+	measured := 0.0
+	for _, v := range c.Measured {
+		measured += v
+	}
+	// Measured covers the same runs: the breakdown (≈1.399) plus the unattributed 2.5.
+	if math.Abs(measured-c.Reported) > 0.001 {
+		t.Errorf("measured %v vs reported %v (parts %v)", measured, c.Reported, c.Measured)
+	}
+	if math.Abs(c.Measured[observability.TypeUnattributed]-2.5) > 0.001 {
+		t.Errorf("unattributed = %v, want 2.5", c.Measured[observability.TypeUnattributed])
+	}
+	if c.Measured[observability.TypeCacheWrite] <= c.Measured[observability.TypeCacheRead] {
+		t.Errorf("for this run the 1-hour cache writes cost more than the cache reads: %v", c.Measured)
+	}
+	admin.expect(http.MethodGet, "/api/v1/cost/cells?days=1&bucket=hour", nil, http.StatusOK)
+}
+
 // The provider's answer is kept as history, and each reading carries the
 // list-price cost booked up to it — the meter read against the bill it would be.
 func TestUsageReadingsCarryTheCostSoFar(t *testing.T) {

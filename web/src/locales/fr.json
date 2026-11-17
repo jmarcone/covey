@@ -184,6 +184,32 @@
       "noReadings": "Pas encore de relevé : covey en enregistre un à chaque réveil d'un agent sur un abonnement.",
       "ratio": "≈ {{usd}} de prix catalogue par 1 % de la limite hebdomadaire ({{dc}} pour +{{dp}} %).",
       "ratioFlat": "{{dc}} de prix catalogue sur la période ; le compteur reste à {{pct}} % (il avance par pourcents entiers)."
+    },
+    "filter": {
+      "agents": "Agents",
+      "all": "Tous",
+      "toggleHint": "Clic : ajouter ou retirer · double-clic : seulement celui-ci",
+      "split": "Répartir par",
+      "split_agent": "Agent",
+      "split_type": "Type de coût",
+      "split_none": "Aucun",
+      "source": "Source",
+      "reported": "Déclaré par Claude",
+      "measured": "Calcul propre",
+      "reportedHint": "Ce que le moteur (Claude Code) a indiqué comme coût par exécution — le chiffre que covey enregistre.",
+      "measuredHint": "Les jetons bruts des mêmes exécutions, valorisés par type au prix catalogue de covey.",
+      "types": "Types de coût",
+      "diff": "Calcul propre vs déclaré : {{pct}} %",
+      "reportedNoTypes": "Le chiffre déclaré n'a pas de types de coût (le moteur donne un chiffre par modèle) ; il reste réparti par agent.",
+      "nSelected": "{{count}} agents"
+    },
+    "stack": {
+      "cache_read": "Cache lu",
+      "cache_write": "Cache écrit",
+      "input": "Entrée (hors cache)",
+      "output": "Sortie",
+      "web_search": "Recherche web",
+      "unattributed": "Non détaillé"
     }
   },
   "lang": {

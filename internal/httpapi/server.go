@@ -717,6 +717,7 @@ func (s *Server) Handler() http.Handler {
 	// provider's subscription meter next to the booked list-price cost.
 	mux.Handle("GET /api/v1/cost/models", s.rbac(anyRole, s.handleModelUsage))
 	mux.Handle("GET /api/v1/cost/subscription", s.rbac(anyRole, s.handleUsageReadings))
+	mux.Handle("GET /api/v1/cost/cells", s.rbac(anyRole, s.handleCostCells))
 	mux.Handle("GET /api/v1/agents/{id}/cost/runs", s.agentScoped(anyRole, s.handleAgentRunCosts))
 	// The price list: delivery next to the cost, same scope, same period
 	// (spec/17-kpis.md).

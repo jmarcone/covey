@@ -184,6 +184,32 @@
       "noReadings": "Noch keine Messwerte: covey hält einen fest, sobald ein Agent auf einem Abo aufwacht.",
       "ratio": "≈ {{usd}} Listenpreis je 1 % des Wochenlimits ({{dc}} über +{{dp}} %).",
       "ratioFlat": "{{dc}} Listenpreis in diesem Zeitraum, der Zähler steht noch bei {{pct}} % (er springt in ganzen Prozent)."
+    },
+    "filter": {
+      "agents": "Agenten",
+      "all": "Alle",
+      "toggleHint": "Klick: hinzu/weg · Doppelklick: nur dieser",
+      "split": "Aufteilen nach",
+      "split_agent": "Agent",
+      "split_type": "Kostenart",
+      "split_none": "Keine",
+      "source": "Quelle",
+      "reported": "Von Claude gemeldet",
+      "measured": "Eigene Berechnung",
+      "reportedHint": "Was die Engine (Claude Code) pro Lauf als Kosten gemeldet hat — die Zahl, die covey bucht.",
+      "measuredHint": "Die Rohtokens derselben Läufe, je Tokenart mit covey's Listenpreis bepreist.",
+      "types": "Kostenarten",
+      "diff": "Eigene Berechnung ggü. gemeldet: {{pct}} %",
+      "reportedNoTypes": "Die gemeldete Zahl hat keine Kostenarten (die Engine meldet eine Zahl je Modell), sie bleibt daher nach Agent aufgeteilt.",
+      "nSelected": "{{count}} Agenten"
+    },
+    "stack": {
+      "cache_read": "Cache gelesen",
+      "cache_write": "Cache geschrieben",
+      "input": "Eingabe (ungecacht)",
+      "output": "Ausgabe",
+      "web_search": "Websuche",
+      "unattributed": "Nicht aufgeschlüsselt"
     }
   },
   "lang": {

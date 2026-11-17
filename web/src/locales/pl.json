@@ -184,6 +184,32 @@
       "noReadings": "Brak odczytów: covey zapisuje odczyt, gdy agent budzi się na subskrypcji.",
       "ratio": "≈ {{usd}} ceny katalogowej na 1 % limitu tygodniowego ({{dc}} przy +{{dp}} %).",
       "ratioFlat": "{{dc}} ceny katalogowej w tym okresie; licznik wciąż na {{pct}} % (zmienia się o pełne procenty)."
+    },
+    "filter": {
+      "agents": "Agenci",
+      "all": "Wszyscy",
+      "toggleHint": "Klik: dodaj lub usuń · dwuklik: tylko ten",
+      "split": "Podział według",
+      "split_agent": "Agent",
+      "split_type": "Rodzaj kosztu",
+      "split_none": "Brak",
+      "source": "Źródło",
+      "reported": "Zgłoszone przez Claude",
+      "measured": "Własne wyliczenie",
+      "reportedHint": "To, co silnik (Claude Code) podał jako koszt każdego przebiegu: kwota księgowana przez covey.",
+      "measuredHint": "Surowe tokeny tych samych przebiegów wycenione według rodzaju cennikiem covey.",
+      "types": "Rodzaje kosztów",
+      "diff": "Własne wyliczenie a zgłoszone: {{pct}} %",
+      "reportedNoTypes": "Kwota zgłoszona nie ma rodzajów kosztów (silnik podaje jedną kwotę na model), więc pozostaje podzielona według agenta.",
+      "nSelected": "Agenci: {{count}}"
+    },
+    "stack": {
+      "cache_read": "Cache odczyt",
+      "cache_write": "Cache zapis",
+      "input": "Wejście (bez cache)",
+      "output": "Wyjście",
+      "web_search": "Wyszukiwanie w sieci",
+      "unattributed": "Bez rozbicia"
     }
   },
   "lang": {
