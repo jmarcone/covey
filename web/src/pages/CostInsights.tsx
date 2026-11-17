@@ -21,6 +21,8 @@ interface ModelUsageRow {
   agent_slug: string;
   agent_name: string;
   model: string;
+  /** api_key | subscription, empty when the runs were not attributable. */
+  credential_kind: string;
   runs: number;
   input_tokens: number;
   output_tokens: number;
@@ -84,7 +86,7 @@ function ModelTable({ rep }: { rep: ModelUsageReport }) {
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={`${r.agent_id}/${r.model}`} style={{ borderTop: "1px solid var(--border)" }}>
+              <tr key={`${r.agent_id}/${r.model}/${r.credential_kind}`} style={{ borderTop: "1px solid var(--border)" }}>
                 <td style={td}>
                   <Link to={`/agents/${r.agent_id}`}>{r.agent_name || r.agent_slug}</Link>
                 </td>

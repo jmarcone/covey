@@ -225,6 +225,7 @@
       "input": "输入（未缓存）",
       "output": "输出",
       "web_search": "网页搜索",
+      "unpriced": "未知模型（引擎价格）",
       "unattributed": "未拆分"
     }
   },

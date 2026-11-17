@@ -225,6 +225,7 @@
       "input": "Entrée (hors cache)",
       "output": "Sortie",
       "web_search": "Recherche web",
+      "unpriced": "Modèle inconnu (prix du moteur)",
       "unattributed": "Non détaillé"
     }
   },

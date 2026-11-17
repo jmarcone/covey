@@ -81,7 +81,7 @@ The `cost` message says what its figure covers in **`basis`**:
 
 - `invocation` — the run's own spend, the figure to book. Claude Code sends it whenever its lines carry the per-invocation delta or the total before is known; Codex, sevencode and educa-ai always send it, they count per run anyway.
 - `cumulative` — the fallback above on a resumed process: the money includes earlier runs of the session.
-- empty — a daemon from before the field. For claude-code that daemon sent the session's running total; the control plane has to treat such an entry as cumulative, not as a run's spend.
+- empty — a daemon from before the field. For claude-code that daemon sent the session's running total; the control plane does not book it as the run's spend but as the sum of the run's own result lines in `model_usage`, and the daemon's figure only where the run left no line ([`06`](06-observability-control.md#cost-control)). `cumulative` is booked the same way.
 
 Next to it travel `session_id` and `session_total_usd` (the last line's `total_cost_usd`): a cross-check — a session's booked amounts should add up to its last total — never a figure to book.
 

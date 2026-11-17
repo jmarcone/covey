@@ -29,6 +29,12 @@ import (
 //	[mock:maxturns <handover-state>]         → run ends at the turn limit
 //	[mock:maxturns-always <handover-state>]  → likewise, on every resumption too
 //	[mock:prompt]                            → returns the system prompt as the result
+//	[mock:line <json>]                       → emits <json> as a runtime line, verbatim
+//	[mock:cost <json>]                       → the run's cost message (daemon.Cost fields)
+//
+// line and cost replay what a real engine sends: a Claude Code result line
+// goes through the control plane's filing exactly as recorded, and a cost
+// without "basis" is what a daemon from before that field sent.
 //
 // Without directives: done with a generic result. On resume: done with the
 // resume input as the result. If the action proxy answers pending_approval, the
@@ -49,7 +55,10 @@ func init() {
 		// effort levels — otherwise the effort path in tests would run past an
 		// engine that does not offer it at all.
 		Capabilities: RuntimeCapabilities{Resume: true, SkillsDir: ".claude/skills",
-			EffortLevels: []string{"low", "medium", "high", "xhigh", "max"}},
+			EffortLevels: []string{"low", "medium", "high", "xhigh", "max"},
+			// And it is booked the way Claude Code is, so that the cost path
+			// can be driven with recorded result lines (mock:line, mock:cost).
+			ResultUsage: true},
 		New: func() Runtime { return Mock{} },
 		Setup: []SetupStep{
 			{Text: "Set this agent's runtime to `mock`."},
@@ -64,7 +73,7 @@ func init() {
 // the parameter. A bare `]` still gets the group no further, so two directives
 // on one line stay separate.
 var mockDirective = regexp.MustCompile(
-	`\[mock:(action|block|fail|result|memory|reply|sleep|maxturns-always|maxturns|prompt)\s*((?:[^\[\]]|\[[^\]]*\])*)\]`)
+	`\[mock:(action|block|fail|result|memory|reply|sleep|maxturns-always|maxturns|prompt|line|cost)\s*((?:[^\[\]]|\[[^\]]*\])*)\]`)
 
 func (Mock) Run(ctx context.Context, spec RunSpec, onEvent func(kind string, payload json.RawMessage)) (RunResult, error) {
 	res := RunResult{
@@ -188,6 +197,23 @@ func (Mock) Run(ctx context.Context, spec RunSpec, onEvent func(kind string, pay
 			case <-ctx.Done():
 				return res, ctx.Err()
 			case <-time.After(d):
+			}
+		case "line":
+			if json.Valid([]byte(arg)) {
+				onEvent("runtime", json.RawMessage(arg))
+			}
+		case "cost":
+			var c Cost
+			if err := json.Unmarshal([]byte(arg), &c); err != nil {
+				res.Status = "failed"
+				res.Error = "mock:cost: " + err.Error()
+				return res, nil
+			}
+			res.CostUSD, res.Basis, res.SessionTotalUSD = c.USD, c.Basis, c.SessionTotalUSD
+			res.InputTokens, res.OutputTokens = c.InputTokens, c.OutputTokens
+			res.CacheReadTokens, res.CacheCreationTokens = c.CacheReadTokens, c.CacheCreationTokens
+			if c.Model != "" {
+				res.Model = c.Model
 			}
 		case "prompt":
 			// Makes the assembled system prompt inspectable (platform protocol,

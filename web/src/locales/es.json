@@ -225,6 +225,7 @@
       "input": "Entrada (sin caché)",
       "output": "Salida",
       "web_search": "Búsqueda web",
+      "unpriced": "Modelo desconocido (precio del motor)",
       "unattributed": "Sin desglose"
     }
   },

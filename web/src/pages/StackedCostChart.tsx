@@ -24,9 +24,13 @@ interface CellAgent {
   label: string;
   reported_usd: number;
 }
+/** One period × agent × credential (the secret value that paid; null: not attributable). */
 interface CostCell {
   period: string;
   agent_id: string;
+  secret_key?: string | null;
+  secret_slot?: number | null;
+  credential_kind?: string;
   reported_usd: number;
   measured: Record<string, number>;
 }
@@ -55,6 +59,7 @@ export const TYPE_COLOR: Record<string, string> = {
   input: "#b9bec7",
   output: "#2c5aa0",
   web_search: "#8c7cc8",
+  unpriced: "#a3a8b0",
   unattributed: "#80858d",
 };
 /** Agents: a qualitative palette (Tableau 10): distinct, calm, colour-blind tolerant. */
@@ -276,7 +281,7 @@ export function CostExplorer({ data, selected, fmtPeriod }: {
   const [layout, setLayout] = useState<Layout>("combined");
   const [split, setSplit] = useState<Split>("none");
   const [src, setSrc] = useState<Record<Source, boolean>>({ reported: true, measured: true, subscription: true });
-  const [types, setTypes] = useState<Set<string>>(new Set(["cache_read", "cache_write", "input", "output", "web_search", "unattributed"]));
+  const [types, setTypes] = useState<Set<string>>(new Set(["cache_read", "cache_write", "input", "output", "web_search", "unpriced", "unattributed"]));
   const [price, setPriceState] = useState<number>(loadPrice);
   const setPrice = (v: number) => {
     setPriceState(v);
@@ -292,11 +297,19 @@ export function CostExplorer({ data, selected, fmtPeriod }: {
     const s = new Set([...(data?.periods ?? []), ...(data?.subscription ?? []).map((x) => x.period)]);
     return [...s].sort();
   }, [data]);
+  /** Cells per period, one per agent: the API splits an agent's period by credential,
+   *  this chart does not, so those parts are added back together. */
   const cellsBy = useMemo(() => {
     const m = new Map<string, CostCell[]>();
     for (const c of data?.cells ?? []) {
       const l = m.get(c.period) ?? [];
-      l.push(c);
+      const same = l.find((x) => x.agent_id === c.agent_id);
+      if (!same) {
+        l.push({ ...c, measured: { ...c.measured } });
+      } else {
+        same.reported_usd += c.reported_usd;
+        for (const [k, v] of Object.entries(c.measured)) same.measured[k] = (same.measured[k] ?? 0) + v;
+      }
       m.set(c.period, l);
     }
     return m;

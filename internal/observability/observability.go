@@ -170,9 +170,13 @@ type ModelCost struct {
 }
 
 // CredentialCost is what one credential of a runtime paid for — the breakdown
-// that answers "is one seat too few, or one too many". Kind says what the money
-// column means there: real billing on a metered credential, a list-price
-// equivalent on a subscription seat (spec/17).
+// that answers "is one seat too few, or one too many". The money column is the
+// engine's own list-price estimate (Claude Code's costUSD) on every credential.
+// Kind says how far that is from money: on a subscription seat it is what the
+// same work would have cost through the API, the seat is paid regardless; on a
+// metered credential (an API key) it is an estimate of the bill, not the bill
+// — what Anthropic actually charged comes from its Usage and Cost API, read
+// separately (spec/06).
 //
 // Runs from before the pools carry no attribution and are missing here; they
 // still count towards the totals. The view has to be able to say that, so that
@@ -545,35 +549,146 @@ func (s *Store) ActionSubjectsSince(ctx context.Context, agentID uuid.UUID, sinc
 	return out, rows.Err()
 }
 
-// AddCost books costs from a cost event of the daemon.
+// What a cost entry's figures cover (cost_entries.basis, migration 0144).
+const (
+	// BasisInvocation: the run's own spend, as a daemon that says so sent it.
+	BasisInvocation = "invocation"
+	// BasisFromDeltas: an older daemon's booking, recomputed from the run's
+	// own result lines (model_usage); the daemon's figure was the session's
+	// running total.
+	BasisFromDeltas = "from_deltas"
+	// BasisLegacy: an older daemon's figure, booked as sent because the run
+	// left no result line to recompute it from.
+	BasisLegacy = "legacy"
+	// BasisCorrected: rewritten by migration 0144 from the lines; the figure
+	// booked before is kept in booked_usd.
+	BasisCorrected = "corrected"
+)
+
+// CostEntry is one booking of a run.
+type CostEntry struct {
+	AgentID uuid.UUID
+	TaskID  *uuid.UUID
+	USD     float64
+	Tokens
+	Model string
+	// Credential says WHICH credential paid for the run — the one the capacity
+	// layer picked for it (spec/18). The zero value means: not attributable,
+	// and the entry then counts towards the totals but not towards the
+	// breakdown per credential. That is the case for every run from before the
+	// runtimes.
+	Credential CredentialRef
+	Basis      string
+	// SessionID is the engine session the run belonged to, empty where the
+	// engine has none.
+	SessionID string
+}
+
+// costInsertCols are the columns of one entry ($1..$14). secret_key/secret_slot come from the
+// entry, or are resolved from the runtime's credential at booking time — the
+// one moment (runtime_id, ord) is known to point at the value that paid.
+const costInsertCols = `(agent_id, task_id, usd, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, model,
+		runtime_id, credential_ord, secret_key, secret_slot, basis, session_id)`
+
+const costSecretKey = `COALESCE($11::text, (SELECT secret_key FROM runtime_credentials WHERE runtime_id = $9::uuid AND ord = $10::smallint))`
+const costSecretSlot = `COALESCE($12::smallint, (SELECT secret_slot FROM runtime_credentials WHERE runtime_id = $9::uuid AND ord = $10::smallint))`
+
+func (e CostEntry) args() []any {
+	rt, ord, key, slot := e.Credential.columns()
+	return []any{e.AgentID, e.TaskID, e.USD, e.Input, e.Output, e.CacheRead, e.CacheCreation, e.Model,
+		rt, ord, key, slot, e.Basis, e.SessionID}
+}
+
+// AddCost books costs from a cost event of the daemon, as sent.
 //
 // runtimeID/ord say WHICH credential paid for the run — the one the capacity
 // layer picked for it (spec/18). A nil runtime means: not attributable, and the
 // entry then counts towards the totals but not towards the breakdown per
 // credential. That is the case for every run from before the runtimes.
 func (s *Store) AddCost(ctx context.Context, agentID uuid.UUID, taskID *uuid.UUID, usd float64, tok Tokens, model string, runtimeID uuid.UUID, ord int) error {
-	var (
-		rt  *uuid.UUID
-		crd *int
-	)
-	if runtimeID != uuid.Nil {
-		rt, crd = &runtimeID, &ord
-	}
-	_, err := s.pool.Exec(ctx, `INSERT INTO cost_entries
-		(agent_id, task_id, usd, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, model, runtime_id, credential_ord)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-		agentID, taskID, usd, tok.Input, tok.Output, tok.CacheRead, tok.CacheCreation, model, rt, crd)
+	_, err := s.BookCost(ctx, CostEntry{AgentID: agentID, TaskID: taskID, USD: usd, Tokens: tok, Model: model,
+		Credential: CredentialRef{RuntimeID: runtimeID, Ord: ord}})
 	return err
+}
+
+// BookCost writes one entry as given and returns its id.
+func (s *Store) BookCost(ctx context.Context, e CostEntry) (int64, error) {
+	var id int64
+	err := s.pool.QueryRow(ctx, `INSERT INTO cost_entries `+costInsertCols+`
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::uuid,$10::smallint,`+costSecretKey+`,`+costSecretSlot+`,$13,$14)
+		RETURNING id`, e.args()...).Scan(&id)
+	return id, err
+}
+
+// Booked is what BookRun wrote, and what the run's lines said.
+type Booked struct {
+	ID    int64
+	USD   float64
+	Basis string
+	// Lines are the model_usage rows linked to the entry, LinesUSD their sum.
+	Lines    int64
+	LinesUSD float64
+}
+
+// BookRun books a run of an engine whose result lines leave model_usage rows
+// (Claude Code), and links the task's rows not booked yet to the entry — in
+// one statement, so that two bookings of the same task cannot both claim them.
+//
+// fromLines=false: the daemon sent the run's own spend (basis invocation); the
+// entry is booked as sent and the lines are the cross-check (LinesUSD).
+// fromLines=true: the daemon's figure cannot be trusted — a daemon from before
+// the basis field sent the session's running total, twice over after a turn
+// limit — so the entry is the sum of the lines (from_deltas), tokens over all
+// models with cache writes as 5 min + 1 h. The daemon's figure is booked, with
+// e.Basis, only when the run left no line at all.
+func (s *Store) BookRun(ctx context.Context, e CostEntry, fromLines bool) (Booked, error) {
+	var b Booked
+	args := append(e.args(), fromLines)
+	err := s.pool.QueryRow(ctx, `WITH d AS (
+			SELECT id, engine_usd, input_tokens, output_tokens, cache_read_tokens,
+				cache_write_5m_tokens + cache_write_1h_tokens AS cache_creation_tokens
+			FROM model_usage
+			WHERE task_id = $2::uuid AND cost_entry_id IS NULL
+			FOR UPDATE),
+		s AS (
+			SELECT count(*) AS n, COALESCE(SUM(engine_usd),0) AS usd,
+				COALESCE(SUM(input_tokens),0) AS input_tokens, COALESCE(SUM(output_tokens),0) AS output_tokens,
+				COALESCE(SUM(cache_read_tokens),0) AS cache_read_tokens,
+				COALESCE(SUM(cache_creation_tokens),0) AS cache_creation_tokens
+			FROM d),
+		ins AS (
+			INSERT INTO cost_entries `+costInsertCols+`
+			SELECT $1::uuid, $2::uuid,
+				CASE WHEN $15::boolean AND s.n > 0 THEN s.usd ELSE $3::numeric END,
+				CASE WHEN $15::boolean AND s.n > 0 THEN s.input_tokens ELSE $4::bigint END,
+				CASE WHEN $15::boolean AND s.n > 0 THEN s.output_tokens ELSE $5::bigint END,
+				CASE WHEN $15::boolean AND s.n > 0 THEN s.cache_read_tokens ELSE $6::bigint END,
+				CASE WHEN $15::boolean AND s.n > 0 THEN s.cache_creation_tokens ELSE $7::bigint END,
+				$8::text, $9::uuid, $10::smallint, `+costSecretKey+`, `+costSecretSlot+`,
+				CASE WHEN $15::boolean AND s.n > 0 THEN '`+BasisFromDeltas+`' ELSE $13::text END, $14::text
+			FROM s
+			RETURNING id, usd, basis),
+		l AS (
+			UPDATE model_usage mu SET cost_entry_id = ins.id
+			FROM ins WHERE mu.id IN (SELECT id FROM d)
+			RETURNING mu.id)
+		SELECT ins.id, ins.usd::float8, ins.basis, s.n, s.usd::float8, (SELECT count(*) FROM l)
+		FROM ins, s`, args...).Scan(&b.ID, &b.USD, &b.Basis, &b.Lines, &b.LinesUSD, new(int64))
+	return b, err
 }
 
 // CredentialUsage is what one credential of a runtime consumed in the rolling
 // window — the measurement behind its limit (runtimes.UsageFunc).
 //
-// The token figure is the sum of all four kinds. For an API key the USD column
-// is the honest one (it is real billing); for a subscription token USD is
-// notional and the token count is the closest available proxy for the
-// provider's own rolling window. Neither is the provider's actual counter —
-// they steer, and the hard signal (a rejected credential) corrects them.
+// The token figure is the sum of all four kinds, over every model the runs
+// used (since 0144 a Claude Code booking counts the small Haiku calls beside
+// the main model too). The USD figure is Claude Code's list-price estimate of
+// the same tokens: for an API key the closest figure to the bill covey has
+// while a run is going (the billed amount arrives hours later from Anthropic's
+// cost report), for a subscription token notional, where the token count is
+// the closer proxy for the provider's own rolling window. Neither is the
+// provider's actual counter — they steer, and the hard signal (a rejected
+// credential) corrects them.
 func (s *Store) CredentialUsage(ctx context.Context, runtimeID uuid.UUID, ord int, window time.Duration) (float64, int64, error) {
 	var (
 		usd    float64
@@ -911,6 +1026,12 @@ func (s *Store) CostByAgent(ctx context.Context, agentID uuid.UUID) (CostSummary
 
 // normalizeBucket restricts the time granularity to valid date_trunc values
 // (no SQL injection vector, sensible default).
+//
+// Every bucket is cut in UTC, date_trunc's three-argument form: the
+// two-argument one follows the session's TimeZone, so the same row would land
+// in another day (or hour, for a half-hour zone) depending on how the
+// connection happened to be configured. UTC days and Monday-UTC weeks, the
+// same for the cost and the meter series.
 func normalizeBucket(bucket string) string {
 	switch bucket {
 	case "hour", "day", "week", "month":
@@ -936,7 +1057,7 @@ func scanBuckets(rows pgx.Rows) ([]CostBucket, error) {
 // CostSeriesByAgent returns an agent's cost time series, grouped into time
 // windows (bucket) and starting at since. For the cost/token chart.
 func (s *Store) CostSeriesByAgent(ctx context.Context, agentID uuid.UUID, bucket string, since time.Time) ([]CostBucket, error) {
-	rows, err := s.pool.Query(ctx, `SELECT date_trunc($2, created_at) AS period,
+	rows, err := s.pool.Query(ctx, `SELECT date_trunc($2, created_at, 'UTC') AS period,
 		COALESCE(SUM(usd),0), `+tokenSums("")+`, COUNT(*)
 		FROM cost_entries WHERE agent_id=$1 AND created_at >= $3
 		GROUP BY period ORDER BY period`, agentID, normalizeBucket(bucket), since)
@@ -1008,7 +1129,7 @@ func (s *Store) OrgCostReport(ctx context.Context, orgID uuid.UUID, bucket strin
 	}
 
 	// Time series.
-	rows, err := s.pool.Query(ctx, `SELECT date_trunc($2, ce.created_at) AS period,
+	rows, err := s.pool.Query(ctx, `SELECT date_trunc($2, ce.created_at, 'UTC') AS period,
 		COALESCE(SUM(ce.usd),0), `+tokenSums("ce.")+`, COUNT(*)
 		FROM cost_entries ce JOIN agents a ON a.id=ce.agent_id
 		WHERE a.org_id=$1 AND ce.created_at >= $3

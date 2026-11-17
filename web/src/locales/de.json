@@ -225,6 +225,7 @@
       "input": "Eingabe (ungecacht)",
       "output": "Ausgabe",
       "web_search": "Websuche",
+      "unpriced": "Unbekanntes Modell (Preis der Engine)",
       "unattributed": "Nicht aufgeschlüsselt"
     }
   },

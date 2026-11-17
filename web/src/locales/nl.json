@@ -225,6 +225,7 @@
       "input": "Invoer (niet gecachet)",
       "output": "Uitvoer",
       "web_search": "Webzoekopdracht",
+      "unpriced": "Onbekend model (prijs van de engine)",
       "unattributed": "Niet uitgesplitst"
     }
   },

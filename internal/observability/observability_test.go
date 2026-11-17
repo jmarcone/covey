@@ -1,6 +1,12 @@
 package observability
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+)
 
 // The recording depth is a compliance setting: the org level is the floor that
 // security sets, the agent may only deviate UPWARDS. An agent that could turn
@@ -83,5 +89,38 @@ func TestNormalizeBucket(t *testing.T) {
 		if got := normalizeBucket(b); !allowed[got] {
 			t.Errorf("normalizeBucket(%q) = %q — an unknown input must fall back to a known granularity", b, got)
 		}
+	}
+}
+
+// Every time bucket is cut in UTC. The two-argument date_trunc follows the
+// session's TimeZone, so the same row lands in another day depending on how
+// the connection is configured — a session with SET TIME ZONE 'Europe/Berlin'
+// moves a run at 23:30 UTC to the next day. The integration suite reads the
+// buckets over such a connection (TestCostBucketsIgnoreSessionTimeZone); this
+// keeps a new query from bringing the two-argument form back.
+func TestDateTruncAlwaysCutsInUTC(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := regexp.MustCompile(`date_trunc\((?:[^()]|\([^()]*\))*\)`)
+	seen := 0
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range call.FindAllString(string(src), -1) {
+			seen++
+			if !strings.Contains(m, "'UTC'") {
+				t.Errorf("%s: %s follows the session's time zone; name 'UTC'", f, m)
+			}
+		}
+	}
+	if seen == 0 {
+		t.Fatal("no date_trunc found — the check has stopped looking")
 	}
 }

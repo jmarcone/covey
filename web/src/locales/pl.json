@@ -225,6 +225,7 @@
       "input": "Wejście (bez cache)",
       "output": "Wyjście",
       "web_search": "Wyszukiwanie w sieci",
+      "unpriced": "Nieznany model (cena silnika)",
       "unattributed": "Bez rozbicia"
     }
   },

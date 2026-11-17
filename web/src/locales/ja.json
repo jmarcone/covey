@@ -225,6 +225,7 @@
       "input": "入力（非キャッシュ）",
       "output": "出力",
       "web_search": "ウェブ検索",
+      "unpriced": "不明なモデル（エンジン価格）",
       "unattributed": "内訳なし"
     }
   },

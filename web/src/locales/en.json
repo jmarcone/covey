@@ -225,6 +225,7 @@
       "input": "Input (uncached)",
       "output": "Output",
       "web_search": "Web search",
+      "unpriced": "Unknown model (engine price)",
       "unattributed": "Not broken down"
     }
   },

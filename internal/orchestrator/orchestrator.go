@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"math"
 	"reflect"
 	"slices"
 	"strconv"
@@ -426,6 +427,12 @@ type session struct {
 	// from the API puts into cooldown.
 	credRuntime uuid.UUID
 	credOrd     int
+	// The same credential by its secret value and kind, resolved once at the
+	// pick: model_usage and cost_entries carry it so that a later Reorder of
+	// the runtime's credentials cannot move past runs to another value.
+	credKey  string
+	credSlot int
+	credKind string
 	// Where this run is happening: the host the sandbox stands on, and the
 	// name it carried at that moment. Held here and not only written into the
 	// recording, because the question "where is this agent working right now"
@@ -1236,6 +1243,7 @@ func (o *Orchestrator) runAgent(ctx context.Context, agentID uuid.UUID, s *sessi
 		return nil
 	}
 	s.credRuntime, s.credOrd = cred.RuntimeID, cred.Ord
+	s.credKey, s.credSlot, s.credKind = cred.SecretKey, cred.SecretSlot, cred.Kind
 
 	o.setStatus(ctx, agent, nil, agents.StatusTriggered)
 
@@ -1885,7 +1893,8 @@ func (o *Orchestrator) llmCredentialFor(ctx context.Context, agent agents.Agent)
 	}
 	// TrimSpace catches copy-and-paste whitespace/newlines.
 	return llmCredential{Token: strings.TrimSpace(p.Value), EnvVar: p.EnvVar, Path: p.Path,
-		RuntimeID: p.RuntimeID, Ord: p.Ord, Label: p.Label}, nil
+		RuntimeID: p.RuntimeID, Ord: p.Ord, Label: p.Label,
+		Kind: p.Kind, SecretKey: p.SecretKey, SecretSlot: p.SecretSlot}, nil
 }
 
 // errNoRuntime: nothing to broker — either the agent has no runtime assigned or
@@ -2082,6 +2091,10 @@ type llmCredential struct {
 	RuntimeID uuid.UUID
 	Ord       int
 	Label     string
+	// Kind (api_key | subscription) and the secret value behind Ord.
+	Kind       string
+	SecretKey  string
+	SecretSlot int
 }
 
 // pushAnthropicKey hands the already picked credential to the daemon. Never
@@ -2613,6 +2626,69 @@ func (o *Orchestrator) storeActionArtifact(ctx context.Context, agent agents.Age
 	return payload
 }
 
+// credential is the phase's credential as observability books it.
+func (s *session) credential() observability.CredentialRef {
+	if s == nil {
+		return observability.CredentialRef{}
+	}
+	return observability.CredentialRef{RuntimeID: s.credRuntime, Ord: s.credOrd,
+		SecretKey: s.credKey, SecretSlot: s.credSlot, Kind: s.credKind}
+}
+
+// bookCost books a run's cost message, against the pool value this waking
+// phase runs on — without that attribution no limit per value is measurable
+// and no utilisation showable (spec/04).
+//
+// An engine whose result lines leave model_usage rows (Claude Code) is booked
+// together with those rows, and the rows are linked to the entry:
+//
+//   - basis invocation: the daemon sent the run's own spend. Booked as sent;
+//     the run's rows are the cross-check, and a gap between the two is said.
+//   - no basis (a daemon from before the field) or cumulative (a resume on a
+//     CLI that reports only running totals): the figure includes the
+//     session's earlier runs, the turn-limit handover's twice. Booked as the
+//     sum of the run's rows; the daemon's figure only where the run left none.
+//
+// Every other engine is booked as sent. enforceBudget and CredentialUsage
+// read these entries, so they see the corrected figure without a change.
+func (o *Orchestrator) bookCost(ctx context.Context, agent agents.Agent, taskID uuid.UUID, c daemon.Cost, s *session) {
+	e := observability.CostEntry{AgentID: agent.ID, TaskID: &taskID, USD: c.USD,
+		Tokens: observability.Tokens{Input: c.InputTokens, Output: c.OutputTokens,
+			CacheRead: c.CacheReadTokens, CacheCreation: c.CacheCreationTokens},
+		Model: c.Model, Credential: s.credential(), Basis: c.Basis, SessionID: c.SessionID}
+	if d, ok := daemon.Describe(agent.Runtime); !ok || !d.Capabilities.ResultUsage {
+		if e.Basis == "" {
+			e.Basis = observability.BasisInvocation
+		}
+		if _, err := o.Obs.BookCost(ctx, e); err != nil {
+			o.Log.Warn("booking a run's cost failed", "agent", agent.Slug, "task", taskID, "err", err)
+		}
+		return
+	}
+	fromLines := c.Basis != daemon.CostBasisInvocation
+	if c.Basis == "" {
+		e.Basis = observability.BasisLegacy
+	}
+	b, err := o.Obs.BookRun(ctx, e, fromLines)
+	if err != nil {
+		o.Log.Warn("booking a run's cost failed", "agent", agent.Slug, "task", taskID, "err", err)
+		return
+	}
+	switch {
+	case fromLines && b.Basis == observability.BasisFromDeltas:
+		o.Log.Info("run booked from its result lines, not the daemon's running total",
+			"agent", agent.Slug, "task", taskID, "sent_usd", c.USD, "booked_usd", b.USD, "lines", b.Lines)
+	case !fromLines && b.Lines > 0 && math.Abs(b.LinesUSD-c.USD) > costTolerance*float64(b.Lines):
+		// Both sides are sums of the same costUSD figures, each rounded to
+		// 1e-6 where it is stored; anything beyond that is a real difference.
+		o.Log.Warn("a run's booked cost and its result lines disagree",
+			"agent", agent.Slug, "task", taskID, "booked_usd", c.USD, "lines_usd", b.LinesUSD, "lines", b.Lines)
+	}
+}
+
+// costTolerance is the rounding of one stored dollar figure (NUMERIC(…,6)).
+const costTolerance = 1e-6
+
 // recordHTTP puts an HTTP request reported from the sandbox into the request
 // log — with the context only the control plane has (org, agent, task). Without
 // a configured log it is a no-op.
@@ -2657,8 +2733,14 @@ func (o *Orchestrator) handleDaemonMessage(ctx context.Context, agent agents.Age
 		}
 		if kind == observability.KindRuntime {
 			// A Claude Code `result` line also files its usage per model
-			// (cost insights, migration 0142) — in the same statement.
-			_ = o.Obs.RecordRuntime(ctx, agent.OrgID, agent.ID, &taskID, payload)
+			// (cost insights, migrations 0142/0144), booked against the
+			// credential of this phase. The line itself is filed even when
+			// that fails; the failure is said, not swallowed — a missing
+			// per-model row is a hole in the measurement nobody would find.
+			if err := o.Obs.RecordRuntime(ctx, agent.OrgID, agent.ID, &taskID, s.credential(), payload); err != nil {
+				o.Log.Warn("filing a runtime line failed",
+					"agent", agent.Slug, "task", taskID, "err", err)
+			}
 		} else {
 			_ = o.Obs.Record(ctx, agent.OrgID, agent.ID, &taskID, kind, payload)
 		}
@@ -2671,13 +2753,7 @@ func (o *Orchestrator) handleDaemonMessage(ctx context.Context, agent agents.Age
 		if err != nil {
 			return false, nil
 		}
-		// Booked against the pool value this waking phase runs on — without that
-		// attribution no limit per value is measurable and no utilisation
-		// showable (spec/04).
-		_ = o.Obs.AddCost(ctx, agent.ID, &taskID, c.USD, observability.Tokens{
-			Input: c.InputTokens, Output: c.OutputTokens,
-			CacheRead: c.CacheReadTokens, CacheCreation: c.CacheCreationTokens,
-		}, c.Model, s.credRuntime, s.credOrd)
+		o.bookCost(ctx, agent, taskID, c, s)
 		return false, o.enforceBudget(ctx, agent, link, taskID, s)
 
 	case daemon.TypeUsageReport:
