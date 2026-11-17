@@ -130,7 +130,7 @@ func (s *Store) ModelUsage(ctx context.Context, orgID uuid.UUID, since time.Time
 	err = s.pool.QueryRow(ctx, `SELECT COUNT(DISTINCT ce.task_id), COALESCE(SUM(ce.usd),0)::float8
 		FROM cost_entries ce JOIN agents a ON a.id = ce.agent_id
 		WHERE a.org_id = $1 AND ce.created_at >= $2 AND ce.task_id IS NOT NULL
-		  AND NOT EXISTS (SELECT 1 FROM model_usage_latest mu WHERE mu.task_id = ce.task_id)`,
+		  AND NOT EXISTS (SELECT 1 FROM model_usage mu WHERE mu.task_id = ce.task_id)`,
 		orgID, since).Scan(&rep.RunsWithout, &rep.USDWithout)
 	return rep, err
 }

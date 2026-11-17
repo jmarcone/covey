@@ -165,11 +165,35 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 		return out, err
 	}
 
-	// Booked cost the breakdown does not cover stays visible as its own part.
-	for k, c := range cells {
-		if rest := c.Reported - engineInCell[k]; rest > 0.005 {
-			c.Measured[TypeUnattributed] += rest
+	_ = engineInCell
+	// Runs with no usage line at all (cut off before Claude Code wrote one) keep
+	// their booked cost, visible as its own part. NOT the difference between
+	// booked and measured: covey books every result line of a resumed session,
+	// and those lines are cumulative, so the booking itself runs high — the gap
+	// is overcounting, not missing breakdown.
+	rows, err = s.pool.Query(ctx, `SELECT date_trunc($2, ce.created_at), ce.agent_id, COALESCE(SUM(ce.usd),0)::float8
+		FROM cost_entries ce JOIN agents a ON a.id = ce.agent_id
+		WHERE a.org_id = $1 AND ce.created_at >= $3
+		  AND (ce.task_id IS NULL OR NOT EXISTS (SELECT 1 FROM model_usage m WHERE m.task_id = ce.task_id))
+		GROUP BY 1,2`, orgID, bucket, since)
+	if err != nil {
+		return out, err
+	}
+	for rows.Next() {
+		var p time.Time
+		var id uuid.UUID
+		var usd float64
+		if err := rows.Scan(&p, &id, &usd); err != nil {
+			rows.Close()
+			return out, err
 		}
+		if usd > 0.0005 {
+			cell(p, id).Measured[TypeUnattributed] += usd
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return out, err
 	}
 
 	periods := map[time.Time]bool{}
