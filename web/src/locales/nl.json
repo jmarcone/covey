@@ -526,6 +526,11 @@
       "editColumns": "Kolommen bewerken",
       "doneEditing": "Klaar",
       "noStageColumn": "Geen fase",
+      "defaultStage": {
+        "open": "Backlog",
+        "in_progress": "Bezig",
+        "done": "Klaar"
+      },
       "empty": "De backlog is leeg.",
       "archived": "gearchiveerd",
       "waitingOn": "wacht op {{key}}",

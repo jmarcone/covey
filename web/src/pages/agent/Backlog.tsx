@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import i18n from "../../i18n";
 import {
   api,
@@ -101,7 +102,7 @@ export function Backlog({
   const orphans = (tasks.data ?? []).filter((tk) => inStage(tk, null));
   const columns: { id: string | null; name: string; color: string }[] = [
     ...(orphans.length ? [{ id: null, name: t("agent.backlog.noStageColumn"), color: "var(--text-muted)" }] : []),
-    ...stageList.map((s) => ({ id: s.id, name: s.name, color: s.color || "var(--text-secondary)" })),
+    ...stageList.map((s) => ({ id: s.id, name: stageLabel(s, t), color: s.color || "var(--text-secondary)" })),
   ];
 
   const drop = (stageId: string | null) => {
@@ -195,7 +196,10 @@ export function Backlog({
               query={debounced}
               hits={hits}
               pending={search.isPending}
-              stageName={(tk) => stageList.find((st) => st.id === tk.stage_id)?.name}
+              stageName={(tk) => {
+                const st = stageList.find((st) => st.id === tk.stage_id);
+                return st && stageLabel(st, t);
+              }}
               onShowRecording={onShowRecording}
             />
           ) : columns.length === 0 ? (
@@ -313,6 +317,13 @@ function SearchResults({
   );
 }
 
+// stageLabel is what a column is called on screen. A default column nobody
+// renamed follows the chosen language — switching it relabels the board without
+// asking the server again; a renamed one, and every other column, shows its name.
+export function stageLabel(s: Stage, t: TFunction): string {
+  return s.key && !s.renamed ? t(`agent.backlog.defaultStage.${s.key}`) : s.name;
+}
+
 const STAGE_PALETTE = [
   "var(--text-muted)",
   "var(--text-accent)",
@@ -369,39 +380,46 @@ function StageEditor({ agentId, stages }: { agentId: string; stages: Stage[] }) 
   return (
     <div className="card mb-4">
       <label>{t("agent.stageEditor.title")}</label>
-      {stages.map((s, i) => (
-        <div key={s.id} className="flex items-center gap-2 mb-2">
-          <button
-            type="button"
-            className="dot-btn"
-            title={t("agent.stageEditor.changeColor")}
-            onClick={() => cycleColor(s)}
-          >
-            <span className="dot" style={{ background: s.color || "var(--text-secondary)" }} />
-          </button>
-          <input
-            className="flex-1"
-            defaultValue={s.name}
-            onBlur={(e) => {
-              if (e.target.value && e.target.value !== s.name) update.mutate({ ...s, name: e.target.value });
-            }}
-          />
-          <button type="button" className="btn sm" onClick={() => swap(i, i - 1)} disabled={i === 0}>
-            ↑
-          </button>
-          <button
-            type="button"
-            className="btn sm"
-            onClick={() => swap(i, i + 1)}
-            disabled={i === stages.length - 1}
-          >
-            ↓
-          </button>
-          <button type="button" className="btn sm danger" onClick={() => remove.mutate(s.id)}>
-            {t("agent.stageEditor.delete")}
-          </button>
-        </div>
-      ))}
+      {stages.map((s, i) => {
+        const label = stageLabel(s, t);
+        return (
+          <div key={s.id} className="flex items-center gap-2 mb-2">
+            <button
+              type="button"
+              className="dot-btn"
+              title={t("agent.stageEditor.changeColor")}
+              onClick={() => cycleColor(s)}
+            >
+              <span className="dot" style={{ background: s.color || "var(--text-secondary)" }} />
+            </button>
+            {/* Keyed by the label, so that a switch of language refills the
+                field. Typing a label of the column's own (in any language) is
+                no rename: the server leaves it unnamed. */}
+            <input
+              key={label}
+              className="flex-1"
+              defaultValue={label}
+              onBlur={(e) => {
+                if (e.target.value && e.target.value !== label) update.mutate({ ...s, name: e.target.value });
+              }}
+            />
+            <button type="button" className="btn sm" onClick={() => swap(i, i - 1)} disabled={i === 0}>
+              ↑
+            </button>
+            <button
+              type="button"
+              className="btn sm"
+              onClick={() => swap(i, i + 1)}
+              disabled={i === stages.length - 1}
+            >
+              ↓
+            </button>
+            <button type="button" className="btn sm danger" onClick={() => remove.mutate(s.id)}>
+              {t("agent.stageEditor.delete")}
+            </button>
+          </div>
+        );
+      })}
       <form
         className="flex gap-2 mt-2"
         onSubmit={(e) => {

@@ -136,6 +136,11 @@ func TestExportImportRoundtrip(t *testing.T) {
 	if n := mustScan("SELECT COUNT(*) FROM agent_stages WHERE agent_id=$1", nid); n != 4 {
 		t.Errorf("stages: %d (expected 4: 3 defaults + Review)", n)
 	}
+	// The defaults come back keyed — otherwise auto-follow would stop on the
+	// imported board.
+	if n := mustScan("SELECT COUNT(*) FROM agent_stages WHERE agent_id=$1 AND key IS NOT NULL AND name IS NULL", nid); n != 3 {
+		t.Errorf("keyed default columns after import: %d (expected 3)", n)
+	}
 	if n := mustScan("SELECT COUNT(*) FROM guardrails WHERE agent_id=$1 AND rule_type='require_approval'", nid); n != 1 {
 		t.Errorf("agent guardrail not imported")
 	}

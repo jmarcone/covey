@@ -526,6 +526,11 @@
       "editColumns": "Editar columnas",
       "doneEditing": "Listo",
       "noStageColumn": "Sin fase",
+      "defaultStage": {
+        "open": "Backlog",
+        "in_progress": "En curso",
+        "done": "Hecho"
+      },
       "empty": "El backlog está vacío.",
       "archived": "archivada",
       "waitingOn": "esperando a {{key}}",

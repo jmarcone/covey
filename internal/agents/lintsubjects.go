@@ -120,7 +120,7 @@ func uuidOrNil(id uuid.UUID) *uuid.UUID {
 
 func agentStages(ctx context.Context, pool *pgxpool.Pool, agentID uuid.UUID) ([]string, error) {
 	rows, err := pool.Query(ctx,
-		"SELECT name FROM agent_stages WHERE agent_id=$1 AND created_by='agent' ORDER BY position, created_at", agentID)
+		"SELECT name FROM agent_stages WHERE agent_id=$1 AND created_by='agent' AND key IS NULL ORDER BY position, created_at", agentID)
 	if err != nil {
 		return nil, err
 	}

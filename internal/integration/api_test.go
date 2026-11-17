@@ -158,7 +158,7 @@ func TestAPIAndRBAC(t *testing.T) {
 	}
 	json.NewDecoder(respStages.Body).Decode(&stages)
 	respStages.Body.Close()
-	// The agent starts with the default board (Backlog/In Arbeit/Erledigt);
+	// The agent starts with the default board (Backlog/In progress/Done);
 	// the new column "Recherche" is appended at the end.
 	if len(stages) != 4 || stages[len(stages)-1].Name != "Recherche" {
 		t.Fatalf("expected stage list [default board + Recherche], got %v", stages)

@@ -526,6 +526,11 @@
       "editColumns": "编辑列",
       "doneEditing": "完成",
       "noStageColumn": "无阶段",
+      "defaultStage": {
+        "open": "待办",
+        "in_progress": "进行中",
+        "done": "已完成"
+      },
       "empty": "待办是空的。",
       "archived": "已归档",
       "waitingOn": "等待 {{key}}",

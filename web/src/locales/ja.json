@@ -526,6 +526,11 @@
       "editColumns": "列を編集",
       "doneEditing": "完了",
       "noStageColumn": "工程なし",
+      "defaultStage": {
+        "open": "バックログ",
+        "in_progress": "進行中",
+        "done": "完了"
+      },
       "empty": "バックログは空です。",
       "archived": "アーカイブ済み",
       "waitingOn": "{{key}} を待っています",

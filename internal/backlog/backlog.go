@@ -113,10 +113,18 @@ func (t *Task) Redact() {
 // the lifecycle state). Order via position, color optional (CSS token).
 // CreatedBy distinguishes the origin: 'agent' columns ("invented" via
 // set_stage) are cleaned up automatically as soon as they are empty.
+//
+// Key marks the three default columns (open, in_progress, done) — the ones
+// auto-follow moves tasks into. As long as nobody renamed such a column,
+// Renamed is false and the interface shows the label of the reader's language;
+// Name then carries the English label for clients that do not know Key. A
+// column a human renamed keeps its key and shows Name in every language.
 type Stage struct {
 	ID        uuid.UUID `json:"id"`
 	AgentID   uuid.UUID `json:"agent_id"`
 	Name      string    `json:"name"`
+	Key       *string   `json:"key"`
+	Renamed   bool      `json:"renamed"`
 	Position  int       `json:"position"`
 	Color     string    `json:"color"`
 	CreatedBy string    `json:"created_by"`
@@ -506,21 +514,21 @@ func (s *Store) ClaimNext(ctx context.Context, agentID uuid.UUID) (Task, error) 
 	return t, nil
 }
 
-// stateStage maps the lifecycle state onto the default column in which a task
-// is then expected. It only applies as long as the task sits in a default
-// column (or in none) — a deliberately chosen stage of its own (agent via
-// set_stage, human via drag & drop) is never overwritten.
+// stateStage maps the lifecycle state onto the key of the default column in
+// which a task is then expected. It only applies as long as the task sits in a
+// default column (or in none) — a deliberately chosen stage of its own (agent
+// via set_stage, human via drag & drop) is never overwritten.
 //
-// The column names are data: they are seeded per agent (DefaultStages) and
-// matched here by name, so renaming them would silently stop auto-follow on
-// every board that already exists.
+// The match is on the key, not the name: what a column is called is up to the
+// reader's language or to the human who renamed it, and neither may stop
+// auto-follow.
 var stateStage = map[string]string{
-	StateOpen:       "Backlog",
-	StateInProgress: "In Arbeit",
-	StateBlocked:    "In Arbeit",
-	StateDone:       "Erledigt",
-	StateFailed:     "Erledigt",
-	StateCancelled:  "Erledigt",
+	StateOpen:       StageKeyOpen,
+	StateInProgress: StageKeyInProgress,
+	StateBlocked:    StageKeyInProgress,
+	StateDone:       StageKeyDone,
+	StateFailed:     StageKeyDone,
+	StateCancelled:  StageKeyDone,
 }
 
 // terminalState says whether a state is the end of the task.
@@ -534,7 +542,7 @@ func terminalState(state string) bool {
 //
 // On the transition into a terminal state, auto-follow additionally applies to
 // the columns the agent created itself: a completed task does not belong in
-// "Recherche", it belongs in "Erledigt". Without this, a terminal task would
+// "Research", it belongs in the done column. Without this, a terminal task would
 // stay behind in every invented column, keeping that column permanently "not
 // empty" — and over weeks the board would collect a dozen dead working states.
 // Columns created by humans stay untouched here as well: a deliberate placement
@@ -544,18 +552,14 @@ func syncStage(ctx context.Context, tx pgx.Tx, taskID uuid.UUID, newState string
 	if !ok {
 		return nil
 	}
-	names := make([]string, len(DefaultStages))
-	for i, d := range DefaultStages {
-		names[i] = d.Name
-	}
 	_, err := tx.Exec(ctx, `UPDATE backlog_tasks t SET stage_id = s.id
 		FROM agent_stages s
-		WHERE t.id=$1 AND s.agent_id=t.agent_id AND s.name=$2
+		WHERE t.id=$1 AND s.agent_id=t.agent_id AND s.key=$2
 		  AND (t.stage_id IS NULL OR t.stage_id IN (
 		      SELECT d.id FROM agent_stages d
 		      WHERE d.agent_id=t.agent_id
-		        AND (d.name = ANY($3) OR ($4 AND d.created_by='agent'))))`,
-		taskID, target, names, terminalState(newState))
+		        AND (d.key IS NOT NULL OR ($3 AND d.created_by='agent'))))`,
+		taskID, target, terminalState(newState))
 	return err
 }
 
@@ -995,13 +999,21 @@ func (s *Store) HasOpen(ctx context.Context, agentID uuid.UUID) (bool, error) {
 
 // --- Stages (Kanban overlay, per agent) ---
 
-const stageCols = "id, agent_id, name, position, color, created_by, created_at"
+const stageCols = "id, agent_id, name, key, position, color, created_by, created_at"
 
 func scanStage(row pgx.Row) (Stage, error) {
 	var st Stage
-	err := row.Scan(&st.ID, &st.AgentID, &st.Name, &st.Position, &st.Color, &st.CreatedBy, &st.CreatedAt)
+	var name *string
+	err := row.Scan(&st.ID, &st.AgentID, &name, &st.Key, &st.Position, &st.Color, &st.CreatedBy, &st.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return st, ErrNotFound
+	}
+	switch {
+	case name != nil:
+		st.Name = *name
+		st.Renamed = st.Key != nil
+	case st.Key != nil:
+		st.Name = DefaultStageName(*st.Key)
 	}
 	return st, err
 }
@@ -1039,21 +1051,44 @@ func (s *Store) CreateStage(ctx context.Context, agentID uuid.UUID, name, color 
 }
 
 func createStage(ctx context.Context, q querier, agentID uuid.UUID, name, color, createdBy string) (Stage, error) {
-	return scanStage(q.QueryRow(ctx, `INSERT INTO agent_stages (id, agent_id, name, color, position, created_by)
-		VALUES ($1,$2,$3,$4,
-			(SELECT COALESCE(MAX(position),-1)+1 FROM agent_stages WHERE agent_id=$2),$5)
-		RETURNING `+stageCols, uuid.New(), agentID, name, color, createdBy))
+	return insertStage(ctx, q, agentID, &name, nil, color, createdBy)
+}
+
+func insertStage(ctx context.Context, q querier, agentID uuid.UUID, name, key *string, color, createdBy string) (Stage, error) {
+	return scanStage(q.QueryRow(ctx, `INSERT INTO agent_stages (id, agent_id, name, key, color, position, created_by)
+		VALUES ($1,$2,$3,$4,$5,
+			(SELECT COALESCE(MAX(position),-1)+1 FROM agent_stages WHERE agent_id=$2),$6)
+		RETURNING `+stageCols, uuid.New(), agentID, name, key, color, createdBy))
+}
+
+// CreateKeyedStage appends a default column of the given key — the import path,
+// which brings a board along from a bundle. A name that is a label of the key
+// (or empty) leaves the column unnamed, so it shows the reader's language;
+// anything else counts as renamed.
+func (s *Store) CreateKeyedStage(ctx context.Context, agentID uuid.UUID, key, name, color string) (Stage, error) {
+	return insertStage(ctx, s.pool, agentID, customStageName(key, name), &key, color, "human")
+}
+
+// customStageName is the name to store for a keyed column: nil while the name
+// is one of the column's own labels (in any language), the name otherwise.
+// Renaming a column back to its label therefore undoes the rename.
+func customStageName(key, name string) *string {
+	if k, ok := StageKeyFor(name); name == "" || (ok && k == key) {
+		return nil
+	}
+	return &name
 }
 
 // DefaultStages are the columns every agent should have from the start — a
 // plain Kanban. The first column is the landing zone for new tasks (see
-// Create). Colors use the same CSS variables as the frontend. The names are
-// German because they are persisted per agent and matched by name (stateStage);
-// renaming them needs a migration of the existing boards.
-var DefaultStages = []struct{ Name, Color string }{
-	{"Backlog", "var(--text-muted)"},
-	{"In Arbeit", "var(--text-accent)"},
-	{"Erledigt", "var(--text-success)"},
+// Create). Colors use the same CSS variables as the frontend. They are seeded
+// by key and without a name: the label comes from the reader's language
+// (agent.backlog.defaultStage.<key> in web/src/locales), and auto-follow finds
+// them by key (stateStage), whatever they are called.
+var DefaultStages = []struct{ Key, Color string }{
+	{StageKeyOpen, "var(--text-muted)"},
+	{StageKeyInProgress, "var(--text-accent)"},
+	{StageKeyDone, "var(--text-success)"},
 }
 
 // SeedDefaultStages creates the default columns for an agent — idempotent: if
@@ -1069,7 +1104,7 @@ func (s *Store) SeedDefaultStages(ctx context.Context, agentID uuid.UUID) error 
 		return nil
 	}
 	for _, d := range DefaultStages {
-		if _, err := s.CreateStage(ctx, agentID, d.Name, d.Color); err != nil {
+		if _, err := s.CreateKeyedStage(ctx, agentID, d.Key, "", d.Color); err != nil {
 			return err
 		}
 	}
@@ -1077,9 +1112,22 @@ func (s *Store) SeedDefaultStages(ctx context.Context, agentID uuid.UUID) error 
 }
 
 // UpdateStage changes name, color and position of a column.
+//
+// For a keyed column a name that is one of its own labels is not a rename: a
+// client that only changes the color sends back the name it got (the English
+// label), and a human who types "Erledigt" over "Done" means the same column.
+// Both leave the column unnamed, so it keeps following the reader's language.
 func (s *Store) UpdateStage(ctx context.Context, id uuid.UUID, name, color string, position int) (Stage, error) {
-	return scanStage(s.pool.QueryRow(ctx, `UPDATE agent_stages SET name=$2, color=$3, position=$4
-		WHERE id=$1 RETURNING `+stageCols, id, name, color, position))
+	return scanStage(s.pool.QueryRow(ctx, `UPDATE agent_stages SET
+			name = CASE WHEN key = $5 THEN NULL ELSE $2 END,
+			color=$3, position=$4
+		WHERE id=$1 RETURNING `+stageCols, id, name, color, position, labelKeyOrEmpty(name)))
+}
+
+// labelKeyOrEmpty is the key a name is a label of, or "" (which no key equals).
+func labelKeyOrEmpty(name string) string {
+	k, _ := StageKeyFor(name)
+	return k
 }
 
 // DeleteStage removes a column; tasks in it fall back to stage=NULL via the FK.
@@ -1113,11 +1161,28 @@ func (s *Store) ReorderStages(ctx context.Context, agentID uuid.UUID, ordered []
 // EnsureStage returns the stage of that name or creates it — the way the agent
 // "invents" a new column via set_stage. Such columns carry created_by='agent'
 // and are cleared out automatically once they run empty.
+//
+// A name that means a default column — its label in any of the ten languages,
+// its key or its old German name, case-insensitive — lands in the keyed column,
+// whatever that one is called now. Without it, an agent that says "Done" on a
+// board whose done column reads "Erledigt" got a second column of the same
+// meaning. Only if the agent has no such column any more (a human deleted it)
+// does the name go the ordinary way.
 func (s *Store) EnsureStage(ctx context.Context, agentID uuid.UUID, name string) (Stage, error) {
 	return ensureStage(ctx, s.pool, agentID, name)
 }
 
 func ensureStage(ctx context.Context, q querier, agentID uuid.UUID, name string) (Stage, error) {
+	if key, ok := StageKeyFor(name); ok {
+		st, err := scanStage(q.QueryRow(ctx, "SELECT "+stageCols+
+			" FROM agent_stages WHERE agent_id=$1 AND key=$2", agentID, key))
+		if err == nil {
+			return st, nil
+		}
+		if !errors.Is(err, ErrNotFound) {
+			return Stage{}, err
+		}
+	}
 	st, err := scanStage(q.QueryRow(ctx, "SELECT "+stageCols+
 		" FROM agent_stages WHERE agent_id=$1 AND name=$2", agentID, name))
 	if err == nil {
@@ -1169,14 +1234,15 @@ func (s *Store) SetTaskStageByName(ctx context.Context, agentID, taskID uuid.UUI
 // CleanupEmptyAgentStages clears out columns the agent created itself
 // (created_by='agent') and in which no active (unarchived) task is left — the
 // agent "invents" those columns while working, so they also disappear again by
-// themselves. Columns created by humans stay untouched.
+// themselves. Columns created by humans stay untouched, and so do the keyed
+// default columns, whoever made them.
 func (s *Store) CleanupEmptyAgentStages(ctx context.Context, agentID uuid.UUID) (int64, error) {
 	return cleanupEmptyAgentStages(ctx, s.pool, agentID)
 }
 
 func cleanupEmptyAgentStages(ctx context.Context, q querier, agentID uuid.UUID) (int64, error) {
 	tag, err := q.Exec(ctx, `DELETE FROM agent_stages s
-		WHERE s.agent_id=$1 AND s.created_by='agent'
+		WHERE s.agent_id=$1 AND s.created_by='agent' AND s.key IS NULL
 		  AND NOT EXISTS (SELECT 1 FROM backlog_tasks t
 		      WHERE t.stage_id=s.id AND t.archived_at IS NULL)`, agentID)
 	if err != nil {

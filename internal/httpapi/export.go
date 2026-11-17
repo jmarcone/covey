@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"covey/internal/agents"
+	"covey/internal/backlog"
 	"covey/internal/egress"
 	"covey/internal/guardrails"
 	"covey/internal/identity"
@@ -68,8 +69,12 @@ type bundleAgent struct {
 	Services []sandbox.Service `json:"services,omitempty"`
 }
 
+// bundleStage is one board column. Key marks a default column (open,
+// in_progress, done) so the imported board keeps auto-follow; Name is always
+// filled, so a covey from before the key still reads the bundle.
 type bundleStage struct {
 	Name  string `json:"name"`
+	Key   string `json:"key,omitempty"`
 	Color string `json:"color,omitempty"`
 }
 
@@ -241,7 +246,11 @@ func (s *Server) buildBundle(ctx context.Context, orgID, agentID uuid.UUID, incl
 		return agentBundle{}, err
 	}
 	for _, st := range stages {
-		b.Stages = append(b.Stages, bundleStage{Name: st.Name, Color: st.Color})
+		bs := bundleStage{Name: st.Name, Color: st.Color}
+		if st.Key != nil {
+			bs.Key = *st.Key
+		}
+		b.Stages = append(b.Stages, bs)
 	}
 
 	rules, err := s.Rails.List(ctx, orgID)
@@ -806,10 +815,25 @@ func (s *Server) handleImportAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Board: columns from the bundle in order, otherwise the defaults.
+	// Board: columns from the bundle in order, otherwise the defaults. A
+	// default column comes back keyed — by its key, or, in a bundle from
+	// before the key, by the German name it was seeded with. One per key: a
+	// second column of the same key stays an ordinary column.
 	if len(b.Stages) > 0 {
+		keyed := map[string]bool{}
 		for _, st := range b.Stages {
-			if _, err := s.Backlog.CreateStage(ctx, a.ID, st.Name, st.Color); err != nil {
+			key := st.Key
+			if key == "" {
+				key = backlog.LegacyStageKey(st.Name)
+			}
+			var err error
+			if backlog.IsStageKey(key) && !keyed[key] {
+				keyed[key] = true
+				_, err = s.Backlog.CreateKeyedStage(ctx, a.ID, key, st.Name, st.Color)
+			} else {
+				_, err = s.Backlog.CreateStage(ctx, a.ID, st.Name, st.Color)
+			}
+			if err != nil {
 				mapErr(w, err)
 				return
 			}

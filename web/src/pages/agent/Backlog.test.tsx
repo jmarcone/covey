@@ -1,7 +1,9 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { screen } from "@testing-library/react";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { act, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Backlog } from "./Backlog";
+import { ladeSprache } from "../../i18n";
+import type { Stage } from "../../api";
+import { Backlog, stageLabel } from "./Backlog";
 import { mockFetch, renderWithProviders, useGerman } from "../../test/render";
 
 // An agent without write access to the tracker of the platform is the normal
@@ -110,5 +112,52 @@ describe("Befund aus einer Aufgaben-Notiz melden", () => {
 
     expect(await screen.findByText(NOTE.content)).toBeTruthy();
     expect(screen.queryByText("↗ nach oben melden")).toBeNull();
+  });
+});
+
+// The three default columns are stored by key, not by name: the board shows
+// them in the chosen language, and a switch of language relabels them without
+// asking the server again. A column a human renamed keeps that name in every
+// language; every other column shows its name as it is.
+describe("Spalten des Boards", () => {
+  const STAGES = [
+    { id: "s1", agent_id: "a1", name: "Backlog", key: "open", renamed: false, position: 0, color: "", created_by: "human", created_at: "2026-01-01T00:00:00Z" },
+    { id: "s2", agent_id: "a1", name: "In progress", key: "in_progress", renamed: false, position: 1, color: "", created_by: "human", created_at: "2026-01-01T00:00:00Z" },
+    { id: "s3", agent_id: "a1", name: "Shipped", key: "done", renamed: true, position: 2, color: "", created_by: "human", created_at: "2026-01-01T00:00:00Z" },
+    { id: "s4", agent_id: "a1", name: "Research", key: null, renamed: false, position: 3, color: "", created_by: "agent", created_at: "2026-01-01T00:00:00Z" },
+  ];
+  afterEach(() => useGerman());
+  const spalten = () => Array.from(document.querySelectorAll(".kanban .knm")).map((n) => n.textContent);
+
+  it("zeigt die Standardspalten in der gewählten Sprache und wechselt mit ihr", async () => {
+    useGerman();
+    const { calls } = mockFetch({
+      ...routen(),
+      "/api/v1/agents/a1/backlog": [{ ...TASK, stage_id: "s3" }],
+      "/api/v1/agents/a1/stages": STAGES,
+    });
+    const stageFetches = () => calls.filter((c) => c.includes("/stages")).length;
+    renderWithProviders(<Backlog agentId="a1" canManage onShowRecording={() => {}} />);
+    expect(await screen.findByText("In Arbeit")).toBeTruthy();
+    expect(spalten()).toEqual(["Backlog", "In Arbeit", "Shipped", "Research"]);
+
+    const vorher = stageFetches();
+    await act(() => ladeSprache("en"));
+    expect(await screen.findByText("In progress")).toBeTruthy();
+    expect(spalten()).toEqual(["Backlog", "In progress", "Shipped", "Research"]);
+    await act(() => ladeSprache("fr"));
+    expect(await screen.findByText("En cours")).toBeTruthy();
+    expect(spalten()).toEqual(["Backlog", "En cours", "Shipped", "Research"]);
+    // Only the language changed — nothing was fetched again.
+    expect(stageFetches()).toBe(vorher);
+  });
+
+  it("nennt eine unbenannte Standardspalte so, wie die Sprache sie nennt", () => {
+    const t = ((key: string) => `«${key}»`) as unknown as Parameters<typeof stageLabel>[1];
+    expect(stageLabel(STAGES[0] as Stage, t)).toBe("«agent.backlog.defaultStage.open»");
+    expect(stageLabel(STAGES[2] as Stage, t)).toBe("Shipped");
+    expect(stageLabel(STAGES[3] as Stage, t)).toBe("Research");
+    // A server from before the key sends neither key nor renamed.
+    expect(stageLabel({ ...STAGES[3], key: undefined, renamed: undefined, name: "Erledigt" } as Stage, t)).toBe("Erledigt");
   });
 });

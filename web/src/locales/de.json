@@ -526,6 +526,11 @@
       "editColumns": "Spalten bearbeiten",
       "doneEditing": "Fertig",
       "noStageColumn": "Ohne Stage",
+      "defaultStage": {
+        "open": "Backlog",
+        "in_progress": "In Arbeit",
+        "done": "Erledigt"
+      },
       "empty": "Backlog ist leer.",
       "archived": "archiviert",
       "waitingOn": "wartet auf {{key}}",
