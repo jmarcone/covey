@@ -28,7 +28,7 @@ export default function AgentsFrame({ teamSurface }: { teamSurface: boolean }) {
 
   return (
     <div className="av-bar">
-      <ViewSwitch views={views} current={current} origin={detail ? originOf(state, teamSurface) : undefined} />
+      <ViewSwitch views={views} current={current} origin={detail ? originOf(detail, state, teamSurface) : undefined} />
       {detail && agent.data && (
         <span className="av-crumb">
           <span aria-hidden="true">/</span> {agent.data.display_name}

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, useSearchParams } from "react-router";
 import AgentsFrame from "./AgentsFrame";
 import { fromView, originOf, viewUrl, viewsFor } from "./views";
 import { mockFetch, useGerman } from "../../test/render";
@@ -77,6 +77,30 @@ describe("AgentsFrame", () => {
     expect(switchLinks()[0].getAttribute("href")).toBe("/");
   });
 
+  /* A tab of the agent's page pushes an entry of its own, without the router
+     state that named the origin: the origin must survive it. */
+  it("keeps the origin marked when a tab of the agent's page changes the address", () => {
+    function TabSwitch() {
+      const [, setSp] = useSearchParams();
+      // As the agent's page does: a new history entry, no state.
+      return <button onClick={() => setSp({ tab: "memory" }, { replace: false })}>Gedächtnis</button>;
+    }
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 0 } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={[{ pathname: `/agents/${ID}`, state: fromView("office") }]}>
+          <AgentsFrame teamSurface />
+          <TabSwitch />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(switchLinks()[0]).toHaveClass("on", "back");
+    fireEvent.click(screen.getByRole("button", { name: "Gedächtnis" }));
+    const [office, list] = switchLinks();
+    expect(office).toHaveClass("on", "back");
+    expect(list).not.toHaveClass("on");
+  });
+
   it("shows no crumb on a view", () => {
     bar("/agents");
     expect(screen.queryByText("/")).not.toBeInTheDocument();
@@ -101,9 +125,23 @@ describe("views", () => {
   });
 
   it("reads the origin from the router state", () => {
-    expect(originOf(fromView("office"), true)).toBe("office");
-    expect(originOf(fromView("office"), false)).toBe("list");
-    expect(originOf(null, true)).toBe("list");
-    expect(originOf({ from: "members" }, true)).toBe("list");
+    expect(originOf(undefined, fromView("office"), true)).toBe("office");
+    expect(originOf(undefined, fromView("office"), false)).toBe("list");
+    expect(originOf(undefined, null, true)).toBe("list");
+    expect(originOf(undefined, { from: "members" }, true)).toBe("list");
+  });
+
+  it("remembers the origin per agent once the router state is gone", () => {
+    const other = "ffffffff-ffff-ffff-ffff-ffffffffffff";
+    expect(originOf(ID, fromView("office"), true)).toBe("office");
+    expect(originOf(ID, null, true)).toBe("office");
+    // Another agent has an origin of its own, here none.
+    expect(originOf(other, null, true)).toBe("list");
+    // A new way in replaces the old one.
+    expect(originOf(ID, fromView("list"), true)).toBe("list");
+    expect(originOf(ID, null, true)).toBe("list");
+    // A stored office the installation does not offer still falls back.
+    originOf(ID, fromView("office"), true);
+    expect(originOf(ID, null, false)).toBe("list");
   });
 });

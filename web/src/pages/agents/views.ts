@@ -50,10 +50,23 @@ export function fromView(view: AgentsView) {
   return { from: view };
 }
 
-/* The view an agent's page was reached from. A bookmark, a link in a message
- * or a notification has no origin, and the list is the one view every
- * installation has. */
-export function originOf(state: unknown, teamSurface: boolean): AgentsView {
-  const from = (state as { from?: unknown } | null)?.from;
+const fromKey = (agentId: string) => `covey.agents.from.${agentId}`;
+
+/* The view an agent's page was reached from. The router state carries it only
+ * on the entry that opened the page: every tab, memory page or folder pushes
+ * an entry of its own without it. So the origin is kept per agent for the
+ * length of the tab, and read back when the state is gone. A bookmark, a link
+ * in a message or a notification has no origin, and the list is the one view
+ * every installation has. */
+export function originOf(agentId: string | undefined, state: unknown, teamSurface: boolean): AgentsView {
+  let from = (state as { from?: unknown } | null)?.from;
+  if (agentId) {
+    try {
+      if (from === "office" || from === "list") sessionStorage.setItem(fromKey(agentId), from);
+      else from = sessionStorage.getItem(fromKey(agentId));
+    } catch {
+      // Without storage only the entry that opened the page knows the origin.
+    }
+  }
   return viewsFor(teamSurface).find((v) => v === from) ?? "list";
 }
