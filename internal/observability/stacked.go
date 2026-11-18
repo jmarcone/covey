@@ -387,14 +387,7 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 	}
 	out.Subscription, out.Meter = steps, coverage
 
-	// The meter share is split per UTC hour whatever the chart's bucket.
-	hourly := func() ([]MeterStep, []MeterCoverage, error) {
-		if bucket == "hour" {
-			return steps, coverage, nil
-		}
-		return s.meterSteps(ctx, orgID, "hour", since, plans)
-	}
-	if out.External, err = s.externalFor(ctx, orgID, bucket, since, hourly); err != nil {
+	if out.External, err = s.externalFor(ctx, orgID, bucket, since, coverage, plans); err != nil {
 		return out, err
 	}
 	return out, nil
@@ -658,27 +651,39 @@ type meterRow struct {
 	points, gap    float64
 }
 
-// meterSteps turns the readings into movement per period, per credential and
-// source, and says how well each was covered. Points of the weekly all-models
-// window are priced with the plan valid when they were read.
-func (s *Store) meterSteps(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time, plans []CredentialPlan) ([]MeterStep, []MeterCoverage, error) {
+// meterRowsAt are the readings with their steps (meterQuery), in partition
+// and time order, each with the bucket's period.
+func (s *Store) meterRowsAt(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time) ([]meterRow, error) {
 	rows, err := s.pool.Query(ctx, meterQuery(bucket), orgID, since)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
+	defer rows.Close()
 	var all []meterRow
 	for rows.Next() {
 		var m meterRow
 		if err := rows.Scan(&m.key, &m.slot, &m.kind, &m.source, &m.window, &m.at, &m.period,
 			&m.pct, &m.top, &m.week, &m.reset, &m.points, &m.gap); err != nil {
-			rows.Close()
-			return nil, nil, err
+			return nil, err
 		}
 		m.period = m.period.UTC()
 		all = append(all, m)
 	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
+	return all, rows.Err()
+}
+
+// meterRows are the readings with their steps, for the meter share, which
+// splits per reading whatever the chart's bucket.
+func (s *Store) meterRows(ctx context.Context, orgID uuid.UUID, since time.Time) ([]meterRow, error) {
+	return s.meterRowsAt(ctx, orgID, "hour", since)
+}
+
+// meterSteps turns the readings into movement per period, per credential and
+// source, and says how well each was covered. Points of the weekly all-models
+// window are priced with the plan valid when they were read.
+func (s *Store) meterSteps(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time, plans []CredentialPlan) ([]MeterStep, []MeterCoverage, error) {
+	all, err := s.meterRowsAt(ctx, orgID, bucket, since)
+	if err != nil {
 		return nil, nil, err
 	}
 

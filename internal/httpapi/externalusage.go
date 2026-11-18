@@ -27,6 +27,11 @@ type externalUpload struct {
 	// removes it, an object sets it.
 	MeterCredential json.RawMessage             `json:"meter_credential"`
 	Rows            []observability.ExternalRow `json:"rows"`
+	// ReportedThrough: per host, the time through which its calls have been
+	// sent ({"laptop": "2026-11-18T19:40:00Z"}). An upload of no rows that
+	// moves it says "nothing new up to here": without it, the cost page
+	// does not split the meter after the host's last call.
+	ReportedThrough map[string]time.Time `json:"reported_through"`
 }
 
 // handlePostExternalUsage stores an upload: an upsert on (organisation,
@@ -54,7 +59,9 @@ func (s *Server) handlePostExternalUsage(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
-	if dec.More() {
+	// Anything after the object, a stray bracket included, is refused:
+	// More() is false at a closing ']' or '}', Token() is not.
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		writeErr(w, http.StatusBadRequest, "invalid body: one JSON object expected")
 		return
 	}
@@ -72,7 +79,7 @@ func (s *Server) handlePostExternalUsage(w http.ResponseWriter, r *http.Request)
 			link.Credential = &mc
 		}
 	}
-	res, err := s.Obs.UpsertExternalUsage(r.Context(), p.OrgID, in.Source, link, in.Rows, time.Now())
+	res, err := s.Obs.UpsertExternalUsage(r.Context(), p.OrgID, in.Source, link, in.Rows, in.ReportedThrough, time.Now())
 	var invalid observability.ErrInvalidExternal
 	switch {
 	case errors.As(err, &invalid):
@@ -85,7 +92,8 @@ func (s *Server) handlePostExternalUsage(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, res)
 }
 
-// handleDeleteExternalUsage removes every row of ?source= and its meter link.
+// handleDeleteExternalUsage removes every row of ?source=, its meter link and
+// its hosts' watermarks.
 func (s *Server) handleDeleteExternalUsage(w http.ResponseWriter, r *http.Request) {
 	p := principalFrom(r)
 	res, err := s.Obs.DeleteExternalUsage(r.Context(), p.OrgID, r.URL.Query().Get("source"))

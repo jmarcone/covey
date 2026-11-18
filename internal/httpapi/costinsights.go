@@ -109,6 +109,9 @@ func (s *Server) handleBilled(w http.ResponseWriter, r *http.Request) {
 	if series.Reason != "" {
 		out["reason"] = series.Reason
 	}
+	if series.HourlyFrom != nil {
+		out["hourly_from"] = series.HourlyFrom
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 

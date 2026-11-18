@@ -18,6 +18,7 @@ import {
   periodMultiple,
   pricePerPoint,
   recomputedOf,
+  meterSplit,
   splitPerPeriod,
   stepRate,
   type CredentialFigures,
@@ -139,12 +140,12 @@ export function Chip({ on, color, hatched, children, onClick, onDoubleClick, loc
   );
 }
 
-export function Swatch({ color, hatched, dim }: { color: string; hatched?: boolean; dim?: boolean }) {
+export function Swatch({ color, hatched, dim, dashed }: { color: string; hatched?: boolean; dim?: boolean; dashed?: string }) {
   return (
     <span aria-hidden style={{
       width: 10, height: 10, borderRadius: 2, display: "inline-block", flexShrink: 0, opacity: dim ? 0.4 : 1,
-      background: hatched ? `repeating-linear-gradient(45deg, ${color} 0 2px, transparent 2px 4px)` : color,
-      border: hatched ? `1px solid ${color}` : undefined,
+      background: hatched && !dashed ? `repeating-linear-gradient(45deg, ${color} 0 2px, transparent 2px 4px)` : color,
+      border: dashed ? `1px dashed ${dashed}` : hatched ? `1px solid ${color}` : undefined,
     }} />
   );
 }
@@ -356,7 +357,10 @@ export function niceAxis(max: number) {
   return { top, ticks, step };
 }
 
-export type Seg = { key: string; label: string; color: string; value: number };
+/** dashed: the segment is drawn plain with a dashed edge in that colour
+ *  instead of the bar's hatch, so it reads apart from its neighbours by its
+ *  pattern, not by its colour alone. */
+export type Seg = { key: string; label: string; color: string; value: number; dashed?: string };
 export type Bar = {
   key: string; label: string; color: string; hatched?: boolean; segs: Seg[];
   /** Print the bar's value above it, not only in the details. */
@@ -464,7 +468,7 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
   const tipId = `${uid}-tip`;
   // A hatched bar is hatched in each segment's own colour: the real cost
   // split between covey and the sessions outside it is one bar of three.
-  const hatches = [...new Set(groups.flatMap((g) => g.filter((b) => b.hatched).flatMap((b) => [b.color, ...b.segs.map((x) => x.color)])))];
+  const hatches = [...new Set(groups.flatMap((g) => g.filter((b) => b.hatched).flatMap((b) => [b.color, ...b.segs.filter((x) => !x.dashed).map((x) => x.color)])))];
   const hatchId = (c: string) => `${uid}-h${hatches.indexOf(c)}`;
   const summary = (i: number) => (groups[i] ?? []).filter((b) => sum(b.segs) > 0).map((b) => `${b.label} ${fmtValue(sum(b.segs))}`).join(", ");
   const close = () => { setPinned(null); setHover(null); };
@@ -521,6 +525,10 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
                       if (g.value <= 0) return null;
                       const top = y(acc + g.value), h = Math.max(1, y(acc) - top);
                       acc += g.value;
+                      if (g.dashed) {
+                        return <rect key={g.key} x={bx + 0.5} y={top + 0.5} width={Math.max(barW - 1, 1)} height={Math.max(h - 1, 1)} rx={1.5}
+                          fill={g.color} stroke={g.dashed} strokeDasharray="2 2" />;
+                      }
                       return <rect key={g.key} x={bx} y={top} width={barW} height={h} rx={1.5}
                         fill={b.hatched ? `url(#${hatchId(g.color)})` : g.color} stroke={b.hatched ? g.color : undefined} />;
                     })}
@@ -564,7 +572,7 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
               {b.tag && <div className="muted" data-tag-detail style={{ paddingLeft: 16 }}>{b.tag}{b.tagDetail ? ` · ${b.tagDetail}` : ""}</div>}
               {b.segs.filter((x) => x.value > 0).length > 1 && b.segs.filter((x) => x.value > 0).map((x) => (
                 <div key={x.key} className="muted" style={{ display: "flex", justifyContent: "space-between", gap: 12, paddingLeft: 16 }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Swatch color={x.color} hatched={b.hatched} /> {x.label}</span>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Swatch color={x.color} hatched={b.hatched} dashed={x.dashed} /> {x.label}</span>
                   <span>{fmtValue(x.value)}</span>
                 </div>
               ))}
@@ -622,9 +630,16 @@ function CredentialTiles({ f, filtered }: { f: CredentialFigures; filtered: bool
         sub={r.unpricedPoints > 0 ? t("costs.fig.noPlanPricePoints", { n: r.unpricedPoints, m: r.points }) : t("costs.fig.noPlan")}
         color={SOURCE_COLOR.real} hatched />);
     } else if (filtered && r) {
-      const share = f.agents.reduce((a, x) => a + (x.realShare ?? 0), 0);
-      tiles.push(<Tile key="real" label={t("costs.fig.shareOfReal")} value={`≈ ${fmtUSD(share)}`}
-        sub={t("costs.fig.shareOfRealSub", { usd: fmtUSD(r.value) })} span={span} note={t("costs.fig.accountWideCaveat")} color={SOURCE_COLOR.real} hatched />);
+      // With outside sessions on the meter, of covey's part only; without a
+      // split step, at most this much (the meter may carry outside use).
+      const known = f.agents.filter((x) => x.realShare != null);
+      const share = known.reduce((a, x) => a + x.realShare!, 0);
+      const value = known.length === 0 ? "–" : `${f.outsideUnreported ? "≤" : "≈"} ${fmtUSD(share)}`;
+      const sub = known.length === 0 ? t("costs.split.agentsUnsplit")
+        : f.split ? t("costs.split.shareOfCoveySub", { usd: fmtUSD(f.split.covey_real_usd), whole: fmtUSD(r.value) })
+        : t("costs.fig.shareOfRealSub", { usd: fmtUSD(r.value) });
+      tiles.push(<Tile key="real" label={t("costs.fig.shareOfReal")} value={value}
+        sub={sub} span={span} note={t("costs.fig.accountWideCaveat")} color={SOURCE_COLOR.real} hatched />);
     } else if (r && r.below) {
       tiles.push(<Tile key="real" label={t("costs.fig.realEstimate")} value={fmtUSDBelow(r.high)}
         sub={t("costs.fig.realBelow")} span={span} note={t("costs.fig.accountWideCaveat")} color={SOURCE_COLOR.real} hatched />);
@@ -639,6 +654,9 @@ function CredentialTiles({ f, filtered }: { f: CredentialFigures; filtered: bool
       tiles.push(<Tile key="mult" label={t("costs.fig.multiple")} value={`≈ ${times(f.multiple.value)}`}
         sub={t("costs.fig.multipleRange", { low: times(f.multiple.low), high: times(f.multiple.high) })}
         span={span} note={t("costs.fig.multipleHint")} />);
+    } else if (f.multiple?.kind === "floor") {
+      tiles.push(<Tile key="mult" label={t("costs.fig.multiple")} value={`≥ ${times(f.multiple.low)}`}
+        sub={t("costs.split.multipleFloor")} span={span} note={t("costs.fig.multipleHint")} />);
     }
   }
   if (f.kind === "api_key" && f.billed) {
@@ -746,22 +764,23 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
     return v;
   }, [steps, idx, periods.length]);
   // Once sessions outside covey report on the meters (#120), the real bar is
-  // split per UTC hour by list-price share: covey's agents, the outside
-  // sessions, and the movement of hours they did not report — split to
-  // nobody, never booked to covey whole.
+  // split per reading by list-price share, each part where its reading
+  // falls: covey's agents, the outside sessions, and the movement of
+  // readings they did not report — split to nobody, never booked to covey
+  // whole.
   const splitPer = useMemo(() => {
     if (!f.split || f.secretKey == null) return null;
     const by = splitPerPeriod(data.external, f.secretKey, f.slot!, bucket);
-    return periods.map((p) => by.get(Date.parse(p)) ?? { covey: 0, outside: 0, unsplit: 0, unsplitHours: 0 });
+    return periods.map((p) => by.get(Date.parse(p)) ?? { covey: 0, outside: 0, unsplit: 0, unsplitSteps: 0 });
   }, [f.split, f.secretKey, f.slot, data.external, bucket, periods]);
-  const realSegs = (i: number) => {
+  const realSegs = (i: number): Seg[] => {
     const sp = splitPer?.[i];
     if (!sp) return [{ key: "real", label: t("costs.fig.realEstimate"), color: SOURCE_COLOR.real, value: realPer[i] }];
     return [
       { key: "covey", label: t("costs.split.covey"), color: SPLIT_COLOR.covey, value: sp.covey },
       { key: "outside", label: t("costs.split.outside"), color: SPLIT_COLOR.outside, value: sp.outside },
-      { key: "unsplit", label: bucket === "hour" ? t("costs.split.unsplitHour") : t("costs.split.unsplitHours", { count: sp.unsplitHours }),
-        color: SPLIT_COLOR.unsplit, value: sp.unsplit },
+      { key: "unsplit", label: t("costs.split.unsplitReadings", { count: sp.unsplitSteps }),
+        color: SPLIT_COLOR.unsplit, dashed: SPLIT_COLOR.unsplitEdge, value: sp.unsplit },
     ];
   };
   // The meter's steps of each period: a period's multiple needs its points.
@@ -805,7 +824,7 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
       const listAll = cs.reduce((a, c) => a + recomputedOf(c), 0);
       // With outside sessions on the meter, covey's list over the whole
       // movement is no multiple: the headline has the split ones.
-      const m = f.split ? null : periodMultiple(listAll, stepsPer[i]);
+      const m = f.split || f.outsideUnreported ? null : periodMultiple(listAll, stepsPer[i]);
       const segs = byType
         ? typeList.map((k) => ({ key: k, label: t(`costs.stack.${k}`), color: TYPE_COLOR[k], value: cs.reduce((a, c) => a + (c.measured[k] ?? 0), 0) }))
         : [{ key: "m", label: t("costs.fig.recomputed"), color: SOURCE_COLOR.recomputed, value: list }];
@@ -903,7 +922,11 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
       )}
       {showReal && f.split && <p className="muted text-xs mt-1 mb-0" data-split-note>
         {t("costs.split.chartNote")}
-        {f.split.unsplit_hours > 0 && <> {t("costs.split.unsplitNote", { count: f.split.unsplit_hours, usd: fmtUSD(f.split.unsplit_real_usd) })}</>}
+        {f.split.unsplit_steps > 0 && <> {t("costs.split.unsplitNote", { count: f.split.unsplit_steps, usd: fmtUSD(f.split.unsplit_real_usd) })}</>}
+      </p>}
+      {subscription && f.outsideUnreported && <p className="muted text-xs mt-1 mb-0" data-outside-unreported>
+        {t((meterSplit(data.external, f.secretKey!, f.slot!)?.sources.length ?? 0) > 0
+          ? "costs.split.notReportedSeat" : "costs.split.mayIncludeOutside")}
       </p>}
       {filtered && (subscription || f.kind === "api_key") && <p className="muted text-xs mt-1 mb-0">{t("costs.fig.filteredRealNote")}</p>}
 
@@ -924,6 +947,7 @@ function AgentTable({ f, agents, subscription }: { f: CredentialFigures; agents:
           {t("costs.fig.agentsTitle")}
           {subscription && f.real?.priced && f.meter && <span data-span> · {realSpan(t, f, "costs.fig.shareOfRealSpan")}</span>}
           {subscription && f.real?.priced && f.split && <span data-split-share> · {t("costs.split.agentsShare", { usd: fmtUSD(f.split.covey_real_usd) })}</span>}
+          {subscription && f.real?.priced && f.outsideUnreported && <span data-split-share> · {t("costs.split.agentsUpTo")}</span>}
         </caption>
         <thead>
           <tr className="muted">
@@ -945,7 +969,9 @@ function AgentTable({ f, agents, subscription }: { f: CredentialFigures; agents:
               <td style={td}>{fmtUSD(a.recomputed)}</td>
               <td style={td}>{a.gapPct != null ? pct(a.gapPct) : "–"}</td>
               <td style={td}>{a.share != null ? `${fmtNumber(a.share * 100, 1)} %` : "–"}</td>
-              {subscription && <td style={td}>{a.realShare != null ? `≈ ${fmtUSD(a.realShare)}` : "–"}</td>}
+              {subscription && <td style={td} title={a.realWhy === "unsplit" ? t("costs.split.agentUnsplit") : undefined} data-real-share>
+                {a.realShare != null ? `${a.realBound === "upTo" ? "≤" : "≈"} ${fmtUSD(a.realShare)}` : "–"}
+              </td>}
             </tr>
           ))}
         </tbody>
@@ -970,7 +996,7 @@ function ColourKey({ split }: { split: boolean }) {
       ))}
       {split && (["outside", "unsplit"] as const).map((k) => (
         <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 6 }} data-split-key={k}>
-          <Swatch color={SPLIT_COLOR[k]} hatched /> {t(`costs.split.key_${k}`)}
+          <Swatch color={SPLIT_COLOR[k]} hatched dashed={k === "unsplit" ? SPLIT_COLOR.unsplitEdge : undefined} /> {t(`costs.split.key_${k}`)}
         </span>
       ))}
     </div>

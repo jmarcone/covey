@@ -282,6 +282,8 @@ function MeterFigures({ f, readings }: { f: CredentialFigures; readings: UsageRe
     mult = t("costs.fig.notEnoughMovement", { pts: r.points, low: times(f.aligned / r.high), high: times(r.low > 0 ? f.aligned / r.low : Infinity) });
   } else if (f.noMultiple === "movement") {
     mult = t("costs.fig.notEnoughMovementNone");
+  } else if (f.multiple?.kind === "floor") {
+    mult = `≥ ${times(f.multiple.low)} · ${t("costs.split.multipleFloor")}`;
   } else if (f.noMultiple === "outside") {
     mult = t("costs.split.noMultipleOutside");
   } else mult = "–";

@@ -648,6 +648,14 @@ type BilledSeries struct {
 	// ReasonBucketBelowSource when the bucket is finer than the bill, which
 	// Anthropic reports per hour at the finest.
 	Reason string `json:"reason,omitempty"`
+	// HourlyFrom: at hour and 10hour, where the hourly bill rows begin in
+	// the window (the first 1h row); nil without any. The hourly sync reaches
+	// back 48 hours and the backfill is daily, so before it the bill is known
+	// per day only: a 10-hour bucket that starts before it is not complete,
+	// whatever its rows say. Inside the hourly rows, an hour without a row
+	// cannot be told from an hour without use, so a sync outage longer than
+	// the reach shows as a gap, not as an incomplete bucket.
+	HourlyFrom *time.Time `json:"hourly_from,omitempty"`
 }
 
 // ReasonBucketBelowSource: the asked bucket is finer than what the source
@@ -668,8 +676,9 @@ const billedMapping = `LEFT JOIN LATERAL (SELECT k.secret_key, k.secret_slot::in
 
 // BilledSeries sums the billed rows per bucket (hour | 10hour | day | week,
 // UTC; day by default), API key and model. Hours and 10-hour buckets come
-// from the 1h reads only; days and weeks from one width per day (chosenRows).
-// 10min is finer than any bill row: no points, with ReasonBucketBelowSource.
+// from the 1h reads only, with HourlyFrom where those begin; days and weeks
+// from one width per day (chosenRows). 10min is finer than any bill row: no
+// points, with ReasonBucketBelowSource.
 func (s *Store) BilledSeries(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time) (BilledSeries, error) {
 	out := BilledSeries{Bucket: bucket, Points: []BilledPoint{}}
 	since = since.UTC().Truncate(24 * time.Hour)
@@ -691,6 +700,17 @@ func (s *Store) BilledSeries(ctx context.Context, orgID uuid.UUID, bucket string
 	if bucket == "10hour" {
 		period = periodSQL(bucket, "c.bucket_start")
 	}
+	if bucket == "hour" || bucket == "10hour" {
+		var from *time.Time
+		if err := s.pool.QueryRow(ctx, `SELECT MIN(bucket_start) FROM billed_cost
+			WHERE org_id = $1 AND bucket_width = '1h' AND bucket_start >= $2`, orgID, since).Scan(&from); err != nil {
+			return out, err
+		}
+		if from != nil {
+			f := from.UTC()
+			out.HourlyFrom = &f
+		}
+	}
 	rows, err := s.pool.Query(ctx, `WITH `+src+`
 		SELECT `+period+` AS b,
 			c.api_key_id, c.workspace_id, c.model, mk.secret_key, mk.secret_slot,
@@ -709,6 +729,11 @@ func (s *Store) BilledSeries(ctx context.Context, orgID uuid.UUID, bucket string
 		if err := rows.Scan(&p.Bucket, &p.APIKeyID, &p.WorkspaceID, &p.Model, &p.SecretKey, &p.SecretSlot,
 			&p.BilledUSD, &p.BilledListUSD, &p.Complete); err != nil {
 			return out, err
+		}
+		// A 10-hour bucket begun before the hourly rows holds only some of
+		// its hours.
+		if bucket == "10hour" && out.HourlyFrom != nil && p.Bucket.Before(*out.HourlyFrom) {
+			p.Complete = false
 		}
 		out.Points = append(out.Points, p)
 	}

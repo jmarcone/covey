@@ -1352,7 +1352,8 @@ func (s *Server) handleCost(w http.ResponseWriter, r *http.Request) {
 }
 
 // costWindow reads bucket + days from the query and forms (bucket, since) out
-// of them. Defaults: daily buckets over the last 30 days; days is capped at 365.
+// of them. Defaults: daily buckets over the last 30 days; days is capped at
+// 365, and at maxTenMinuteDays for 10-minute buckets.
 func costWindow(r *http.Request) (string, time.Time) {
 	bucket := r.URL.Query().Get("bucket")
 	days := 30
@@ -1362,8 +1363,16 @@ func costWindow(r *http.Request) (string, time.Time) {
 	if days > 365 {
 		days = 365
 	}
+	// 10-minute buckets are clamped to two days, the most the page offers:
+	// a year of them is tens of megabytes for any reader (#120).
+	if bucket == "10min" && days > maxTenMinuteDays {
+		days = maxTenMinuteDays
+	}
 	return bucket, time.Now().AddDate(0, 0, -days)
 }
+
+// maxTenMinuteDays is how far back costWindow reaches at ?bucket=10min.
+const maxTenMinuteDays = 2
 
 // handleCostSeries returns an agent's cost time series for the chart.
 func (s *Server) handleCostSeries(w http.ResponseWriter, r *http.Request) {

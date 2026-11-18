@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -32,12 +33,23 @@ import (
 //     model the list does not know gets no figure, not $0: its tokens are
 //     counted as unpriced.
 //   - F2, a bucket: the sum of F1 over the calls with b ≤ ts < b + width.
-//   - F3, the meter share, per UTC hour h and meter credential c:
-//     R_out = R · L_out / (L_out + L_cov), with R the meter's real cost (the
-//     priced steps of the credential's meter, as on the page), L_out F1 over
-//     the calls of the sources linked to c and L_cov covey's recomputed list
-//     price on c. L_out = 0 gives R_out = 0; an hour without a reading has
-//     no R and so no R_out either.
+//   - F3, the meter share, per reading of a seat's meter: step i is the
+//     reading at t_i, and its span S_i = (t_{i−1}, t_i] reaches back to the
+//     previous reading of the same meter (the baseline before the window,
+//     for the first one). R_i is the step's priced movement, L_out,i F1 over
+//     the calls of the sources linked to the seat with ts in S_i (a model
+//     the list does not know at the call's reported_usd), L_cov,i covey's
+//     recomputed list of the seat's lines with created_at in S_i (a model
+//     the list does not know at the engine's figure, as measuredBetween).
+//     When the step is reported (stepReported) and L_out,i + L_cov,i > 0:
+//     R_out,i = R_i · L_out,i / (L_out,i + L_cov,i), R_cov,i = R_i − R_out,i.
+//     Otherwise the step's movement is nobody's: unsplit, never covey's
+//     whole. Each part is placed at t_i.
+//
+//     L_cov comes from model_usage only: a booking of an older daemon that
+//     files no lines is not in it (the booking check flags such bookings),
+//     so a step with only such a run moved "without a reported call" and is
+//     not split.
 
 // Limits of one upload.
 const (
@@ -50,6 +62,13 @@ const (
 	externalMaxField  = 256
 	// externalMaxUSD keeps reported_usd inside its NUMERIC(14,6) column.
 	externalMaxUSD = 1e7
+	// externalMaxTokens bounds every count of one call. No real call comes
+	// near it (a context is about a million tokens), and it keeps the sums
+	// the cost page reads inside int64: a window would need nine billion
+	// calls at the bound to overflow, where two rows of 9e18 did at once.
+	externalMaxTokens = 1_000_000_000
+	// externalMaxHosts bounds the hosts one push reports through.
+	externalMaxHosts = 100
 )
 
 // External origins: where in a session a call was made.
@@ -95,6 +114,8 @@ func (e ErrInvalidExternal) Error() string { return "invalid external usage: " +
 
 // ExternalUploadResult is what an upload changed. Inserted + Updated +
 // Unchanged = Received: a re-sent row that is identical counts as unchanged.
+// Hosts: the source's machines as stored after the upload, with how far each
+// has reported.
 type ExternalUploadResult struct {
 	Source          string           `json:"source"`
 	Received        int              `json:"received"`
@@ -102,6 +123,16 @@ type ExternalUploadResult struct {
 	Updated         int              `json:"updated"`
 	Unchanged       int              `json:"unchanged"`
 	MeterCredential *MeterCredential `json:"meter_credential"`
+	Hosts           []ExternalHost   `json:"hosts"`
+}
+
+// ExternalHost is one machine of a source: ReportedThrough, the watermark
+// its pushes gave (every call of the host with ts at or before it has been
+// sent; nil when none did), and PushedAt, its latest push.
+type ExternalHost struct {
+	Host            string     `json:"host"`
+	ReportedThrough *time.Time `json:"reported_through"`
+	PushedAt        time.Time  `json:"pushed_at"`
 }
 
 // ValidateExternalSource checks a source label.
@@ -112,12 +143,47 @@ func ValidateExternalSource(source string) error {
 	if !utf8.ValidString(source) || utf8.RuneCountInString(source) > externalMaxSource {
 		return ErrInvalidExternal{Reason: fmt.Sprintf("source must be at most %d characters", externalMaxSource)}
 	}
+	// Postgres refuses 0x00 in text: refused here, it is a 400, not a 500.
+	if strings.ContainsRune(source, 0) {
+		return ErrInvalidExternal{Reason: "source must not contain a NUL character"}
+	}
+	return nil
+}
+
+// externalText checks one required text field of an upload.
+func externalText(name, v string) string {
+	switch {
+	case v == "":
+		return name + " is required"
+	case !utf8.ValidString(v) || len(v) > externalMaxField:
+		return fmt.Sprintf("%s must be valid UTF-8 of at most %d bytes", name, externalMaxField)
+	case strings.ContainsRune(v, 0):
+		return name + " must not contain a NUL character"
+	}
+	return ""
+}
+
+// ValidateExternalReported checks a push's watermarks: per host, the time
+// through which its calls have been sent. A time after now is not refused:
+// the store clamps it to the push's arrival.
+func ValidateExternalReported(reported map[string]time.Time) error {
+	if len(reported) > externalMaxHosts {
+		return ErrInvalidExternal{Reason: fmt.Sprintf("reported_through names %d hosts, at most %d", len(reported), externalMaxHosts)}
+	}
+	for host, at := range reported {
+		if msg := externalText("reported_through host", host); msg != "" {
+			return ErrInvalidExternal{Reason: msg}
+		}
+		if at.IsZero() {
+			return ErrInvalidExternal{Reason: fmt.Sprintf("reported_through of %q needs a time (RFC 3339)", host)}
+		}
+	}
 	return nil
 }
 
 // ValidateExternalRows checks an upload's rows against #120's rules: every
-// required field present, counts ≥ 0, ts not after now + 5 min, at most
-// ExternalMaxRows, each message_id once.
+// required field present, counts between 0 and externalMaxTokens, ts not
+// after now + 5 min, at most ExternalMaxRows, each message_id once.
 func ValidateExternalRows(rows []ExternalRow, now time.Time) error {
 	if len(rows) > ExternalMaxRows {
 		return ErrInvalidExternal{Reason: fmt.Sprintf("%d rows, at most %d per request", len(rows), ExternalMaxRows)}
@@ -131,11 +197,8 @@ func ValidateExternalRows(rows []ExternalRow, now time.Time) error {
 		for _, f := range []struct{ name, v string }{
 			{"host", r.Host}, {"session_id", r.SessionID}, {"message_id", r.MessageID}, {"model", r.Model},
 		} {
-			if f.v == "" {
-				return bad("%s is required", f.name)
-			}
-			if !utf8.ValidString(f.v) || len(f.v) > externalMaxField {
-				return bad("%s must be valid UTF-8 of at most %d bytes", f.name, externalMaxField)
+			if msg := externalText(f.name, f.v); msg != "" {
+				return bad("%s", msg)
 			}
 		}
 		if r.TS == nil || r.TS.IsZero() {
@@ -157,6 +220,9 @@ func ValidateExternalRows(rows []ExternalRow, now time.Time) error {
 			if *c.v < 0 {
 				return bad("%s must not be negative", c.name)
 			}
+			if *c.v > externalMaxTokens {
+				return bad("%s must be at most %d", c.name, externalMaxTokens)
+			}
 		}
 		if r.Origin != nil && !externalOrigins[*r.Origin] {
 			return bad("origin must be main, subagent or workflow")
@@ -173,16 +239,21 @@ func ValidateExternalRows(rows []ExternalRow, now time.Time) error {
 }
 
 // UpsertExternalUsage stores an upload for the organisation: every row
-// replaces the one with its (source, message_id) or is added, and the
-// source's meter link is changed as the upload says — in one transaction, so
-// a refused link stores no row either.
+// replaces the one with its (source, message_id) or is added, the source's
+// meter link is changed as the upload says, and every host the upload names
+// (in a row or in reported) is marked as pushed now, with its watermark
+// moved up to reported's time (clamped to now, never back) — in one
+// transaction, so a refused link stores no row either.
 func (s *Store) UpsertExternalUsage(ctx context.Context, orgID uuid.UUID, source string, link MeterLinkChange,
-	rows []ExternalRow, now time.Time) (ExternalUploadResult, error) {
-	res := ExternalUploadResult{Source: source, Received: len(rows)}
+	rows []ExternalRow, reported map[string]time.Time, now time.Time) (ExternalUploadResult, error) {
+	res := ExternalUploadResult{Source: source, Received: len(rows), Hosts: []ExternalHost{}}
 	if err := ValidateExternalSource(source); err != nil {
 		return res, err
 	}
 	if err := ValidateExternalRows(rows, now); err != nil {
+		return res, err
+	}
+	if err := ValidateExternalReported(reported); err != nil {
 		return res, err
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -266,7 +337,72 @@ func (s *Store) UpsertExternalUsage(ctx context.Context, orgID uuid.UUID, source
 		}
 		res.Unchanged = res.Received - res.Inserted - res.Updated
 	}
+
+	// The hosts: GREATEST skips a NULL, so a push without a watermark for a
+	// host keeps the one it had.
+	marks := map[string]*time.Time{}
+	for _, r := range rows {
+		if _, ok := marks[r.Host]; !ok {
+			marks[r.Host] = nil
+		}
+	}
+	for host, at := range reported {
+		at := at.UTC()
+		if at.After(now) {
+			at = now.UTC()
+		}
+		marks[host] = &at
+	}
+	if len(marks) > 0 {
+		hosts, ats := make([]string, 0, len(marks)), make([]*time.Time, 0, len(marks))
+		for host, at := range marks {
+			hosts, ats = append(hosts, host), append(ats, at)
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO external_usage_hosts (org_id, source, host, reported_through, pushed_at)
+			SELECT $1, $2, h.host, h.at, $5 FROM unnest($3::text[], $4::timestamptz[]) AS h(host, at)
+			ON CONFLICT (org_id, source, host) DO UPDATE SET
+				reported_through = GREATEST(external_usage_hosts.reported_through, EXCLUDED.reported_through),
+				pushed_at = GREATEST(external_usage_hosts.pushed_at, EXCLUDED.pushed_at)`,
+			orgID, source, hosts, ats, now.UTC()); err != nil {
+			return res, err
+		}
+	}
+	hosts, err := externalHosts(ctx, tx, orgID, []string{source})
+	if err != nil {
+		return res, err
+	}
+	res.Hosts = append(res.Hosts, hosts[source]...)
 	return res, tx.Commit(ctx)
+}
+
+// externalHosts are the stored hosts of the given sources, by source and
+// host name.
+func externalHosts(ctx context.Context, q interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+}, orgID uuid.UUID, sources []string) (map[string][]ExternalHost, error) {
+	rows, err := q.Query(ctx, `SELECT source, host, reported_through, pushed_at FROM external_usage_hosts
+		WHERE org_id = $1 AND source = ANY($2) ORDER BY source, host`, orgID, sources)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]ExternalHost{}
+	for rows.Next() {
+		var (
+			src string
+			h   ExternalHost
+		)
+		if err := rows.Scan(&src, &h.Host, &h.ReportedThrough, &h.PushedAt); err != nil {
+			return nil, err
+		}
+		if h.ReportedThrough != nil {
+			at := h.ReportedThrough.UTC()
+			h.ReportedThrough = &at
+		}
+		h.PushedAt = h.PushedAt.UTC()
+		out[src] = append(out[src], h)
+	}
+	return out, rows.Err()
 }
 
 // setMeterLink stores (or with nil removes) a source's meter credential. The
@@ -310,7 +446,7 @@ type ExternalDeleteResult struct {
 }
 
 // DeleteExternalUsage removes every row of one source of the organisation,
-// and its meter link.
+// its meter link and its hosts' watermarks.
 func (s *Store) DeleteExternalUsage(ctx context.Context, orgID uuid.UUID, source string) (ExternalDeleteResult, error) {
 	res := ExternalDeleteResult{Source: source}
 	if err := ValidateExternalSource(source); err != nil {
@@ -331,6 +467,9 @@ func (s *Store) DeleteExternalUsage(ctx context.Context, orgID uuid.UUID, source
 		return res, err
 	}
 	res.MeterRemoved = tag.RowsAffected() > 0
+	if _, err := tx.Exec(ctx, `DELETE FROM external_usage_hosts WHERE org_id = $1 AND source = $2`, orgID, source); err != nil {
+		return res, err
+	}
 	return res, tx.Commit(ctx)
 }
 
@@ -351,7 +490,8 @@ type ExternalUsage struct {
 type ExternalSource struct {
 	Source string `json:"source"`
 	// MeterCredential: the subscription credential the source shares its
-	// meter with; nil without one (no meter share).
+	// meter with; nil without one (no meter share). The link is not dated:
+	// it applies to every call of the source, also the earlier ones.
 	MeterCredential *MeterCredential `json:"meter_credential"`
 	Calls           int64            `json:"calls"`
 	// ListUSD: F1 over the priced calls; nil when none was priced.
@@ -366,6 +506,8 @@ type ExternalSource struct {
 	UnpricedModels []string   `json:"unpriced_models"`
 	FirstAt        *time.Time `json:"first_at"`
 	LastAt         *time.Time `json:"last_at"`
+	// Hosts: the source's machines and how far each has reported.
+	Hosts []ExternalHost `json:"hosts"`
 }
 
 // ExternalCell is one bucket × source × origin.
@@ -390,74 +532,143 @@ type ExternalCell struct {
 	UnpricedCalls  int64            `json:"unpriced_calls"`
 }
 
-// ExternalMeter is F3 over the window: per UTC hour and seat credential, and
-// summed. It is filled once a source names the meter it shares; then every
-// subscription seat with readings takes part, linked or not, so that the
-// headline holds the whole dent in the meters.
-//
-// An hour is split only where the outside calls were reported for it: it
-// lies within the span of a linked source's uploads (reportedSpan). Any other
-// hour's movement is not split: it is neither covey's nor the outside
-// sessions', and stands as UnsplitRealUSD. Covey's share is never the whole
-// movement of an hour for want of outside data.
+// Why a step is not split (ExternalMeterStep.Reason).
+const (
+	// SplitNotReported: a machine of the linked sources that was active
+	// before the reading has not reported through it, or the seat has none.
+	SplitNotReported = "not_reported"
+	// SplitNoReportedCall: the meter moved, but neither covey nor a linked
+	// source has a call in the step's span.
+	SplitNoReportedCall = "moved_without_reported_call"
+	// SplitUnpriced: points no plan prices; the step is out of the dent.
+	SplitUnpriced = "unpriced"
+)
+
+// ExternalMeter is F3 over the window: per reading step of every seat, the
+// hours and seats they sum to, and the whole. It is filled once a source
+// names the meter it shares; then every subscription seat with readings
+// takes part, linked or not, so that the headline holds the whole dent in
+// the meters. A seat no source names has no reported step: all of its
+// movement is unsplit.
 type ExternalMeter struct {
+	Steps       []ExternalMeterStep  `json:"steps"`
 	Hours       []ExternalMeterHour  `json:"hours"`
 	Credentials []ExternalMeterTotal `json:"credentials"`
-	// RealUSD: Σ R over the hours with a reading, every seat — the dent.
-	// ExternalRealUSD / CoveyRealUSD: Σ R_out / Σ R_cov over the split hours;
-	// UnsplitRealUSD: Σ R over the hours with a reading that were not split.
-	// The three add up to RealUSD.
+	ExternalMeterSums
+}
+
+// ExternalMeterSums are the figures a seat and the whole share.
+type ExternalMeterSums struct {
+	// RealUSD: Σ R over the priced steps — the dent. ExternalRealUSD /
+	// CoveyRealUSD: Σ R_out / Σ R_cov over the split steps; UnsplitRealUSD:
+	// Σ R over the priced steps that were not split. The three add up to
+	// RealUSD.
 	RealUSD         float64 `json:"real_usd"`
 	ExternalRealUSD float64 `json:"external_real_usd"`
 	CoveyRealUSD    float64 `json:"covey_real_usd"`
 	UnsplitRealUSD  float64 `json:"unsplit_real_usd"`
-	// Share: ExternalRealUSD over the real cost of the split hours (nil
-	// without one). The tile's figure.
+	// Share: ExternalRealUSD over the split steps' real cost; nil without
+	// one.
 	Share *float64 `json:"share"`
 	// SplitExternalListUSD / SplitCoveyListUSD: L_out and L_cov over the
-	// split hours, the list prices the three multiples divide.
+	// split steps, the list prices the three multiples divide.
 	SplitExternalListUSD float64 `json:"split_external_list_usd"`
 	SplitCoveyListUSD    float64 `json:"split_covey_list_usd"`
-	// SplitPoints: the meter points of the split hours; SplitRuns: how many
-	// unbroken runs of split readings they come from (and resets in them),
-	// each known to ±1 point only, the meter showing whole percents;
-	// PointRate: the dearest price per point among them. Together they give
-	// the multiples' range.
-	SplitPoints float64 `json:"split_points"`
-	SplitRuns   int     `json:"split_runs"`
-	PointRate   float64 `json:"point_rate"`
-	// UnsplitHours: hours with a reading whose outside calls were not
-	// reported.
-	UnsplitHours int `json:"unsplit_hours"`
-	// UnmeteredListUSD: L_out of hours without a reading, whose share has no
-	// figure.
+	// Points: the priced movement, the dent in points. SplitPoints: the
+	// split steps' part of it, SplitExternalPoints / SplitCoveyPoints its
+	// share-weighted parts (Σ s_i·points_i and Σ (1 − s_i)·points_i).
+	// Points of seats on different plans are not one unit: a sum over seats
+	// is a figure only while PointRateMixed is false.
+	Points              float64 `json:"points"`
+	SplitPoints         float64 `json:"split_points"`
+	SplitExternalPoints float64 `json:"split_external_points"`
+	SplitCoveyPoints    float64 `json:"split_covey_points"`
+	// SplitRuns: the runs of split steps (a run ends at an unsplit step or a
+	// reset). The meter shows whole percents, so each run's movement is
+	// known to ±1 point: SplitSlackPoints / SplitSlackUSD, the whole's range.
+	// A part's range is ±½·TV of its share over each run, TV = s_1 +
+	// Σ|s_{k+1} − s_k| + s_n (s_out for the outside sessions, 1 − s_out for
+	// covey): Split{External,Covey}Slack{Points,USD}. The dollars weigh each
+	// reading at its own plan's price per point.
+	SplitRuns                int     `json:"split_runs"`
+	SplitSlackPoints         float64 `json:"split_slack_points"`
+	SplitSlackUSD            float64 `json:"split_slack_usd"`
+	SplitExternalSlackPoints float64 `json:"split_external_slack_points"`
+	SplitExternalSlackUSD    float64 `json:"split_external_slack_usd"`
+	SplitCoveySlackPoints    float64 `json:"split_covey_slack_points"`
+	SplitCoveySlackUSD       float64 `json:"split_covey_slack_usd"`
+	// PointRate: the dearest price per point among the priced steps that
+	// moved; PointRateMixed: some of them moved at another price.
+	PointRate      float64 `json:"point_rate"`
+	PointRateMixed bool    `json:"point_rate_mixed"`
+	// StepCount: the readings in the window with a span (the first reading
+	// of a meter, its baseline, has none); SplitSteps / UnsplitSteps of them,
+	// UnsplitSteps counting the priced ones that moved.
+	StepCount    int `json:"step_count"`
+	SplitSteps   int `json:"split_steps"`
+	UnsplitSteps int `json:"unsplit_steps"`
+	// UnpricedSteps / UnpricedPoints: steps that moved while no plan priced
+	// the seat. They stay out of the dent whole, never as $0.
+	UnpricedSteps  int     `json:"unpriced_steps"`
+	UnpricedPoints float64 `json:"unpriced_points"`
+	// UnpricedCalls / UnpricedTokens: linked outside calls in the steps'
+	// spans with neither a list price nor a reported_usd: not in L_out.
+	UnpricedCalls  int64 `json:"unpriced_calls"`
+	UnpricedTokens int64 `json:"unpriced_tokens"`
+	// UnmeteredListUSD: L_out of linked calls in the window that lie in no
+	// step's span (after the seat's last reading, or with no reading at
+	// all): no real share yet.
 	UnmeteredListUSD float64 `json:"unmetered_list_usd"`
 }
 
-// ExternalMeterHour is one UTC hour of one seat credential's meter.
+// ExternalMeterStep is one reading of one seat's meter and its split.
+type ExternalMeterStep struct {
+	// At: the reading, where the step is placed; From: the previous one.
+	At         time.Time `json:"at"`
+	From       time.Time `json:"from"`
+	SecretKey  string    `json:"secret_key"`
+	SecretSlot int       `json:"secret_slot"`
+	Points     float64   `json:"points"`
+	// Reset: the reading began a new week.
+	Reset bool `json:"reset"`
+	// RealUSD: R, the priced movement; nil when no plan prices its points.
+	RealUSD *float64 `json:"real_usd"`
+	// ExternalListUSD: L_out; CoveyListUSD: L_cov over (From, At].
+	ExternalListUSD float64 `json:"external_list_usd"`
+	CoveyListUSD    float64 `json:"covey_list_usd"`
+	// Reported: every active machine of the linked sources has reported
+	// through At (stepReported).
+	Reported bool `json:"reported"`
+	// Split: R_out and R_cov are set and add up to R. Otherwise Reason says
+	// why not, and a priced step's R is UnsplitRealUSD.
+	Split           bool     `json:"split"`
+	Reason          string   `json:"reason,omitempty"`
+	ExternalRealUSD *float64 `json:"external_real_usd"`
+	CoveyRealUSD    *float64 `json:"covey_real_usd"`
+	UnsplitRealUSD  float64  `json:"unsplit_real_usd"`
+}
+
+// ExternalMeterHour is one UTC hour of one seat: the sums of the steps
+// placed in it.
 type ExternalMeterHour struct {
 	Hour       time.Time `json:"hour"`
 	SecretKey  string    `json:"secret_key"`
 	SecretSlot int       `json:"secret_slot"`
-	// RealUSD: R, the meter's priced movement in the hour; nil without a
-	// reading (or with points no plan prices). Points: the movement in
-	// points.
-	RealUSD *float64 `json:"real_usd"`
-	Points  float64  `json:"points"`
-	// OutsideReported: a source linked to this meter reported the hour (it
-	// lies within the span of its uploads). Without it the hour is not split.
-	OutsideReported bool `json:"outside_reported"`
-	// ExternalListUSD: L_out; CoveyListUSD: L_cov.
-	ExternalListUSD float64 `json:"external_list_usd"`
-	CoveyListUSD    float64 `json:"covey_list_usd"`
-	// ExternalRealUSD: R_out; CoveyRealUSD: R − R_out. Both nil without R
-	// and in an hour the outside calls were not reported for.
-	ExternalRealUSD *float64 `json:"external_real_usd"`
-	CoveyRealUSD    *float64 `json:"covey_real_usd"`
+	// RealUSD: Σ R of its priced steps; nil when none was priced. Points:
+	// their movement.
+	RealUSD         *float64 `json:"real_usd"`
+	Points          float64  `json:"points"`
+	ExternalListUSD float64  `json:"external_list_usd"`
+	CoveyListUSD    float64  `json:"covey_list_usd"`
+	ExternalRealUSD float64  `json:"external_real_usd"`
+	CoveyRealUSD    float64  `json:"covey_real_usd"`
+	UnsplitRealUSD  float64  `json:"unsplit_real_usd"`
+	Steps           int      `json:"steps"`
+	SplitSteps      int      `json:"split_steps"`
+	UnpricedPoints  float64  `json:"unpriced_points"`
 }
 
-// ExternalMeterTotal is one seat credential over the window. The figures are
-// ExternalMeter's, for this credential alone.
+// ExternalMeterTotal is one seat credential over the window.
 type ExternalMeterTotal struct {
 	SecretKey  string `json:"secret_key"`
 	SecretSlot int    `json:"secret_slot"`
@@ -466,24 +677,25 @@ type ExternalMeterTotal struct {
 	// without readings in the window.
 	MeterSource string `json:"meter_source"`
 	// Sources: the outside sources linked to this meter; none for a seat
-	// no source names, whose hours are all unsplit.
+	// no source names, whose steps are all unsplit.
 	Sources []string `json:"sources"`
-	// Hours with a reading, and hours with outside calls but none.
-	HoursWithReading     int      `json:"hours_with_reading"`
-	HoursWithoutReading  int      `json:"hours_without_reading"`
-	UnsplitHours         int      `json:"unsplit_hours"`
-	RealUSD              float64  `json:"real_usd"`
-	ExternalRealUSD      float64  `json:"external_real_usd"`
-	CoveyRealUSD         float64  `json:"covey_real_usd"`
-	UnsplitRealUSD       float64  `json:"unsplit_real_usd"`
-	Share                *float64 `json:"share"`
-	SplitExternalListUSD float64  `json:"split_external_list_usd"`
-	SplitCoveyListUSD    float64  `json:"split_covey_list_usd"`
-	Points               float64  `json:"points"`
-	SplitPoints          float64  `json:"split_points"`
-	SplitRuns            int      `json:"split_runs"`
-	PointRate            float64  `json:"point_rate"`
-	UnmeteredListUSD     float64  `json:"unmetered_list_usd"`
+	// HoursWithReading: the UTC hours a step is placed in.
+	HoursWithReading int `json:"hours_with_reading"`
+	ExternalMeterSums
+	// Agents: covey's real share per agent (finding 22 on #126).
+	Agents []ExternalMeterAgent `json:"agents"`
+}
+
+// ExternalMeterAgent is one agent's part of covey's share of a seat:
+// RealUSD = Σ over the split steps with L_cov > 0 of R_cov · L_a / L_cov,
+// so the agents add up to the seat's CoveyRealUSD. SplitListUSD: the agent's
+// list over the split steps; UnsplitListUSD: over the steps that were not
+// split, which give it no real share.
+type ExternalMeterAgent struct {
+	AgentID        uuid.UUID `json:"agent_id"`
+	SplitListUSD   float64   `json:"split_list_usd"`
+	RealUSD        float64   `json:"real_usd"`
+	UnsplitListUSD float64   `json:"unsplit_list_usd"`
 }
 
 // externalTokens are one group's summed counts.
@@ -512,13 +724,12 @@ func ExternalListUSD(model string, t ModelTokens) *float64 {
 }
 
 // externalFor reads the outside-covey series of the window: cells at the
-// chart's bucket, and the meter share per hour. hourly returns the meter's
-// steps cut per UTC hour with their coverage; it is only called when a source
-// is linked to a meter.
+// chart's bucket, and the meter share per reading step, whatever the bucket.
+// coverage and plans are the cost cells' own: the share reads the meter the
+// page reads, priced as the page prices it.
 func (s *Store) externalFor(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time,
-	hourly func() ([]MeterStep, []MeterCoverage, error)) (ExternalUsage, error) {
-	out := ExternalUsage{Sources: []ExternalSource{}, Cells: []ExternalCell{},
-		Meter: ExternalMeter{Hours: []ExternalMeterHour{}, Credentials: []ExternalMeterTotal{}}}
+	coverage []MeterCoverage, plans []CredentialPlan) (ExternalUsage, error) {
+	out := ExternalUsage{Sources: []ExternalSource{}, Cells: []ExternalCell{}, Meter: emptyMeter()}
 
 	links := map[string]MeterCredential{}
 	lrows, err := s.pool.Query(ctx, `SELECT source, secret_key, secret_slot FROM external_usage_meters WHERE org_id = $1`, orgID)
@@ -557,7 +768,7 @@ func (s *Store) externalFor(ctx context.Context, orgID uuid.UUID, bucket string,
 	source := func(name string) *ExternalSource {
 		src, ok := sources[name]
 		if !ok {
-			src = &ExternalSource{Source: name, UnpricedModels: []string{}}
+			src = &ExternalSource{Source: name, UnpricedModels: []string{}, Hosts: []ExternalHost{}}
 			if m, ok := links[name]; ok {
 				m := m
 				src.MeterCredential = &m
@@ -648,7 +859,16 @@ func (s *Store) externalFor(ctx context.Context, orgID uuid.UUID, bucket string,
 	for name := range links {
 		source(name)
 	}
+	names := make([]string, 0, len(sources))
+	for name := range sources {
+		names = append(names, name)
+	}
+	hosts, err := externalHosts(ctx, s.pool, orgID, names)
+	if err != nil {
+		return out, err
+	}
 	for name, src := range sources {
+		src.Hosts = append(src.Hosts, hosts[name]...)
 		for m := range unpriced[name] {
 			src.UnpricedModels = append(src.UnpricedModels, m)
 		}
@@ -671,64 +891,36 @@ func (s *Store) externalFor(ctx context.Context, orgID uuid.UUID, bucket string,
 	})
 
 	// Until a source names the meter it shares, there is nothing to split
-	// the meters by and no hour to call unreported: the page stays as it was
+	// the meters by and no step to call unreported: the page stays as it was
 	// (a machine billed per use shares no meter).
 	if len(links) == 0 {
 		return out, nil
 	}
-	steps, coverage, err := hourly()
+	readings, err := s.meterRows(ctx, orgID, since)
 	if err != nil {
 		return out, err
 	}
-	keys := map[string]bool{}
-	for _, m := range links {
-		keys[m.SecretKey] = true
-	}
-	for _, c := range coverage {
-		if c.CredentialKind != "api_key" {
-			keys[c.SecretKey] = true
+	seats, linked := meterSeats(links, coverage)
+	var totals []ExternalMeterTotal
+	var steps []ExternalMeterStep
+	for _, seat := range seats {
+		in, cov, err := s.seatSteps(ctx, orgID, since, seat, linked[seat], readings, coverage, plans, hosts)
+		if err != nil {
+			return out, err
 		}
+		tot, st := splitSeat(seat, linked[seat], in)
+		tot.MeterSource = cov.Source
+		if tot.UnmeteredListUSD, err = s.unmeteredList(ctx, orgID, since, linked[seat], in); err != nil {
+			return out, err
+		}
+		totals, steps = append(totals, tot), append(steps, st...)
 	}
-	lOut, lCov, err := s.meterLists(ctx, orgID, since, links, keys)
-	if err != nil {
-		return out, err
-	}
-	spans, err := s.reportedSpans(ctx, orgID, since, links, out.Sources)
-	if err != nil {
-		return out, err
-	}
-	out.Meter = meterShare(links, spans, steps, coverage, lOut, lCov)
+	out.Meter = meterSums(totals, steps)
 	return out, nil
 }
 
-// reportedSpan is the stretch of hours a source's uploads cover: from the
-// hour of its first call (the window's first hour when it has calls before
-// the window) through its last call. An hour outside it is one the source
-// did not report: its calls may not have been sent yet, so the meter's
-// movement in it is not split, rather than booked to covey whole.
-type reportedSpan struct{ from, to time.Time }
-
-// reportedSpans are the spans of the linked sources over the window.
-func (s *Store) reportedSpans(ctx context.Context, orgID uuid.UUID, since time.Time,
-	links map[string]MeterCredential, sources []ExternalSource) (map[string]reportedSpan, error) {
-	out := map[string]reportedSpan{}
-	first := since.UTC().Truncate(time.Hour)
-	for _, src := range sources {
-		if _, ok := links[src.Source]; !ok || src.FirstAt == nil || src.LastAt == nil {
-			continue
-		}
-		span := reportedSpan{from: src.FirstAt.Truncate(time.Hour), to: *src.LastAt}
-		var earlier bool
-		if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM external_usage
-			WHERE org_id = $1 AND source = $2 AND ts < $3)`, orgID, src.Source, since).Scan(&earlier); err != nil {
-			return nil, err
-		}
-		if earlier {
-			span.from = first
-		}
-		out[src.Source] = span
-	}
-	return out, nil
+func emptyMeter() ExternalMeter {
+	return ExternalMeter{Steps: []ExternalMeterStep{}, Hours: []ExternalMeterHour{}, Credentials: []ExternalMeterTotal{}}
 }
 
 // originOrder sorts a cell's origin: main, subagent, workflow, unsaid.
@@ -739,89 +931,43 @@ func originOrder(o *string) string {
 	return *o
 }
 
-// credHour is one UTC hour of one credential.
-type credHour struct {
-	hour time.Time
+// meterSeat is one subscription credential of the meter share.
+type meterSeat struct {
 	key  string
 	slot int
 }
 
-// meterLists are L_out and L_cov per UTC hour and seat credential (keys: the
-// linked ones and every metered seat): the outside calls of the sources
-// linked to it priced with F1 (a model the list does not know has no figure
-// and is left out), and covey's recomputed list price of the credential's
-// lines (a model the list does not know at the
-// engine's figure, as the agents' recomputed figure counts it).
-func (s *Store) meterLists(ctx context.Context, orgID uuid.UUID, since time.Time, links map[string]MeterCredential,
-	keys map[string]bool) (map[credHour]float64, map[credHour]float64, error) {
-	lOut, lCov := map[credHour]float64{}, map[credHour]float64{}
-	names := make([]string, 0, len(links))
-	for name := range links {
-		names = append(names, name)
+// meterSeats are the credentials F3 covers once a source names a meter, in
+// order: every linked one and every subscription seat with a weekly reading
+// in the window, linked or not — with the sources linked to each. The one
+// list every part of the share is read for.
+func meterSeats(links map[string]MeterCredential, coverage []MeterCoverage) ([]meterSeat, map[meterSeat][]string) {
+	linked := map[meterSeat][]string{}
+	for name, m := range links {
+		c := meterSeat{m.SecretKey, m.SecretSlot}
+		linked[c] = append(linked[c], name)
 	}
-	rows, err := s.pool.Query(ctx, `SELECT date_trunc('hour', ts, 'UTC'), source, model,
-		SUM(input), SUM(output), SUM(cache_read), SUM(cache_write_5m), SUM(cache_write_1h)
-		FROM external_usage
-		WHERE org_id = $1 AND ts >= $2 AND source = ANY($3)
-		GROUP BY 1, 2, 3`, orgID, since, names)
-	if err != nil {
-		return nil, nil, err
-	}
-	for rows.Next() {
-		var (
-			h           time.Time
-			name, model string
-			t           ModelTokens
-		)
-		if err := rows.Scan(&h, &name, &model, &t.Input, &t.Output, &t.CacheRead, &t.CacheWrite5m, &t.CacheWrite1h); err != nil {
-			rows.Close()
-			return nil, nil, err
+	for _, cv := range coverage {
+		if cv.CredentialKind == "api_key" || cv.WindowKind != WindowSevenDay {
+			continue
 		}
-		if usd := ExternalListUSD(model, t); usd != nil {
-			m := links[name]
-			lOut[credHour{h.UTC(), m.SecretKey, m.SecretSlot}] += *usd
+		c := meterSeat{cv.SecretKey, cv.SecretSlot}
+		if _, ok := linked[c]; !ok {
+			linked[c] = nil
 		}
 	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, nil, err
+	seats := make([]meterSeat, 0, len(linked))
+	for c := range linked {
+		sort.Strings(linked[c])
+		seats = append(seats, c)
 	}
-
-	secretKeys := make([]string, 0, len(keys))
-	for k := range keys {
-		secretKeys = append(secretKeys, k)
-	}
-	rows, err = s.pool.Query(ctx, `SELECT date_trunc('hour', created_at, 'UTC'), secret_key, secret_slot, model,
-		SUM(input_tokens), SUM(output_tokens), SUM(cache_read_tokens), SUM(cache_write_5m_tokens),
-		SUM(cache_write_1h_tokens), SUM(web_search_requests), SUM(engine_usd)::float8
-		FROM model_usage
-		WHERE org_id = $1 AND created_at >= $2 AND secret_key = ANY($3)
-		GROUP BY 1, 2, 3, 4`, orgID, since, secretKeys)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var (
-			h      time.Time
-			key    string
-			slot   int
-			model  string
-			t      ModelTokens
-			engine float64
-		)
-		if err := rows.Scan(&h, &key, &slot, &model, &t.Input, &t.Output, &t.CacheRead, &t.CacheWrite5m,
-			&t.CacheWrite1h, &t.WebSearches, &engine); err != nil {
-			return nil, nil, err
+	sort.Slice(seats, func(i, j int) bool {
+		if seats[i].key != seats[j].key {
+			return seats[i].key < seats[j].key
 		}
-		k := credHour{h.UTC(), key, slot}
-		if pr, ok := ListPrice(model); ok {
-			lCov[k] += pr.Cost(t)
-		} else {
-			lCov[k] += engine
-		}
-	}
-	return lOut, lCov, rows.Err()
+		return seats[i].slot < seats[j].slot
+	})
+	return seats, linked
 }
 
 // pickCoverage is the meter coverage a credential's real cost is read from,
@@ -854,170 +1000,572 @@ func pickCoverage(coverage []MeterCoverage, key string, slot int) (MeterCoverage
 	return best, found
 }
 
-// stepReal is R of one hourly step: its priced movement, nil when some of its
-// points have no plan price. No movement is $0 whatever the plan.
-func stepReal(st MeterStep) *float64 {
-	if st.Points == 0 {
-		zero := 0.0
-		return &zero
-	}
-	if st.USD == nil || st.UnpricedPoints > 0 {
-		return nil
-	}
-	usd := *st.USD
-	return &usd
+// shareStep is one reading step of a seat with everything F3 needs: the
+// movement and its price, the two lists of its span, the agents' part of
+// L_cov, and whether the outside calls were reported through it.
+type shareStep struct {
+	At, From time.Time
+	Points   float64
+	// Rate: the plan's price per point at the reading; nil without a plan.
+	Rate  *float64
+	Reset bool
+	LOut  float64
+	LCov  float64
+	// Agents: each agent's part of LCov.
+	Agents                        map[uuid.UUID]float64
+	UnpricedCalls, UnpricedTokens int64
+	Reported                      bool
 }
 
-// meterShare is F3. steps must be cut per UTC hour. The credentials are the
-// linked ones and every subscription seat the coverage knows. An hour enters
-// when the credential's meter was read in it, or when calls of a linked
-// source were made in it; only the first kind has a figure, and of those
-// only the hours a linked source reported (spans) are split.
-func meterShare(links map[string]MeterCredential, spans map[string]reportedSpan, steps []MeterStep,
-	coverage []MeterCoverage, lOut, lCov map[credHour]float64) ExternalMeter {
-	out := ExternalMeter{Hours: []ExternalMeterHour{}, Credentials: []ExternalMeterTotal{}}
-	if len(links) == 0 {
-		return out
+// seatSteps builds a seat's steps from its meter's readings in the window
+// (the source the page reads), each with the lists of its span and whether
+// it was reported. A meter read only before the window, or never, has none.
+func (s *Store) seatSteps(ctx context.Context, orgID uuid.UUID, since time.Time, seat meterSeat, sources []string,
+	readings []meterRow, coverage []MeterCoverage, plans []CredentialPlan,
+	hosts map[string][]ExternalHost) ([]shareStep, MeterCoverage, error) {
+	cov, ok := pickCoverage(coverage, seat.key, seat.slot)
+	if !ok {
+		return nil, cov, nil
 	}
-	type cred struct {
-		key  string
-		slot int
+	var rs []meterRow
+	for _, r := range readings {
+		if r.key == seat.key && r.slot == seat.slot && r.source == cov.Source && r.window == cov.WindowKind {
+			rs = append(rs, r)
+		}
 	}
-	byCred := map[cred][]string{}
-	for name, m := range links {
-		c := cred{m.SecretKey, m.SecretSlot}
-		byCred[c] = append(byCred[c], name)
-	}
-	for _, cv := range coverage {
-		if cv.CredentialKind == "api_key" || cv.WindowKind != WindowSevenDay {
+	var steps []shareStep
+	for k := 1; k < len(rs); k++ {
+		r := rs[k]
+		if r.at.Before(since) {
 			continue
 		}
-		c := cred{cv.SecretKey, cv.SecretSlot}
-		if _, ok := byCred[c]; !ok {
-			byCred[c] = nil
+		st := shareStep{At: r.at.UTC(), From: rs[k-1].at.UTC(), Points: r.points, Reset: r.reset}
+		if p, ok := planAt(plans, r.key, r.slot, r.at); ok {
+			rate := p.USDPerPoint
+			st.Rate = &rate
 		}
+		steps = append(steps, st)
 	}
-	creds := make([]cred, 0, len(byCred))
-	for c := range byCred {
-		creds = append(creds, c)
+	if len(steps) == 0 {
+		return nil, cov, nil
 	}
-	sort.Slice(creds, func(i, j int) bool {
-		if creds[i].key != creds[j].key {
-			return creds[i].key < creds[j].key
-		}
-		return creds[i].slot < creds[j].slot
-	})
+	if err := s.stepLists(ctx, orgID, seat, sources, steps); err != nil {
+		return nil, cov, err
+	}
+	if len(sources) == 0 {
+		return steps, cov, nil
+	}
+	marks, err := s.hostMarks(ctx, orgID, sources, hosts, steps)
+	if err != nil {
+		return nil, cov, err
+	}
+	for i := range steps {
+		steps[i].Reported = stepReported(steps[i].At, marks(i))
+	}
+	return steps, cov, nil
+}
 
-	for _, c := range creds {
-		tot := ExternalMeterTotal{SecretKey: c.key, SecretSlot: c.slot, Sources: append([]string{}, byCred[c]...)}
-		sort.Strings(tot.Sources)
-		reported := func(h time.Time) bool {
-			for _, name := range tot.Sources {
-				if sp, ok := spans[name]; ok && !h.Before(sp.from) && !sp.to.Before(h) {
-					return true
-				}
+// spanArrays are the steps' spans as two arrays for unnest.
+func spanArrays(steps []shareStep) ([]time.Time, []time.Time) {
+	from, to := make([]time.Time, len(steps)), make([]time.Time, len(steps))
+	for i, st := range steps {
+		from[i], to[i] = st.From, st.At
+	}
+	return from, to
+}
+
+// externalStepUSD prices one group of outside calls of one model for L_out:
+// F1 where the list knows the model, else the calls' reported_usd (the
+// counterpart of the engine's figure in L_cov). ok is false for calls with
+// neither: they are counted as unpriced.
+func externalStepUSD(model string, t ModelTokens, hasReported bool, reported float64) (float64, bool) {
+	if usd := ExternalListUSD(model, t); usd != nil {
+		return *usd, true
+	}
+	if hasReported {
+		return reported, true
+	}
+	return 0, false
+}
+
+// stepLists fills each step's L_out (the linked sources' calls with ts in
+// its span) and L_cov with the agents' parts (the seat's lines with
+// created_at in its span). The spans are disjoint, so a call or line counts
+// in one step at most.
+func (s *Store) stepLists(ctx context.Context, orgID uuid.UUID, seat meterSeat, sources []string, steps []shareStep) error {
+	from, to := spanArrays(steps)
+	if len(sources) > 0 {
+		rows, err := s.pool.Query(ctx, `SELECT s.i, e.model, e.reported_usd IS NOT NULL, count(*),
+			SUM(e.input), SUM(e.output), SUM(e.cache_read), SUM(e.cache_write_5m), SUM(e.cache_write_1h),
+			COALESCE(SUM(e.reported_usd), 0)::float8
+			FROM unnest($2::timestamptz[], $3::timestamptz[]) WITH ORDINALITY AS s(f, t, i)
+			JOIN external_usage e ON e.org_id = $1 AND e.source = ANY($4) AND e.ts > s.f AND e.ts <= s.t
+			GROUP BY 1, 2, 3`, orgID, from, to, sources)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var (
+				i           int64
+				model       string
+				hasReported bool
+				calls       int64
+				t           ModelTokens
+				reported    float64
+			)
+			if err := rows.Scan(&i, &model, &hasReported, &calls, &t.Input, &t.Output, &t.CacheRead,
+				&t.CacheWrite5m, &t.CacheWrite1h, &reported); err != nil {
+				rows.Close()
+				return err
 			}
+			st := &steps[i-1]
+			if usd, ok := externalStepUSD(model, t, hasReported, reported); ok {
+				st.LOut += usd
+			} else {
+				st.UnpricedCalls += calls
+				st.UnpricedTokens += t.Input + t.Output + t.CacheRead + t.CacheWrite5m + t.CacheWrite1h
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+	}
+
+	rows, err := s.pool.Query(ctx, `SELECT s.i, m.agent_id, m.model,
+		SUM(m.input_tokens), SUM(m.output_tokens), SUM(m.cache_read_tokens), SUM(m.cache_write_5m_tokens),
+		SUM(m.cache_write_1h_tokens), SUM(m.web_search_requests), SUM(m.engine_usd)::float8
+		FROM unnest($2::timestamptz[], $3::timestamptz[]) WITH ORDINALITY AS s(f, t, i)
+		JOIN model_usage m ON m.org_id = $1 AND m.secret_key = $4 AND m.secret_slot = $5
+			AND m.created_at > s.f AND m.created_at <= s.t
+		GROUP BY 1, 2, 3`, orgID, from, to, seat.key, seat.slot)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			i      int64
+			agent  uuid.UUID
+			model  string
+			t      ModelTokens
+			engine float64
+		)
+		if err := rows.Scan(&i, &agent, &model, &t.Input, &t.Output, &t.CacheRead, &t.CacheWrite5m,
+			&t.CacheWrite1h, &t.WebSearches, &engine); err != nil {
+			return err
+		}
+		usd := engine
+		if pr, ok := ListPrice(model); ok {
+			usd = pr.Cost(t)
+		}
+		st := &steps[i-1]
+		st.LCov += usd
+		if st.Agents == nil {
+			st.Agents = map[uuid.UUID]float64{}
+		}
+		st.Agents[agent] += usd
+	}
+	return rows.Err()
+}
+
+// unmeteredList is L_out of the linked calls in the window that lie in no
+// step's span: the steps' spans are contiguous, from the first step's
+// previous reading through the last reading, so it is every call outside
+// that stretch.
+func (s *Store) unmeteredList(ctx context.Context, orgID uuid.UUID, since time.Time, sources []string, steps []shareStep) (float64, error) {
+	if len(sources) == 0 {
+		return 0, nil
+	}
+	// No step: an empty stretch, (since, since].
+	from, to := since, since
+	if len(steps) > 0 {
+		from, to = steps[0].From, steps[len(steps)-1].At
+	}
+	rows, err := s.pool.Query(ctx, `SELECT model, reported_usd IS NOT NULL,
+		SUM(input), SUM(output), SUM(cache_read), SUM(cache_write_5m), SUM(cache_write_1h),
+		COALESCE(SUM(reported_usd), 0)::float8
+		FROM external_usage
+		WHERE org_id = $1 AND source = ANY($2) AND ts >= $3 AND NOT (ts > $4 AND ts <= $5)
+		GROUP BY 1, 2`, orgID, sources, since, from, to)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	var usd float64
+	for rows.Next() {
+		var (
+			model       string
+			hasReported bool
+			t           ModelTokens
+			reported    float64
+		)
+		if err := rows.Scan(&model, &hasReported, &t.Input, &t.Output, &t.CacheRead, &t.CacheWrite5m,
+			&t.CacheWrite1h, &reported); err != nil {
+			return 0, err
+		}
+		if v, ok := externalStepUSD(model, t, hasReported, reported); ok {
+			usd += v
+		}
+	}
+	return usd, rows.Err()
+}
+
+// externalActiveFor is how long a machine counts as active after a push or
+// a call: one that has done neither in the week before a reading is not
+// waited for (an old laptop must not hold every later reading unsplit).
+const externalActiveFor = 7 * 24 * time.Hour
+
+// hostMark is what stepReported knows of one machine at one reading.
+type hostMark struct {
+	// ReportedThrough: the machine's watermark; nil when it never sent one.
+	ReportedThrough *time.Time
+	// PushedAt: its latest push. The table keeps only the latest, so a
+	// machine that pushed after the reading without reaching it counts as
+	// active: it is alive and has not reported the reading.
+	PushedAt time.Time
+	// LastCall: its latest call at or before the reading; nil without one.
+	LastCall *time.Time
+}
+
+// stepReported says whether the outside calls of a step's span were all
+// sent: every active machine of the linked sources has reported through the
+// reading. Active: it pushed, or had a call, in the week before the reading
+// (externalActiveFor). Without an active machine, or without watermarks,
+// nothing is reported: a step is split only on what the uploader says it
+// has sent, never on the absence of calls.
+func stepReported(at time.Time, hosts []hostMark) bool {
+	since := at.Add(-externalActiveFor)
+	active := false
+	for _, h := range hosts {
+		if !h.PushedAt.After(since) && (h.LastCall == nil || !h.LastCall.After(since)) {
+			continue
+		}
+		active = true
+		if h.ReportedThrough == nil || h.ReportedThrough.Before(at) {
 			return false
 		}
-		hours := map[time.Time]*ExternalMeterHour{}
-		resets := map[time.Time]int{}
-		hour := func(h time.Time) *ExternalMeterHour {
-			eh, ok := hours[h]
-			if !ok {
-				eh = &ExternalMeterHour{Hour: h, SecretKey: c.key, SecretSlot: c.slot, OutsideReported: reported(h)}
-				hours[h] = eh
-			}
-			return eh
-		}
-		if cov, ok := pickCoverage(coverage, c.key, c.slot); ok {
-			tot.MeterSource = cov.Source
-			for _, st := range steps {
-				if st.SecretKey != c.key || st.SecretSlot != c.slot || st.Source != cov.Source || st.WindowKind != cov.WindowKind {
-					continue
-				}
-				eh := hour(st.Period.UTC())
-				eh.Points += st.Points
-				resets[eh.Hour] += st.Resets
-				if r := stepReal(st); r != nil {
-					eh.RealUSD = addUSD(eh.RealUSD, *r)
-				}
-			}
-		}
-		for k, v := range lOut {
-			if k.key == c.key && k.slot == c.slot && v > 0 {
-				hour(k.hour).ExternalListUSD = v
-			}
-		}
-		order := make([]*ExternalMeterHour, 0, len(hours))
-		for _, eh := range hours {
-			order = append(order, eh)
-		}
-		sort.Slice(order, func(i, j int) bool { return order[i].Hour.Before(order[j].Hour) })
-		// A run of split readings telescopes to its last reading minus the
-		// one before it: ±1 point, whatever its length. It breaks where a
-		// reading falls in an unsplit hour, and a reset starts another.
-		inRun := false
-		for _, eh := range order {
-			eh.CoveyListUSD = lCov[credHour{eh.Hour, c.key, c.slot}]
-			if eh.RealUSD == nil {
-				tot.HoursWithoutReading++
-				tot.UnmeteredListUSD += eh.ExternalListUSD
-				continue
-			}
-			tot.HoursWithReading++
-			tot.RealUSD += *eh.RealUSD
-			tot.Points += eh.Points
-			if !eh.OutsideReported {
-				tot.UnsplitHours++
-				tot.UnsplitRealUSD += *eh.RealUSD
-				inRun = false
-				continue
-			}
-			share := 0.0
-			if eh.ExternalListUSD > 0 {
-				share = *eh.RealUSD * eh.ExternalListUSD / (eh.ExternalListUSD + eh.CoveyListUSD)
-			}
-			rest := *eh.RealUSD - share
-			eh.ExternalRealUSD, eh.CoveyRealUSD = &share, &rest
-			tot.ExternalRealUSD += share
-			tot.CoveyRealUSD += rest
-			tot.SplitExternalListUSD += eh.ExternalListUSD
-			tot.SplitCoveyListUSD += eh.CoveyListUSD
-			tot.SplitPoints += eh.Points
-			if !inRun {
-				tot.SplitRuns++
-				inRun = true
-			}
-			tot.SplitRuns += resets[eh.Hour]
-			if eh.Points > 0 {
-				tot.PointRate = math.Max(tot.PointRate, *eh.RealUSD/eh.Points)
-			}
-		}
-		if split := tot.ExternalRealUSD + tot.CoveyRealUSD; split > 0 {
-			sh := tot.ExternalRealUSD / split
-			tot.Share = &sh
-		}
-		for _, eh := range order {
-			out.Hours = append(out.Hours, *eh)
-		}
-		out.Credentials = append(out.Credentials, tot)
-		out.RealUSD += tot.RealUSD
-		out.ExternalRealUSD += tot.ExternalRealUSD
-		out.CoveyRealUSD += tot.CoveyRealUSD
-		out.UnsplitRealUSD += tot.UnsplitRealUSD
-		out.SplitExternalListUSD += tot.SplitExternalListUSD
-		out.SplitCoveyListUSD += tot.SplitCoveyListUSD
-		out.SplitPoints += tot.SplitPoints
-		out.SplitRuns += tot.SplitRuns
-		out.PointRate = math.Max(out.PointRate, tot.PointRate)
-		out.UnsplitHours += tot.UnsplitHours
-		out.UnmeteredListUSD += tot.UnmeteredListUSD
 	}
+	return active
+}
+
+// hostMarks returns, per step, the marks of the linked sources' machines. A
+// machine's calls are read only from a week before the first step on, where
+// they can make it active; its latest one before a reading is found by
+// binary search.
+func (s *Store) hostMarks(ctx context.Context, orgID uuid.UUID, sources []string, hosts map[string][]ExternalHost,
+	steps []shareStep) (func(i int) []hostMark, error) {
+	type hostKey struct{ source, host string }
+	var keys []hostKey
+	known := map[hostKey]ExternalHost{}
+	for _, src := range sources {
+		for _, h := range hosts[src] {
+			k := hostKey{src, h.Host}
+			keys = append(keys, k)
+			known[k] = h
+		}
+	}
+	calls := map[hostKey][]time.Time{}
+	rows, err := s.pool.Query(ctx, `SELECT source, host, ts FROM external_usage
+		WHERE org_id = $1 AND source = ANY($2) AND ts > $3 AND ts <= $4
+		ORDER BY source, host, ts`, orgID, sources, steps[0].At.Add(-externalActiveFor), steps[len(steps)-1].At)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			k  hostKey
+			ts time.Time
+		)
+		if err := rows.Scan(&k.source, &k.host, &ts); err != nil {
+			return nil, err
+		}
+		if _, ok := known[k]; !ok {
+			// Rows of a host the hosts table does not know (uploaded before
+			// it existed): active by its calls, and with no watermark.
+			known[k] = ExternalHost{Host: k.host}
+			keys = append(keys, k)
+		}
+		calls[k] = append(calls[k], ts.UTC())
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return func(i int) []hostMark {
+		at := steps[i].At
+		marks := make([]hostMark, 0, len(keys))
+		for _, k := range keys {
+			h := known[k]
+			m := hostMark{ReportedThrough: h.ReportedThrough, PushedAt: h.PushedAt}
+			cs := calls[k]
+			if n := sort.Search(len(cs), func(j int) bool { return cs[j].After(at) }); n > 0 {
+				last := cs[n-1]
+				m.LastCall = &last
+			}
+			marks = append(marks, m)
+		}
+		return marks
+	}, nil
+}
+
+// splitRun is one run of split steps of a seat, for the ranges: per step
+// with lists, its outside share and its price per point.
+type splitRun struct{ share, rate []float64 }
+
+// tv is ½·TV of f over the run: ½(f_1 + Σ|f_{k+1} − f_k| + f_n), the bound
+// of the error the readings' whole percents leave in a part whose
+// coefficient at step k is f_k (#126 finding 19).
+func (r splitRun) tv(f func(k int) float64) float64 {
+	n := len(r.share)
+	if n == 0 {
+		return 0
+	}
+	sum := math.Abs(f(0)) + math.Abs(f(n-1))
+	for k := 0; k+1 < n; k++ {
+		sum += math.Abs(f(k+1) - f(k))
+	}
+	return sum / 2
+}
+
+// splitSeat is F3 for one seat over its steps, in order: each step split or
+// not, with the seat's sums, its runs' ranges and its agents.
+//
+// A step that moved at no plan price is out of the dent whole (unpriced). A
+// priced step is split when it was reported and L_out + L_cov > 0. A
+// reported step with no list on either side that moved the meter is not
+// split: neither covey nor a linked source made that movement. One that did
+// not move either (R = 0, both lists 0: an idle reading) has nothing to
+// split; it neither starts nor ends a run, so the runs' ranges see through
+// it, as the meter, unmoved, does. Any other unsplit step ends the run, and
+// a reset starts a new one.
+func splitSeat(seat meterSeat, sources []string, steps []shareStep) (ExternalMeterTotal, []ExternalMeterStep) {
+	tot := ExternalMeterTotal{SecretKey: seat.key, SecretSlot: seat.slot, Sources: append([]string{}, sources...),
+		Agents: []ExternalMeterAgent{}}
+	out := make([]ExternalMeterStep, 0, len(steps))
+	agents := map[uuid.UUID]*ExternalMeterAgent{}
+	agent := func(id uuid.UUID) *ExternalMeterAgent {
+		a, ok := agents[id]
+		if !ok {
+			a = &ExternalMeterAgent{AgentID: id}
+			agents[id] = a
+		}
+		return a
+	}
+	hours := map[time.Time]bool{}
+	rates := map[float64]bool{}
+	var run splitRun
+	endRun := func() {
+		if len(run.share) == 0 {
+			return
+		}
+		tot.SplitRuns++
+		one := func(int) float64 { return 1 }
+		tot.SplitSlackPoints += run.tv(one)
+		tot.SplitSlackUSD += run.tv(func(k int) float64 { return run.rate[k] })
+		tot.SplitExternalSlackPoints += run.tv(func(k int) float64 { return run.share[k] })
+		tot.SplitExternalSlackUSD += run.tv(func(k int) float64 { return run.share[k] * run.rate[k] })
+		tot.SplitCoveySlackPoints += run.tv(func(k int) float64 { return 1 - run.share[k] })
+		tot.SplitCoveySlackUSD += run.tv(func(k int) float64 { return (1 - run.share[k]) * run.rate[k] })
+		run = splitRun{}
+	}
+	lastRate := 0.0
+	for _, in := range steps {
+		st := ExternalMeterStep{At: in.At, From: in.From, SecretKey: seat.key, SecretSlot: seat.slot,
+			Points: in.Points, Reset: in.Reset, ExternalListUSD: in.LOut, CoveyListUSD: in.LCov, Reported: in.Reported}
+		tot.StepCount++
+		hours[in.At.Truncate(time.Hour)] = true
+		tot.UnpricedCalls += in.UnpricedCalls
+		tot.UnpricedTokens += in.UnpricedTokens
+		if in.Reset {
+			endRun()
+		}
+		unsplitList := func() {
+			for id, l := range in.Agents {
+				agent(id).UnsplitListUSD += l
+			}
+		}
+		if in.Points != 0 && in.Rate == nil {
+			st.Reason = SplitUnpriced
+			tot.UnpricedSteps++
+			tot.UnpricedPoints += in.Points
+			unsplitList()
+			endRun()
+			out = append(out, st)
+			continue
+		}
+		r := 0.0
+		if in.Rate != nil {
+			r = in.Points * *in.Rate
+			lastRate = *in.Rate
+			if in.Points != 0 {
+				rates[*in.Rate] = true
+				tot.PointRate = math.Max(tot.PointRate, *in.Rate)
+			}
+		}
+		st.RealUSD = &r
+		tot.RealUSD += r
+		tot.Points += in.Points
+		lists := in.LOut + in.LCov
+		switch {
+		case !in.Reported || (lists == 0 && r != 0):
+			st.Reason = SplitNotReported
+			if in.Reported {
+				st.Reason = SplitNoReportedCall
+			}
+			st.UnsplitRealUSD = r
+			tot.UnsplitRealUSD += r
+			if in.Points != 0 {
+				tot.UnsplitSteps++
+			}
+			unsplitList()
+			endRun()
+		default:
+			share := 0.0
+			if lists > 0 {
+				share = in.LOut / lists
+			}
+			rOut := r * share
+			rCov := r - rOut
+			st.Split, st.ExternalRealUSD, st.CoveyRealUSD = true, &rOut, &rCov
+			tot.SplitSteps++
+			tot.ExternalRealUSD += rOut
+			tot.CoveyRealUSD += rCov
+			tot.SplitExternalListUSD += in.LOut
+			tot.SplitCoveyListUSD += in.LCov
+			tot.SplitPoints += in.Points
+			tot.SplitExternalPoints += in.Points * share
+			tot.SplitCoveyPoints += in.Points * (1 - share)
+			for id, l := range in.Agents {
+				a := agent(id)
+				a.SplitListUSD += l
+				if in.LCov > 0 {
+					a.RealUSD += rCov * l / in.LCov
+				}
+			}
+			if lists > 0 {
+				// The price of a reading that did not move is the plan's
+				// all the same; without one, the run's last.
+				rate := lastRate
+				if in.Rate != nil {
+					rate = *in.Rate
+				}
+				run.share = append(run.share, share)
+				run.rate = append(run.rate, rate)
+			}
+		}
+		out = append(out, st)
+	}
+	endRun()
+	tot.PointRateMixed = len(rates) > 1
+	tot.HoursWithReading = len(hours)
+	if split := tot.ExternalRealUSD + tot.CoveyRealUSD; split > 0 {
+		sh := tot.ExternalRealUSD / split
+		tot.Share = &sh
+	}
+	for _, a := range agents {
+		tot.Agents = append(tot.Agents, *a)
+	}
+	sort.Slice(tot.Agents, func(i, j int) bool {
+		if tot.Agents[i].SplitListUSD != tot.Agents[j].SplitListUSD {
+			return tot.Agents[i].SplitListUSD > tot.Agents[j].SplitListUSD
+		}
+		return tot.Agents[i].AgentID.String() < tot.Agents[j].AgentID.String()
+	})
+	return tot, out
+}
+
+// meterSums puts the seats together: the steps in order, the hours they are
+// placed in, and the whole. The slack in points is summed as it is; it is a
+// figure for the whole only while every seat moved at one price
+// (PointRateMixed false), the dollars always are.
+func meterSums(totals []ExternalMeterTotal, steps []ExternalMeterStep) ExternalMeter {
+	out := emptyMeter()
+	rates := map[float64]bool{}
+	for _, t := range totals {
+		out.Credentials = append(out.Credentials, t)
+		a, b := &out.ExternalMeterSums, t.ExternalMeterSums
+		a.RealUSD += b.RealUSD
+		a.ExternalRealUSD += b.ExternalRealUSD
+		a.CoveyRealUSD += b.CoveyRealUSD
+		a.UnsplitRealUSD += b.UnsplitRealUSD
+		a.SplitExternalListUSD += b.SplitExternalListUSD
+		a.SplitCoveyListUSD += b.SplitCoveyListUSD
+		a.Points += b.Points
+		a.SplitPoints += b.SplitPoints
+		a.SplitExternalPoints += b.SplitExternalPoints
+		a.SplitCoveyPoints += b.SplitCoveyPoints
+		a.SplitRuns += b.SplitRuns
+		a.SplitSlackPoints += b.SplitSlackPoints
+		a.SplitSlackUSD += b.SplitSlackUSD
+		a.SplitExternalSlackPoints += b.SplitExternalSlackPoints
+		a.SplitExternalSlackUSD += b.SplitExternalSlackUSD
+		a.SplitCoveySlackPoints += b.SplitCoveySlackPoints
+		a.SplitCoveySlackUSD += b.SplitCoveySlackUSD
+		a.PointRate = math.Max(a.PointRate, b.PointRate)
+		a.PointRateMixed = a.PointRateMixed || b.PointRateMixed
+		if b.PointRate > 0 {
+			rates[b.PointRate] = true
+		}
+		a.StepCount += b.StepCount
+		a.SplitSteps += b.SplitSteps
+		a.UnsplitSteps += b.UnsplitSteps
+		a.UnpricedSteps += b.UnpricedSteps
+		a.UnpricedPoints += b.UnpricedPoints
+		a.UnpricedCalls += b.UnpricedCalls
+		a.UnpricedTokens += b.UnpricedTokens
+		a.UnmeteredListUSD += b.UnmeteredListUSD
+	}
+	out.PointRateMixed = out.PointRateMixed || len(rates) > 1
 	if split := out.ExternalRealUSD + out.CoveyRealUSD; split > 0 {
 		sh := out.ExternalRealUSD / split
 		out.Share = &sh
 	}
-	sort.SliceStable(out.Hours, func(i, j int) bool {
+
+	sort.SliceStable(steps, func(i, j int) bool {
+		a, b := steps[i], steps[j]
+		if !a.At.Equal(b.At) {
+			return a.At.Before(b.At)
+		}
+		if a.SecretKey != b.SecretKey {
+			return a.SecretKey < b.SecretKey
+		}
+		return a.SecretSlot < b.SecretSlot
+	})
+	out.Steps = append(out.Steps, steps...)
+	type hk struct {
+		h    time.Time
+		key  string
+		slot int
+	}
+	byHour := map[hk]*ExternalMeterHour{}
+	for _, st := range steps {
+		k := hk{st.At.Truncate(time.Hour), st.SecretKey, st.SecretSlot}
+		h, ok := byHour[k]
+		if !ok {
+			h = &ExternalMeterHour{Hour: k.h, SecretKey: k.key, SecretSlot: k.slot}
+			byHour[k] = h
+		}
+		h.Steps++
+		h.ExternalListUSD += st.ExternalListUSD
+		h.CoveyListUSD += st.CoveyListUSD
+		if st.RealUSD == nil {
+			h.UnpricedPoints += st.Points
+			continue
+		}
+		h.RealUSD = addUSD(h.RealUSD, *st.RealUSD)
+		h.Points += st.Points
+		h.UnsplitRealUSD += st.UnsplitRealUSD
+		if st.Split {
+			h.SplitSteps++
+			h.ExternalRealUSD += *st.ExternalRealUSD
+			h.CoveyRealUSD += *st.CoveyRealUSD
+		}
+	}
+	for _, h := range byHour {
+		out.Hours = append(out.Hours, *h)
+	}
+	sort.Slice(out.Hours, func(i, j int) bool {
 		a, b := out.Hours[i], out.Hours[j]
 		if !a.Hour.Equal(b.Hour) {
 			return a.Hour.Before(b.Hour)

@@ -831,6 +831,14 @@ export type CostCells = {
 /** A subscription credential named by its secret, as the meter readings name it. */
 export type MeterCredentialRef = { secret_key: string; secret_slot: number };
 
+/** One machine of an outside source: how far it has reported its calls. */
+export type ExternalHost = {
+  host: string;
+  /** Every call of the host up to here has been sent; null: it never said. */
+  reported_through: string | null;
+  pushed_at: string;
+};
+
 /** One outside source over the window (an operator's machine). */
 export type ExternalSource = {
   source: string;
@@ -845,6 +853,7 @@ export type ExternalSource = {
   unpriced_models: string[];
   first_at: string | null;
   last_at: string | null;
+  hosts: ExternalHost[];
 };
 
 /** One bucket × source × origin of the outside calls. */
@@ -863,59 +872,109 @@ export type ExternalCell = {
   unpriced_calls: number;
 };
 
-/** One UTC hour of one seat's meter, split by list-price share (F3). */
+/** One reading of a seat's meter, split over the span since the reading before it (F3). */
+export type ExternalMeterStep = {
+  at: string;
+  from: string;
+  secret_key: string;
+  secret_slot: number;
+  points: number;
+  reset: boolean;
+  /** The step's priced movement; null when no plan prices its points. */
+  real_usd: number | null;
+  external_list_usd: number;
+  covey_list_usd: number;
+  /** Every active machine of the linked sources has reported through the reading. */
+  reported: boolean;
+  /** Split: the two parts are set and add up to real_usd. Otherwise reason says why not. */
+  split: boolean;
+  reason?: "not_reported" | "moved_without_reported_call" | "unpriced";
+  external_real_usd: number | null;
+  covey_real_usd: number | null;
+  unsplit_real_usd: number;
+};
+
+/** One UTC hour of one seat: the sums of the steps placed in it. */
 export type ExternalMeterHour = {
   hour: string;
   secret_key: string;
   secret_slot: number;
-  /** The meter's priced movement in the hour; null without a reading. */
   real_usd: number | null;
   points: number;
-  /** A source linked to this meter reported the hour; without it the hour is not split. */
-  outside_reported: boolean;
   external_list_usd: number;
   covey_list_usd: number;
-  /** Null without a reading and in an hour the outside calls were not reported for. */
-  external_real_usd: number | null;
-  covey_real_usd: number | null;
+  external_real_usd: number;
+  covey_real_usd: number;
+  unsplit_real_usd: number;
+  steps: number;
+  split_steps: number;
+  unpriced_points: number;
 };
 
 /** The split's sums: per seat, and over every seat. */
 export type ExternalMeterSums = {
-  /** Σ real over the hours with a reading: the dent. The three parts below add up to it. */
+  /** Σ real over the priced steps: the dent. The three parts below add up to it. */
   real_usd: number;
   external_real_usd: number;
   covey_real_usd: number;
   unsplit_real_usd: number;
-  /** external_real_usd over the split hours' real cost; null without one. */
+  /** external_real_usd over the split steps' real cost; null without one. */
   share: number | null;
-  /** The list prices of the split hours, which the multiples divide. */
+  /** The list prices of the split steps, which the multiples divide. */
   split_external_list_usd: number;
   split_covey_list_usd: number;
+  /** The priced movement in points; a sum over seats only while point_rate_mixed is false. */
+  points: number;
   split_points: number;
-  /** Unbroken runs of split readings (and resets): each leaves ±1 point. */
+  split_external_points: number;
+  split_covey_points: number;
+  /** Runs of split steps; each leaves ±1 point of the whole. */
   split_runs: number;
-  /** The dearest price per point among the split hours. */
+  /** The ranges the whole percents leave: the whole's, and each part's (½·TV of its share per run). */
+  split_slack_points: number;
+  split_slack_usd: number;
+  split_external_slack_points: number;
+  split_external_slack_usd: number;
+  split_covey_slack_points: number;
+  split_covey_slack_usd: number;
+  /** The dearest price per point among the priced steps that moved; mixed: some moved at another. */
   point_rate: number;
-  unsplit_hours: number;
+  point_rate_mixed: boolean;
+  step_count: number;
+  split_steps: number;
+  unsplit_steps: number;
+  /** Steps that moved at no plan price: out of the dent, never $0. */
+  unpriced_steps: number;
+  unpriced_points: number;
+  /** Linked outside calls with neither a list price nor reported_usd: not in the split. */
+  unpriced_calls: number;
+  unpriced_tokens: number;
+  /** Outside list price after the seat's last reading: no real share yet. */
   unmetered_list_usd: number;
+};
+
+/** One agent's part of covey's share of a seat (the split steps only). */
+export type ExternalMeterAgent = {
+  agent_id: string;
+  split_list_usd: number;
+  real_usd: number;
+  unsplit_list_usd: number;
 };
 
 export type ExternalMeterTotal = ExternalMeterSums & {
   secret_key: string;
   secret_slot: number;
   meter_source: string;
-  /** The outside sources linked to this meter; none: every hour is unsplit. */
+  /** The outside sources linked to this meter; none: every step is unsplit. */
   sources: string[];
   hours_with_reading: number;
-  hours_without_reading: number;
-  points: number;
+  agents: ExternalMeterAgent[];
 };
 
 export type ExternalUsage = {
   sources: ExternalSource[];
   cells: ExternalCell[];
-  meter: ExternalMeterSums & { hours: ExternalMeterHour[]; credentials: ExternalMeterTotal[] };
+  meter: ExternalMeterSums & { steps: ExternalMeterStep[]; hours: ExternalMeterHour[]; credentials: ExternalMeterTotal[] };
 };
 
 /** One reading of the provider's meter, with the measured cost on its credential up to it. */
@@ -998,6 +1057,10 @@ export type BilledReport = {
   points: BilledPoint[] | null;
   window?: BilledWindow | null;
   sync: BillingSyncStatus;
+  /** Why points is empty: "bucket_below_source" when the bucket is finer than the bill. */
+  reason?: string;
+  /** At hour and 10hour: where the hourly bill rows begin; a 10-hour bucket before it is not complete. */
+  hourly_from?: string;
 };
 
 export type TokenDiff = { type: string; reported: number; billed: number; diff: number };

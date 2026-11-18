@@ -107,6 +107,15 @@ func TestExternalUsageUploadIsIdempotent(t *testing.T) {
 		t.Errorf("%d rows after the second upload, want 3", n)
 	}
 	after := cellsExternal(t, admin, "days=1&bucket=hour")
+	// The push itself is recorded (the host's pushed_at); the figures are not
+	// touched.
+	for _, e := range []*observability.ExternalUsage{&before, &after} {
+		for i := range e.Sources {
+			for j := range e.Sources[i].Hosts {
+				e.Sources[i].Hosts[j].PushedAt = time.Time{}
+			}
+		}
+	}
 	if a, b := mustJSON(t, before), mustJSON(t, after); a != b {
 		t.Errorf("a re-upload changed the figures:\nbefore %s\nafter  %s", a, b)
 	}
@@ -205,6 +214,11 @@ func TestExternalUsageValidationAndAccess(t *testing.T) {
 		{"more than 5,000 rows", extUpload("op", tooMany...), "at most 5000"},
 		{"no source", extUpload("", ok), "source is required"},
 		{"a source over 64 characters", extUpload(strings.Repeat("s", 65), ok), "at most 64"},
+		// Postgres refuses 0x00 in text: a 400, not a 500 at the insert.
+		{"a NUL in the host", extUpload("op", with("host", "lap\u0000top")), "host must not contain a NUL"},
+		{"a count above the bound", extUpload("op", with("input", int64(2_000_000_000))), "input must be at most"},
+		{"a watermark without a host", map[string]any{"source": "op", "rows": []any{},
+			"reported_through": map[string]any{"": now}}, "reported_through host is required"},
 	} {
 		resp := admin.do(http.MethodPost, externalPath, c.body)
 		body, _ := io.ReadAll(resp.Body)
@@ -213,8 +227,18 @@ func TestExternalUsageValidationAndAccess(t *testing.T) {
 			t.Errorf("%s: HTTP %d %s, want 400 with %q", c.name, resp.StatusCode, body, c.want)
 		}
 	}
-	if code, body := postRaw(t, admin, []byte(`{"source":"op","rows":[]} {"source":"x"}`)); code != http.StatusBadRequest {
-		t.Errorf("two objects: HTTP %d %s, want 400", code, body)
+	for _, raw := range []string{`{"source":"op","rows":[]} {"source":"x"}`, `{"source":"op","rows":[]}]`, `{"source":"op","rows":[]}}`} {
+		if code, body := postRaw(t, admin, []byte(raw)); code != http.StatusBadRequest {
+			t.Errorf("%s: HTTP %d %s, want 400", raw, code, body)
+		}
+	}
+	if code, body := postRaw(t, admin, []byte(`{"source":"op","rows":[]}`+"\n ")); code != http.StatusOK {
+		t.Errorf("one object and white space: HTTP %d %s, want 200", code, body)
+	}
+	if r := admin.do(http.MethodDelete, externalPath+"?source=a%00b", nil); r.StatusCode != http.StatusBadRequest {
+		t.Errorf("DELETE of a source with a NUL: HTTP %d, want 400", r.StatusCode)
+	} else {
+		r.Body.Close()
 	}
 	// Over 2 MiB: refused before anything is decoded.
 	huge := []byte(`{"source":"op","rows":[],"pad":"` + strings.Repeat("x", observability.ExternalMaxBodyBytes) + `"}`)
@@ -354,9 +378,8 @@ func TestExternalUsageMeterShare(t *testing.T) {
 			"valid_from": h1.Add(-48 * time.Hour)}, http.StatusOK)
 	perPoint := 200.0 * 12 / 52 / 100
 
-	// The baseline before the window, then +2 points in h1 and +1 in h2,
-	// and +1 in h4, after the last outside call: not split (#120, the
-	// headline).
+	// The baseline before the window, then +2 points at h1:40, +1 at h2:40
+	// and +1 at h4:40, each step over the span since the reading before it.
 	cred := observability.CredentialRef{RuntimeID: rt.ID, Ord: ord, SecretKey: "claude_code_oauth_token", Kind: "subscription"}
 	for _, r := range []struct {
 		at  time.Time
@@ -374,8 +397,9 @@ func TestExternalUsageMeterShare(t *testing.T) {
 	f.line(t, cred, h1.Add(10*time.Minute), 50_000)
 	f.line(t, cred, h2.Add(10*time.Minute), 100_000)
 
-	// Outside calls linked to the seat: $3 of output in h1, none in h2, and
-	// $5 in h3, an hour the meter was not read in.
+	// Outside calls linked to the seat: $3 of output in h1 and $5 in h3, an
+	// hour the meter was not read in: the h4:40 step's span holds it. The
+	// laptop has reported through h3:30 only, so that step is not split.
 	out := func(id string, at time.Time, usd float64) map[string]any {
 		r := extRow(id, at, "claude-opus-5-5", int64(usd*1e6/20))
 		r["input"], r["cache_read"], r["cache_write_1h"] = 0, 0, 0
@@ -383,6 +407,7 @@ func TestExternalUsageMeterShare(t *testing.T) {
 	}
 	up := extUpload("operator: home", out("a", h1.Add(5*time.Minute), 3), out("c", h3.Add(5*time.Minute), 5))
 	up["meter_credential"] = map[string]any{"secret_key": "claude_code_oauth_token", "secret_slot": 0}
+	up["reported_through"] = map[string]any{"laptop": h3.Add(30 * time.Minute)}
 	res := admin.expect(http.MethodPost, externalPath, up, http.StatusOK)
 	if mc, _ := res["meter_credential"].(map[string]any); mc["secret_key"] != "claude_code_oauth_token" {
 		t.Fatalf("the link was not stored: %v", res)
@@ -391,52 +416,82 @@ func TestExternalUsageMeterShare(t *testing.T) {
 	admin.expect(http.MethodPost, externalPath, extUpload("operator: work", out("w", h1.Add(5*time.Minute), 7)), http.StatusOK)
 
 	near := func(p *float64, want float64) bool { return p != nil && math.Abs(*p-want) < 1e-9 }
+	nearV := func(v, want float64) bool { return math.Abs(v-want) < 1e-9 }
+	r1, r2 := 2*perPoint, perPoint
 	var reference string
 	for _, bucket := range []string{"hour", "day", "10min", "10hour"} {
-		ext := cellsExternal(t, admin, "days=2&bucket="+bucket)
-		m := ext.Meter
-		byHour := map[time.Time]observability.ExternalMeterHour{}
-		for _, h := range m.Hours {
-			byHour[h.Hour.UTC()] = h
+		m := cellsExternal(t, admin, "days=2&bucket="+bucket).Meter
+		if len(m.Steps) != 3 {
+			t.Fatalf("%s: steps = %+v, want the three readings after the baseline", bucket, m.Steps)
 		}
-		r1, r2 := 2*perPoint, perPoint
-		if h := byHour[h1]; !near(h.RealUSD, r1) || !near(h.ExternalRealUSD, r1*3/4) || !near(h.CoveyRealUSD, r1/4) ||
-			math.Abs(h.ExternalListUSD-3) > 1e-9 || math.Abs(h.CoveyListUSD-1) > 1e-9 {
-			t.Errorf("%s: h1 = %+v, want R %v split 3:1", bucket, h, r1)
+		s1, s2, s3 := m.Steps[0], m.Steps[1], m.Steps[2]
+		if !s1.At.Equal(h1.Add(40*time.Minute)) || !s1.From.Equal(h1.Add(-30*time.Hour)) || !s1.Split ||
+			!near(s1.RealUSD, r1) || !near(s1.ExternalRealUSD, r1*3/4) || !near(s1.CoveyRealUSD, r1/4) ||
+			!nearV(s1.ExternalListUSD, 3) || !nearV(s1.CoveyListUSD, 1) {
+			t.Errorf("%s: step 1 = %+v, want R %v split 3:1 over (baseline, h1:40]", bucket, s1, r1)
 		}
-		if h := byHour[h2]; !near(h.RealUSD, r2) || !near(h.ExternalRealUSD, 0) || !near(h.CoveyRealUSD, r2) {
-			t.Errorf("%s: h2 = %+v, want R_out 0 and R_cov %v", bucket, h, r2)
+		if !s2.Split || !near(s2.ExternalRealUSD, 0) || !near(s2.CoveyRealUSD, r2) {
+			t.Errorf("%s: step 2 = %+v, want R_out 0 and R_cov %v", bucket, s2, r2)
 		}
-		if h, ok := byHour[h3]; !ok || h.RealUSD != nil || h.ExternalRealUSD != nil || h.ExternalListUSD != 5 {
-			t.Errorf("%s: h3 = %+v (present %v), want L_out 5 and no figure", bucket, h, ok)
+		// h4:40 lies after the laptop's watermark: not reported, not split,
+		// though its span holds h3's call.
+		if s3.Split || s3.Reported || s3.Reason != observability.SplitNotReported || !nearV(s3.UnsplitRealUSD, perPoint) ||
+			!nearV(s3.ExternalListUSD, 5) || s3.ExternalRealUSD != nil || s3.CoveyRealUSD != nil {
+			t.Errorf("%s: step 3 = %+v, want R %v unsplit with L_out 5", bucket, s3, perPoint)
 		}
-		// h4 lies after the source's last call: not reported, so not split.
-		if h := byHour[h4]; !near(h.RealUSD, perPoint) || h.OutsideReported || h.ExternalRealUSD != nil || h.CoveyRealUSD != nil {
-			t.Errorf("%s: h4 = %+v, want R %v and no split", bucket, h, perPoint)
+		if len(m.Hours) != 3 || !m.Hours[0].Hour.Equal(h1) || !m.Hours[2].Hour.Equal(h4) {
+			t.Errorf("%s: hours = %+v, want h1, h2, h4", bucket, m.Hours)
 		}
-		for _, h := range m.Hours {
-			if h.RealUSD != nil && h.OutsideReported && math.Abs(*h.ExternalRealUSD+*h.CoveyRealUSD-*h.RealUSD) > 1e-9 {
-				t.Errorf("%s: %v: R_out + R_cov != R (%+v)", bucket, h.Hour, h)
-			}
-		}
-		if math.Abs(m.RealUSD-(r1+r2+perPoint)) > 1e-9 || math.Abs(m.ExternalRealUSD-r1*3/4) > 1e-9 ||
-			math.Abs(m.CoveyRealUSD-(r1/4+r2)) > 1e-9 || math.Abs(m.UnsplitRealUSD-perPoint) > 1e-9 ||
-			!near(m.Share, r1*3/4/(r1+r2)) || m.UnmeteredListUSD != 5 {
+		if !nearV(m.RealUSD, r1+r2+perPoint) || !nearV(m.ExternalRealUSD, r1*3/4) || !nearV(m.CoveyRealUSD, r1/4+r2) ||
+			!nearV(m.UnsplitRealUSD, perPoint) || !near(m.Share, r1*3/4/(r1+r2)) || m.UnmeteredListUSD != 0 {
 			t.Errorf("%s: totals real %v outside %v covey %v unsplit %v share %v unmetered %v", bucket,
 				m.RealUSD, m.ExternalRealUSD, m.CoveyRealUSD, m.UnsplitRealUSD, m.Share, m.UnmeteredListUSD)
 		}
-		if m.SplitExternalListUSD != 3 || math.Abs(m.SplitCoveyListUSD-3) > 1e-9 || m.SplitPoints != 3 || m.SplitRuns != 1 {
+		if m.SplitExternalListUSD != 3 || !nearV(m.SplitCoveyListUSD, 3) || m.SplitPoints != 3 || m.SplitRuns != 1 {
 			t.Errorf("%s: split list %v / %v, points %v, runs %d; want 3 / 3, 3, 1", bucket,
 				m.SplitExternalListUSD, m.SplitCoveyListUSD, m.SplitPoints, m.SplitRuns)
 		}
 		if len(m.Credentials) != 1 || strings.Join(m.Credentials[0].Sources, ",") != "operator: home" {
 			t.Errorf("%s: credentials = %+v, want the seat with the home source only", bucket, m.Credentials)
 		}
+		if a := m.Credentials[0].Agents; len(a) != 1 || a[0].AgentID != agent.ID || !nearV(a[0].RealUSD, m.CoveyRealUSD) ||
+			!nearV(a[0].SplitListUSD, 3) {
+			t.Errorf("%s: agents = %+v, want the one agent with all of covey's part", bucket, a)
+		}
 		if reference == "" {
 			reference = mustJSON(t, m)
 		} else if got := mustJSON(t, m); got != reference {
 			t.Errorf("the split at %s differs from the hourly one:\n%s\n%s", bucket, got, reference)
 		}
+	}
+
+	// The watermark is clamped to the push and never moves back. An empty
+	// push through now reports the last step: its $5 of outside calls take
+	// all of R, there being no covey line in its span.
+	now := time.Now().UTC()
+	push := func(at time.Time) []any {
+		t.Helper()
+		up := extUpload("operator: home")
+		up["reported_through"] = map[string]any{"laptop": at}
+		hosts, _ := admin.expect(http.MethodPost, externalPath, up, http.StatusOK)["hosts"].([]any)
+		return hosts
+	}
+	hosts := push(now.Add(time.Hour))
+	h, _ := hosts[0].(map[string]any)
+	stored, _ := time.Parse(time.RFC3339Nano, fmt.Sprint(h["reported_through"]))
+	if len(hosts) != 1 || h["host"] != "laptop" || stored.After(time.Now()) || stored.Before(now.Add(-time.Second)) {
+		t.Errorf("a watermark an hour ahead: hosts %v, want it clamped to the push", hosts)
+	}
+	if h, _ := push(h1)[0].(map[string]any); fmt.Sprint(h["reported_through"]) != stored.Format(time.RFC3339Nano) {
+		t.Errorf("an older watermark moved it back: %v, want %v", h["reported_through"], stored)
+	}
+	m := cellsExternal(t, admin, "days=2&bucket=hour").Meter
+	if s3 := m.Steps[2]; !s3.Split || !near(s3.ExternalRealUSD, perPoint) || !near(s3.CoveyRealUSD, 0) || m.UnsplitRealUSD != 0 {
+		t.Errorf("after the push: step 3 = %+v, unsplit %v; want R_out %v", s3, m.UnsplitRealUSD, perPoint)
+	}
+	src := cellsExternal(t, admin, "days=2&bucket=hour").Sources
+	if len(src) != 2 || len(src[0].Hosts) != 1 || src[0].Hosts[0].ReportedThrough == nil {
+		t.Errorf("sources = %+v, want the home source's laptop with its watermark", src)
 	}
 
 	// The link must name a subscription credential of the organisation.
@@ -538,6 +593,7 @@ func TestExternalUsageLeavesTheAgentsFiguresAlone(t *testing.T) {
 	rows = append(rows, extRow("unknown", h, "claude-sonnet-5-7", 1000))
 	up := extUpload("operator: home", rows...)
 	up["meter_credential"] = map[string]any{"secret_key": "claude_code_oauth_token", "secret_slot": 0}
+	up["reported_through"] = map[string]any{"laptop": time.Now()}
 	admin.expect(http.MethodPost, externalPath, up, http.StatusOK)
 
 	after := snapshot()
@@ -719,5 +775,171 @@ func TestCostBucketsTenMinutesAndTenHours(t *testing.T) {
 		if billed := admin.expect(http.MethodGet, "/api/v1/cost/billed?days=2&bucket="+b, nil, http.StatusOK); billed["reason"] != nil {
 			t.Errorf("billed at %s carries a reason: %v", b, billed["reason"])
 		}
+	}
+}
+
+// #126 round 1, finding 1 and cost-controller's part A findings: a step is
+// split over its own reading span, so an outside session that moved the
+// meter while covey was idle is in the step of the next reading, not lost
+// to covey's line beside it. Outside calls of a model the list does not
+// know count at their reported_usd, and the ones with neither price are
+// counted; covey's line of such a model counts at the engine's figure.
+func TestExternalUsageSplitsAReadingOverItsSpan(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	admin := login(t, s, "admin@test.local", "admin-passwort")
+	agent := s.newSupportAgent("spanne")
+	rt, err := s.runtimes.Create(ctx, s.orgID, "claude-code", "Claude", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ord := s.seat(t, rt.ID, daemon.CredSubscription, "claude_code_oauth_token", "sitz", "A")
+	base := time.Now().UTC().Truncate(time.Hour).Add(-6 * time.Hour)
+	admin.expect(http.MethodPut, fmt.Sprintf("/api/v1/runtime-instances/%s/credentials/%d/plan", rt.ID, ord),
+		map[string]any{"plan_name": "Max", "amount": 200, "currency": "USD", "period": "month", "tax_basis": "net",
+			"valid_from": base.Add(-48 * time.Hour)}, http.StatusOK)
+	perPoint := 200.0 * 12 / 52 / 100
+	cred := observability.CredentialRef{RuntimeID: rt.ID, Ord: ord, SecretKey: "claude_code_oauth_token", Kind: "subscription"}
+
+	// The meter is read at :10 (10 %), then not again until 2:10 (20 %),
+	// during covey's next run.
+	for _, r := range []struct {
+		at  time.Time
+		pct float64
+	}{{base.Add(10 * time.Minute), 10}, {base.Add(2*time.Hour + 10*time.Minute), 20}} {
+		if err := s.obs.AddUsageReading(ctx, s.orgID, observability.MeterReading{Credential: cred,
+			Supported: true, WindowPercent: -1, WeekPercent: r.pct, FetchedAt: r.at}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// $50 of Opus output outside covey between 1:00 and 1:49, in the hour
+	// no reading falls in; an unknown model's call priced by Claude Code at
+	// $0.50, and one with no price at all.
+	var rows []map[string]any
+	for i, min := range []int{60, 70, 80, 90, 109} {
+		r := extRow(fmt.Sprintf("o%d", i), base.Add(time.Duration(min)*time.Minute), "claude-opus-5-5", 500_000)
+		r["input"], r["cache_read"], r["cache_write_1h"] = 0, 0, 0
+		rows = append(rows, r)
+	}
+	unknown := extRow("u-priced", base.Add(95*time.Minute), "claude-sonnet-5-7", 1000)
+	unknown["reported_usd"] = 0.5
+	rows = append(rows, unknown, extRow("u-bare", base.Add(100*time.Minute), "claude-sonnet-5-7", 1000))
+	up := extUpload("operator: home", rows...)
+	up["meter_credential"] = map[string]any{"secret_key": "claude_code_oauth_token", "secret_slot": 0}
+	up["reported_through"] = map[string]any{"laptop": base.Add(2*time.Hour + 30*time.Minute)}
+	admin.expect(http.MethodPost, externalPath, up, http.StatusOK)
+
+	// covey's run at 2:05: $0.10 of Opus output, and $0.40 of a model the
+	// list does not know, at the engine's figure.
+	f := billingFixture{s: s, ctx: ctx, agent: agent.ID, org: s.orgID}
+	f.line(t, cred, base.Add(2*time.Hour+5*time.Minute), 5_000)
+	task := uuid.New()
+	line := fmt.Sprintf(`{"type":"result","session_id":"s-%s","modelUsage":{"claude-sonnet-5-7":{"costUSD":0.4,"outputTokens":1000}}}`, task)
+	if err := s.obs.RecordRuntime(ctx, s.orgID, agent.ID, &task, cred, json.RawMessage(line)); err != nil {
+		t.Fatal(err)
+	}
+	f.exec(t, `UPDATE model_usage SET created_at = $1 WHERE task_id = $2`, base.Add(2*time.Hour+6*time.Minute), task)
+
+	m := cellsExternal(t, admin, "days=1&bucket=hour").Meter
+	r := 10 * perPoint
+	lOut, lCov := 50.5, 0.5
+	if len(m.Steps) != 1 || len(m.Hours) != 1 {
+		t.Fatalf("steps %+v hours %+v, want the one step at 2:10", m.Steps, m.Hours)
+	}
+	st, h := m.Steps[0], m.Hours[0]
+	near := func(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
+	if !st.Split || !near(st.ExternalListUSD, lOut) || !near(st.CoveyListUSD, lCov) ||
+		!near(*st.ExternalRealUSD, r*lOut/(lOut+lCov)) || !near(*st.CoveyRealUSD, r*lCov/(lOut+lCov)) {
+		t.Errorf("the step = %+v, want L_out %v, L_cov %v and R %v split by them", st, lOut, lCov, r)
+	}
+	if !h.Hour.Equal(base.Add(2*time.Hour)) || !near(h.ExternalRealUSD, r*lOut/(lOut+lCov)) || !near(h.CoveyListUSD, lCov) {
+		t.Errorf("hour = %+v, want the step's split at 2:00", h)
+	}
+	if m.UnpricedCalls != 1 || m.UnpricedTokens != 2060 || m.Credentials[0].UnpricedCalls != 1 {
+		t.Errorf("unpriced calls %d (%d tokens), seat %d; want the bare call, 2060 tokens", m.UnpricedCalls,
+			m.UnpricedTokens, m.Credentials[0].UnpricedCalls)
+	}
+	// The cells keep the unknown model's calls without a list price.
+	for _, src := range cellsExternal(t, admin, "days=1&bucket=hour").Sources {
+		if src.UnpricedCalls != 2 || src.ListUSD == nil || !near(*src.ListUSD, 50) {
+			t.Errorf("source %+v, want list $50 and 2 unpriced calls", src)
+		}
+	}
+}
+
+// #126 round 1, finding 2: counts are bounded per call, so the cost page's
+// sums stay inside int64 — two rows at the bound in one cell read back with
+// 200, not a 500 for the whole organisation. Finding 6: 10-minute buckets
+// reach back two days at most, whatever ?days= says.
+func TestExternalUsageBoundsAndTenMinuteReach(t *testing.T) {
+	s := newStack(t)
+	admin := login(t, s, "admin@test.local", "admin-passwort")
+	at := time.Now().Add(-time.Hour)
+	big := func(id string) map[string]any {
+		r := extRow(id, at, "claude-opus-5-5", 1_000_000_000)
+		for _, k := range []string{"input", "cache_read", "cache_write_5m", "cache_write_1h"} {
+			r[k] = 1_000_000_000
+		}
+		return r
+	}
+	admin.expect(http.MethodPost, externalPath, extUpload("op", big("b1"), big("b2")), http.StatusOK)
+	ext := cellsExternal(t, admin, "days=1&bucket=hour")
+	if len(ext.Cells) != 1 || ext.Cells[0].Tokens["input"] != 2_000_000_000 {
+		t.Errorf("cells = %+v, want one cell of both rows", ext.Cells)
+	}
+
+	old := extRow("old", time.Now().Add(-72*time.Hour), "claude-opus-5-5", 10)
+	admin.expect(http.MethodPost, externalPath, extUpload("op", old), http.StatusOK)
+	if n := len(cellsExternal(t, admin, "days=365&bucket=hour").Cells); n != 2 {
+		t.Errorf("hourly cells over a year: %d, want 2", n)
+	}
+	if c := cellsExternal(t, admin, "days=365&bucket=10min").Cells; len(c) != 1 || c[0].Period.Before(time.Now().Add(-49*time.Hour)) {
+		t.Errorf("10-minute cells over a year: %+v, want the last two days only", c)
+	}
+}
+
+// #126 round 1, finding 3: the bill at 10hour reads the hourly rows only.
+// It says where they begin, and a 10-hour bucket that starts before them
+// holds only some of its hours: not complete.
+func TestBilledTenHourSaysWhereTheHourlyRowsBegin(t *testing.T) {
+	f := newBillingFixture(t, "zehn-stunden")
+	admin := login(t, f.s, "admin@test.local", "admin-passwort")
+	now := time.Now().UTC()
+	// Daily rows for ten days, hourly ones from 3 h into the 10-hour bucket
+	// of two days ago.
+	for d := 1; d <= 10; d++ {
+		day := now.Truncate(24 * time.Hour).Add(-time.Duration(d) * 24 * time.Hour)
+		f.exec(t, `INSERT INTO billed_cost (org_id, bucket_width, bucket_start, bucket_end, api_key_id, model, cost_type, token_type,
+			amount_cents, list_amount_cents, data_refreshed_at, fetched_at)
+			VALUES ($1,'1d',$2,$3,'apikey_z','claude-opus-5-5','tokens','output_tokens',2400,2400,$4,$4)`,
+			f.s.orgID, day, day.Add(24*time.Hour), now)
+	}
+	// 10-hour buckets are cut from the Unix epoch.
+	bin := time.Unix(now.Add(-48*time.Hour).Unix()/36000*36000, 0).UTC()
+	from := bin.Add(3 * time.Hour)
+	for at := from; at.Add(time.Hour).Before(now); at = at.Add(time.Hour) {
+		f.exec(t, `INSERT INTO billed_cost (org_id, bucket_width, bucket_start, bucket_end, api_key_id, model, cost_type, token_type,
+			amount_cents, list_amount_cents, data_refreshed_at, fetched_at)
+			VALUES ($1,'1h',$2,$3,'apikey_z','claude-opus-5-5','tokens','output_tokens',100,100,$4,$4)`,
+			f.s.orgID, at, at.Add(time.Hour), now)
+	}
+	series, err := f.s.obs.BilledSeries(f.ctx, f.s.orgID, "10hour", now.Add(-10*24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if series.HourlyFrom == nil || !series.HourlyFrom.Equal(from) {
+		t.Fatalf("hourly_from = %v, want %v", series.HourlyFrom, from)
+	}
+	if len(series.Points) < 2 || !series.Points[0].Bucket.Equal(bin) || series.Points[0].Complete || !series.Points[1].Complete {
+		t.Errorf("points = %+v, want the first (from %v, 7 of 10 hours) not complete, the next complete", series.Points, bin)
+	}
+	var out struct {
+		HourlyFrom *time.Time `json:"hourly_from"`
+	}
+	if err := json.Unmarshal(rawGet(t, admin, "/api/v1/cost/billed?days=10&bucket=10hour"), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.HourlyFrom == nil || !out.HourlyFrom.Equal(from) {
+		t.Errorf("/cost/billed hourly_from = %v, want %v", out.HourlyFrom, from)
 	}
 }

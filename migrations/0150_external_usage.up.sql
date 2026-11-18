@@ -38,11 +38,18 @@ CREATE TABLE external_usage (
 
 -- The cost page reads a window of the organisation's rows.
 CREATE INDEX idx_external_usage_org_ts ON external_usage (org_id, ts);
+-- The meter share asks per machine whether it had a call in the 7 days
+-- before a reading (external_usage_hosts below).
+CREATE INDEX idx_external_usage_host_ts ON external_usage (org_id, source, host, ts);
 
 -- The subscription credential a source shares its meter with, if it does:
 -- what the meter's real cost is split by (formula F3 in #120). Named by the
 -- upload, the last one wins; a source without a row here (a machine billed
 -- per use) gets no share of any meter.
+--
+-- The link is not dated: it applies to every call of the source, also the
+-- ones uploaded before it was set. Re-linking a source to another seat moves
+-- its whole history onto that seat's meter.
 CREATE TABLE external_usage_meters (
     org_id      UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     source      TEXT NOT NULL,
@@ -50,4 +57,25 @@ CREATE TABLE external_usage_meters (
     secret_slot SMALLINT NOT NULL,
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (org_id, source)
+);
+
+-- Which calls of a machine have been sent (#120, F3): every push says per
+-- host how far it has read its transcripts (reported_through); every call of
+-- that host with ts <= it has been uploaded. The server clamps it to the
+-- time the push arrived and keeps the maximum, so it never moves back. A
+-- meter reading is split between covey and the outside sessions only when
+-- every active machine of the linked sources has reported through it;
+-- otherwise the outside calls before it may still be missing.
+--
+-- pushed_at is the latest push that named the host, in a row or in
+-- reported_through: a machine that pushed or had a call in the 7 days before
+-- a reading is active for it. NULL reported_through: the host's rows came
+-- without one.
+CREATE TABLE external_usage_hosts (
+    org_id           UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    source           TEXT NOT NULL,
+    host             TEXT NOT NULL,
+    reported_through TIMESTAMPTZ,
+    pushed_at        TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (org_id, source, host)
 );

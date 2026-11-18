@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // validRow is an upload row that passes every rule; the cases below break
@@ -37,6 +39,10 @@ func TestValidateExternalRows(t *testing.T) {
 		{"an unknown origin", func(r *ExternalRow) { r.Origin = &bad }, "origin must be"},
 		{"a negative reported_usd", func(r *ExternalRow) { r.ReportedUSD = &usd }, "reported_usd"},
 		{"an overlong session id", func(r *ExternalRow) { r.SessionID = strings.Repeat("x", 257) }, "session_id must be"},
+		// Postgres refuses 0x00 in text: a 400 here, not a 500 at the insert.
+		{"a NUL in the host", func(r *ExternalRow) { r.Host = "lap\x00top" }, "host must not contain a NUL"},
+		// Above the bound, two rows in one cell overflowed the cells' sums.
+		{"a count above the bound", func(r *ExternalRow) { v := int64(externalMaxTokens + 1); r.Input = &v }, "input must be at most"},
 	}
 	for _, c := range cases {
 		rows := []ExternalRow{validRow("m-0", now), validRow("m-1", now)}
@@ -77,13 +83,42 @@ func TestValidateExternalRows(t *testing.T) {
 		t.Errorf("%d rows: err = %v", len(many), err)
 	}
 
-	for _, src := range []string{"", strings.Repeat("ü", 65)} {
+	big := validRow("m-big", now)
+	b := int64(externalMaxTokens)
+	big.Input, big.Output, big.CacheRead, big.CacheWrite5m, big.CacheWrite1h = &b, &b, &b, &b, &b
+	if err := ValidateExternalRows([]ExternalRow{big}, now); err != nil {
+		t.Errorf("counts at the bound: %v", err)
+	}
+
+	for _, src := range []string{"", strings.Repeat("ü", 65), "a\x00b"} {
 		if ValidateExternalSource(src) == nil {
 			t.Errorf("source %q passed", src)
 		}
 	}
 	if err := ValidateExternalSource(strings.Repeat("ü", 64)); err != nil {
 		t.Errorf("a 64-character source: %v", err)
+	}
+}
+
+// A push's watermarks: per host, a time; the host follows the rows' rules.
+func TestValidateExternalReported(t *testing.T) {
+	at := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
+	if err := ValidateExternalReported(map[string]time.Time{"laptop": at, "desktop": at.Add(time.Hour)}); err != nil {
+		t.Errorf("two hosts: %v", err)
+	}
+	for name, m := range map[string]map[string]time.Time{
+		"an empty host": {"": at}, "a NUL": {"a\x00b": at}, "no time": {"laptop": {}},
+	} {
+		if ValidateExternalReported(m) == nil {
+			t.Errorf("%s passed", name)
+		}
+	}
+	many := map[string]time.Time{}
+	for i := 0; i <= externalMaxHosts; i++ {
+		many[fmt.Sprintf("h%d", i)] = at
+	}
+	if ValidateExternalReported(many) == nil {
+		t.Errorf("%d hosts passed", len(many))
 	}
 }
 
@@ -119,185 +154,330 @@ func TestPeriodSQL(t *testing.T) {
 	}
 }
 
-// F3 per hour and credential: the meter's real cost split by list-price
-// share; no outside calls is a share of 0; an hour without a reading has no
-// figure; and the two shares always add up to the meter's cost.
-func TestMeterShare(t *testing.T) {
-	h1 := time.Date(2026, 11, 18, 9, 0, 0, 0, time.UTC)
-	h2, h3, h4 := h1.Add(time.Hour), h1.Add(2*time.Hour), h1.Add(3*time.Hour)
-	usd := func(v float64) *float64 { return &v }
-	links := map[string]MeterCredential{"operator: home": {SecretKey: "claude_oauth", SecretSlot: 0}}
-	coverage := []MeterCoverage{
-		{SecretKey: "claude_oauth", SecretSlot: 0, Source: "usage_cmd", WindowKind: WindowSevenDay, Readings: 5},
-		// The same meter read in-band, less often: never counted beside it.
-		{SecretKey: "claude_oauth", SecretSlot: 0, Source: "inband", WindowKind: WindowSevenDay, Readings: 2},
+// The meter share's tests below build steps by hand: tm is a clock time on
+// 2026-11-18 UTC, rate a plan price per point.
+func tm(hhmm string) time.Time {
+	t, err := time.Parse("2006-01-02 15:04", "2026-11-18 "+hhmm)
+	if err != nil {
+		panic(err)
 	}
-	step := func(h time.Time, src string, points float64, u *float64, unpriced float64) MeterStep {
-		return MeterStep{Period: h, SecretKey: "claude_oauth", SecretSlot: 0, Source: src, WindowKind: WindowSevenDay,
-			Points: points, Readings: 1, USD: u, UnpricedPoints: unpriced}
-	}
-	steps := []MeterStep{
-		step(h1, "usage_cmd", 2, usd(10), 0),
-		step(h2, "usage_cmd", 1, usd(4), 0),
-		step(h1, "inband", 3, usd(15), 0),
-		// Moved, but no plan prices the points: R has no figure.
-		step(h4, "usage_cmd", 1, nil, 1),
-	}
-	key := func(h time.Time) credHour { return credHour{h, "claude_oauth", 0} }
-	lOut := map[credHour]float64{key(h1): 3, key(h3): 5, key(h4): 2}
-	lCov := map[credHour]float64{key(h1): 1, key(h2): 2, key(h4): 1}
+	return t
+}
 
-	// The source reported h1 through h4.
-	spans := map[string]reportedSpan{"operator: home": {from: h1, to: h4.Add(5 * time.Minute)}}
+func rate(v float64) *float64 { return &v }
 
-	m := meterShare(links, spans, steps, coverage, lOut, lCov)
-	byHour := map[time.Time]ExternalMeterHour{}
-	for _, h := range m.Hours {
-		byHour[h.Hour] = h
-	}
-	if len(byHour) != 4 {
-		t.Fatalf("hours = %+v, want h1..h4", m.Hours)
-	}
-	near := func(p *float64, want float64) bool { return p != nil && math.Abs(*p-want) < 1e-9 }
+func near(got, want float64) bool { return math.Abs(got-want) < 1e-6 }
 
-	// h1: R = 10 (the usage_cmd reading, not the in-band one), L_out 3 of 4.
-	if h := byHour[h1]; !near(h.RealUSD, 10) || !near(h.ExternalRealUSD, 7.5) || !near(h.CoveyRealUSD, 2.5) {
-		t.Errorf("h1 = %+v, want R 10 split 7.5 / 2.5", h)
-	}
-	// h2: no outside calls, so R_out = 0 and covey keeps all of it.
-	if h := byHour[h2]; !near(h.ExternalRealUSD, 0) || !near(h.CoveyRealUSD, 4) {
-		t.Errorf("h2 = %+v, want R_out 0, R_cov 4", h)
-	}
-	// h3 and h4: no figure, not 0.
-	for _, h := range []time.Time{h3, h4} {
-		if eh := byHour[h]; eh.RealUSD != nil || eh.ExternalRealUSD != nil || eh.CoveyRealUSD != nil {
-			t.Errorf("%v = %+v, want no figure", h, eh)
-		}
-	}
-	for _, h := range byHour {
-		if h.RealUSD != nil && math.Abs(*h.ExternalRealUSD+*h.CoveyRealUSD-*h.RealUSD) > 1e-9 {
-			t.Errorf("%v: R_out + R_cov = %v, R = %v", h.Hour, *h.ExternalRealUSD+*h.CoveyRealUSD, *h.RealUSD)
-		}
-	}
-	// The tile: Σ R_out over the hours with a reading, over Σ R of the same.
-	if m.RealUSD != 14 || math.Abs(m.ExternalRealUSD-7.5) > 1e-9 || !near(m.Share, 7.5/14) || m.UnmeteredListUSD != 7 {
-		t.Errorf("totals = real %v, outside %v, share %v, unmetered %v; want 14, 7.5, %.4f, 7",
-			m.RealUSD, m.ExternalRealUSD, m.Share, m.UnmeteredListUSD, 7.5/14)
-	}
-	if len(m.Credentials) != 1 || m.Credentials[0].MeterSource != "usage_cmd" ||
-		m.Credentials[0].HoursWithReading != 2 || m.Credentials[0].HoursWithoutReading != 2 {
-		t.Errorf("credentials = %+v", m.Credentials)
-	}
+func nearP(got *float64, want float64) bool { return got != nil && near(*got, want) }
 
-	// No link, no share: a source billed per use has no meter.
-	if m := meterShare(map[string]MeterCredential{}, spans, steps, coverage, lOut, lCov); len(m.Hours) != 0 || m.Share != nil {
-		t.Errorf("without a link: %+v", m)
+// Which steps are reported (#126 finding 20): every machine of the linked
+// sources that pushed or had a call in the week before a reading must have
+// reported through it. Without an active machine, or without watermarks,
+// nothing is: the share is never split on the absence of calls.
+func TestStepReported(t *testing.T) {
+	at := tm("19:30")
+	w := func(hhmm string) *time.Time { v := tm(hhmm); return &v }
+	laptop := hostMark{ReportedThrough: w("19:40"), PushedAt: tm("19:41")}
+	desktop := hostMark{ReportedThrough: w("18:30"), PushedAt: tm("18:31"), LastCall: w("17:00")}
+	if !stepReported(at, []hostMark{laptop}) {
+		t.Error("the laptop alone reported through 19:40: the 19:30 step is reported")
+	}
+	if stepReported(at, []hostMark{laptop, desktop}) {
+		t.Error("the desktop, active, reported only through 18:30: the 19:30 step is not reported")
+	}
+	if !stepReported(tm("18:05"), []hostMark{laptop, desktop}) {
+		t.Error("both reported through 18:05")
+	}
+	// A machine asleep for more than a week is not waited for.
+	old := hostMark{ReportedThrough: w("00:00"), PushedAt: at.Add(-8 * 24 * time.Hour)}
+	*old.ReportedThrough = old.PushedAt
+	if !stepReported(at, []hostMark{laptop, old}) {
+		t.Error("a machine idle for eight days held the step")
+	}
+	// A call in the week makes it active again.
+	old.LastCall = w("12:00")
+	if stepReported(at, []hostMark{laptop, old}) {
+		t.Error("a machine with a call that day did not hold the step")
+	}
+	// No watermark: active by its calls, never reported.
+	if stepReported(at, []hostMark{{PushedAt: tm("19:35"), LastCall: w("19:00")}}) {
+		t.Error("a machine without a watermark reported the step")
+	}
+	// No active machine at all: nothing to say the calls were sent.
+	if stepReported(at, nil) || stepReported(at, []hostMark{{ReportedThrough: w("20:00"), PushedAt: at.Add(-8 * 24 * time.Hour)}}) {
+		t.Error("a step without an active machine is reported")
 	}
 }
 
-// #120, the headline: an hour the outside sessions did not report is not
-// split — its movement is neither covey's nor theirs — and a seat no source
-// names is all unsplit. Covey's share never takes an hour's whole movement
-// for want of outside data. The three parts add up to the dent, and the
-// split hours carry the list prices and points the multiples need.
-func TestMeterShareLeavesUnreportedHoursUnsplit(t *testing.T) {
-	h0 := time.Date(2026, 11, 18, 8, 0, 0, 0, time.UTC)
-	hr := func(i int) time.Time { return h0.Add(time.Duration(i) * time.Hour) }
-	usd := func(v float64) *float64 { return &v }
-	links := map[string]MeterCredential{"operator: home": {SecretKey: "seat_a", SecretSlot: 0}}
-	coverage := []MeterCoverage{
-		{SecretKey: "seat_a", SecretSlot: 0, CredentialKind: "subscription", Source: "usage_cmd", WindowKind: WindowSevenDay, Readings: 5},
-		// A second seat no source names, and an API key: the key has no meter
-		// to split.
-		{SecretKey: "seat_b", SecretSlot: 0, CredentialKind: "subscription", Source: "inband", WindowKind: WindowSevenDay, Readings: 2},
-		{SecretKey: "api", SecretSlot: 0, CredentialKind: "api_key", Source: "inband", WindowKind: WindowSevenDay, Readings: 2},
+// acceptanceA is cost-controller's fixture (#126, finding 20): one seat at $4
+// a point, source "operator: home" with a laptop (watermark 19:40) and a
+// desktop (watermark 18:30, a call at 17:00).
+func acceptanceA(desktopW string) []shareStep {
+	a1, a2 := uuid.MustParse("00000000-0000-0000-0000-0000000000a1"), uuid.MustParse("00000000-0000-0000-0000-0000000000a2")
+	w := func(hhmm string) *time.Time { v := tm(hhmm); return &v }
+	marks := []hostMark{
+		{ReportedThrough: w("19:40"), PushedAt: tm("19:41")},
+		{ReportedThrough: w(desktopW), PushedAt: tm(desktopW), LastCall: w("17:00")},
 	}
-	step := func(key, src string, h time.Time, points, u float64, resets int) MeterStep {
-		return MeterStep{Period: h, SecretKey: key, SecretSlot: 0, Source: src, WindowKind: WindowSevenDay,
-			Points: points, Readings: 1, Resets: resets, USD: usd(u)}
+	steps := []shareStep{
+		{From: tm("14:10"), At: tm("16:10"), Points: 10, LOut: 50, LCov: 0.10, Agents: map[uuid.UUID]float64{a1: 0.10}},
+		{From: tm("16:10"), At: tm("16:40"), Points: 1, LOut: 1, LCov: 1, Agents: map[uuid.UUID]float64{a2: 1}},
+		{From: tm("16:40"), At: tm("18:05"), Points: 3, LOut: 3, LCov: 1, Agents: map[uuid.UUID]float64{a2: 1}},
+		{From: tm("18:05"), At: tm("19:30"), Points: 2, LOut: 2, LCov: 6, Agents: map[uuid.UUID]float64{a1: 6}},
 	}
-	// seat_a at $4 a point: hour 0 before the uploads, hours 1-3 inside
-	// them, hour 4 after the last outside call.
-	steps := []MeterStep{
-		step("seat_a", "usage_cmd", hr(0), 1, 4, 0),
-		step("seat_a", "usage_cmd", hr(1), 2, 8, 0),
-		step("seat_a", "usage_cmd", hr(2), 1, 4, 0),
-		step("seat_a", "usage_cmd", hr(3), 3, 12, 1),
-		step("seat_a", "usage_cmd", hr(4), 2, 8, 0),
-		step("seat_b", "inband", hr(1), 1, 5, 0),
+	for i := range steps {
+		steps[i].Rate = rate(4)
+		steps[i].Reported = stepReported(steps[i].At, marks)
 	}
-	key := func(k string, i int) credHour { return credHour{hr(i), k, 0} }
-	lOut := map[credHour]float64{key("seat_a", 1): 6, key("seat_a", 3): 1}
-	lCov := map[credHour]float64{key("seat_a", 0): 3, key("seat_a", 1): 2, key("seat_a", 2): 5, key("seat_a", 3): 3,
-		key("seat_a", 4): 9, key("seat_b", 1): 7}
-	spans := map[string]reportedSpan{"operator: home": {from: hr(1), to: hr(3).Add(20 * time.Minute)}}
+	return steps
+}
 
-	m := meterShare(links, spans, steps, coverage, lOut, lCov)
-	at := map[credHour]ExternalMeterHour{}
-	for _, h := range m.Hours {
-		at[credHour{h.Hour, h.SecretKey, h.SecretSlot}] = h
-	}
-	near := func(p *float64, want float64) bool { return p != nil && math.Abs(*p-want) < 1e-9 }
-	for _, c := range []struct {
-		k        credHour
-		reported bool
-		out, cov *float64
+// Acceptance test (A) of #126 finding 20, figures by cost-controller: each
+// step split over its own span, placed at its reading; the desktop's stale
+// watermark holds the last step unsplit; the parts' ranges are ½·TV of
+// their shares (19); the agents' real share is per step (22).
+func TestSplitSeatAcceptanceA(t *testing.T) {
+	seat := meterSeat{"seat", 0}
+	tot, steps := splitSeat(seat, []string{"operator: home"}, acceptanceA("18:30"))
+	m := meterSums([]ExternalMeterTotal{tot}, steps)
+
+	want := []struct {
+		split           bool
+		reason          string
+		out, cov, unspl float64
 	}{
-		{key("seat_a", 0), false, nil, nil},
-		{key("seat_a", 1), true, usd(8 * 6.0 / 8), usd(8 * 2.0 / 8)},
-		{key("seat_a", 2), true, usd(0), usd(4)},
-		{key("seat_a", 3), true, usd(12 * 1.0 / 4), usd(12 * 3.0 / 4)},
-		{key("seat_a", 4), false, nil, nil},
-		{key("seat_b", 1), false, nil, nil},
-	} {
-		h, ok := at[c.k]
-		if !ok || h.RealUSD == nil || h.OutsideReported != c.reported {
-			t.Errorf("%v: %+v (present %v), want a reading, reported %v", c.k, h, ok, c.reported)
+		{true, "", 39.920160, 0.079840, 0},
+		{true, "", 2, 2, 0},
+		{true, "", 9, 3, 0},
+		{false, SplitNotReported, 0, 0, 8},
+	}
+	for i, w := range want {
+		st := m.Steps[i]
+		if st.Split != w.split || st.Reason != w.reason || !near(st.UnsplitRealUSD, w.unspl) {
+			t.Errorf("step %d = %+v, want split %v (%q), unsplit %v", i, st, w.split, w.reason, w.unspl)
 			continue
 		}
-		if c.out == nil {
-			if h.ExternalRealUSD != nil || h.CoveyRealUSD != nil {
-				t.Errorf("%v: split %v / %v, want no split", c.k, h.ExternalRealUSD, h.CoveyRealUSD)
-			}
-		} else if !near(h.ExternalRealUSD, *c.out) || !near(h.CoveyRealUSD, *c.cov) {
-			t.Errorf("%v: split %v / %v, want %v / %v", c.k, h.ExternalRealUSD, h.CoveyRealUSD, *c.out, *c.cov)
+		if w.split && (!nearP(st.ExternalRealUSD, w.out) || !nearP(st.CoveyRealUSD, w.cov)) {
+			t.Errorf("step %d: out %v cov %v, want %v / %v", i, *st.ExternalRealUSD, *st.CoveyRealUSD, w.out, w.cov)
+		}
+		if !w.split && (st.ExternalRealUSD != nil || st.CoveyRealUSD != nil) {
+			t.Errorf("step %d is not split but has parts", i)
 		}
 	}
-	if _, ok := at[key("api", 1)]; ok {
-		t.Errorf("the API key has meter hours")
+	if !near(m.RealUSD, 64) || !near(m.ExternalRealUSD, 50.920160) || !near(m.CoveyRealUSD, 5.079840) ||
+		!near(m.UnsplitRealUSD, 8) || !nearP(m.Share, 0.909289) || m.SplitPoints != 14 || m.SplitRuns != 1 {
+		t.Errorf("dent %v, outside %v, covey %v, unsplit %v, share %v, split points %v, runs %d",
+			m.RealUSD, m.ExternalRealUSD, m.CoveyRealUSD, m.UnsplitRealUSD, *m.Share, m.SplitPoints, m.SplitRuns)
+	}
+	// The hours the steps are placed in.
+	hours := map[int][4]float64{16: {44, 41.920160, 2.079840, 0}, 18: {12, 9, 3, 0}, 19: {8, 0, 0, 8}}
+	if len(m.Hours) != len(hours) {
+		t.Fatalf("hours = %+v", m.Hours)
+	}
+	for _, h := range m.Hours {
+		w := hours[h.Hour.Hour()]
+		if !nearP(h.RealUSD, w[0]) || !near(h.ExternalRealUSD, w[1]) || !near(h.CoveyRealUSD, w[2]) || !near(h.UnsplitRealUSD, w[3]) {
+			t.Errorf("hour %v = %+v, want %v", h.Hour, h, w)
+		}
+	}
+	// The multiples: list ÷ real, with their ranges.
+	split := m.ExternalRealUSD + m.CoveyRealUSD
+	list := m.SplitExternalListUSD + m.SplitCoveyListUSD
+	check := func(name string, l, r, slack, value, low, high float64) {
+		t.Helper()
+		if !near(l/r, value) || math.Abs(l/(r+slack)-low) > 5e-6 || math.Abs(l/(r-slack)-high) > 5e-6 {
+			t.Errorf("%s: %.5f (%.5f–%.5f), want %.5f (%.5f–%.5f)", name, l/r, l/(r+slack), l/(r-slack), value, low, high)
+		}
+	}
+	check("together", list, split, m.SplitSlackUSD, 1.001786, 0.93500, 1.07885)
+	check("outside", m.SplitExternalListUSD, m.ExternalRealUSD, m.SplitExternalSlackUSD, 1.060484, 0.96580, 1.17575)
+	check("covey", m.SplitCoveyListUSD, m.CoveyRealUSD, m.SplitCoveySlackUSD, 0.413399, 0.29662, 0.68185)
+	if !near(m.SplitExternalSlackUSD, 4.992016) || !near(m.SplitCoveySlackUSD, 2) || !near(m.SplitSlackUSD, 4) {
+		t.Errorf("slack outside %v covey %v whole %v, want 4.992016, 2, 4", m.SplitExternalSlackUSD, m.SplitCoveySlackUSD, m.SplitSlackUSD)
+	}
+	// The agents: a1 has the first step's covey part and $6 of list in the
+	// unsplit step; a2 the second and third steps' covey parts.
+	agents := map[string]ExternalMeterAgent{}
+	for _, a := range m.Credentials[0].Agents {
+		agents[a.AgentID.String()[34:]] = a
+	}
+	if a := agents["a1"]; !near(a.RealUSD, 0.079840) || !near(a.SplitListUSD, 0.10) || !near(a.UnsplitListUSD, 6) {
+		t.Errorf("a1 = %+v, want real 0.079840, split list 0.10, unsplit list 6", a)
+	}
+	if a := agents["a2"]; !near(a.RealUSD, 5) || !near(a.SplitListUSD, 2) || a.UnsplitListUSD != 0 {
+		t.Errorf("a2 = %+v, want real 5, split list 2", a)
+	}
+	if !near(agents["a1"].RealUSD+agents["a2"].RealUSD, m.CoveyRealUSD) {
+		t.Error("the agents do not add up to covey's part")
 	}
 
-	// The dent: $36 on seat_a and $5 on seat_b. Split: hours 1-3, $24, of
-	// it $9 outside. Unsplit: hours 0 and 4 of seat_a and seat_b's hour.
-	if math.Abs(m.RealUSD-41) > 1e-9 || math.Abs(m.ExternalRealUSD-9) > 1e-9 || math.Abs(m.CoveyRealUSD-15) > 1e-9 ||
-		math.Abs(m.UnsplitRealUSD-17) > 1e-9 || m.UnsplitHours != 3 {
-		t.Errorf("dent = real %v outside %v covey %v unsplit %v (%d hours), want 41, 9, 15, 17 (3)",
-			m.RealUSD, m.ExternalRealUSD, m.CoveyRealUSD, m.UnsplitRealUSD, m.UnsplitHours)
+	// Variant: the desktop's watermark at 18:00 holds the third step too.
+	tot, steps = splitSeat(seat, []string{"operator: home"}, acceptanceA("18:00"))
+	if !near(tot.UnsplitRealUSD, 20) || tot.SplitPoints != 11 {
+		t.Errorf("desktop at 18:00: unsplit %v, split points %v; want 20 and 11", tot.UnsplitRealUSD, tot.SplitPoints)
 	}
-	if math.Abs(m.ExternalRealUSD+m.CoveyRealUSD+m.UnsplitRealUSD-m.RealUSD) > 1e-9 {
-		t.Errorf("the parts do not add up to the dent")
+	// Variant: without the desktop (no 17:00 call, no watermark), the
+	// laptop's 19:40 covers all four steps.
+	in := acceptanceA("18:30")
+	laptop := []hostMark{{ReportedThrough: func() *time.Time { v := tm("19:40"); return &v }(), PushedAt: tm("19:41")}}
+	for i := range in {
+		in[i].Reported = stepReported(in[i].At, laptop)
 	}
-	if !near(m.Share, 9.0/24) {
-		t.Errorf("share = %v, want 9/24 of the split hours", m.Share)
+	if tot, _ := splitSeat(seat, nil, in); tot.SplitSteps != 4 || tot.UnsplitRealUSD != 0 {
+		t.Errorf("laptop only: %d split steps, unsplit %v; want 4 and 0", tot.SplitSteps, tot.UnsplitRealUSD)
 	}
-	// The multiples' inputs: the list prices and points of the split hours
-	// only; one run of readings plus the reset in hour 3; $4 a point.
-	if m.SplitExternalListUSD != 7 || m.SplitCoveyListUSD != 10 || m.SplitPoints != 6 || m.SplitRuns != 2 || m.PointRate != 4 {
-		t.Errorf("split list %v / %v, points %v, runs %d, rate %v; want 7 / 10, 6, 2, 4",
-			m.SplitExternalListUSD, m.SplitCoveyListUSD, m.SplitPoints, m.SplitRuns, m.PointRate)
+}
+
+// Acceptance test (B), finding 19 alone: a part's range is ½·TV of its
+// share, not its share of the whole's. One step all outside, one all covey,
+// two points each: each part ±1 point, the whole ±1 too.
+func TestSplitSeatPartRanges(t *testing.T) {
+	steps := []shareStep{
+		{From: tm("10:00"), At: tm("11:00"), Points: 2, Rate: rate(1), LOut: 5, Reported: true},
+		{From: tm("11:00"), At: tm("12:00"), Points: 2, Rate: rate(1), LCov: 5, Reported: true},
 	}
-	if len(m.Credentials) != 2 || len(m.Credentials[1].Sources) != 0 || m.Credentials[1].UnsplitRealUSD != 5 ||
-		m.Credentials[1].Share != nil {
-		t.Errorf("credentials = %+v, want seat_b with no source, all unsplit, no share", m.Credentials)
+	tot, _ := splitSeat(meterSeat{"seat", 0}, nil, steps)
+	if tot.SplitExternalSlackPoints != 1 || tot.SplitCoveySlackPoints != 1 || tot.SplitSlackPoints != 1 || tot.SplitRuns != 1 {
+		t.Errorf("slack outside %v covey %v whole %v (runs %d), want 1, 1, 1 (1)",
+			tot.SplitExternalSlackPoints, tot.SplitCoveySlackPoints, tot.SplitSlackPoints, tot.SplitRuns)
+	}
+}
+
+// Acceptance test (C): the web fixture of #126 (HOURS in
+// SubscriptionDent.test.tsx) as steps: 4 points, L_out 300 / L_cov 151 (a1
+// 101, a2 50); 2 points, 155 / 152 (a2); 3 points not reported (a1 40). The
+// agents and the parts' slack by cost-controller's figures.
+func TestSplitSeatWebFixture(t *testing.T) {
+	pp := 200.0 * 12 / 52 / 100
+	a1, a2 := uuid.New(), uuid.New()
+	steps := []shareStep{
+		{From: tm("17:40"), At: tm("18:40"), Points: 4, Rate: rate(pp), LOut: 300, LCov: 151,
+			Agents: map[uuid.UUID]float64{a1: 101, a2: 50}, Reported: true},
+		{From: tm("18:40"), At: tm("19:40"), Points: 2, Rate: rate(pp), LOut: 155, LCov: 152,
+			Agents: map[uuid.UUID]float64{a2: 152}, Reported: true},
+		{From: tm("19:40"), At: tm("20:40"), Points: 3, Rate: rate(pp), LCov: 40, Agents: map[uuid.UUID]float64{a1: 40}},
+	}
+	tot, _ := splitSeat(meterSeat{"seat", 0}, []string{"operator: home"}, steps)
+	got := map[uuid.UUID]ExternalMeterAgent{}
+	for _, a := range tot.Agents {
+		got[a.AgentID] = a
+	}
+	if !near(got[a1].RealUSD, 0.413440) || !near(got[a2].RealUSD, 0.661702) || !near(got[a1].UnsplitListUSD, 40) {
+		t.Errorf("a1 %+v, a2 %+v; want 0.413440 (unsplit list 40) and 0.661702", got[a1], got[a2])
+	}
+	if !near(tot.SplitExternalSlackUSD, 0.307010) || !near(tot.SplitCoveySlackUSD, 0.228514) {
+		t.Errorf("slack outside %v covey %v, want 0.307010 and 0.228514", tot.SplitExternalSlackUSD, tot.SplitCoveySlackUSD)
+	}
+	if !near(tot.ExternalRealUSD, 1.694089) || !near(tot.CoveyRealUSD, 1.075142) || !near(tot.UnsplitRealUSD, 1.384615) {
+		t.Errorf("outside %v covey %v unsplit %v", tot.ExternalRealUSD, tot.CoveyRealUSD, tot.UnsplitRealUSD)
+	}
+}
+
+// Acceptance test (D), finding 21: a reported step with no list on either
+// side that moved the meter is nobody's, not covey's whole. A reading that
+// did not move either is idle: no money, and the run goes on through it.
+func TestSplitSeatMovedWithoutACall(t *testing.T) {
+	tot, steps := splitSeat(meterSeat{"seat", 0}, []string{"src"}, []shareStep{
+		{From: tm("10:00"), At: tm("11:00"), Points: 1, Rate: rate(4), Reported: true},
+	})
+	if steps[0].Split || steps[0].Reason != SplitNoReportedCall || tot.CoveyRealUSD != 0 || tot.UnsplitRealUSD != 4 {
+		t.Errorf("step %+v, covey %v, unsplit %v; want unsplit 4 (%s)", steps[0], tot.CoveyRealUSD, tot.UnsplitRealUSD, SplitNoReportedCall)
 	}
 
-	// A reading in an unsplit hour between two split ones breaks the run:
-	// one source reported hour 1, another hours 3 and 4.
-	links["operator: late"] = MeterCredential{SecretKey: "seat_a", SecretSlot: 0}
-	gap := meterShare(links, map[string]reportedSpan{"operator: home": {from: hr(1), to: hr(1).Add(time.Minute)},
-		"operator: late": {from: hr(3), to: hr(4)}}, steps, coverage, lOut, lCov)
-	// Split: hours 1, 3, 4 (two runs, broken by hour 2) plus the reset.
-	if gap.SplitRuns != 3 || gap.Credentials[0].UnsplitHours != 2 {
-		t.Errorf("runs = %d, unsplit hours %d; want 3 and 2", gap.SplitRuns, gap.Credentials[0].UnsplitHours)
+	// Idle readings between two split ones: one run, the same range as
+	// without them.
+	run := func(idle bool) ExternalMeterTotal {
+		in := []shareStep{{From: tm("10:00"), At: tm("11:00"), Points: 2, Rate: rate(1), LOut: 1, LCov: 1, Reported: true}}
+		if idle {
+			in = append(in, shareStep{From: tm("11:00"), At: tm("11:30"), Rate: rate(1), Reported: true})
+		}
+		in = append(in, shareStep{From: tm("11:30"), At: tm("12:00"), Points: 2, Rate: rate(1), LOut: 3, LCov: 1, Reported: true})
+		tot, _ := splitSeat(meterSeat{"seat", 0}, []string{"src"}, in)
+		return tot
+	}
+	with, without := run(true), run(false)
+	if with.SplitRuns != 1 || with.SplitExternalSlackPoints != without.SplitExternalSlackPoints || with.SplitSteps != 3 {
+		t.Errorf("with an idle reading: %d runs, slack %v (%v without), %d split steps", with.SplitRuns,
+			with.SplitExternalSlackPoints, without.SplitExternalSlackPoints, with.SplitSteps)
+	}
+}
+
+// Decision 4 of part A and the lists' edges (cost-controller, part A finding
+// 2): a reading that did not move gives R = 0 even without a plan, split as
+// 0 / 0 — not unpriced — when outside calls ran; a step with outside calls
+// and no covey line gives all of R to the outside sessions.
+func TestSplitSeatZeroMovementAndOneSidedLists(t *testing.T) {
+	tot, steps := splitSeat(meterSeat{"seat", 0}, []string{"src"}, []shareStep{
+		{From: tm("10:00"), At: tm("11:00"), Points: 0, Rate: nil, LOut: 3, Reported: true},
+		{From: tm("11:00"), At: tm("12:00"), Points: 2, Rate: rate(4), LOut: 3, Reported: true},
+	})
+	if s := steps[0]; !s.Split || !nearP(s.RealUSD, 0) || !nearP(s.ExternalRealUSD, 0) || !nearP(s.CoveyRealUSD, 0) {
+		t.Errorf("the unmoved step = %+v, want R 0 split 0 / 0", s)
+	}
+	if s := steps[1]; !nearP(s.ExternalRealUSD, 8) || !nearP(s.CoveyRealUSD, 0) {
+		t.Errorf("L_cov 0: %+v, want R_out = R = 8", s)
+	}
+	if tot.HoursWithReading != 2 || tot.UnpricedSteps != 0 || tot.StepCount != 2 {
+		t.Errorf("hours with reading %d, unpriced steps %d, steps %d; want 2, 0, 2", tot.HoursWithReading, tot.UnpricedSteps, tot.StepCount)
+	}
+}
+
+// Part A finding 1: L_out takes a model the list does not know at the
+// call's reported_usd, the counterpart of L_cov's engine figure; a call
+// with neither is left out and counted.
+func TestExternalStepUSD(t *testing.T) {
+	tok := ModelTokens{Output: 100_000}
+	if usd, ok := externalStepUSD("claude-opus-5-5", tok, true, 99); !ok || !near(usd, 2) {
+		t.Errorf("a known model: %v %v, want the list's $2 whatever it reported", usd, ok)
+	}
+	if usd, ok := externalStepUSD("claude-sonnet-5-7", tok, true, 0.7); !ok || !near(usd, 0.7) {
+		t.Errorf("an unknown model with reported_usd: %v %v, want 0.70", usd, ok)
+	}
+	if _, ok := externalStepUSD("claude-sonnet-5-7", tok, false, 0); ok {
+		t.Error("an unknown model without reported_usd was priced")
+	}
+	// In the split: $2 opus + $0.70 reported = L_out 2.70 beside L_cov 0.30;
+	// 3 points at $1, so R_out = 3 × 2.7 / 3 = 2.70. The call with neither
+	// is counted, not priced.
+	_, steps := splitSeat(meterSeat{"seat", 0}, []string{"src"}, []shareStep{{From: tm("10:00"), At: tm("11:00"),
+		Points: 3, Rate: rate(1), LOut: 2 + 0.7, LCov: 0.3, UnpricedCalls: 1, UnpricedTokens: 100_000, Reported: true}})
+	if !nearP(steps[0].ExternalRealUSD, 2.7) || !nearP(steps[0].CoveyRealUSD, 0.3) {
+		t.Errorf("split %+v, want 2.70 / 0.30", steps[0])
+	}
+}
+
+// Acceptance test (E), finding 23: points no plan prices stay out of the
+// dent, counted; a seat with only such points has no dent of its own.
+func TestMeterSumsUnpricedMovement(t *testing.T) {
+	a, _ := splitSeat(meterSeat{"seat_a", 0}, []string{"src"}, []shareStep{
+		{From: tm("10:00"), At: tm("11:00"), Points: 1, Rate: rate(4), LOut: 1, LCov: 1, Reported: true}})
+	cTot, cSteps := splitSeat(meterSeat{"seat_c", 0}, nil, []shareStep{
+		{From: tm("10:00"), At: tm("11:00"), Points: 20},
+		{From: tm("11:00"), At: tm("12:00"), Points: 10}})
+	m := meterSums([]ExternalMeterTotal{a, cTot}, cSteps)
+	if m.RealUSD != 4 || m.UnpricedPoints != 30 || m.UnpricedSteps != 2 || cTot.RealUSD != 0 || cTot.Points != 0 {
+		t.Errorf("dent %v, unpriced %v points in %d steps; seat C real %v points %v", m.RealUSD, m.UnpricedPoints,
+			m.UnpricedSteps, cTot.RealUSD, cTot.Points)
+	}
+	if cSteps[0].RealUSD != nil || cSteps[0].Reason != SplitUnpriced {
+		t.Errorf("an unpriced step: %+v", cSteps[0])
+	}
+}
+
+// One list of seats for every part of the share (#126 nit 18): the linked
+// ones and every subscription seat with weekly readings, never an API key.
+func TestMeterSeats(t *testing.T) {
+	links := map[string]MeterCredential{"b": {SecretKey: "seat_a", SecretSlot: 0}, "a": {SecretKey: "seat_a", SecretSlot: 0}}
+	coverage := []MeterCoverage{
+		{SecretKey: "seat_b", SecretSlot: 1, CredentialKind: "subscription", WindowKind: WindowSevenDay},
+		{SecretKey: "seat_c", SecretSlot: 0, CredentialKind: "subscription", WindowKind: "five_hour"},
+		{SecretKey: "api", SecretSlot: 0, CredentialKind: "api_key", WindowKind: WindowSevenDay},
+	}
+	seats, linked := meterSeats(links, coverage)
+	if len(seats) != 2 || seats[0] != (meterSeat{"seat_a", 0}) || seats[1] != (meterSeat{"seat_b", 1}) {
+		t.Errorf("seats = %v", seats)
+	}
+	if strings.Join(linked[seats[0]], ",") != "a,b" || len(linked[seats[1]]) != 0 {
+		t.Errorf("linked = %v", linked)
 	}
 }
