@@ -1,0 +1,84 @@
+# PR review to merge-ready (#131, design note #129 proposal P2).
+#
+# Installed as slug pr-review, in watch mode: the trigger starts a run for each
+# PR the gate sees and puts it on the first step; nothing is assigned, written
+# or asked. Revisions go to the running install with PUT /api/v1/workflows/pr-review,
+# never a second POST (that would create pr-review-2). The test in
+# internal/workflow/prreview_test.go pins this file.
+#
+# Rounds: max_rounds 3 means three reviews and two fix loops. The third
+# "changes" takes the limit exit to the card "stuck". The operator's "changes"
+# on the card and "retry" on the stuck card end the run: the loop counter of a
+# run is never reset, so a second round inside the same run would count against
+# the limit, and the next change on the PR starts a fresh run with fresh rounds.
+workflow: "PR review to merge-ready"
+owner: "admin@covey.local"
+mode: watch
+roles:
+  "Review": [covey-reviewer]
+  "Author": [covey-dev]
+steps:
+  trigger:
+    type: trigger
+    title: "covey-bot PR without an answer"
+    as: "covey-dev"
+    every: "10m"
+    only_if: "github:pulls"
+    next: review
+  review:
+    type: agent
+    title: "Adversarial review"
+    role: "Review"
+    # Decorative today: round 1 has no fixer and the two roles do not overlap.
+    not_same_as: fix
+    task: "Review {{case.no}} on jmarcone/covey. Read the diff first and try to break it; check every line of org-lessons; then the PR body. Post the review comment in the charter format. Report verdict, exactly the word approve or the word changes (nothing else), and majors (the count of open major findings)."
+    result: [verdict, majors]
+    limit: "2h"
+    next: verdict
+  verdict:
+    type: condition
+    title: "Approved?"
+    on: "review.verdict"
+    max_rounds: 3
+    next:
+      "approve": card
+      "changes": fix
+      "else": stuck
+      "limit": stuck
+  fix:
+    type: agent
+    title: "Fix the findings"
+    role: "Author"
+    sticky: true
+    task: "Fix the open blocker and major findings on {{case.no}} from the latest review comment; push to the same branch. Report head (the new sha)."
+    result: [head]
+    limit: "3h"
+    next: review
+  card:
+    type: approval
+    title: "Operator validation"
+    who: "admin@covey.local"
+    ask: "{{case.no}} approved by covey-reviewer, majors reported: {{review.majors}}. Run the outside review, then: merge-ready or back to the author?"
+    next:
+      "merge-ready": ready
+      "changes": back
+  stuck:
+    type: approval
+    title: "Three rounds without approval"
+    who: "admin@covey.local"
+    ask: "{{case.no}} had no approval after the review rounds (last verdict: {{review.verdict}}). Cut it smaller, retry or drop?"
+    next:
+      "retry": again
+      "drop": dropped
+  ready:
+    type: end
+    title: "Merge-ready"
+  back:
+    type: end
+    title: "Back to the author"
+  again:
+    type: end
+    title: "Retry on the next change"
+  dropped:
+    type: end
+    title: "Dropped"
