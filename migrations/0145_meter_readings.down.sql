@@ -1,6 +1,12 @@
--- Back to readings by place only, one source, no plans.
-
-DROP TABLE IF EXISTS credential_plans;
+-- Back to readings by place only, one source.
+--
+-- credential_plans STAYS. Its rows are plan prices a person entered by hand
+-- (what a seat cost, from when), found nowhere else and not derivable from any
+-- other table — unlike everything else this migration added, which the down
+-- below gives back or which can be read again. Nothing before 0145 reads the
+-- table, so leaving it costs the older schema nothing, and the up migration
+-- (CREATE ... IF NOT EXISTS) finds it with its rows intact. Drop it by hand
+-- if the prices are really meant to go.
 
 -- The in-band readings did not exist before; the rows of the other sources
 -- stay (they fit the old columns as they are).

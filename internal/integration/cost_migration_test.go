@@ -335,7 +335,11 @@ func TestMigration0145MeterReadings(t *testing.T) {
 		t.Errorf("0145 run twice: %d readings (%d in band), want %d (%d)", a, i, all, inband)
 	}
 
-	// Down: the readings as they were, the plans gone.
+	// A plan price entered by hand: the down migration must not lose it.
+	exec(`INSERT INTO credential_plans (org_id, secret_key, secret_slot, plan_name, amount, period, valid_from)
+		VALUES ($1, 'claude_code_oauth_token', 0, 'Max', 200, 'month', $2)`, s.orgID, base)
+
+	// Down: the readings as they were, the plans kept.
 	for version() > 144 {
 		if err := db.MigrateDown(ctx, s.pool, migrations.FS); err != nil {
 			t.Fatal(err)
@@ -344,11 +348,15 @@ func TestMigration0145MeterReadings(t *testing.T) {
 	if after := snapshot(); after != before {
 		t.Errorf("usage_readings after down differ:\n%s", diffLines(before, after))
 	}
-	var plans bool
-	_ = s.pool.QueryRow(ctx, `SELECT to_regclass('credential_plans') IS NOT NULL`).Scan(&plans)
-	if plans {
-		t.Error("credential_plans survived the down migration")
+	plans := func(when string) {
+		t.Helper()
+		var amount float64
+		if err := s.pool.QueryRow(ctx, `SELECT amount::float8 FROM credential_plans WHERE org_id = $1`, s.orgID).
+			Scan(&amount); err != nil || amount != 200 {
+			t.Errorf("credential_plans %s: %v (%v), want the plan entered by hand", when, amount, err)
+		}
 	}
+	plans("after the down migration")
 	var aside0145 bool
 	_ = s.pool.QueryRow(ctx, `SELECT to_regclass('usage_readings_0145_duplicates') IS NOT NULL`).Scan(&aside0145)
 	if aside0145 {
@@ -357,6 +365,7 @@ func TestMigration0145MeterReadings(t *testing.T) {
 	if _, err := db.MigrateUp(ctx, s.pool, migrations.FS); err != nil {
 		t.Fatal(err)
 	}
+	plans("after up again")
 }
 
 // diffLines names the lines that differ between two snapshots.
