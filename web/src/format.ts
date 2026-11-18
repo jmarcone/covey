@@ -20,11 +20,11 @@ export function fmtBytes(n: number): string {
   return `${v.toFixed(v < 10 ? 1 : 0)} ${units[i]}`;
 }
 
-// fmtUSD brings an amount to cents — `2.746 $`, `12,30 $`, `0,42 $` — and an
-// amount below a cent to `<0,01 $`. Four digits below a dollar read as
-// precision the figures do not have (`0,4615 $` next to `33,70 $`), and
-// printed `0,0000 $` for a run that cost a fraction of a cent: `<0,01 $` says
-// it was not nothing; a negative one is `-<0,01 $`. Zero is `0,00 $`. Used by
+// fmtUSD brings an amount to cents — `$2,746`, `$12.30`, `$0.42` — and an
+// amount below a cent to `<$0.01`. Four digits below a dollar read as
+// precision the figures do not have (`$0.4615` next to `$33.70`), and
+// printed `$0.0000` for a run that cost a fraction of a cent: `<$0.01` says
+// it was not nothing; a negative one is `-<$0.01`. Zero is `$0.00`. Used by
 // the cost page and by the backlog (cost on the task card).
 //
 // From a thousand with thousands separators, because that is exactly where they
@@ -39,19 +39,19 @@ export function fmtUSD(v: number): string {
   return v < 0 ? `-${dollar(num)}` : dollar(num);
 }
 
-// fmtUSDBelow is an upper bound, `< 1,85 $`. fmtUSD already says "below" for
-// an amount under a cent, and `< <0,01 $` says it twice: a bound under a cent
-// reads `< 0,01 $`, which is what it is.
+// fmtUSDBelow is an upper bound, `< $1.85`. fmtUSD already says "below" for
+// an amount under a cent, and `< <$0.01` says it twice: a bound under a cent
+// reads `< $0.01`, which is what it is.
 export function fmtUSDBelow(v: number): string {
   return `< ${v > 0 && v < 0.01 ? dollar(dezimal(0.01, 2)) : fmtUSD(v)}`;
 }
 
-// fmtUSDFixed is an amount with a fixed number of decimal digits, `0,4615 $`
-// — for a price that gets multiplied on the same screen: `4 Punkte × 0,46 $`
-// does not give the `1,85 $` beside it, `4 Punkte × 0,4615 $` does. Four
-// digits bring the product within a cent for a few dozen points, not for
-// hundreds; the `≈` beside it says so. Below half the last digit it says
-// `<0,0001 $`.
+// fmtUSDFixed is an amount with a fixed number of decimal digits, `$0.4615` —
+// for a price that stands beside the amount it was multiplied into: `4 points
+// × $0.46` sits badly beside `$1.85`, `4 points × $0.4615` reads as what it
+// is. Four digits bring the product within a cent for a few dozen points, not
+// for hundreds; the `≈` beside it says so. Below half the last digit it says
+// `<$0.0001`.
 export function fmtUSDFixed(v: number, digits: number): string {
   const a = Math.abs(v);
   const least = 10 ** -digits;
@@ -61,16 +61,18 @@ export function fmtUSDFixed(v: number, digits: number): string {
 }
 
 // fmtUSDUnit is the price of one unit. From a cent up it is fmtUSD; below it
-// two significant digits, `0,0042 $`, `0,000040 $`, because `<0,01 $ / Stück`
+// two significant digits, `$0.0042`, `$0.000040`, because `<$0.01 / unit`
 // for two different prices says nothing and a price is read to compare
 // (Delta stands beside it). Down to a hundred-millionth of a dollar, then
-// `<`. A price that rounds up to a cent is a cent (`0,01 $`, not `0,0100 $`).
+// `<`. The digits come from the price rounded to two significant figures, so
+// `$0.000996` is `$0.0010`, not `$0.00100`; a price that rounds up to a cent
+// is a cent (`$0.01`).
 export function fmtUSDUnit(v: number): string {
   const a = Math.abs(v);
   if (!(a > 0 && a < 0.01)) return fmtUSD(v);
-  const digits = Math.min(8, 1 - Math.floor(Math.log10(a)));
-  if (Number(a.toFixed(digits)) >= 0.01) return fmtUSDFixed(v, 2);
-  return fmtUSDFixed(v, digits);
+  const r = Number(a.toPrecision(2));
+  if (r >= 0.01) return fmtUSDFixed(v, 2);
+  return fmtUSDFixed(v, Math.min(8, 1 - Math.floor(Math.log10(r))));
 }
 
 // dollar puts the symbol on the side the UI's language expects, with the
@@ -280,9 +282,9 @@ export function fmtBucket(iso: string, bucket: string): string {
   }
 }
 
-// fmtClockUTC is an instant as HH:MM UTC in the UI's language — how far
-// Anthropic's bill is complete.
+// fmtClockUTC is an instant as HH:MM UTC — how far Anthropic's bill is
+// complete. A 24-hour clock in every language: `20:00 UTC`, not `08:00 PM UTC`.
 export function fmtClockUTC(iso: string | Date): string {
   const d = typeof iso === "string" ? new Date(iso) : iso;
-  return `${d.toLocaleTimeString(uiLocale(), { hour: "2-digit", minute: "2-digit", timeZone: "UTC" })} UTC`;
+  return `${d.toLocaleTimeString(uiLocale(), { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "UTC" })} UTC`;
 }

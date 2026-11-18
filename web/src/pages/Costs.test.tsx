@@ -3,6 +3,7 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import Costs from "./Costs";
 import type { CostCells } from "../api";
+import i18n from "../i18n";
 import { mockFetch, renderWithProviders, useGerman } from "../test/render";
 
 // The Costs page is argued with, so what it may and may not show is pinned:
@@ -122,6 +123,34 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     expect(within(block).queryByRole("group", { name: "Listenpreis laut Anthropic" })).toBeNull();
   });
 
+  // #83 outside review: "compared until 20:00 UTC" with no date reads as today,
+  // so a mark on another day than the window's end carries its date.
+  it("nennt bei „verglichen bis“ den Tag, wenn er nicht der des Fensterendes ist", async () => {
+    const KEY = "anthropic_api_key";
+    const data = cells([2, 2]);
+    data.cells.push({
+      period: "2026-11-17T18:00:00Z", agent_id: "a1", secret_key: KEY, secret_slot: 0, credential_kind: "api_key",
+      reported_usd: BOOKED, measured: { output: 4 }, engine_usd: 4, tokens: { output: 200_000 },
+    });
+    const point = (bucket: string, usd: string) => ({ bucket, api_key_id: "apikey_01", workspace_id: "", model: "claude-opus-5-5",
+      secret_key: KEY, secret_slot: 0, billed_usd: usd, billed_list_usd: usd, complete: true });
+    const { container } = serve(data, {
+      "/api/v1/cost/billed": { bucket: "hour",
+        points: [point("2026-11-17T18:00:00Z", "3.50"), point("2026-11-17T19:00:00Z", "0.50")],
+        window: { start: "2026-11-17T18:00:00Z", end: "2026-11-18T03:00:00Z", compared_until: "2026-11-17T20:00:00Z", width: "1h",
+          totals: [{ secret_key: KEY, secret_slot: 0, has_billed: true, billed_usd: "4.00", billed_list_usd: "4.00", reported_usd: 4, list_usd: 4 }] },
+        sync: { configured: true, last_attempt_at: null, last_success_at: null, last_daily_at: null,
+          data_refreshed_at: "2026-11-18T00:00:00Z", last_status: "ok", last_error: "" } },
+    });
+    const block = await waitFor(() => {
+      const b = container.querySelector<HTMLElement>(`[data-credential="${KEY}#0"]`);
+      if (!b) throw new Error("no block for the API key yet");
+      return b;
+    });
+    const tile = within(block).getByRole("group", { name: "Von Anthropic berechnet" });
+    expect(within(tile).getByText(/verglichen bis 17\.11\., 20:00 UTC$/)).toBeInTheDocument();
+  });
+
   // Review C3: the bill's bars reached back to the midnight before the
   // window, so the table's billed total was not the tile's.
   it("summiert die Rechnung in der Tabelle zu derselben Zahl wie die Kachel", async () => {
@@ -213,6 +242,18 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     expect(tile.textContent).not.toMatch(/≈|0,00|< /);
   });
 
+  // #83: an upper bound under a cent was written "< <$0.01".
+  it("schreibt die Obergrenze unter einem Cent als „< $0.01“", async () => {
+    await i18n.changeLanguage("en");
+    const data = cells([0, 0]);
+    for (const s of data.subscription!) s.usd = 0;
+    data.plans![0] = { ...data.plans![0], amount: 1.73, weekly_usd: 0.4, usd_per_point: 0.004 }; // a point costs 0.4 cents
+    serve(data);
+    const tile = await screen.findByRole("group", { name: "Real cost (estimate)" });
+    expect(within(tile).getByText("< $0.01")).toBeInTheDocument();
+    expect(tile.textContent).not.toMatch(/<\s*</);
+  });
+
   // Review C5: the meter's baseline can lie days before the window; the
   // real figure (and every share of it) covers that span, not the window.
   it("sagt, seit wann die echten Kosten und ihr Anteil gelten", async () => {
@@ -235,7 +276,7 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     // 16 $ over 4 points × 0,4615 $
     expect(within(tile).getByText("≈ 8,7×")).toBeInTheDocument();
     expect(within(tile).getByText("Spanne 6,9× – 11,6×")).toBeInTheDocument();
-    // #83: the point price carries four decimals, so points × price gives the total
+    // #83: the point price carries four decimals
     expect(screen.getByRole("group", { name: "Echte Kosten (Schätzung)" }).textContent).toMatch(/4 Punkte × 0,4615 \$/);
     expect(screen.getAllByText("Preistabellen-Prüfung +0,00 %").length).toBeGreaterThan(0);
     const share = [...container.querySelectorAll("caption")].find((c) => /Je Agent/.test(c.textContent!))!.closest("table")!;
@@ -299,7 +340,7 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     expect(unpriced.textContent).toMatch(/davon Modelle ohne Listenpreis \(1\).*2,00 \$2,00 \$$/);
     const total = unpriced.parentElement!.querySelector("tr[data-total]")!;
     expect([...total.querySelectorAll("td")].map((td) => td.textContent)).toEqual([
-      "Summe (Liste, Modelle ohne Listenpreis zu Claude Codes Preis)", "12,00 $", "12,50 $",
+      "Summe (nachgerechnet, Modelle ohne Listenpreis zum gemeldeten Preis)", "12,00 $", "12,50 $",
     ]);
   });
 

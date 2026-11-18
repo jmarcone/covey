@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import i18n from "./i18n";
-import { exact, fmtBucket, fmtBytes, fmtCount, fmtDelta, fmtNumber, fmtUSD, fmtUSDAxis, fmtUSDBelow, fmtUSDFixed, fmtUSDUnit } from "./format";
+import { exact, fmtBucket, fmtBytes, fmtClockUTC, fmtCount, fmtDelta, fmtNumber, fmtUSD, fmtUSDAxis, fmtUSDBelow, fmtUSDFixed, fmtUSDUnit } from "./format";
 
 /* The reason stood on the cost side: 147952885 read cache tokens. Nobody reads
    that as a hundred forty-eight million — you count it through digit by digit.
@@ -125,6 +125,10 @@ describe("fmtUSD edges", () => {
     expect(fmtUSDUnit(0.00995)).toBe("$0.01");
     expect(fmtUSDUnit(0.00999)).toBe("$0.01");
     expect(fmtUSDUnit(-0.00999)).toBe("-$0.01");
+    // just under a power of ten the two digits come from the rounded price
+    expect(fmtUSDUnit(0.000996)).toBe("$0.0010");
+    expect(fmtUSDUnit(0.0000999)).toBe("$0.00010");
+    expect(fmtUSDUnit(0.000994)).toBe("$0.00099");
     expect(fmtUSDUnit(1e-12)).toBe("<$0.00000001");
     expect(fmtUSDUnit(0)).toBe("$0.00");
   });
@@ -134,6 +138,28 @@ describe("fmtUSD edges", () => {
     expect(fmtUSDFixed(0.4615, 4)).toBe("0,4615 $");
     expect(fmtUSDUnit(0.0042)).toBe("0,0042 $");
     expect(fmtUSDBelow(0.004)).toBe("< 0,01 $");
+  });
+});
+
+/* #83 outside review: `compared until 08:00 PM UTC` in English, though the
+   issue asked for HH:MM UTC. */
+describe("fmtClockUTC", () => {
+  const evening = new Date("2026-11-18T20:00:00Z");
+
+  it("is a 24-hour clock in English", async () => {
+    await i18n.changeLanguage("en");
+    expect(fmtClockUTC(evening)).toBe("20:00 UTC");
+    expect(fmtClockUTC("2026-11-18T08:05:00Z")).toBe("08:05 UTC");
+  });
+
+  it("reads midnight as 00:00, not 24:00", async () => {
+    await i18n.changeLanguage("en");
+    expect(fmtClockUTC(new Date("2026-11-19T00:00:00Z"))).toBe("00:00 UTC");
+  });
+
+  it("is the same in German", async () => {
+    await i18n.changeLanguage("de");
+    expect(fmtClockUTC(evening)).toBe("20:00 UTC");
   });
 });
 

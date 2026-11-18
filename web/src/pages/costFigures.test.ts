@@ -12,6 +12,7 @@ import {
   meterWeeks,
   multiple,
   multipleOf,
+  perCredentialTotals,
   pricePerPoint,
   realCost,
   realFromWeeks,
@@ -290,6 +291,69 @@ describe("per credential", () => {
   });
   const keyOf = (billed: BilledReport | null) =>
     credentialFigures({ cells: mixed, billed, bucketMs: HOUR, windowEnd: new Date("2026-11-17T23:00:00Z") }).find((f) => f.id === `${KEY}#1`)!;
+
+  // The per-model table shows the real cost and the bill in rows of their own,
+  // as the sum of the figures the tiles show per credential.
+  describe("totals of the per-credential sources", () => {
+    const figs = (billed: BilledReport | null) => credentialFigures({ cells: mixed, billed, bucketMs: HOUR, windowEnd: new Date("2026-11-17T23:00:00Z") });
+
+    it("adds the seat's real cost and the key's bill, each from its own credential", () => {
+      const { real, billed } = perCredentialTotals(figs(report()));
+      expect(real).toMatchObject({ with: 1, of: 1, below: false });
+      expect(real!.usd).toBeCloseTo(4 * PP, 10);
+      expect(billed).toMatchObject({ usd: 80.5, with: 1, of: 1, pending: true });
+    });
+
+    it("carries each source's list figures and span for the same credentials, so a row compares like with like", () => {
+      const [, seat] = figs(report());
+      const { real, billed } = perCredentialTotals(figs(report()));
+      expect(real!.recomputed).toBe(seat.aligned);
+      expect(real!.reported).toBeNull(); // only a bill has Claude Code's figure over its window
+      expect(real!.spans.map((x) => [x.id, x.from.toISOString(), x.to.toISOString()])).toEqual([[`${SEAT}#0`, "2026-11-17T18:00:00.000Z", "2026-11-17T21:00:00.000Z"]]);
+      expect(billed).toMatchObject({ reported: 95, recomputed: 99 });
+      expect(billed!.spans.map((x) => [x.from.toISOString(), x.to.toISOString()])).toEqual([["2026-11-17T18:00:00.000Z", "2026-11-17T23:00:00.000Z"]]);
+    });
+
+    it("keeps a seat without a meter in the count, so the real total is never the metered seats' alone", () => {
+      const both = credentialFigures({
+        cells: { ...mixed, cells: [...mixed.cells!, cell("2026-11-17T18:00:00Z", { output: 3 }, { secret_key: "other_seat", secret_slot: 2 })] },
+        bucketMs: HOUR, windowEnd: new Date("2026-11-17T23:00:00Z"),
+      });
+      expect(both.find((f) => f.secretKey === "other_seat")!.real).toBeNull();
+      const { real } = perCredentialTotals(both);
+      expect(real).toMatchObject({ with: 1, of: 2 });
+    });
+
+    it("keeps a key without a bill in the count, whether it is unmapped or its bill has not landed", () => {
+      const twoKeys = (second: BilledReport["window"]) => {
+        const cellsTwo = { ...mixed, cells: [...mixed.cells!, cell("2026-11-17T18:00:00Z", { output: 9 }, { secret_key: KEY, secret_slot: 2, credential_kind: "api_key" })] };
+        const base = report();
+        return credentialFigures({ cells: cellsTwo, billed: { ...base, window: second }, bucketMs: HOUR, windowEnd: new Date("2026-11-17T23:00:00Z") });
+      };
+      const quiet = { secret_key: KEY, secret_slot: 2, has_billed: false, billed_usd: "0.00000000", billed_list_usd: "0.00000000", reported_usd: 1, list_usd: 1 };
+      const win = report().window!;
+      // the second key has no row in the window's totals: not mapped
+      const unmapped = twoKeys(win);
+      expect(unmapped.find((f) => f.id === `${KEY}#2`)!.billed!.state).toBe("unmapped");
+      expect(perCredentialTotals(unmapped).billed).toMatchObject({ usd: 80.5, with: 1, of: 2 });
+      // a row without anything billed while the window is not complete
+      const waiting = twoKeys({ ...win, totals: [...win.totals!, quiet] });
+      expect(waiting.find((f) => f.id === `${KEY}#2`)!.billed!.state).toBe("not_landed");
+      expect(perCredentialTotals(waiting).billed).toMatchObject({ usd: 80.5, with: 1, of: 2 });
+    });
+
+    it("offers no bill where none can be read, and no real cost without a meter", () => {
+      expect(perCredentialTotals(figs(null)).billed).toBeNull();
+      expect(perCredentialTotals(figs(report({ sync: sync({ configured: false }) }))).billed).toBeNull();
+      const noMeter = credentialFigures({ cells: { ...mixed, meter: [], subscription: [] }, bucketMs: HOUR, windowEnd: new Date("2026-11-17T23:00:00Z") });
+      expect(perCredentialTotals(noMeter).real).toBeNull();
+    });
+
+    it("counts the credentials without a figure, so a partial sum is not passed off as the total", () => {
+      const noPlan = credentialFigures({ cells: { ...mixed, plans: [], subscription: mixed.subscription!.map((x) => ({ ...x, usd: null, unpriced_points: x.points })) }, bucketMs: HOUR, windowEnd: new Date("2026-11-17T23:00:00Z") });
+      expect(perCredentialTotals(noPlan).real).toMatchObject({ with: 0, of: 1 });
+    });
+  });
 
   it("sums an API key's bill over the window the server names, beside the same window's lines, pending after data_refreshed_at", () => {
     const key = keyOf(report());
