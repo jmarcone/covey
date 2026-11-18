@@ -180,12 +180,13 @@ export default function Dashboard({ me }: { me: Principal }) {
   const drafts = all.filter(isDraft).filter((a) => deptFilter(a, dept, known) && matches(a, "", q, states));
   const groups = groupByDepartment(all.filter((a) => !isDraft(a)), depts, q, states, dept, departments.isSuccess);
   // The name is only there once the departments are in; an id nobody has
-  // stays without one. The chip does not wait for it.
+  // stays without one. The chip does not wait for it, and never shows the id
+  // in its place: that is a UUID, nothing a person can read.
   const deptName = dept === "none" ? t("dashboard.withoutDepartment") : depts.find((d) => d.id === dept)?.name;
   const deptUnknown = !!dept && !deptName && departments.isSuccess;
   // Why nothing is shown. Under a department filter alone the sentence names
   // the department, so it waits for the departments instead of printing a
-  // name that is not there yet; if they fail, the id stands in for it.
+  // name that is not there yet; if they fail, the sentence goes without one.
   const emptyText = deptUnknown
     ? t("dashboard.deptUnknown")
     : dept && !q && states.length === 0
@@ -193,7 +194,9 @@ export default function Dashboard({ me }: { me: Principal }) {
         ? null
         : dept === "none"
           ? t("dashboard.deptEmptyNone")
-          : t("dashboard.deptEmpty", { name: deptName ?? dept })
+          : deptName
+            ? t("dashboard.deptEmpty", { name: deptName })
+            : t("dashboard.deptEmptyUnnamed")
       : t("dashboard.noMatch", { q });
   const shown = groups.reduce((n, g) => n + g.agents.length, 0) + drafts.length;
 
@@ -261,12 +264,11 @@ export default function Dashboard({ me }: { me: Principal }) {
             {dept && !deptUnknown && (
               <button
                 className="badge"
-                aria-label={t("dashboard.deptFilterRemove")}
                 title={t("dashboard.deptFilterRemove")}
                 style={{ cursor: "pointer", outline: "1px solid var(--text-accent)" }}
                 onClick={() => setParam("dept", "", false)}
               >
-                {t("dashboard.deptFilter", { name: deptName ?? dept })} ×
+                {t("dashboard.deptFilter", { name: deptName ?? t("dashboard.deptNamePending") })} ×
               </button>
             )}
             {(q || states.length > 0 || dept) && (

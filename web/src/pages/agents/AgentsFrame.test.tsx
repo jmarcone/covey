@@ -173,14 +173,16 @@ describe("views", () => {
     expect(viewUrl("list")).toBe("/agents?sort=name");
   });
 
-  // The office's ?dept= points at a room once; the list's is a filter.
-  it("remembers the list's department filter, not the office's room", () => {
+  // A department id belongs to one organisation, and the tab outlives a switch of it.
+  it("remembers no ?dept= of either view, but the other filters", () => {
     bar("/?dept=dev&x=1").unmount();
     expect(viewUrl("office")).toBe("/?x=1");
     bar("/?dept=dev").unmount();
     expect(viewUrl("office")).toBe("/");
+    bar("/agents?dept=dev&sort=name").unmount();
+    expect(viewUrl("list")).toBe("/agents?sort=name");
     bar("/agents?dept=dev");
-    expect(viewUrl("list")).toBe("/agents?dept=dev");
+    expect(viewUrl("list")).toBe("/agents");
   });
 
   it("reads the origin from the router state", () => {

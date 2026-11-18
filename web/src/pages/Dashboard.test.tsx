@@ -210,14 +210,22 @@ describe("the list with ?dept=", () => {
     await screen.findByText("Wanda Wachsam");
     expect(screen.queryByText("Egon Rastlos")).not.toBeInTheDocument();
     expect(screen.queryByText("Solo Ohnehaus")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Abteilungsfilter entfernen" })).toHaveTextContent("Abteilung: Support");
+    expect(screen.getByRole("button", { name: /^Abteilung: .* ×$/ })).toHaveTextContent("Abteilung: Support");
+  });
+
+  // WCAG 2.5.3: what the screen reader and voice control call the chip contains what it shows.
+  it("names the chip by its visible text", async () => {
+    zeige("?dept=d1");
+    const chip = await screen.findByRole("button", { name: "Abteilung: Support ×" });
+    expect(chip).not.toHaveAttribute("aria-label");
+    expect(chip).toHaveAttribute("title", "Abteilungsfilter entfernen");
   });
 
   it("shows only the agents without a department for none", async () => {
     zeige("?dept=none");
     await screen.findByText("Solo Ohnehaus");
     expect(screen.queryByText("Wanda Wachsam")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Abteilungsfilter entfernen" })).toHaveTextContent("Abteilung: Ohne Abteilung");
+    expect(screen.getByRole("button", { name: /^Abteilung: .* ×$/ })).toHaveTextContent("Abteilung: Ohne Abteilung");
   });
 
   it("counts an agent whose department is gone as without one", async () => {
@@ -240,17 +248,24 @@ describe("the list with ?dept=", () => {
     expect(screen.queryByText(/Keine Agenten in/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Diese Abteilung gibt es nicht/)).not.toBeInTheDocument();
     // The filter shows from the start, under a neutral label.
-    expect(screen.getByRole("button", { name: "Abteilungsfilter entfernen" })).toHaveTextContent("Abteilung: gone");
+    expect(screen.getByRole("button", { name: /^Abteilung: .* ×$/ })).toHaveTextContent("Abteilung: gewählt ×");
   });
 
   it("still shows the filter, and a way to take it off, when the departments fail", async () => {
     const nutzer = userEvent.setup();
     zeige("?dept=d1", { departments: "fail" });
-    const chip = await screen.findByRole("button", { name: "Abteilungsfilter entfernen" });
-    expect(chip).toHaveTextContent("Abteilung: d1");
+    const chip = await screen.findByRole("button", { name: /^Abteilung: .* ×$/ });
+    expect(chip).toHaveTextContent("Abteilung: gewählt ×");
+    expect(chip).not.toHaveTextContent("d1");
     expect(screen.getByText("Wanda Wachsam")).toBeInTheDocument();
     await nutzer.click(chip);
     expect(await screen.findByText("Egon Rastlos")).toBeInTheDocument();
+  });
+
+  it("does not name the id in the empty state when the departments fail", async () => {
+    zeige("?dept=d9", { departments: "fail" });
+    expect(await screen.findByText("Keine Agenten in dieser Abteilung.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Abteilung: .* ×$/ })).not.toHaveTextContent("d9");
   });
 
   it("answers an id nobody has with an empty state and a way back", async () => {
@@ -267,20 +282,20 @@ describe("the list with ?dept=", () => {
   it("takes the filter off with its chip", async () => {
     const nutzer = userEvent.setup();
     zeige("?dept=d1");
-    await nutzer.click(await screen.findByRole("button", { name: "Abteilungsfilter entfernen" }));
+    await nutzer.click(await screen.findByRole("button", { name: /^Abteilung: .* ×$/ }));
     expect(await screen.findByText("Egon Rastlos")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Abteilungsfilter entfernen" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Abteilung: .* ×$/ })).not.toBeInTheDocument();
     expect(screen.getByTestId("where")).toHaveTextContent(/^\/agents$/);
   });
 
   it("brings the filter back with the browser's Back after the chip took it off", async () => {
     const nutzer = userEvent.setup();
     zeige("?dept=d1");
-    await nutzer.click(await screen.findByRole("button", { name: "Abteilungsfilter entfernen" }));
+    await nutzer.click(await screen.findByRole("button", { name: /^Abteilung: .* ×$/ }));
     expect(await screen.findByText("Egon Rastlos")).toBeInTheDocument();
     await nutzer.click(screen.getByRole("button", { name: "zurück" }));
     expect(screen.getByTestId("where")).toHaveTextContent("/agents?dept=d1");
-    expect(await screen.findByRole("button", { name: "Abteilungsfilter entfernen" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /^Abteilung: .* ×$/ })).toBeInTheDocument();
     expect(screen.queryByText("Egon Rastlos")).not.toBeInTheDocument();
   });
 
