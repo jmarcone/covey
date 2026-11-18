@@ -296,3 +296,72 @@ func TestBilledWindowOneMappingPerBucket(t *testing.T) {
 		}
 	}
 }
+
+// A bucket whose mapping begins only after now — the key handed over within
+// the current hour — still belongs to its holder in the tile, as it does in
+// the chart: the tile lists that credential although no mapping of it is
+// valid in the window yet.
+func TestBilledWindowHolderMappedAfterNow(t *testing.T) {
+	f := newBillingFixture(t, "rechnung-spaeter-zugeordnet")
+	now := time.Now().UTC()
+	if now.Add(2*time.Second).Truncate(time.Hour) != now.Truncate(time.Hour) {
+		// The hand-over at now+1s has to fall inside the current hour.
+		time.Sleep(3 * time.Second)
+		now = time.Now().UTC()
+	}
+	handed := now.Add(time.Second)
+	f.exec(t, `INSERT INTO credential_billing_keys (org_id, secret_key, secret_slot, api_key_id, valid_from, valid_to)
+		VALUES ($1, 'key_old', 0, 'apikey_u', $2, $3), ($1, 'key_new', 0, 'apikey_u', $3, NULL)`,
+		f.s.orgID, now.Add(-10*24*time.Hour), handed)
+	hour := now.Truncate(time.Hour)
+	for _, r := range []struct {
+		at    time.Time
+		cents int
+	}{{hour.Add(-time.Hour), 300}, {hour, 700}} {
+		f.exec(t, `INSERT INTO billed_cost (org_id, bucket_width, bucket_start, bucket_end, api_key_id, model, cost_type, token_type,
+			amount_cents, list_amount_cents, data_refreshed_at, fetched_at)
+			VALUES ($1,'1h',$2,$3,'apikey_u','claude-opus-5-5','tokens','output_tokens',$4,$4,$5,$5)`,
+			f.s.orgID, r.at, r.at.Add(time.Hour), r.cents, now)
+	}
+
+	since := now.Add(-24 * time.Hour)
+	w, err := f.s.obs.BilledWindowFor(f.ctx, f.s.orgID, since, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Width != "1h" {
+		t.Fatalf("window width %q, want 1h", w.Width)
+	}
+	type shown struct {
+		hasBilled bool
+		usd       string
+	}
+	tile := map[string]shown{}
+	for _, b := range w.Totals {
+		tile[b.SecretKey] = shown{b.HasBilled, b.BilledUSD}
+	}
+	for key, want := range map[string]shown{"key_old": {true, "3.00000000"}, "key_new": {true, "7.00000000"}} {
+		if tile[key] != want {
+			t.Errorf("tile of %s: %+v, want %+v", key, tile[key], want)
+		}
+	}
+
+	series, err := f.s.obs.BilledSeries(f.ctx, f.s.orgID, "hour", since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chart := map[string]float64{}
+	for _, p := range series.Points {
+		if p.SecretKey == nil || p.Bucket.Before(w.Start) {
+			continue
+		}
+		var usd float64
+		fmt.Sscan(p.BilledUSD, &usd)
+		chart[*p.SecretKey] += usd
+	}
+	for key, usd := range map[string]float64{"key_old": 3, "key_new": 7} {
+		if math.Abs(usd-chart[key]) > 1e-9 {
+			t.Errorf("%s: chart sums to %v, want %v as in the tile", key, chart[key], usd)
+		}
+	}
+}

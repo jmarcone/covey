@@ -729,9 +729,10 @@ type BilledWindow struct {
 
 // BilledTotal is one credential with a mapping to an API key valid in the
 // window — also when nothing was billed, so "mapped, nothing billed" can be
-// told from "not mapped". A bill bucket counts for the mapping of its time
-// (billedMapping), as in the chart; the lines stay inside the mapping's
-// interval.
+// told from "not mapped" — or the holder of a bucket whose mapping begins
+// only after now (see BilledWindowFor). A bill bucket counts for the mapping
+// of its time (billedMapping), as in the chart; the lines stay inside the
+// mapping's interval.
 type BilledTotal struct {
 	SecretKey  string `json:"secret_key"`
 	SecretSlot int    `json:"secret_slot"`
