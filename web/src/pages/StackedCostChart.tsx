@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { api, type BilledReport, type CellAgent, type CostCell, type CostCells, type UsageReading } from "../api";
-import { fmtBucket, fmtClockUTC, fmtCount, fmtCountAxis, fmtNumber, fmtUSD, fmtUSDAxis } from "../format";
+import { fmtBucket, fmtClockUTC, fmtCount, fmtCountAxis, fmtNumber, fmtUSD, fmtUSDAxis, fmtUSDBelow, fmtUSDFixed } from "../format";
 import { SOURCES, SOURCE_COLOR, sourceHint, sourceLabel, type Source } from "./costSources";
 
 export { SOURCE_COLOR };
@@ -492,11 +492,11 @@ function CredentialTiles({ f, filtered }: { f: CredentialFigures; filtered: bool
       tiles.push(<Tile key="real" label={t("costs.fig.shareOfReal")} value={`≈ ${fmtUSD(share)}`}
         sub={t("costs.fig.shareOfRealSub", { usd: fmtUSD(r.value) })} span={span} note={t("costs.fig.accountWideCaveat")} color={SOURCE_COLOR.real} hatched />);
     } else if (r && r.below) {
-      tiles.push(<Tile key="real" label={t("costs.fig.realEstimate")} value={`< ${fmtUSD(r.high)}`}
+      tiles.push(<Tile key="real" label={t("costs.fig.realEstimate")} value={fmtUSDBelow(r.high)}
         sub={t("costs.fig.realBelow")} span={span} note={t("costs.fig.accountWideCaveat")} color={SOURCE_COLOR.real} hatched />);
     } else if (r) {
       tiles.push(<Tile key="real" label={t("costs.fig.realEstimate")} value={`≈ ${fmtUSD(r.value)}`}
-        sub={t("costs.fig.realRange", { low: fmtUSD(r.low), high: fmtUSD(r.high), pts: r.points, pp: pp != null ? fmtUSD(pp) : "–" })}
+        sub={t("costs.fig.realRange", { low: fmtUSD(r.low), high: fmtUSD(r.high), pts: r.points, pp: pp != null ? fmtUSDFixed(pp, 4) : "–" })}
         span={span} note={t("costs.fig.accountWideCaveat")} color={SOURCE_COLOR.real} hatched />);
     } else {
       tiles.push(<Tile key="real" label={t("costs.fig.realEstimate")} value="–" sub={t("costs.fig.noMeter")} color={SOURCE_COLOR.real} hatched />);
@@ -522,12 +522,18 @@ function CredentialTiles({ f, filtered }: { f: CredentialFigures; filtered: bool
         : t("costs.fig.billedUnavailable");
       tiles.push(<Tile key="billed" label={t("costs.fig.billed")} value="–" sub={why} color={SOURCE_COLOR.billed} />);
     } else {
-      // The bill covers whole billed buckets; the same window's reported and
-      // recomputed figures stand beside it, not the page's.
-      const win = b.window ? t("costs.fig.billedWindow", {
-        from: fmtBucket(b.window.start.toISOString(), "hour"),
-        unit: t(b.window.width === "1h" ? "costs.fig.billedUnitHours" : "costs.fig.billedUnitDays"),
-        reported: fmtUSD(b.reported), list: fmtUSD(b.recomputed),
+      // The bill covers whole billed buckets; the reported and recomputed
+      // figures of the same window stand beside it, not the page's — up to
+      // compared_until, where the bill is complete, not up to now. Without a
+      // date it would read as today, so a day other than the window's end
+      // gets one.
+      const w = b.window;
+      const until = w && (w.comparedUntil.toISOString().slice(0, 10) === w.end.toISOString().slice(0, 10)
+        ? fmtClockUTC(w.comparedUntil) : fmtBucket(w.comparedUntil.toISOString(), "hour"));
+      const win = w ? t("costs.fig.billedWindow", {
+        from: fmtBucket(w.start.toISOString(), "hour"),
+        unit: t(w.width === "1h" ? "costs.fig.billedUnitHours" : "costs.fig.billedUnitDays"),
+        reported: fmtUSD(b.reported), list: fmtUSD(b.recomputed), until,
       }) : undefined;
       const failed = b.error ? t("costs.fig.billedLastSyncFailed", { error: b.error }) : undefined;
       tiles.push(<Tile key="billed" label={t("costs.fig.billed")} value={fmtUSD(b.usd)} sub={status}

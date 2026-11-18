@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { type IndicatorReport } from "../api";
-import { fmtDelta, fmtUSD } from "../format";
+import { fmtDelta, fmtUSDUnit } from "../format";
 
 /** Sparkline: the trend as a small area, without axes and without numbers.
  *
@@ -99,7 +99,7 @@ export function PriceList({ rep, compact = false }: { rep?: IndicatorReport; com
                   agent page. */}
               {r.unit_usd !== undefined ? (
                 <>
-                  <span className="muted">{t("costs.indicators.perUnit", { price: fmtUSD(r.unit_usd) })}</span>
+                  <span className="muted">{t("costs.indicators.perUnit", { price: fmtUSDUnit(r.unit_usd) })}</span>
                   <Delta now={r.unit_usd} prev={r.prev_unit_usd} gutWennKleiner />
                 </>
               ) : r.count === 0 ? (
@@ -186,7 +186,7 @@ function PriceStrip({ rep, rows }: { rep: IndicatorReport; rows: NonNullable<Ind
             <Spark data={r.series} width={42} />
             {r.unit_usd !== undefined ? (
               <>
-                <span className="muted" style={{ fontWeight: 400 }}>{t("costs.indicators.perUnit", { price: fmtUSD(r.unit_usd) })}</span>
+                <span className="muted" style={{ fontWeight: 400 }}>{t("costs.indicators.perUnit", { price: fmtUSDUnit(r.unit_usd) })}</span>
                 <Delta now={r.unit_usd} prev={r.prev_unit_usd} gutWennKleiner />
               </>
             ) : r.count === 0 ? (
