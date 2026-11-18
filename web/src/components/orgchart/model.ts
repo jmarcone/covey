@@ -74,6 +74,45 @@ export function descendantsOf(pool: Member[], id: string): Set<string> {
   return out;
 }
 
+export type OrgPath = {
+  /** The department the member sits in; null for none (or one the chart no longer has). */
+  dept: Department | null;
+  /** The supervisors above the member inside its department, top first. */
+  chain: Member[];
+  /** The direct supervisor when it sits in another department. Such a line
+   *  makes the member a root of its department (see above), so it is not a
+   *  step of the path — only something to point at. */
+  outsideBoss: Member | null;
+};
+
+/** The path from a department down to a member: the way the tree above
+ *  draws it, read upwards. Walks `supervisor_id` / `manager_id` while the
+ *  boss is in the member's department and stops at the boundary, at a boss
+ *  the chart does not have, or at a loop. Null when the member is not in
+ *  the chart. */
+export function orgPath(chart: OrgChart, id: string): OrgPath | null {
+  const byId = new Map(allMembers(chart).map((m) => [m.id, m]));
+  const self = byId.get(id);
+  if (!self) return null;
+  const deptId = memberDept(self);
+  const dept = chart.departments.find((d) => d.id === deptId) ?? null;
+  const chain: Member[] = [];
+  const seen = new Set([self.id]);
+  let outsideBoss: Member | null = null;
+  for (let boss = memberBoss(self); boss; ) {
+    const m = byId.get(boss);
+    if (!m || seen.has(m.id)) break;
+    if (memberDept(m) !== deptId) {
+      if (chain.length === 0) outsideBoss = m;
+      break;
+    }
+    seen.add(m.id);
+    chain.unshift(m);
+    boss = memberBoss(m);
+  }
+  return { dept, chain, outsideBoss };
+}
+
 export function buildModel(chart: OrgChart, isOpen: IsOpen, sizes: Sizes): Model {
   const members = allMembers(chart);
   const nodes = new Map<string, ChartNode>();

@@ -422,6 +422,11 @@
     "countFiltered": "{{count}} 个中的 {{shown}} 个",
     "withoutDepartment": "没有部门",
     "noMatch": "没有找到与“{{q}}”相关的内容。",
+    "deptFilter": "部门：{{name}}",
+    "deptFilterRemove": "移除部门筛选",
+    "deptUnknown": "没有这个部门，它可能已被移除。",
+    "deptEmpty": "{{name}}中没有智能体。",
+    "allAgents": "显示全部智能体",
     "searchClear": "清空搜索",
     "searchShortcut": "按 / 跳到搜索框，Esc 清空",
     "colWho": "谁",
@@ -433,6 +438,14 @@
   "agent": {
     "notFound": "找不到该智能体。",
     "breadcrumb": "智能体",
+    "crumb": {
+      "label": "组织路径",
+      "more_one": "再显示 {{count}} 级",
+      "more_other": "再显示 {{count}} 级",
+      "between": "{{from}} 与 {{to}} 之间",
+      "allIn": "{{department}}的全部智能体",
+      "reportsTo": "汇报给 <link>{{name}}</link>（{{department}}）"
+    },
     "sandbox": "沙箱运行中",
     "wake": "唤醒",
     "resume": "继续",

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, Navigate, useParams, useSearchParams } from "react-router";
+import { Navigate, useParams, useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import { api, post, isDraft, isNotFound, type Agent, type Principal } from "../api";
 import { AgentFiles } from "../components/AgentFiles";
@@ -10,6 +10,7 @@ import { HireDialog } from "../components/HireDialog";
 import { canFiles, canKill, canManage, canRecord, canSecrets } from "./agent/roles";
 import { AgentTooling } from "./agent/Tooling";
 import { AgentSettings } from "./agent/Settings";
+import { AgentCrumb } from "./agent/AgentCrumb";
 import { CostBar } from "./agent/CostBar";
 import { Performance } from "./agent/Performance";
 import { LintFindings } from "./agent/LintFindings";
@@ -121,12 +122,7 @@ export default function AgentPage({ me }: { me: Principal }) {
 
   return (
     <div>
-      <div className="text-sm secondary mb-3">
-        <Link to="/agents" style={{ color: "inherit" }}>
-          {t("agent.breadcrumb")}
-        </Link>{" "}
-        / <b style={{ color: "var(--text-primary)", fontWeight: 500 }}>{a.display_name}</b>
-      </div>
+      <AgentCrumb agent={a} />
 
       <div className="flex items-center gap-3 mb-5 flex-wrap">
         <h1 className="text-[22px]">{a.display_name}</h1>

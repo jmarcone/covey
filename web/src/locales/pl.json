@@ -422,6 +422,11 @@
     "countFiltered": "{{shown}} z {{count}}",
     "withoutDepartment": "Bez działu",
     "noMatch": "Nic nie znaleziono dla „{{q}}”.",
+    "deptFilter": "Dział: {{name}}",
+    "deptFilterRemove": "Usuń filtr działu",
+    "deptUnknown": "Taki dział nie istnieje. Mógł zostać usunięty.",
+    "deptEmpty": "Brak agentów w dziale {{name}}.",
+    "allAgents": "Pokaż wszystkich agentów",
     "searchClear": "Wyczyść wyszukiwanie",
     "searchShortcut": "Naciśnij /, by przejść do wyszukiwania, Esc czyści",
     "colWho": "Kto",
@@ -433,6 +438,14 @@
   "agent": {
     "notFound": "Nie znaleziono agenta.",
     "breadcrumb": "Agenci",
+    "crumb": {
+      "label": "Ścieżka w organizacji",
+      "more_one": "Pokaż jeszcze {{count}} poziom",
+      "more_other": "Pokaż jeszcze {{count}} poziomów",
+      "between": "Między {{from}} a {{to}}",
+      "allIn": "Wszyscy agenci w dziale {{department}}",
+      "reportsTo": "podlega <link>{{name}}</link> ({{department}})"
+    },
     "sandbox": "Piaskownica aktywna",
     "wake": "Obudź",
     "resume": "Wznów",

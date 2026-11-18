@@ -422,6 +422,11 @@
     "countFiltered": "{{shown}} di {{count}}",
     "withoutDepartment": "Senza reparto",
     "noMatch": "Nessun risultato per «{{q}}».",
+    "deptFilter": "Reparto: {{name}}",
+    "deptFilterRemove": "Rimuovi il filtro per reparto",
+    "deptUnknown": "Questo reparto non esiste. Forse è stato rimosso.",
+    "deptEmpty": "Nessun agente in {{name}}.",
+    "allAgents": "Mostra tutti gli agenti",
     "searchClear": "Svuota la ricerca",
     "searchShortcut": "Premi / per saltare nella ricerca, Esc la svuota",
     "colWho": "Chi",
@@ -433,6 +438,14 @@
   "agent": {
     "notFound": "Agente non trovato.",
     "breadcrumb": "Agenti",
+    "crumb": {
+      "label": "Percorso nell’organizzazione",
+      "more_one": "Mostra {{count}} livello in più",
+      "more_other": "Mostra {{count}} livelli in più",
+      "between": "Tra {{from}} e {{to}}",
+      "allIn": "Tutti gli agenti di {{department}}",
+      "reportsTo": "risponde a <link>{{name}}</link> ({{department}})"
+    },
     "sandbox": "Sandbox attiva",
     "wake": "Sveglia",
     "resume": "Riprendi",

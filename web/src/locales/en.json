@@ -422,6 +422,11 @@
     "countFiltered": "{{shown}} of {{count}}",
     "withoutDepartment": "Without a department",
     "noMatch": "Nothing found for “{{q}}”.",
+    "deptFilter": "Department: {{name}}",
+    "deptFilterRemove": "Remove the department filter",
+    "deptUnknown": "There is no such department. It may have been removed.",
+    "deptEmpty": "No agents in {{name}}.",
+    "allAgents": "Show all agents",
     "searchClear": "Clear the search",
     "searchShortcut": "Press / to jump into the search, Esc clears it",
     "colWho": "Who",
@@ -433,6 +438,14 @@
   "agent": {
     "notFound": "Agent not found.",
     "breadcrumb": "Agents",
+    "crumb": {
+      "label": "Organisation path",
+      "more_one": "Show {{count}} more level",
+      "more_other": "Show {{count}} more levels",
+      "between": "Between {{from}} and {{to}}",
+      "allIn": "All agents in {{department}}",
+      "reportsTo": "reports to <link>{{name}}</link> ({{department}})"
+    },
     "sandbox": "Sandbox active",
     "wake": "Wake",
     "resume": "Resume",

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import * as THREE from "three";
 import { api, post, type Agent, type Department, type Human, type Laufend, type OfficeFurnishing, type Organization, type Principal } from "../api";
 import { canManage } from "../pages/agent/roles";
@@ -135,6 +135,27 @@ export default function Buero({
   const etage = Math.min(etageWunsch, haus.etagen.length - 1);
   const plan = haus.etagen[etage].plan;
   const [wechsel, setWechsel] = useState(false);
+
+  /* ?dept=<id|none>: the agent page's crumb names a department. A place is
+     not filtered — the office shows that department's floor and outlines the
+     room for two seconds. "none" is the room of those without a department;
+     an id the house has no room for (unknown, or nobody works there) leaves
+     the floor as it is and drops the parameter. */
+  const [sp, setSp] = useSearchParams();
+  const wunsch = sp.get("dept");
+  const zielId = wunsch === "none" ? "ohne" : wunsch;
+  const ziel = useMemo(() => {
+    if (!zielId) return null;
+    for (const e of haus.etagen) {
+      const r = e.plan.raeume.find((x) => !x.gem && x.id === zielId);
+      if (r) return { etage: e.nr, raum: r };
+    }
+    return null;
+  }, [haus, zielId]);
+  const [umrandet, setUmrandet] = useState<string | null>(null);
+  const umrandetRef = useRef(umrandet);
+  umrandetRef.current = umrandet;
+  const rahmen = useRef<SVGPolygonElement>(null);
 
   /* Where the signed-in person belongs. The platform knows it (the human's
      department, #315); the office opens there and the home button leads back
@@ -405,6 +426,16 @@ export default function Buero({
       pfad += `M${s.x.toFixed(1)} ${(s.y + 2).toFixed(1)}L${s.ax.toFixed(1)} ${s.ay.toFixed(1)}M${(s.ax - 1.8).toFixed(1)} ${s.ay.toFixed(1)}a1.8 1.8 0 1 0 3.6 0a1.8 1.8 0 1 0 -3.6 0`;
     }
     svg?.firstElementChild?.setAttribute("d", pfad);
+    // The outline of the room the crumb pointed at, drawn on the floor.
+    const r = umrandetRef.current ? plan.raeume.find((x) => !x.gem && x.id === umrandetRef.current) : undefined;
+    rahmen.current?.setAttribute(
+      "points",
+      r
+        ? [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]]
+            .map(([cx, cy]) => aufSchirm(st.kamera, plan, w, h, cx, cy, 0).map((v) => v.toFixed(1)).join(","))
+            .join(" ")
+        : "",
+    );
   };
 
   /* The pointer, decoupled from the event: mouse moves come more often than
@@ -470,6 +501,42 @@ export default function Buero({
     return () => window.removeEventListener("keydown", auf);
   }, [etage, etageWechseln]);
 
+  const zielGezeigt = useRef<string | null>(null);
+  useEffect(() => {
+    if (!zielId) {
+      zielGezeigt.current = null;
+      return;
+    }
+    // Nobody to show yet, or the departments are still on their way.
+    if (agents.length === 0 || (zielId !== "ohne" && departments.length === 0)) return;
+    if (!ziel) {
+      setSp(
+        (prev) => {
+          const n = new URLSearchParams(prev);
+          n.delete("dept");
+          return n;
+        },
+        { replace: true },
+      );
+      return;
+    }
+    const st = steuerung.current;
+    if (!st || zielGezeigt.current === zielId) return;
+    if (ziel.etage !== etage) {
+      setEtage(ziel.etage);
+      return;
+    }
+    zielGezeigt.current = zielId;
+    const r = ziel.raum;
+    st.zentrieren({ x: r.x + r.w / 2, y: r.y + r.h / 2 }, Math.min(2.2, Math.max(1.3, 1800 / Math.max(r.w, r.h))));
+    setUmrandet(r.id);
+  }, [zielId, ziel, etage, agents.length, departments.length, setSp]);
+  useEffect(() => {
+    if (!umrandet) return;
+    const h = window.setTimeout(() => setUmrandet(null), 2000);
+    return () => window.clearTimeout(h);
+  }, [umrandet]);
+
   /* Home: the own room in the middle, closer — and on its floor. Without a
      department the whole floor, as before. */
   const heim = useCallback(() => {
@@ -486,7 +553,8 @@ export default function Buero({
      floor switch lands first, the centring follows on the new floor. */
   const heimGezeigt = useRef<Haus | null>(null);
   useEffect(() => {
-    if (!meinZimmer || !steuerung.current) return;
+    // A department asked for in the address wins over the own room.
+    if (!meinZimmer || !steuerung.current || zielId) return;
     if (heimGezeigt.current === haus && meinZimmer.etage === etage) return;
     if (meinZimmer.etage !== etage) {
       if (heimGezeigt.current !== haus) setEtage(meinZimmer.etage);
@@ -494,7 +562,7 @@ export default function Buero({
     }
     heimGezeigt.current = haus;
     heim();
-  }, [haus, meinZimmer, etage, heim]);
+  }, [haus, meinZimmer, etage, heim, zielId]);
 
   /* The building is fitted to the stage whatever its headcount, so the faces
      have to give way: seventy heads at thirty pixels cover the desks they
@@ -522,6 +590,9 @@ export default function Buero({
         <div className="bu-leute">
           <svg className="bu-masten" ref={masten} aria-hidden="true">
             <path d="" />
+          </svg>
+          <svg className="bu-masten bu-ziel" aria-hidden="true">
+            <polygon ref={rahmen} points="" />
           </svg>
           {plan.raeume.map((r) => (
             <div

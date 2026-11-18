@@ -422,6 +422,11 @@
     "countFiltered": "{{shown}} sur {{count}}",
     "withoutDepartment": "Sans département",
     "noMatch": "Rien trouvé pour « {{q}} ».",
+    "deptFilter": "Département : {{name}}",
+    "deptFilterRemove": "Retirer le filtre de département",
+    "deptUnknown": "Ce département n’existe pas. Il a peut-être été supprimé.",
+    "deptEmpty": "Aucun agent dans {{name}}.",
+    "allAgents": "Afficher tous les agents",
     "searchClear": "Vider la recherche",
     "searchShortcut": "Appuyez sur / pour aller dans la recherche, Échap la vide",
     "colWho": "Qui",
@@ -433,6 +438,14 @@
   "agent": {
     "notFound": "Agent introuvable.",
     "breadcrumb": "Agents",
+    "crumb": {
+      "label": "Chemin dans l’organisation",
+      "more_one": "Afficher {{count}} niveau de plus",
+      "more_other": "Afficher {{count}} niveaux de plus",
+      "between": "Entre {{from}} et {{to}}",
+      "allIn": "Tous les agents de {{department}}",
+      "reportsTo": "rend compte à <link>{{name}}</link> ({{department}})"
+    },
     "sandbox": "Bac à sable actif",
     "wake": "Réveiller",
     "resume": "Reprendre",

@@ -64,6 +64,14 @@ const basisRouten = {
   [`/api/v1/agents/${AGENT_ID}/skills`]: [],
   [`/api/v1/agents/${AGENT_ID}/files`]: { path: "", exists: false, truncated: false, entries: [] },
   [`/api/v1/agents/${AGENT_ID}/config`]: { version: 1, files: {}, compiled_prompt: "", created_at: "" },
+  "/api/v1/org/chart": {
+    humans: [],
+    agents: [
+      { ...agent, department_id: "d1", supervisor_id: "boss" },
+      { ...agent, id: "boss", slug: "boss", display_name: "Chefin", department_id: "d1" },
+    ],
+    departments: [{ id: "d1", org_id: "o", name: "Entwicklung", description: "", color: "", leads: [], created_at: "" }],
+  },
   "/api/v1/skills": [],
   "/api/v1/targets": [],
   "/api/v1/runtimes": [],
@@ -116,6 +124,18 @@ describe("Reiter der Agenten-Seite", () => {
 
     await nutzer.click(screen.getByRole("button", { name: "Dateien" }));
     await waitFor(() => expect(netz.calls.some((c) => c.includes("/files"))).toBe(true));
+  });
+});
+
+// The crumb names the way through the organisation. It is one request, not
+// one per step.
+describe("Pfad durch die Organisation", () => {
+  it("holt das Organigramm einmal und zeigt Abteilung und Vorgesetzte als Schritte", async () => {
+    const { netz } = zeigeAgent(`/agents/${AGENT_ID}`);
+    const pfad = await screen.findByRole("navigation", { name: "Organisationspfad" });
+    expect(await screen.findByRole("link", { name: "Entwicklung" })).toHaveAttribute("href", "/agents?dept=d1");
+    expect(pfad).toHaveTextContent("Chefin");
+    expect(netz.calls.filter((c) => c.includes("/org/chart"))).toHaveLength(1);
   });
 });
 
