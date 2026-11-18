@@ -178,6 +178,7 @@
       "meterSpanValue": "{{from}}%（{{fromAt}}）→ {{to}}%（{{toAt}}）：{{n}} 次读数共 {{pts}} 个点",
       "meterList": "重新计算的标价（同一时段）",
       "perCredential": "按凭据而非按模型：显示在合计之下的专属行。",
+      "lastColumn": "至少保留一个来源处于开启状态。",
       "someWithout": "{{n}} / {{m}} 个凭据没有数值",
       "billedPending": "账单只在最近一次同步之前是完整的；上方卡片说明了截止时间。",
       "col_reported": "报告值",

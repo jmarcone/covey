@@ -1,11 +1,11 @@
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import { api, type ModelUsageReport, type ModelUsageRow, type UsageReading } from "../api";
 import { fmtBucket, fmtCount, fmtNumber, fmtUSD } from "../format";
-import { SOURCES, sourceHint, sourceLabel, type Source } from "./costSources";
-import { perCredentialTotals, type SourceTotal } from "./costFigures";
+import { DEFAULT_SOURCES, SOURCES, SOURCE_INFO, isPerModel, modelFigure, sourceHint, sourceLabel, type Source } from "./costSources";
+import { isSeat, perCredentialTotals, scopeFigure, type SourceTotal } from "./costFigures";
 import { Chip } from "./StackedCostChart";
 import { usableReadings, type CredentialFigures } from "./costFigures";
 import { OrgWide, SOURCE_COLOR, Swatch, useUsageReadings } from "./StackedCostChart";
@@ -36,13 +36,13 @@ function shortModel(m: string) {
   return m.replace(/^claude-/, "");
 }
 
-type Col = Source;
 const COLS_KEY = "covey.cost.modelColumns";
-const DEFAULT_COLS: Col[] = ["reported", "recomputed"];
 
-/** The remembered columns of this browser; the default (the two per-model
- *  sources) when nothing usable is stored or storage is not there. */
-export function loadColumns(): Col[] {
+/** The remembered columns of this browser: what was stored, whether or not
+ *  this window offers it now (a column the window lacks is remembered, not
+ *  shown). The default sources when nothing usable is stored or storage is
+ *  not there. */
+export function loadColumns(): Source[] {
   try {
     const v: unknown = JSON.parse(window.localStorage.getItem(COLS_KEY) ?? "null");
     if (Array.isArray(v)) {
@@ -50,96 +50,129 @@ export function loadColumns(): Col[] {
       if (on.length > 0) return on;
     }
   } catch { /* private mode, or not JSON */ }
-  return DEFAULT_COLS;
+  return [...DEFAULT_SOURCES];
 }
 
-function saveColumns(cols: Col[]) {
+function saveColumns(cols: Source[]) {
   try { window.localStorage.setItem(COLS_KEY, JSON.stringify(cols)); } catch { /* private mode */ }
 }
 
-function ModelTable({ rep, figures }: { rep: ModelUsageReport; figures: CredentialFigures[] }) {
+function ModelTable({ rep, figures, agents }: { rep: ModelUsageReport; figures: CredentialFigures[]; agents: ReadonlySet<string> }) {
   const { t } = useTranslation();
-  const [chosen, setChosen] = useState<Col[]>(loadColumns);
+  const [chosen, setChosen] = useState<Source[]>(loadColumns);
   const per = useMemo(() => perCredentialTotals(figures), [figures]);
-  const rows = [...(rep.rows ?? [])].sort((a, b) => (b.list_usd ?? b.engine_usd) - (a.list_usd ?? a.engine_usd));
-  const engine = rows.reduce((a, r) => a + r.engine_usd, 0);
+  const perBy: Partial<Record<Source, SourceTotal | null>> = per;
+  const filtered = agents.size > 0;
+  // The model lines carry their agent, so the per-model columns follow the
+  // agent filter like the headline does; the per-credential rows cannot.
+  const rows = (rep.rows ?? []).filter((r) => !filtered || agents.has(r.agent_id))
+    .sort((a, b) => (b.list_usd ?? b.engine_usd) - (a.list_usd ?? a.engine_usd));
   const list = rows.reduce((a, r) => a + (r.list_usd ?? 0), 0);
   const priced = rows.filter((r) => r.list_usd !== null).reduce((a, r) => a + r.engine_usd, 0);
-  const unpriced = rows.filter((r) => r.list_usd === null).length;
-  // A model the list does not know enters the recomputed figure at Claude
-  // Code's own price; without it here the list total falls short of the
-  // headline by exactly that, with nothing saying so.
-  const unpricedUSD = rows.filter((r) => r.list_usd === null).reduce((a, r) => a + r.engine_usd, 0);
-  if (rows.length === 0) return <div className="muted text-sm">{t("costs.empty")}</div>;
+  const unpricedRows = rows.filter((r) => r.list_usd === null);
+  const unpriced = unpricedRows.length;
+  // A model the list does not know enters a column that lacks its figure at
+  // Claude Code's own price; without it the recomputed total falls short of
+  // the headline by exactly that, with nothing saying so.
+  const unpricedUSD = unpricedRows.reduce((a, r) => a + r.engine_usd, 0);
   const check = priced > 0 ? ((list - priced) / priced) * 100 : 0;
 
   // The real cost and the bill are offered only where a meter or a bill exists.
-  const offered = SOURCES.filter((c) => (c === "real" ? per.real : c === "billed" ? per.billed : true));
+  const offered = SOURCES.filter((c) => isPerModel(c) || perBy[c] != null);
   const shown = offered.filter((c) => chosen.includes(c));
-  // What was stored may name a column this window does not offer: then the default.
-  const visible = shown.length > 0 ? shown : DEFAULT_COLS;
-  const toggle = (c: Col) => {
-    const next = visible.includes(c) ? visible.filter((x) => x !== c) : offered.filter((x) => x === c || visible.includes(x));
-    if (next.length === 0) return; // keep at least one
+  // What was stored may name only columns this window does not offer: then the default.
+  const visible = shown.length > 0 ? shown : offered.filter((c) => DEFAULT_SOURCES.includes(c));
+  // Switch within what is remembered, not within what is offered now: a
+  // column the window lacks (Real over 24 h, which has no meter) stays in the
+  // choice and comes back with the window that offers it.
+  const toggle = (c: Source) => {
+    const base = shown.length > 0 ? chosen : SOURCES.filter((x) => chosen.includes(x) || visible.includes(x));
+    const next = base.includes(c) ? base.filter((x) => x !== c) : SOURCES.filter((x) => x === c || base.includes(x));
+    if (!next.some((x) => offered.includes(x))) return; // keep at least one on show
     setChosen(next);
     saveColumns(next);
   };
 
-  const hint = (c: Col) => {
-    const h = sourceHint(t, c);
-    return c === "real" || c === "billed" ? `${h} ${t("costs.insights.perCredential")}` : h;
-  };
   const perCredential = t("costs.insights.perCredential");
-  // The cell of a per-credential source in its own row: none, with the
-  // reason, where the credentials with a figure are not all of them.
-  const perCell = (c: SourceTotal | null, real: boolean) => {
-    if (!c) return { text: "–", title: undefined };
-    if (c.with < c.of) return { text: "–", title: t("costs.insights.someWithout", { n: c.of - c.with, m: c.of }) };
-    if (c.with === 0) return { text: "–", title: undefined };
-    if (real && c.below) return { text: `< ${fmtUSD(c.high)}`, title: undefined };
-    // The seats without movement count as 0 in the sum; the whole is
-    // somewhere between the lowest and the highest each seat's range allows.
-    if (real) return { text: `≈ ${fmtUSD(c.usd)}`, title: t("costs.insights.sumRange", { low: fmtUSD(c.low), high: fmtUSD(c.high) }) };
-    return { text: fmtUSD(c.usd), title: c.pending ? t("costs.insights.billedPending") : undefined };
+  const hint = (c: Source) => {
+    const h = sourceHint(t, c);
+    return isPerModel(c) ? h : `${h} ${perCredential}`;
   };
-  // The list figures beside it: the same credentials over the same span.
-  const sameScope = (c: SourceTotal | null, v: number | null | undefined) =>
-    c && c.with === c.of && v != null ? fmtUSD(v) : "–";
-  const modelCell = (c: Col, r: ModelUsageRow) => {
-    if (c === "reported") return { text: fmtUSD(r.engine_usd), title: undefined };
-    if (c === "recomputed") return { text: r.list_usd === null ? "–" : fmtUSD(r.list_usd), title: undefined };
-    return { text: "–", title: perCredential }; // per credential, not per model
+  // The cell of a per-credential source in its own row, and the reason for
+  // it where there is one: none where the credentials with a figure are not
+  // all of them. A failed sync is said in either case: a bill it left out is
+  // what it explains best.
+  const perCell = (c: Source, total: SourceTotal) => {
+    const failed = total.syncError ? t("costs.fig.billedLastSyncFailed", { error: total.syncError }) : "";
+    if (total.with < total.of) {
+      return { text: "–", why: [t("costs.insights.someWithout", { n: total.of - total.with, m: total.of }), failed].filter(Boolean).join(" · ") };
+    }
+    if (total.with === 0) return { text: "–", why: undefined };
+    if (SOURCE_INFO[c].estimate) {
+      if (total.below) return { text: `< ${fmtUSD(total.high)}`, why: undefined };
+      // The seats without movement count as 0 in the sum; the whole is
+      // somewhere between the lowest and the highest each seat's range allows.
+      return { text: `≈ ${fmtUSD(total.usd)}`, why: t("costs.insights.sumRange", { low: fmtUSD(total.low), high: fmtUSD(total.high) }) };
+    }
+    const why = [total.pending ? t("costs.insights.billedPending") : "", failed].filter(Boolean).join(" ");
+    return { text: fmtUSD(total.usd), why: why || undefined };
   };
-  const totalCell = (c: Col) => {
-    if (c === "reported") return fmtUSD(engine);
-    if (c === "recomputed") return fmtUSD(list + unpricedUSD);
-    return ""; // the real cost and the bill have rows of their own
+  // The figures of the per-model sources beside it: the same credentials over the same span.
+  const sameScope = (total: SourceTotal, c: Source) => {
+    const v = scopeFigure(total, c);
+    return total.with === total.of && v != null ? fmtUSD(v) : "–";
   };
+  const modelCell = (c: Source, r: ModelUsageRow) => {
+    if (!isPerModel(c)) return { text: "–", title: perCredential }; // per credential, not per model
+    const v = modelFigure(c, r);
+    return { text: v === null ? "–" : fmtUSD(v), title: undefined };
+  };
+  const modelTotal = (c: Source) => rows.reduce((a, r) => a + (modelFigure(c, r) ?? r.engine_usd), 0);
   const spanOf = (c: SourceTotal) => c.spans.length > 0 ? {
     from: fmtBucket(new Date(Math.min(...c.spans.map((x) => x.from.getTime()))).toISOString(), "hour"),
     to: fmtBucket(new Date(Math.max(...c.spans.map((x) => x.to.getTime()))).toISOString(), "hour"),
   } : { from: "–", to: "–" };
-  const spanTitle = (c: SourceTotal) => c.spans.length > 1
-    ? c.spans.map((x) => `${x.id}: ${fmtBucket(x.from.toISOString(), "hour")} – ${fmtBucket(x.to.toISOString(), "hour")}`).join("\n") : undefined;
+  // Where the row combines several credentials, the span of each: its label
+  // names only the combined one.
+  const spansOf = (c: SourceTotal) => c.spans.length > 1
+    ? c.spans.map((x) => `${x.id}: ${fmtBucket(x.from.toISOString(), "hour")} – ${fmtBucket(x.to.toISOString(), "hour")}`) : [];
+
+  const credentialRows = visible.filter((c) => !isPerModel(c) && perBy[c] != null);
+  if (rows.length === 0 && credentialRows.length === 0 && offered.every(isPerModel)) return <div className="muted text-sm">{t("costs.empty")}</div>;
+  // A column that gives some model line a figure of another source's price.
+  const fallsBack = visible.some((c) => isPerModel(c) && rows.some((r) => modelFigure(c, r) === null));
+
+  // What the cells carry in their title stands here in the open as well:
+  // a title is not there on a phone or for a keyboard.
+  const notes: ReactNode[] = [];
   // The price-table check compares the two per-model sources, so it stands
   // only while both are on.
-  const notes: string[] = [];
   if (visible.includes("reported") && visible.includes("recomputed")) {
     notes.push(t("costs.insights.priceTableCheck", { pct: `${check >= 0 ? "+" : ""}${fmtNumber(check, 2)}` }));
   }
   if (unpriced > 0) notes.push(t("costs.insights.unpriced", { count: unpriced }));
   if (rep.runs_without_breakdown > 0) {
-    notes.push(t("costs.insights.without", { count: rep.runs_without_breakdown, usd: fmtUSD(rep.usd_without_breakdown) }));
+    // Runs without a model record have no agent here: the figure is the whole organisation's.
+    notes.push(<>{t("costs.insights.without", { count: rep.runs_without_breakdown, usd: fmtUSD(rep.usd_without_breakdown) })}{filtered && <OrgWide />}</>);
+  }
+  for (const c of visible.filter((x) => !isPerModel(x))) {
+    const total = perBy[c];
+    notes.push([sourceLabel(t, c) + ":", perCredential, total ? perCell(c, total).why : undefined,
+      total ? spansOf(total).join("; ") : undefined].filter(Boolean).join(" "));
   }
   return (
     <div>
       <div className="flex flex-wrap items-center gap-2" style={{ marginBottom: 8 }} role="group" aria-label={t("costs.filter.source")}>
         <span className="muted text-xs" style={{ marginRight: 4 }}>{t("costs.filter.source")}</span>
-        {offered.map((c) => (
-          <Chip key={c} on={visible.includes(c)} color={SOURCE_COLOR[c]} hatched={c === "real"} onClick={() => toggle(c)}>
-            {sourceLabel(t, c)}
-          </Chip>
-        ))}
+        {offered.map((c) => {
+          const locked = visible.length === 1 && visible[0] === c;
+          return (
+            <Chip key={c} on={visible.includes(c)} color={SOURCE_COLOR[c]} hatched={SOURCE_INFO[c].estimate} onClick={() => toggle(c)}
+              locked={locked} title={locked ? t("costs.insights.lastColumn") : undefined}>
+              {sourceLabel(t, c)}
+            </Chip>
+          );
+        })}
       </div>
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
@@ -157,6 +190,11 @@ function ModelTable({ rep, figures }: { rep: ModelUsageReport; figures: Credenti
             </tr>
           </thead>
           <tbody>
+            {rows.length === 0 && (
+              <tr data-empty style={{ borderTop: "1px solid var(--border)" }}>
+                <td style={td} colSpan={6 + visible.length} className="muted">{t("costs.empty")}</td>
+              </tr>
+            )}
             {rows.map((r) => (
               <tr key={`${r.agent_id}/${r.model}/${r.credential_kind}`} style={{ borderTop: "1px solid var(--border)" }}>
                 <td style={td}>
@@ -181,37 +219,29 @@ function ModelTable({ rep, figures }: { rep: ModelUsageReport; figures: Credenti
               <tr data-unpriced style={{ borderTop: "1px solid var(--border)" }}>
                 <td style={{ ...td, whiteSpace: "normal" }} colSpan={6} className="muted">{t("costs.insights.unpricedRow", { count: unpriced })}</td>
                 {visible.map((c) => (
-                  <td key={c} style={num}>{c === "reported" || c === "recomputed" ? fmtUSD(unpricedUSD) : ""}</td>
+                  <td key={c} style={num}>{isPerModel(c) ? fmtUSD(unpricedUSD) : ""}</td>
                 ))}
               </tr>
             )}
             <tr data-total style={{ borderTop: "1px solid var(--border)", fontWeight: 600 }}>
-              <td style={td} colSpan={6}>{t(unpriced > 0 && visible.includes("recomputed") ? "costs.insights.totalWithUnpriced" : "costs.insights.total")}</td>
-              {visible.map((c) => <td key={c} data-col={c} style={num}>{totalCell(c)}</td>)}
+              <td style={td} colSpan={6}>{t(fallsBack ? "costs.insights.totalWithUnpriced" : "costs.insights.total")}</td>
+              {/* the real cost and the bill have rows of their own */}
+              {visible.map((c) => <td key={c} data-col={c} style={num}>{isPerModel(c) ? fmtUSD(modelTotal(c)) : ""}</td>)}
             </tr>
-            {visible.includes("real") && per.real && (
-              <tr data-seats style={{ borderTop: "1px solid var(--border)" }}>
-                <td style={{ ...td, whiteSpace: "normal" }} colSpan={6} title={spanTitle(per.real)}>
-                  {t("costs.insights.seatsRow", spanOf(per.real))}
-                </td>
-                {visible.map((c) => {
-                  const x = c === "real" ? perCell(per.real, true) : { text: c === "recomputed" ? sameScope(per.real, per.real!.recomputed) : "", title: undefined };
-                  return <td key={c} data-col={c} style={num} title={x.title}>{x.text}</td>;
-                })}
-              </tr>
-            )}
-            {visible.includes("billed") && per.billed && (
-              <tr data-keys style={{ borderTop: "1px solid var(--border)" }}>
-                <td style={{ ...td, whiteSpace: "normal" }} colSpan={6}>
-                  {t("costs.insights.keysRow", spanOf(per.billed))}
-                </td>
-                {visible.map((c) => {
-                  const x = c === "billed" ? perCell(per.billed, false)
-                    : { text: c === "reported" ? sameScope(per.billed, per.billed!.reported) : c === "recomputed" ? sameScope(per.billed, per.billed!.recomputed) : "", title: undefined };
-                  return <td key={c} data-col={c} style={num} title={x.title}>{x.text}</td>;
-                })}
-              </tr>
-            )}
+            {credentialRows.map((c) => {
+              const total = perBy[c]!;
+              return (
+                <tr key={c} data-credential-row={c} style={{ borderTop: "1px solid var(--border)" }}>
+                  <td style={{ ...td, whiteSpace: "normal" }} colSpan={6} title={spansOf(total).join("\n") || undefined}>
+                    {t(SOURCE_INFO[c].rowLabel!, spanOf(total))}{filtered && <OrgWide />}
+                  </td>
+                  {visible.map((x) => {
+                    const own = x === c ? perCell(c, total) : { text: isPerModel(x) ? sameScope(total, x) : "", why: undefined };
+                    return <td key={x} data-col={x} style={num} title={own.why}>{own.text}</td>;
+                  })}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -282,11 +312,14 @@ function MeterFigures({ f, readings }: { f: CredentialFigures; readings: UsageRe
   );
 }
 
+const NO_AGENTS: ReadonlySet<string> = new Set();
 const times = (v: number) => (Number.isFinite(v) ? `${fmtNumber(v, 1)}×` : "∞");
 
 /** The cards below the chart. `figures` are the credentials' figures over the
- *  whole organisation — the same the tiles show without an agent filter. */
-export function CostInsights({ days, figures, filtered = false }: { days: number; figures: CredentialFigures[]; filtered?: boolean }) {
+ *  whole organisation — the same the tiles show without an agent filter —
+ *  while the model table follows `agents`, the page's agent filter (empty:
+ *  all agents). */
+export function CostInsights({ days, figures, agents = NO_AGENTS }: { days: number; figures: CredentialFigures[]; agents?: ReadonlySet<string> }) {
   const { t } = useTranslation();
   const models = useQuery({
     queryKey: ["cost", "models", days],
@@ -295,14 +328,15 @@ export function CostInsights({ days, figures, filtered = false }: { days: number
   });
   const readings = useUsageReadings(days);
   const rs = useMemo(() => readings.data ?? [], [readings.data]);
-  const metered = figures.filter((f) => f.meter != null && f.kind !== "api_key");
+  const filtered = agents.size > 0;
+  const metered = figures.filter((f) => f.meter != null && isSeat(f));
 
   return (
     <div className="grid gap-4 mt-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(420px, 100%), 1fr))" }}>
       <div className="card" style={{ gridColumn: "1 / -1" }}>
-        <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.insights.modelsTitle")}{filtered && <OrgWide />}</div>
+        <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.insights.modelsTitle")}</div>
         <p className="muted text-xs mb-3">{t("costs.insights.modelsHint")}</p>
-        {models.data ? <ModelTable rep={models.data} figures={figures} /> : <div className="muted text-sm">…</div>}
+        {models.data ? <ModelTable rep={models.data} figures={figures} agents={agents} /> : <div className="muted text-sm">…</div>}
       </div>
       <div className="card">
         <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.insights.meterTitle")}{filtered && <OrgWide />}</div>

@@ -178,6 +178,7 @@
       "meterSpanValue": "{{from}} % ({{fromAt}}) → {{to}} % ({{toAt}}): {{pts}} puntos de {{n}} lecturas",
       "meterList": "Precio de lista recalculado, mismo periodo",
       "perCredential": "Por credencial, no por modelo: en su propia fila bajo el total.",
+      "lastColumn": "Al menos una fuente permanece activada.",
       "someWithout": "{{n}} de {{m}} credenciales sin cifra",
       "billedPending": "La factura solo está completa hasta la última sincronización; el recuadro de arriba indica hasta cuándo.",
       "col_reported": "Informado",

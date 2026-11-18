@@ -178,6 +178,7 @@
       "meterSpanValue": "{{from}} % ({{fromAt}}) → {{to}} % ({{toAt}}): {{pts}} Punkte aus {{n}} Ablesungen",
       "meterList": "Nachgerechneter Listenpreis, derselbe Zeitraum",
       "perCredential": "Pro Zugang, nicht pro Modell: in einer eigenen Zeile unter der Summe.",
+      "lastColumn": "Mindestens eine Quelle bleibt an.",
       "someWithout": "{{n}} von {{m}} Zugängen ohne Zahl",
       "billedPending": "Die Rechnung ist nur bis zum letzten Abgleich vollständig; die Kachel oben sagt, bis wann.",
       "col_reported": "Gemeldet",
