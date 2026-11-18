@@ -31,10 +31,15 @@ const leute = ["a", "b", "c"].map(
    would be asked to run. */
 let warteschlange: Map<number, FrameRequestCallback>;
 let n: number;
+/* The clock is the test's too: a frame is 16 ms after the one before, however
+   fast or slow the machine runs the test. The camera's ride and the life's
+   step are functions of that time. */
+let jetzt: number;
 function rahmenLaufen() {
   const dran = [...warteschlange];
   warteschlange.clear();
-  for (const [, cb] of dran) cb(performance.now());
+  jetzt += 16;
+  for (const [, cb] of dran) cb(jetzt);
 }
 async function beruhigen() {
   for (let i = 0; i < 60 && warteschlange.size; i++) await act(async () => rahmenLaufen());
@@ -45,6 +50,8 @@ describe("the office's frame loop", () => {
     useGerman();
     warteschlange = new Map();
     n = 0;
+    jetzt = 1000;
+    vi.spyOn(performance, "now").mockImplementation(() => jetzt);
     maler.render.mockClear();
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => (warteschlange.set(++n, cb), n));
     vi.stubGlobal("cancelAnimationFrame", (id: number) => void warteschlange.delete(id));
@@ -64,7 +71,11 @@ describe("the office's frame loop", () => {
 
     const gezeichnet = maler.render.mock.calls.length;
     // Nobody is awake: there is nothing for the life to do, and nothing is drawn.
+    // (No guest turns up by chance in these seconds.)
+    vi.spyOn(Math, "random").mockReturnValue(0.9999);
+    jetzt += 600;
     await new Promise((r) => setTimeout(r, 600));
+    vi.mocked(Math.random).mockRestore();
     expect(warteschlange.size).toBe(0);
     expect(maler.render.mock.calls.length).toBe(gezeichnet);
 
