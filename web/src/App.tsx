@@ -41,6 +41,11 @@ function useLiveEvents(enabled: boolean) {
       qc.invalidateQueries({ queryKey: ["agents"] });
       qc.invalidateQueries({ queryKey: ["agent"] });
       qc.invalidateQueries({ queryKey: ["backlog"] });
+      // The columns move with the tasks: set_stage can make a column during a
+      // run, and the end of the run clears it away again. Refreshing only the
+      // tasks put a task into a column the board did not know yet ("No stage")
+      // and left a column standing that was already gone.
+      qc.invalidateQueries({ queryKey: ["stages"] });
       qc.invalidateQueries({ queryKey: ["recording"] });
       qc.invalidateQueries({ queryKey: ["inbox"] });
       qc.invalidateQueries({ queryKey: ["cost"] });

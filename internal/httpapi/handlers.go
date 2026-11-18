@@ -519,14 +519,20 @@ func (s *Server) handleUpdateStage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	// default_name gives a default column its own name back, so it shows the
+	// reader's language again; the name sent beside it does not count.
 	var in struct {
-		Name     string `json:"name"`
-		Color    string `json:"color"`
-		Position int    `json:"position"`
+		Name        string `json:"name"`
+		Color       string `json:"color"`
+		Position    int    `json:"position"`
+		DefaultName bool   `json:"default_name"`
 	}
-	if err := readJSON(r, &in); err != nil || in.Name == "" {
+	if err := readJSON(r, &in); err != nil || (in.Name == "" && !in.DefaultName) {
 		writeErr(w, http.StatusBadRequest, "name is required")
 		return
+	}
+	if in.DefaultName {
+		in.Name = ""
 	}
 	st, err := s.Backlog.UpdateStage(r.Context(), id, in.Name, in.Color, in.Position)
 	if err != nil {

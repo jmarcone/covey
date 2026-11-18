@@ -695,6 +695,11 @@
       "editColumns": "编辑列",
       "doneEditing": "完成",
       "noStageColumn": "无阶段",
+      "defaultStage": {
+        "open": "待办",
+        "in_progress": "进行中",
+        "done": "已完成"
+      },
       "empty": "待办是空的。",
       "archived": "已归档",
       "waitingOn": "等待 {{key}}",
@@ -737,7 +742,8 @@
       "changeColor": "更换颜色",
       "delete": "删除",
       "newColumn": "新建列…",
-      "add": "添加"
+      "add": "添加",
+      "nameTaken": "此看板已有同名或同义的列。"
     },
     "recording": {
       "taskFilter": "任务：{{title}}",

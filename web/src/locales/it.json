@@ -695,6 +695,11 @@
       "editColumns": "Modifica le colonne",
       "doneEditing": "Fatto",
       "noStageColumn": "Senza fase",
+      "defaultStage": {
+        "open": "Backlog",
+        "in_progress": "In corso",
+        "done": "Fatto"
+      },
       "empty": "Il backlog è vuoto.",
       "archived": "archiviato",
       "waitingOn": "in attesa di {{key}}",
@@ -737,7 +742,8 @@
       "changeColor": "Cambia colore",
       "delete": "Elimina",
       "newColumn": "Nuova colonna…",
-      "add": "Aggiungi"
+      "add": "Aggiungi",
+      "nameTaken": "Questa bacheca ha già una colonna con questo nome o significato."
     },
     "recording": {
       "taskFilter": "Compito: {{title}}",

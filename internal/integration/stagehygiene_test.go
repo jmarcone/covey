@@ -11,7 +11,7 @@ import (
 )
 
 // TestTerminalTaskLeavesAgentStage checks the column hygiene: a completed task
-// does not belong in "Recherche", it belongs in "Erledigt". Without it, a
+// does not belong in "Recherche", it belongs in the done column. Without it, a
 // terminal task would stay behind in every column the agent invented, keeping
 // that column permanently "not empty" — that is how a board with a dozen dead
 // working states came about in practice.
@@ -49,7 +49,7 @@ func TestTerminalTaskLeavesAgentStage(t *testing.T) {
 		t.Fatalf("only the default columns may be left, board: %+v", stages)
 	}
 
-	// The task is not lost, it landed in "Erledigt".
+	// The task is not lost, it landed in the done column.
 	done, err := s.backlog.Get(ctx, task.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -58,8 +58,8 @@ func TestTerminalTaskLeavesAgentStage(t *testing.T) {
 		t.Fatalf("a completed task must not be left without a column")
 	}
 	for _, st := range stages {
-		if st.ID == *done.StageID && st.Name != "Erledigt" {
-			t.Fatalf("a completed task belongs in Erledigt, it lies in %q", st.Name)
+		if st.ID == *done.StageID && (st.Key == nil || *st.Key != backlog.StageKeyDone) {
+			t.Fatalf("a completed task belongs in the done column, it lies in %q", st.Name)
 		}
 	}
 }
@@ -99,7 +99,7 @@ func TestAgentStageWithActiveTaskSurvives(t *testing.T) {
 		}
 	}
 
-	// One of the two turns terminal — it leaves "Analyse" for "Erledigt".
+	// One of the two turns terminal — it leaves "Analyse" for the done column.
 	claimed, err := s.backlog.ClaimNext(ctx, agent.ID)
 	if err != nil {
 		t.Fatal(err)

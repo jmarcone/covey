@@ -93,6 +93,20 @@ func TestExportImportRoundtrip(t *testing.T) {
 	if n := len(bundle["guardrails"].([]any)); n != 1 {
 		t.Fatalf("guardrails in the bundle: %d", n)
 	}
+	// A default column nobody renamed travels under its old German name beside
+	// the key: a covey from before the key finds its default columns by
+	// exactly that name, and its board keeps auto-follow.
+	legacy := map[string]string{}
+	for _, raw := range bundle["stages"].([]any) {
+		st := raw.(map[string]any)
+		if key, _ := st["key"].(string); key != "" {
+			legacy[key], _ = st["name"].(string)
+		}
+	}
+	if want := map[string]string{"open": "Backlog", "in_progress": "In Arbeit", "done": "Erledigt"}; len(legacy) != len(want) ||
+		legacy["open"] != want["open"] || legacy["in_progress"] != want["in_progress"] || legacy["done"] != want["done"] {
+		t.Errorf("default columns in the bundle: %v (expected %v)", legacy, want)
+	}
 
 	// --- Import: slug collision, then a copy under a new slug. ---
 	c.expect(http.MethodPost, "/api/v1/agents/import", bundle, http.StatusConflict)
@@ -135,6 +149,11 @@ func TestExportImportRoundtrip(t *testing.T) {
 	}
 	if n := mustScan("SELECT COUNT(*) FROM agent_stages WHERE agent_id=$1", nid); n != 4 {
 		t.Errorf("stages: %d (expected 4: 3 defaults + Review)", n)
+	}
+	// The defaults come back keyed — otherwise auto-follow would stop on the
+	// imported board.
+	if n := mustScan("SELECT COUNT(*) FROM agent_stages WHERE agent_id=$1 AND key IS NOT NULL", nid); n != 3 {
+		t.Errorf("keyed default columns after import: %d (expected 3)", n)
 	}
 	if n := mustScan("SELECT COUNT(*) FROM guardrails WHERE agent_id=$1 AND rule_type='require_approval'", nid); n != 1 {
 		t.Errorf("agent guardrail not imported")

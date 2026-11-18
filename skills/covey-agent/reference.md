@@ -172,7 +172,11 @@ Two of them need care when designing:
 - **`set_stage`** creates missing columns automatically. Prescribe a **fixed, small** set of
   names in the playbook that name working *states* (`Triage`, `Analysis`, `Waiting for
   review`) — never the item (`#83 CSV import`), never synonyms for the same state. Otherwise the
-  board grows a dozen dead columns within days.
+  board grows a dozen dead columns within days. The three default columns answer to their
+  label in any of the ten interface languages and to their key (`open`, `in_progress`,
+  `done`), case-insensitive — `{"stage":"Done"}` lands in the done column whatever it is
+  called on screen, and never adds a second one beside it. Only a column of exactly the given
+  name comes before that.
 
 ## API endpoints
 

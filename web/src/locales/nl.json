@@ -695,6 +695,11 @@
       "editColumns": "Kolommen bewerken",
       "doneEditing": "Klaar",
       "noStageColumn": "Geen fase",
+      "defaultStage": {
+        "open": "Backlog",
+        "in_progress": "Bezig",
+        "done": "Klaar"
+      },
       "empty": "De backlog is leeg.",
       "archived": "gearchiveerd",
       "waitingOn": "wacht op {{key}}",
@@ -737,7 +742,8 @@
       "changeColor": "Kleur wijzigen",
       "delete": "Verwijderen",
       "newColumn": "Nieuwe kolom…",
-      "add": "Toevoegen"
+      "add": "Toevoegen",
+      "nameTaken": "Dit bord heeft al een kolom met deze naam of betekenis."
     },
     "recording": {
       "taskFilter": "Taak: {{title}}",

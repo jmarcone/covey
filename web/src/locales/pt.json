@@ -695,6 +695,11 @@
       "editColumns": "Editar as colunas",
       "doneEditing": "Concluído",
       "noStageColumn": "Sem fase",
+      "defaultStage": {
+        "open": "Backlog",
+        "in_progress": "Em curso",
+        "done": "Concluído"
+      },
       "empty": "O backlog está vazio.",
       "archived": "arquivada",
       "waitingOn": "à espera de {{key}}",
@@ -737,7 +742,8 @@
       "changeColor": "Mudar a cor",
       "delete": "Eliminar",
       "newColumn": "Nova coluna…",
-      "add": "Adicionar"
+      "add": "Adicionar",
+      "nameTaken": "Este quadro já tem uma coluna com esse nome ou significado."
     },
     "recording": {
       "taskFilter": "Tarefa: {{title}}",
