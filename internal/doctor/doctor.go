@@ -12,6 +12,7 @@ package doctor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -127,6 +128,14 @@ func (d *doctor) check(ctx context.Context, pool *pgxpool.Pool) {
 // moment somebody would want a backup.
 func (d *doctor) checkMigrations(ctx context.Context, pool *pgxpool.Pool) bool {
 	pending, err := db.Pending(ctx, pool, migrations.FS)
+	// A number applied under another name is not "pending": `covey serve` refuses
+	// to start on it, so it blocks, and the remedy is not a backup.
+	var mismatch *db.NameMismatchError
+	if errors.As(err, &mismatch) {
+		d.problem("migrations", mismatch.Error(),
+			"renumber "+mismatch.File+" to the next free number — `covey serve` refuses to start until then", true)
+		return false
+	}
 	if err != nil {
 		d.problem("migrations", "not readable: "+err.Error(), "", false)
 		return false

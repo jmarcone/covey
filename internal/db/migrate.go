@@ -7,7 +7,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -89,32 +91,98 @@ func loadMigrations(fsys fs.FS) ([]migration, error) {
 	return out, nil
 }
 
-// MigrateUp applies all pending migrations, guarded by pg_advisory_lock.
-// Pending names the migrations this database has not seen yet — read, without
-// applying anything. It exists so that an operator can ask what a restart is
-// about to do to their database BEFORE they restart, which is the moment they
-// would want to have a backup.
-func Pending(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) ([]string, error) {
-	all, err := loadMigrations(fsys)
+// NameMismatchError says that a migration file's number is already applied
+// under another name. loadMigrations refuses two files with one number in one
+// tree; this is the same rule against the database. Without it the file is
+// skipped silently and forever — its SQL never runs, and the damage shows up
+// only as a missing column in live operation.
+type NameMismatchError struct {
+	Version   int
+	File      string    // the name on disk
+	Applied   string    // the name recorded in schema_migrations
+	AppliedAt time.Time // when that row was written
+}
+
+func (e *NameMismatchError) Error() string {
+	return fmt.Sprintf("migration %s has version %d, but this database applied version %d as %s (at %s) — renumber %s",
+		e.File, e.Version, e.Version, e.Applied, e.AppliedAt.UTC().Format(time.RFC3339), e.File)
+}
+
+type appliedMigration struct {
+	name      string
+	appliedAt time.Time
+}
+
+// appliedMigrations reads schema_migrations per version, not as a water mark —
+// see MigrateUp for why a MAX(version) is the wrong question.
+func appliedMigrations(ctx context.Context, q interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+}) (map[int]appliedMigration, error) {
+	rows, err := q.Query(ctx, "SELECT version, name, applied_at FROM schema_migrations")
 	if err != nil {
 		return nil, err
 	}
-	var current int
-	// A database that has never been migrated has no table yet — and then
-	// everything is pending, which is the right answer and not an error.
-	err = pool.QueryRow(ctx, "SELECT COALESCE(MAX(version),0) FROM schema_migrations").Scan(&current)
-	if err != nil && !strings.Contains(err.Error(), "schema_migrations") {
-		return nil, err
+	defer rows.Close()
+	out := map[int]appliedMigration{}
+	for rows.Next() {
+		var v int
+		var a appliedMigration
+		if err := rows.Scan(&v, &a.name, &a.appliedAt); err != nil {
+			return nil, err
+		}
+		out[v] = a
 	}
-	var out []string
-	for _, m := range all {
-		if m.version > current {
-			out = append(out, m.name)
+	return out, rows.Err()
+}
+
+// unapplied returns the migrations whose version the database has not seen, and
+// refuses when a version it has seen carries another name than the file. A
+// database row without a file (a database ahead of the binary) is left alone.
+func unapplied(ms []migration, applied map[int]appliedMigration) ([]migration, error) {
+	var out []migration
+	for _, m := range ms {
+		a, ok := applied[m.version]
+		switch {
+		case !ok:
+			out = append(out, m)
+		case a.name != m.name:
+			return nil, &NameMismatchError{Version: m.version, File: m.name, Applied: a.name, AppliedAt: a.appliedAt}
 		}
 	}
 	return out, nil
 }
 
+// Pending names the migrations this database has not seen yet — read, without
+// applying anything. It exists so that an operator can ask what a restart is
+// about to do to their database BEFORE they restart, which is the moment they
+// would want to have a backup. It asks the question MigrateUp asks, version by
+// version, and returns a *NameMismatchError where MigrateUp would refuse.
+func Pending(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) ([]string, error) {
+	all, err := loadMigrations(fsys)
+	if err != nil {
+		return nil, err
+	}
+	// A database that has never been migrated has no table yet — and then
+	// everything is pending, which is the right answer and not an error.
+	applied, err := appliedMigrations(ctx, pool)
+	if err != nil {
+		if !strings.Contains(err.Error(), "schema_migrations") {
+			return nil, err
+		}
+		applied = nil
+	}
+	todo, err := unapplied(all, applied)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, m := range todo {
+		out = append(out, m.name)
+	}
+	return out, nil
+}
+
+// MigrateUp applies all pending migrations, guarded by pg_advisory_lock.
 func MigrateUp(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) (applied int, err error) {
 	ms, err := loadMigrations(fsys)
 	if err != nil {
@@ -141,27 +209,19 @@ func MigrateUp(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) (applied int
 	// merge: two branches hand out their numbers against the same main, the
 	// second merges with the smaller one. Skipped silently and forever, because
 	// on the next start the mark is unchanged and still as high.
-	seen := map[int]bool{}
-	rows, err := conn.Query(ctx, "SELECT version FROM schema_migrations")
+	//
+	// The name counts too: a version applied under another name is the same
+	// collision one step later (the branch merged after the other one ran), and
+	// is refused before anything is applied, like two files with one number.
+	seen, err := appliedMigrations(ctx, conn)
 	if err != nil {
 		return 0, err
 	}
-	for rows.Next() {
-		var v int
-		if err := rows.Scan(&v); err != nil {
-			rows.Close()
-			return 0, err
-		}
-		seen[v] = true
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
+	todo, err := unapplied(ms, seen)
+	if err != nil {
 		return 0, err
 	}
-	for _, m := range ms {
-		if seen[m.version] {
-			continue
-		}
+	for _, m := range todo {
 		tx, err := conn.Begin(ctx)
 		if err != nil {
 			return applied, err
