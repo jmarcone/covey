@@ -72,11 +72,17 @@ func TestAgentWebhookTrigger(t *testing.T) {
 		t.Fatalf("raw-text trigger: HTTP %d, %+v", code, out)
 	}
 
+	// A title of only blanks counts as no title: the default is filed, not a
+	// task nobody can read in the backlog (#128).
+	if code, out := triggerPost(t, s.http.URL+"/api/trigger/"+token, "{\"title\":\" \\t\\u00a0 \",\"body\":\"blank title\"}"); code != http.StatusOK || out["outcome"] != "created" {
+		t.Fatalf("blank-title trigger: HTTP %d, %+v", code, out)
+	}
+
 	tasks, err := s.backlog.ListByAgent(ctx, agent.ID, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var sawJSON, sawRaw bool
+	var sawJSON, sawRaw, sawBlank bool
 	for _, task := range tasks {
 		if task.Origin != "webhook:trigger" {
 			continue
@@ -87,9 +93,12 @@ func TestAgentWebhookTrigger(t *testing.T) {
 		if task.Title == "Webhook trigger" && task.Body == "disk almost full" {
 			sawRaw = true
 		}
+		if task.Title == "Webhook trigger" && task.Body == "blank title" {
+			sawBlank = true
+		}
 	}
-	if !sawJSON || !sawRaw {
-		t.Fatalf("the expected trigger tasks are missing (json=%v, raw=%v): %+v", sawJSON, sawRaw, tasks)
+	if !sawJSON || !sawRaw || !sawBlank {
+		t.Fatalf("the expected trigger tasks are missing (json=%v, raw=%v, blank=%v): %+v", sawJSON, sawRaw, sawBlank, tasks)
 	}
 
 	// Rotation: a new token, the old one becomes invalid.
