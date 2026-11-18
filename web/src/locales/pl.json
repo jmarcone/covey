@@ -178,6 +178,7 @@
       "meterSpanValue": "{{from}} % ({{fromAt}}) → {{to}} % ({{toAt}}): {{pts}} punktów z {{n}} odczytów",
       "meterList": "Przeliczona cena katalogowa, ten sam okres",
       "perCredential": "Na poświadczenie, nie na model: we własnym wierszu pod sumą.",
+      "lastColumn": "Co najmniej jedno źródło pozostaje włączone.",
       "someWithout": "{{n}} z {{m}} poświadczeń bez kwoty",
       "billedPending": "Rachunek jest kompletny tylko do ostatniej synchronizacji; kafelek powyżej podaje, do kiedy.",
       "col_reported": "Zgłoszone",

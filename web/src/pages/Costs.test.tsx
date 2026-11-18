@@ -384,11 +384,11 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     await act(async () => { await userEvent.click(screen.getByRole("button", { name: /^Coordinator/ })); });
     expect(screen.getByText(/^Verbrauch je Modell/)).toBeInTheDocument();
     expect(screen.getByText(/^Abo-Zähler je Zugangsdaten/)).toBeInTheDocument();
-    // one agent: the price list and the runs follow it, the two insight cards cannot
-    expect(container.querySelectorAll("[data-org-wide]")).toHaveLength(2);
+    // one agent: the price list, the runs and the model table follow it, the meter card cannot
+    expect(container.querySelectorAll("[data-org-wide]")).toHaveLength(1);
     await act(async () => { await userEvent.click(screen.getByRole("button", { name: /^QA/ })); });
     // two agents: the price list and the runs are the whole organisation's too
-    expect(container.querySelectorAll("[data-org-wide]")).toHaveLength(4);
+    expect(container.querySelectorAll("[data-org-wide]")).toHaveLength(3);
     expect(container.querySelector("[data-org-wide]")!.textContent).toBe("ganze Organisation: folgt dem Agentenfilter nicht");
   });
 

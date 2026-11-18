@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { api, type BilledReport, type CellAgent, type CostCell, type CostCells, type UsageReading } from "../api";
-import { fmtBucket, fmtClockUTC, fmtCount, fmtCountAxis, fmtNumber, fmtUSD, fmtUSDAxis } from "../format";
+import { fmtBucket, fmtClockUTC, fmtCount, fmtCountAxis, fmtNumber, fmtUSD, fmtUSDAxis, fmtUSDBelow, fmtUSDFixed } from "../format";
 import { SOURCES, SOURCE_COLOR, sourceHint, sourceLabel, type Source } from "./costSources";
 
 export { SOURCE_COLOR };
@@ -13,11 +13,11 @@ import {
   billedPerPeriod,
   credentialFigures,
   credId,
+  isSeat,
   meterCrossings,
   recomputedOf,
   type CredentialFigures,
 } from "./costFigures";
-import { fmtUSDBelow, fmtUSDFixed } from "../format";
 import { PlanPrice } from "./PlanPrice";
 
 /* The cost explorer. The credential is the first level: what money means
@@ -105,8 +105,10 @@ export function agentColor(agents: readonly { id: string }[], id: string) {
   return AGENT_COLORS[(i < 0 ? 0 : i) % AGENT_COLORS.length];
 }
 
-export function Chip({ on, color, hatched, children, onClick, onDoubleClick }: {
+export function Chip({ on, color, hatched, children, onClick, onDoubleClick, locked, title }: {
   on: boolean; color?: string; hatched?: boolean; children: React.ReactNode; onClick: () => void; onDoubleClick?: () => void;
+  /** The last chip that is on: it stays, and says so instead of ignoring the click. */
+  locked?: boolean; title?: string;
 }) {
   return (
     <button
@@ -114,13 +116,15 @@ export function Chip({ on, color, hatched, children, onClick, onDoubleClick }: {
       onClick={onClick}
       onDoubleClick={onDoubleClick}
       aria-pressed={on}
+      aria-disabled={locked || undefined}
+      title={title}
       className="text-xs"
       style={{
         display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 6,
         border: `1px solid ${on ? "var(--border-strong)" : "var(--border)"}`,
         background: on ? "var(--surface-2)" : "transparent",
         color: on ? "var(--text-primary)" : "var(--text-muted)",
-        cursor: "pointer", lineHeight: 1.2,
+        cursor: locked ? "default" : "pointer", lineHeight: 1.2,
       }}
     >
       {color && <Swatch color={color} hatched={hatched} dim={!on} />}
@@ -445,7 +449,7 @@ function CredentialTiles({ f, filtered }: { f: CredentialFigures; filtered: bool
     <Tile key="rec" label={t("costs.fig.recomputed")} value={fmtUSD(f.recomputed)}
       sub={f.check != null ? t("costs.fig.priceTableCheck", { pct: pct(f.check) }) : undefined} color={SOURCE_COLOR.recomputed} />,
   ];
-  if (f.kind === "subscription" || (f.kind === "" && f.meter)) {
+  if (isSeat(f)) {
     const r = f.real;
     // The price per point the server priced the movement at, on average.
     const pp = r && r.points > 0 ? r.value / r.points : null;
@@ -627,7 +631,7 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
   const name = f.secretKey == null ? t("costs.fig.notAttributable") : `${f.secretKey} #${f.slot}`;
   const kind = t(`costs.fig.kind_${f.kind || "unknown"}`);
   const plan = planLabel(f);
-  const subscription = f.kind === "subscription" || (f.kind === "" && f.meter != null);
+  const subscription = isSeat(f);
 
   return (
     <section className="mb-5" aria-label={name} data-credential={f.id}>

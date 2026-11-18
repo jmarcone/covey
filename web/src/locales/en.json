@@ -178,6 +178,7 @@
       "meterSpanValue": "{{from}} % ({{fromAt}}) → {{to}} % ({{toAt}}): {{pts}} points from {{n}} readings",
       "meterList": "Recomputed list price, same span",
       "perCredential": "Per credential, not per model: in its own row under the total.",
+      "lastColumn": "At least one source stays on.",
       "someWithout": "{{n}} of {{m}} credentials without a figure",
       "billedPending": "The bill is complete only up to the last sync; the tile above says how far.",
       "col_reported": "Reported",
