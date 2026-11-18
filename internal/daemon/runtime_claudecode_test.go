@@ -3,8 +3,12 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -423,5 +427,202 @@ EOF`)
 	got, _ := os.ReadFile(filepath.Join(dir, "args.txt"))
 	if strings.Contains(string(got), "--mcp-config") || strings.Contains(string(got), "mcp__covey") {
 		t.Fatalf("without an MCP config no MCP flags:\n%s", got)
+	}
+}
+
+// fakeClaudeTurnLimit is a fake `claude` for the turn-limit path. The run ends
+// at the turn limit; the handover turn (recognisable by --resume) runs the
+// given script. Each call writes its arguments NUL-separated to main.args or
+// summary.args — the system prompt spans lines, so one per line would not
+// split them back reliably.
+func fakeClaudeTurnLimit(t *testing.T, summary string) (bin, dir string) {
+	t.Helper()
+	dir = t.TempDir()
+	bin = filepath.Join(dir, "claude")
+	content := "#!/bin/sh\n" +
+		"if printf '%s\\n' \"$@\" | grep -qx -- '--resume'; then\n" +
+		"printf '%s\\0' \"$@\" > \"" + dir + "/summary.args\"\n" + summary + "\n" +
+		"else\n" +
+		"printf '%s\\0' \"$@\" > \"" + dir + "/main.args\"\n" +
+		"cat <<'EOF'\n" +
+		`{"type":"result","subtype":"error_max_turns","session_id":"sess-limit","num_turns":3,"total_cost_usd":0.9}` + "\n" +
+		"EOF\n" +
+		"fi\n"
+	if err := os.WriteFile(bin, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return bin, dir
+}
+
+func readArgs(t *testing.T, path string) []string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Split(strings.TrimSuffix(string(raw), "\x00"), "\x00")
+}
+
+// flagValue returns the value after flag, "" without the flag.
+func flagValue(args []string, flag string) string {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == flag {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
+// withoutFlags drops the given flags together with their values.
+func withoutFlags(args []string, flags ...string) []string {
+	var out []string
+	for i := 0; i < len(args); i++ {
+		if slices.Contains(flags, args[i]) {
+			i++
+			continue
+		}
+		out = append(out, args[i])
+	}
+	return out
+}
+
+// turnLimitSpec carries everything that ends up in the prompt prefix: appended
+// system prompt with memory context, MCP config, allow-list, built-in tool set,
+// model and effort.
+func turnLimitSpec(home string) RunSpec {
+	return RunSpec{
+		TaskID: "t-limit", Title: "Big assignment", Body: "Fix the payment bug",
+		SystemPrompt:  "You are the developer.\n\nYour workplace is the sandbox.",
+		MemoryContext: "## Relevant from your wiki\n[[payments]]",
+		MCPConfig:     `{"mcpServers":{"covey":{"command":"coveyd","args":["mcp"]}}}`,
+		AllowedTools:  []string{"Bash", "Read", "Edit"},
+		Model:         "claude-opus-4-8",
+		Effort:        "high",
+		MaxTurns:      3,
+		HomeDir:       home,
+	}
+}
+
+// The handover turn at the turn limit has to send the run's own prefix: the
+// same appended system prompt, MCP config, tool lists, model and effort. Tools
+// and system prompt stand at the head of the prompt cache; a turn that leaves
+// them out misses every cached token after them and writes the whole
+// conversation into the cache again. Only the prompt, --resume and the turn cap
+// differ — and the tool guard, which is a setting, not part of the prompt.
+func TestClaudeCodeSummaryReusesTheRunsPrefix(t *testing.T) {
+	bin, dir := fakeClaudeTurnLimit(t, `cat <<'EOF'
+{"type":"result","subtype":"success","session_id":"sess-limit","result":"## Done\nRepo cloned\n## Open\nThe fix\n## Next step\nEdit pay.go","total_cost_usd":0.05}
+EOF`)
+	adapter := &ClaudeCode{Binary: bin}
+
+	res, err := adapter.Run(context.Background(), turnLimitSpec(dir), func(string, json.RawMessage) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "incomplete" || !strings.Contains(res.Result, "Edit pay.go") {
+		t.Fatalf("the handover state has to arrive as the result of an incomplete run: %+v", res)
+	}
+
+	main := readArgs(t, filepath.Join(dir, "main.args"))
+	summary := readArgs(t, filepath.Join(dir, "summary.args"))
+	for _, want := range []string{"--append-system-prompt", "--mcp-config", "--allowedTools", "--tools", "--model", "--effort"} {
+		if flagValue(main, want) == "" {
+			t.Fatalf("the spec is meant to put %s into the run's args:\n%q", want, main)
+		}
+	}
+	strip := []string{"-p", "--resume", "--max-turns", "--settings"}
+	if a, b := withoutFlags(main, strip...), withoutFlags(summary, strip...); !slices.Equal(a, b) {
+		t.Fatalf("the handover turn has to send the run's prefix unchanged\nrun:     %q\nsummary: %q", a, b)
+	}
+	if got := flagValue(summary, "-p"); got != maxTurnsSummaryPrompt {
+		t.Fatalf("the handover turn asks with the summary prompt, got %q", got)
+	}
+	if got := flagValue(summary, "--resume"); got != "sess-limit" {
+		t.Fatalf("the handover turn resumes the aborted session, got %q", got)
+	}
+	if got := flagValue(summary, "--max-turns"); got != strconv.Itoa(maxTurnsSummaryTurns) {
+		t.Fatalf("the handover turn runs with its own turn cap, got %q", got)
+	}
+	if got := flagValue(summary, "--settings"); got != summaryToolGuard {
+		t.Fatalf("the handover turn carries the tool guard, got %q", got)
+	}
+}
+
+// The guard refuses every tool call without touching the tool list: a
+// PreToolUse hook for all tools that exits 2 (blocked, the message goes to the
+// model). Run the hook's command for real, so that a quoting mistake in the JSON
+// cannot hide behind a string comparison.
+func TestClaudeCodeSummaryToolGuardRefusesEveryTool(t *testing.T) {
+	var guard struct {
+		Hooks map[string][]struct {
+			Matcher string `json:"matcher"`
+			Hooks   []struct {
+				Type    string `json:"type"`
+				Command string `json:"command"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal([]byte(summaryToolGuard), &guard); err != nil {
+		t.Fatalf("the guard has to be valid settings JSON: %v", err)
+	}
+	if len(guard.Hooks) != 1 || len(guard.Hooks["PreToolUse"]) != 1 {
+		t.Fatalf("the guard is exactly one PreToolUse hook: %+v", guard)
+	}
+	entry := guard.Hooks["PreToolUse"][0]
+	if entry.Matcher != "*" || len(entry.Hooks) != 1 || entry.Hooks[0].Type != "command" {
+		t.Fatalf("the hook has to match every tool with one command: %+v", entry)
+	}
+	cmd := exec.Command("sh", "-c", entry.Hooks[0].Command)
+	cmd.Stdin = strings.NewReader(`{"hook_event_name":"PreToolUse","tool_name":"mcp__covey__run_action"}`)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 2 {
+		t.Fatalf("the hook has to block with exit code 2, got %v", err)
+	}
+	if !strings.Contains(stderr.String(), "handover state") {
+		t.Fatalf("the model has to learn why the call was refused: %q", stderr.String())
+	}
+}
+
+// The model answers the summary prompt with a tool call anyway. The guard
+// refuses it and the second turn the cap leaves is the handover — it arrives.
+func TestClaudeCodeSummaryAfterARefusedToolCall(t *testing.T) {
+	bin, dir := fakeClaudeTurnLimit(t, `cat <<'EOF'
+{"type":"assistant","message":{"model":"claude-opus-4-8","content":[{"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"git status"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu1","is_error":true,"content":"No tools in the handover turn."}]}}
+{"type":"result","subtype":"success","session_id":"sess-limit","num_turns":2,"result":"## Done\nHalf the fix\n## Open\nTests\n## Next step\nRun go test","total_cost_usd":0.06}
+EOF`)
+	res, err := (&ClaudeCode{Binary: bin}).Run(context.Background(), turnLimitSpec(dir), func(string, json.RawMessage) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "incomplete" || !strings.Contains(res.Result, "Run go test") {
+		t.Fatalf("the handover after a refused call has to arrive: %+v", res)
+	}
+	if res.CostUSD < 0.95 {
+		t.Fatalf("the handover turn's cost belongs in the billing: %+v", res)
+	}
+}
+
+// The model spends the whole cap on tool calls: no result text. The handover is
+// lost, the run still reports incomplete with its session, so the control plane
+// creates the follow-up task without a handover (best-effort, as before).
+func TestClaudeCodeSummaryCapSpentOnTools(t *testing.T) {
+	bin, dir := fakeClaudeTurnLimit(t, `cat <<'EOF'
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tu1","name":"Bash","input":{}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tu2","name":"Read","input":{}}]}}
+{"type":"result","subtype":"error_max_turns","session_id":"sess-limit","num_turns":2,"is_error":true,"total_cost_usd":0.07}
+EOF`)
+	res, err := (&ClaudeCode{Binary: bin}).Run(context.Background(), turnLimitSpec(dir), func(string, json.RawMessage) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "incomplete" || res.Result != "" || res.SessionID != "sess-limit" {
+		t.Fatalf("without a handover the run stays incomplete with its session: %+v", res)
+	}
+	if !strings.Contains(res.Error, "turn limit reached (3 turns)") {
+		t.Fatalf("the main run's error text has to stand: %q", res.Error)
 	}
 }
