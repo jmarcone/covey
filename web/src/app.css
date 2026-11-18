@@ -3261,14 +3261,29 @@ a.tm-file:hover { background: var(--tint); }
  * stays calm with seventy colleagues. The colours of the house itself live in
  * buero/mal.ts, not here — a CSS token cannot reach into a canvas.
  */
-.bu { display: flex; flex-direction: column; gap: 10px; }
+.bu { display: flex; flex-direction: column; gap: 10px; flex: 1 1 auto; min-height: 0; container-type: inline-size; }
 
-/* The stage: 16:10, the height follows the width. `touch-action: none` so
-   that dragging pans the office and not the page. */
+/* The stage takes the height the window has left below the blocks above it
+   (Ueberblick) — the page does not scroll for the office. The chain from the
+   console's frame down is one flex column, each link growing; where the
+   blocks above leave less than 320px the stage keeps that and the page
+   scrolls, as any page does. It used to be 16:10 of its width: at a wide
+   window that was taller than the window, the page scrolled, and the wheel
+   over the stage panned the building instead of the page.
+   `touch-action: none` so that dragging pans the office and not the page. */
+.konsole-inhalt:has(> .tm-ueberblick) { display: flex; flex-direction: column; padding-bottom: 16px; }
+.tm-ueberblick { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+.tm-ueberblick > .tm-block-weit { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; margin-bottom: 0; }
 .bu-buehne {
   position: relative;
-  aspect-ratio: 16 / 10;
+  flex: 1 1 0;
   min-height: 320px;
+  /* On a narrow, tall window (a phone) the building is as wide as the stage
+     and no taller than a part of it: the rest of a window-high stage would
+     be two empty bands. So the stage is at most a little taller than wide
+     there; on a wide window the free height is far below this and does
+     not count. */
+  max-height: max(320px, 115cqw);
   border-radius: var(--radius);
   overflow: hidden;
   background: light-dark(#e6e8e0, #17191a);
