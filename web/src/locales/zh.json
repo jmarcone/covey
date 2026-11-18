@@ -331,6 +331,36 @@
       "errForbidden": "你的角色无权设置套餐价格（{{msg}}）。",
       "form": "设置 {{name}} 的套餐价格",
       "errGone": "该凭据已不在任何工位上——无处保存价格。"
+    },
+    "dent": {
+      "title": "订阅的全部消耗",
+      "hint": "期间内每个订阅计量器的实际成本，按每个 UTC 小时依标价份额在 covey 的智能体与向同一计量器报告的 covey 之外的 Claude Code 会话之间分摊。",
+      "total": "计量器的实际成本",
+      "totalSub": "外部来源：{{sources}}",
+      "covey": "covey 的智能体",
+      "outside": "covey 之外的会话",
+      "unsplit": "未分摊",
+      "partSub": "占消耗的 {{pct}} · 标价 {{list}} · {{x}}",
+      "unsplitSub": "占消耗的 {{pct}} · 外部会话 {{count}} 小时未报告",
+      "sentence": "你的订阅为标价 {{list}} 的工作实际支付了 ≈ {{real}}：covey 的智能体 {{covey}}，驱动它们的 covey 之外的会话 {{outside}}。",
+      "multiples": "每实际美元对应的标价：covey 的智能体 {{covey}}，covey 之外的会话 {{outside}}，两者合计 {{together}}（范围 {{low}} 至 {{high}}）。",
+      "noMultipleMovement": "尚无倍数：已分摊的小时使计量器移动了 {{pts}} 点，倍数需要 3 点。",
+      "noMultipleSplit": "无倍数：covey 之外的会话在期间内没有报告任何有计量读数的小时。",
+      "unsplitNote": "≈ {{usd}} 的变动落在外部会话未报告的 {{count}} 小时内：不分摊给任何人，也不计入 covey 的智能体。",
+      "unmetered": "按标价 {{usd}} 的外部工作落在没有计量读数的小时内：没有实际份额。",
+      "caveat": "这是估算：计量器覆盖整个账户且只显示整数百分比，倍数仅基于已分摊的小时。"
+    },
+    "split": {
+      "covey": "covey 的智能体",
+      "outside": "covey 之外的会话",
+      "unsplitHour": "未分摊：外部会话未报告此小时",
+      "unsplitHours": "未分摊：外部会话 {{count}} 小时未报告",
+      "chartNote": "实际成本柱按每小时依标价份额在 covey 的智能体与 covey 之外的会话之间分摊。",
+      "unsplitNote": "外部会话未报告的 {{count}} 小时内的 ≈ {{usd}} 不分摊给任何人。",
+      "noMultipleOutside": "此处无倍数：covey 之外的会话共享此计量器，用 covey 的标价对比其全部变动会低估倍数。分摊后的倍数见标题行。",
+      "agentsShare": "实际份额仅针对计量器中 covey 的部分（≈ {{usd}}）",
+      "key_outside": "实际成本，covey 之外的会话",
+      "key_unsplit": "未分摊的实际成本（外部会话未报告）"
     }
   },
   "lang": {

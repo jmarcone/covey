@@ -5,6 +5,8 @@ import type {
   CostCell,
   CostCells,
   CredentialPlan,
+  ExternalMeterTotal,
+  ExternalUsage,
   MeterCoverage,
   MeterStep,
   UsageReading,
@@ -336,11 +338,16 @@ export function billedFigure(report: BilledReport | null | undefined, key: strin
 }
 
 /** The start of the UTC bucket an instant falls in, cut as the server cuts
- *  its periods (date_trunc in UTC: hour, day, the week from Monday, month). */
+ *  its periods (date_trunc in UTC: hour, day, the week from Monday, month;
+ *  date_bin from the epoch: 10 minutes, 10 hours). */
 export function bucketStart(ms: number, bucket: string): number {
   const d = new Date(ms);
   const day = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
   switch (bucket) {
+    case "10min":
+      return Math.floor(ms / 600_000) * 600_000;
+    case "10hour":
+      return Math.floor(ms / 36_000_000) * 36_000_000;
     case "hour":
       return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), d.getUTCHours());
     case "week":
@@ -391,7 +398,9 @@ export type AgentFigure = {
   gapPct: number | null;
   /** The agent's share of the credential's recomputed list $. */
   share: number | null;
-  /** share × the credential's real cost: an ESTIMATE (the meter is account-wide). */
+  /** share × the credential's real cost: an ESTIMATE (the meter is account-wide).
+   *  Once sessions outside covey report on the meter (#120), share × covey's
+   *  part of it only: never the movement of an hour they did not report. */
   realShare: number | null;
 };
 
@@ -418,8 +427,13 @@ export type CredentialFigures = {
   aligned: number | null;
   multiple: Multiple | null;
   /** Why there is no multiple: "agents" (filtered or per agent), "movement" (< 3 points), "meter" (no reading),
-   *  "unpriced" (points without a plan price). */
-  noMultiple: "agents" | "movement" | "meter" | "unpriced" | null;
+   *  "unpriced" (points without a plan price), "outside" (sessions outside covey report on this meter: the
+   *  headline's multiples split it, covey's list over the whole movement would not). */
+  noMultiple: "agents" | "movement" | "meter" | "unpriced" | "outside" | null;
+  /** The meter's real cost split between covey and the sessions outside it
+   *  (#120), per UTC hour by list-price share; null until a source names a
+   *  meter. */
+  split: ExternalMeterTotal | null;
   billed: BilledFigure | null;
   /** Bookings of an older daemon's running totals (legacy, cumulative). */
   bookingCheck: BookingBasis[];
@@ -490,6 +504,7 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
     const plan = a.key == null ? null : planAt(plans, a.key, a.slot!, windowEnd) ?? ownPlans.at(-1) ?? null;
     const kind = a.kind || (plan ? "subscription" : "");
 
+    const split = a.key == null ? null : meterSplit(data.external, a.key, a.slot!);
     let cov: MeterCoverage | null = null, real: RealFigure | null = null, aligned: number | null = null;
     let mult: Multiple | null = null;
     let noMultiple: CredentialFigures["noMultiple"] = null;
@@ -500,6 +515,7 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
         aligned = cov.measured_usd ?? null;
       }
       if (sel.size > 0 || input.layout === "agents") noMultiple = "agents";
+      else if (split) noMultiple = "outside";
       else if (!cov || !real || aligned == null) noMultiple = "meter";
       else if (!real.priced) noMultiple = "unpriced";
       else if (real.points < 3) noMultiple = "movement";
@@ -517,7 +533,7 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
         recomputed: p.recomputed,
         gapPct: p.reported > 0 ? ((p.recomputed - p.reported) / p.reported) * 100 : null,
         share,
-        realShare: share != null && real?.priced ? share * real.value : null,
+        realShare: share != null && real?.priced ? share * (split ? split.covey_real_usd : real.value) : null,
       };
     }).sort((x, y) => y.recomputed - x.recomputed);
 
@@ -526,7 +542,7 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
       id, secretKey: a.key, slot: a.slot, kind, plan,
       reported, recomputed,
       check: reported > 0 ? ((recomputed - reported) / reported) * 100 : null,
-      unattributed, meter: cov, real, aligned, multiple: mult, noMultiple, billed, bookingCheck, agents,
+      unattributed, meter: cov, real, aligned, multiple: mult, noMultiple, split, billed, bookingCheck, agents,
     });
   }
   out.sort((x, y) => (x.id === "" ? 1 : 0) - (y.id === "" ? 1 : 0) || y.recomputed - x.recomputed);
@@ -617,7 +633,9 @@ export function perCredentialTotals(figures: readonly CredentialFigures[]): { re
       below: priced.length > 0 && priced.every((f) => f.real!.below),
       with: priced.length, of: subs.length, pending: false, syncError: null,
       reported: null,
-      recomputed: priced.length > 0 && priced.every((f) => f.aligned != null) ? priced.reduce((a, f) => a + f.aligned!, 0) : null,
+      // covey's list beside a meter that sessions outside covey move too
+      // would read as covey's multiple over the whole movement (#120): none.
+      recomputed: priced.length > 0 && priced.every((f) => f.aligned != null && f.split == null) ? priced.reduce((a, f) => a + f.aligned!, 0) : null,
       spans: meters.filter((f) => f.meter != null).map((f) => ({ id: f.id, from: new Date(f.meter!.baseline_at), to: new Date(f.meter!.last_at) })),
     };
   }
@@ -635,4 +653,95 @@ export function perCredentialTotals(figures: readonly CredentialFigures[]): { re
     };
   }
   return { real, billed };
+}
+
+// --- The dent: covey and the sessions outside it on one meter (#120) -------------
+
+/** A seat's split, when sessions outside covey report on the meters. */
+export function meterSplit(ext: ExternalUsage | null | undefined, key: string, slot: number): ExternalMeterTotal | null {
+  return ext?.meter.credentials.find((c) => c.secret_key === key && c.secret_slot === slot) ?? null;
+}
+
+/** One period of a seat's real cost, split: covey's agents, the outside
+ *  sessions, and the movement of hours they did not report. */
+export type SplitPeriod = { covey: number; outside: number; unsplit: number; unsplitHours: number };
+
+/** The split per chart period (keyed by the period's start in ms), summed
+ *  from the server's hours: the split is per UTC hour whatever the bucket. */
+export function splitPerPeriod(ext: ExternalUsage | null | undefined, key: string, slot: number, bucket: string): Map<number, SplitPeriod> {
+  const out = new Map<number, SplitPeriod>();
+  for (const h of ext?.meter.hours ?? []) {
+    if (h.secret_key !== key || h.secret_slot !== slot || h.real_usd == null) continue;
+    const k = bucketStart(Date.parse(h.hour), bucket);
+    const p = out.get(k) ?? { covey: 0, outside: 0, unsplit: 0, unsplitHours: 0 };
+    if (h.covey_real_usd != null && h.external_real_usd != null) {
+      p.covey += h.covey_real_usd;
+      p.outside += h.external_real_usd;
+    } else {
+      p.unsplit += h.real_usd;
+      p.unsplitHours += 1;
+    }
+    out.set(k, p);
+  }
+  return out;
+}
+
+/** One consumer of the meters: its real cost, its share of the dent, its list
+ *  price over the split hours, and list $ per real $. */
+export type DentPart = { real: number; share: number | null; list: number; multiple: Multiple | null };
+
+/** The whole dent in the subscription meters over the window, and its split
+ *  (#120). The parts add up to `real`: covey's agents and the outside
+ *  sessions over the hours the outside sessions reported, `unsplit` over the
+ *  hours they did not — never booked to covey whole. The three multiples rest
+ *  on the same split hours: list price over real cost, from 3 points of
+ *  movement, each with the range the whole percents leave (every run of
+ *  split readings ±1 point at the dearest rate, a share of the range for a
+ *  part, since the parts are shares of the same readings). */
+export type SubscriptionDent = {
+  real: number;
+  covey: DentPart;
+  outside: DentPart;
+  together: DentPart;
+  unsplit: { real: number; share: number | null; hours: number };
+  /** The outside calls' list price in hours without a reading: no real share. */
+  unmeteredList: number;
+  splitPoints: number;
+  /** Why there are no multiples: "movement" (< 3 points in the split hours), "split" (no hour was split). */
+  noMultiple: "movement" | "split" | null;
+  /** The outside sources that name a meter. */
+  sources: string[];
+};
+
+export function subscriptionDent(ext: ExternalUsage | null | undefined): SubscriptionDent | null {
+  const m = ext?.meter;
+  if (!m || m.credentials.length === 0) return null;
+  const real = m.real_usd;
+  const splitReal = m.covey_real_usd + m.external_real_usd;
+  const share = (v: number) => (real > 0 ? v / real : null);
+  let noMultiple: SubscriptionDent["noMultiple"] = null;
+  if (!(splitReal > 0)) noMultiple = "split";
+  else if (m.split_points < 3) noMultiple = "movement";
+  // The range of the split real cost: each run ±1 point at the dearest rate.
+  const slack = m.split_runs * m.point_rate;
+  const part = (r: number, list: number): DentPart => {
+    let mult: Multiple | null = null;
+    if (noMultiple == null && r > 0 && list >= 0.01) {
+      const f = r / splitReal;
+      mult = { kind: "estimate", value: list / r, low: list / (r + f * slack), high: r - f * slack > 0 ? list / (r - f * slack) : Infinity };
+    }
+    return { real: r, share: share(r), list, multiple: mult };
+  };
+  const sources = [...new Set(m.credentials.flatMap((c) => c.sources))].sort();
+  return {
+    real,
+    covey: part(m.covey_real_usd, m.split_covey_list_usd),
+    outside: part(m.external_real_usd, m.split_external_list_usd),
+    together: part(splitReal, m.split_covey_list_usd + m.split_external_list_usd),
+    unsplit: { real: m.unsplit_real_usd, share: share(m.unsplit_real_usd), hours: m.unsplit_hours },
+    unmeteredList: m.unmetered_list_usd,
+    splitPoints: m.split_points,
+    noMultiple,
+    sources,
+  };
 }

@@ -331,6 +331,36 @@
       "errForbidden": "Your role may not set a plan price ({{msg}}).",
       "form": "Set plan price for {{name}}",
       "errGone": "This credential no longer sits on any seat — there is nowhere to save the price."
+    },
+    "dent": {
+      "title": "The whole dent in the subscription",
+      "hint": "Every subscription meter's real cost over the range, split per UTC hour by list-price share between covey's agents and the Claude Code sessions outside covey that report on the same meter.",
+      "total": "Real cost of the meters",
+      "totalSub": "outside sources: {{sources}}",
+      "covey": "covey's agents",
+      "outside": "Sessions outside covey",
+      "unsplit": "Not split",
+      "partSub": "{{pct}} of the dent · list {{list}} · {{x}}",
+      "unsplitSub": "{{pct}} of the dent · outside sessions not reported for {{count}} h",
+      "sentence": "Your subscription paid ≈ {{real}} real for {{list}} of list-price work: {{covey}} by covey's agents, {{outside}} by the sessions outside covey that drive them.",
+      "multiples": "List price per real dollar: {{covey}} for covey's agents, {{outside}} for the sessions outside covey and {{together}} for both together (range {{low}} to {{high}}).",
+      "noMultipleMovement": "No multiples yet: the split hours moved the meter {{pts}} points, and a multiple needs 3.",
+      "noMultipleSplit": "No multiples: the sessions outside covey reported no hour of the range that has a meter reading.",
+      "unsplitNote": "≈ {{usd}} of the movement fell in {{count}} h the outside sessions did not report: it is split to nobody, not booked to covey's agents.",
+      "unmetered": "{{usd}} of outside work at list price fell in hours without a meter reading: it has no real share.",
+      "caveat": "An estimate: a meter is account-wide and shows whole percents, and the multiples rest on the split hours only."
+    },
+    "split": {
+      "covey": "covey's agents",
+      "outside": "Sessions outside covey",
+      "unsplitHour": "Not split: outside sessions not reported for this hour",
+      "unsplitHours": "Not split: outside sessions not reported for {{count}} h",
+      "chartNote": "The real bar is split per hour by list-price share between covey's agents and the sessions outside covey.",
+      "unsplitNote": "≈ {{usd}} in {{count}} h the outside sessions did not report is split to nobody.",
+      "noMultipleOutside": "No multiple here: sessions outside covey share this meter, so covey's list price over its whole movement would understate it. The split multiples are in the headline.",
+      "agentsShare": "the real share is of covey's part of the meter only (≈ {{usd}})",
+      "key_outside": "Real cost, sessions outside covey",
+      "key_unsplit": "Real cost not split (outside sessions not reported)"
     }
   },
   "lang": {

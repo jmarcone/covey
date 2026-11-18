@@ -331,6 +331,36 @@
       "errForbidden": "Uw rol mag geen abonnementsprijs instellen ({{msg}}).",
       "form": "Abonnementsprijs instellen voor {{name}}",
       "errGone": "Deze referentie zit op geen enkele werkplek meer — er is geen plek om de prijs op te slaan."
+    },
+    "dent": {
+      "title": "De hele deuk in het abonnement",
+      "hint": "De echte kosten van elke abonnementsmeter in de periode, per UTC-uur verdeeld naar aandeel in de lijstprijs tussen de agents van covey en de Claude Code-sessies buiten covey die op dezelfde meter rapporteren.",
+      "total": "Echte kosten van de meters",
+      "totalSub": "externe bronnen: {{sources}}",
+      "covey": "Agents van covey",
+      "outside": "Sessies buiten covey",
+      "unsplit": "Niet verdeeld",
+      "partSub": "{{pct}} van de deuk · lijst {{list}} · {{x}}",
+      "unsplitSub": "{{pct}} van de deuk · externe sessies {{count}} u niet gerapporteerd",
+      "sentence": "Je abonnement betaalde ≈ {{real}} aan echte kosten voor {{list}} aan werk tegen lijstprijs: {{covey}} door de agents van covey, {{outside}} door de sessies buiten covey die ze aansturen.",
+      "multiples": "Lijstprijs per echte dollar: {{covey}} voor de agents van covey, {{outside}} voor de sessies buiten covey en {{together}} voor beide samen (bereik {{low}} tot {{high}}).",
+      "noMultipleMovement": "Nog geen veelvouden: de verdeelde uren bewogen de meter {{pts}} punten, en een veelvoud heeft er 3 nodig.",
+      "noMultipleSplit": "Geen veelvouden: de sessies buiten covey rapporteerden geen enkel uur van de periode met een meterstand.",
+      "unsplitNote": "≈ {{usd}} van de beweging viel in {{count}} u die de externe sessies niet rapporteerden: aan niemand toegedeeld, niet aan de agents van covey.",
+      "unmetered": "{{usd}} extern werk tegen lijstprijs viel in uren zonder meterstand: zonder echt aandeel.",
+      "caveat": "Een schatting: een meter geldt voor het hele account en toont hele procenten, en de veelvouden rusten alleen op de verdeelde uren."
+    },
+    "split": {
+      "covey": "Agents van covey",
+      "outside": "Sessies buiten covey",
+      "unsplitHour": "Niet verdeeld: externe sessies voor dit uur niet gerapporteerd",
+      "unsplitHours": "Niet verdeeld: externe sessies {{count}} u niet gerapporteerd",
+      "chartNote": "De balk van de echte kosten is per uur verdeeld naar aandeel in de lijstprijs tussen de agents van covey en de sessies buiten covey.",
+      "unsplitNote": "≈ {{usd}} in {{count}} u die de externe sessies niet rapporteerden, is aan niemand toegedeeld.",
+      "noMultipleOutside": "Hier geen veelvoud: sessies buiten covey delen deze meter, dus de lijstprijs van covey over de hele beweging zou het te laag inschatten. De verdeelde veelvouden staan in de kopregel.",
+      "agentsShare": "het echte aandeel gaat alleen over het deel van covey in de meter (≈ {{usd}})",
+      "key_outside": "Echte kosten, sessies buiten covey",
+      "key_unsplit": "Echte kosten niet verdeeld (externe sessies niet gerapporteerd)"
     }
   },
   "lang": {

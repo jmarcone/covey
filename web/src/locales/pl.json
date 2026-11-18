@@ -331,6 +331,36 @@
       "errForbidden": "Twoja rola nie może ustawić ceny planu ({{msg}}).",
       "form": "Ustaw cenę planu dla {{name}}",
       "errGone": "To poświadczenie nie jest już na żadnym stanowisku — nie ma gdzie zapisać ceny."
+    },
+    "dent": {
+      "title": "Całe zużycie subskrypcji",
+      "hint": "Rzeczywisty koszt każdego licznika subskrypcji w okresie, dzielony co godzinę UTC według udziału w cenie katalogowej między agentów covey a sesje Claude Code poza covey, które raportują na ten sam licznik.",
+      "total": "Rzeczywisty koszt liczników",
+      "totalSub": "źródła zewnętrzne: {{sources}}",
+      "covey": "Agenci covey",
+      "outside": "Sesje poza covey",
+      "unsplit": "Niepodzielone",
+      "partSub": "{{pct}} zużycia · katalog {{list}} · {{x}}",
+      "unsplitSub": "{{pct}} zużycia · sesje zewnętrzne nie raportowały przez {{count}} h",
+      "sentence": "Twoja subskrypcja zapłaciła ≈ {{real}} kosztu rzeczywistego za {{list}} pracy w cenie katalogowej: {{covey}} przez agentów covey, {{outside}} przez sesje poza covey, które nimi sterują.",
+      "multiples": "Cena katalogowa na realnego dolara: {{covey}} dla agentów covey, {{outside}} dla sesji poza covey i {{together}} dla obu razem (zakres od {{low}} do {{high}}).",
+      "noMultipleMovement": "Jeszcze brak krotności: podzielone godziny przesunęły licznik o {{pts}} pkt, a krotność wymaga 3.",
+      "noMultipleSplit": "Brak krotności: sesje poza covey nie zaraportowały żadnej godziny okresu z odczytem licznika.",
+      "unsplitNote": "≈ {{usd}} ruchu przypadło na {{count}} h, których sesje zewnętrzne nie zaraportowały: nie jest przypisane nikomu, także agentom covey.",
+      "unmetered": "{{usd}} pracy zewnętrznej w cenie katalogowej przypadło na godziny bez odczytu licznika: bez realnego udziału.",
+      "caveat": "Szacunek: licznik obejmuje całe konto i pokazuje pełne procenty, a krotności opierają się tylko na podzielonych godzinach."
+    },
+    "split": {
+      "covey": "Agenci covey",
+      "outside": "Sesje poza covey",
+      "unsplitHour": "Niepodzielone: sesje zewnętrzne nie zaraportowały tej godziny",
+      "unsplitHours": "Niepodzielone: sesje zewnętrzne nie raportowały przez {{count}} h",
+      "chartNote": "Słupek rzeczywistego kosztu jest dzielony co godzinę według udziału w cenie katalogowej między agentów covey a sesje poza covey.",
+      "unsplitNote": "≈ {{usd}} w {{count}} h niezaraportowanych przez sesje zewnętrzne nie jest przypisane nikomu.",
+      "noMultipleOutside": "Tu brak krotności: sesje poza covey dzielą ten licznik, więc cena katalogowa covey wobec całego jego ruchu by ją zaniżyła. Podzielone krotności są w nagłówku.",
+      "agentsShare": "rzeczywisty udział dotyczy tylko części licznika przypadającej na covey (≈ {{usd}})",
+      "key_outside": "Rzeczywisty koszt, sesje poza covey",
+      "key_unsplit": "Rzeczywisty koszt niepodzielony (sesje zewnętrzne nie raportowały)"
     }
   },
   "lang": {

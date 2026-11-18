@@ -54,6 +54,15 @@ export const SOURCE_COLOR: Record<Source, string> = {
   billed: "var(--cost-billed)",
 };
 
+/** The parts of a meter's real cost once sessions outside covey report on it
+ *  (#120): covey's agents, the outside sessions, and movement in an hour the
+ *  outside sessions did not report, split to nobody. */
+export const SPLIT_COLOR = {
+  covey: "var(--cost-real)",
+  outside: "var(--cost-outside)",
+  unsplit: "var(--cost-unsplit)",
+} as const;
+
 /** The source's full name, as the chips carry it. */
 export function sourceLabel(t: TFunction, s: Source): string {
   return t(s === "real" ? "costs.fig.realEstimate" : `costs.fig.${s}`);

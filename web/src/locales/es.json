@@ -331,6 +331,36 @@
       "errForbidden": "Tu rol no puede fijar un precio de plan ({{msg}}).",
       "form": "Fijar precio del plan de {{name}}",
       "errGone": "Esta credencial ya no está en ningún puesto: no hay dónde guardar el precio."
+    },
+    "dent": {
+      "title": "La mella completa en la suscripción",
+      "hint": "El coste real de cada contador de suscripción en el periodo, repartido por hora UTC según la parte del precio de lista entre los agentes de covey y las sesiones de Claude Code fuera de covey que informan sobre el mismo contador.",
+      "total": "Coste real de los contadores",
+      "totalSub": "fuentes externas: {{sources}}",
+      "covey": "Agentes de covey",
+      "outside": "Sesiones fuera de covey",
+      "unsplit": "Sin repartir",
+      "partSub": "{{pct}} de la mella · lista {{list}} · {{x}}",
+      "unsplitSub": "{{pct}} de la mella · sesiones externas sin informar durante {{count}} h",
+      "sentence": "Tu suscripción pagó ≈ {{real}} en coste real por {{list}} de trabajo a precio de lista: {{covey}} de los agentes de covey, {{outside}} de las sesiones fuera de covey que los dirigen.",
+      "multiples": "Precio de lista por dólar real: {{covey}} para los agentes de covey, {{outside}} para las sesiones fuera de covey y {{together}} para ambos juntos (rango de {{low}} a {{high}}).",
+      "noMultipleMovement": "Aún no hay múltiplos: las horas repartidas movieron el contador {{pts}} puntos y un múltiplo necesita 3.",
+      "noMultipleSplit": "Sin múltiplos: las sesiones fuera de covey no informaron ninguna hora del periodo con lectura del contador.",
+      "unsplitNote": "≈ {{usd}} del movimiento cayó en {{count}} h que las sesiones externas no informaron: no se reparte a nadie ni se asigna a los agentes de covey.",
+      "unmetered": "{{usd}} de trabajo externo a precio de lista cayó en horas sin lectura del contador: no tiene parte real.",
+      "caveat": "Una estimación: un contador abarca toda la cuenta y muestra porcentajes enteros, y los múltiplos se basan solo en las horas repartidas."
+    },
+    "split": {
+      "covey": "Agentes de covey",
+      "outside": "Sesiones fuera de covey",
+      "unsplitHour": "Sin repartir: sesiones externas sin informar en esta hora",
+      "unsplitHours": "Sin repartir: sesiones externas sin informar durante {{count}} h",
+      "chartNote": "La barra del coste real se reparte por hora según la parte del precio de lista entre los agentes de covey y las sesiones fuera de covey.",
+      "unsplitNote": "≈ {{usd}} en {{count}} h que las sesiones externas no informaron no se reparte a nadie.",
+      "noMultipleOutside": "Aquí no hay múltiplo: sesiones fuera de covey comparten este contador, así que el precio de lista de covey sobre todo su movimiento lo subestimaría. Los múltiplos repartidos están en el encabezado.",
+      "agentsShare": "la parte real es solo de la parte de covey en el contador (≈ {{usd}})",
+      "key_outside": "Coste real, sesiones fuera de covey",
+      "key_unsplit": "Coste real sin repartir (sesiones externas sin informar)"
     }
   },
   "lang": {

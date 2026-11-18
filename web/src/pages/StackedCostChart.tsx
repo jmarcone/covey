@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { api, type BilledReport, type CellAgent, type CostCell, type CostCells, type UsageReading } from "../api";
 import { fmtBucket, fmtClockUTC, fmtCount, fmtCountAxis, fmtNumber, fmtUSD, fmtUSDAxis, fmtUSDBelow, fmtUSDFixed } from "../format";
-import { SOURCES, SOURCE_COLOR, sourceHint, sourceLabel, type Source } from "./costSources";
+import { SOURCES, SOURCE_COLOR, SPLIT_COLOR, sourceHint, sourceLabel, type Source } from "./costSources";
 
 export { SOURCE_COLOR };
 
@@ -18,6 +18,7 @@ import {
   periodMultiple,
   pricePerPoint,
   recomputedOf,
+  splitPerPeriod,
   stepRate,
   type CredentialFigures,
 } from "./costFigures";
@@ -461,7 +462,9 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
   const hx = open != null ? padL + open * slot + slot / 2 : 0;
   const tipLeft = open == null ? 0 : Math.max(0, Math.min(hx + 16 + tipW > W ? hx - 16 - tipW : hx + 16, W - tipW));
   const tipId = `${uid}-tip`;
-  const hatches = [...new Set(groups.flatMap((g) => g.filter((b) => b.hatched).map((b) => b.color)))];
+  // A hatched bar is hatched in each segment's own colour: the real cost
+  // split between covey and the sessions outside it is one bar of three.
+  const hatches = [...new Set(groups.flatMap((g) => g.filter((b) => b.hatched).flatMap((b) => [b.color, ...b.segs.map((x) => x.color)])))];
   const hatchId = (c: string) => `${uid}-h${hatches.indexOf(c)}`;
   const summary = (i: number) => (groups[i] ?? []).filter((b) => sum(b.segs) > 0).map((b) => `${b.label} ${fmtValue(sum(b.segs))}`).join(", ");
   const close = () => { setPinned(null); setHover(null); };
@@ -519,7 +522,7 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
                       const top = y(acc + g.value), h = Math.max(1, y(acc) - top);
                       acc += g.value;
                       return <rect key={g.key} x={bx} y={top} width={barW} height={h} rx={1.5}
-                        fill={b.hatched ? `url(#${hatchId(b.color)})` : g.color} stroke={b.hatched ? b.color : undefined} />;
+                        fill={b.hatched ? `url(#${hatchId(g.color)})` : g.color} stroke={b.hatched ? g.color : undefined} />;
                     })}
                     {(isOpen || b.valueLabel) && total > 0 && (
                       // A halo in the page's colour keeps the value legible where it spills over the bar next to it.
@@ -561,7 +564,7 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
               {b.tag && <div className="muted" data-tag-detail style={{ paddingLeft: 16 }}>{b.tag}{b.tagDetail ? ` · ${b.tagDetail}` : ""}</div>}
               {b.segs.filter((x) => x.value > 0).length > 1 && b.segs.filter((x) => x.value > 0).map((x) => (
                 <div key={x.key} className="muted" style={{ display: "flex", justifyContent: "space-between", gap: 12, paddingLeft: 16 }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Swatch color={x.color} /> {x.label}</span>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Swatch color={x.color} hatched={b.hatched} /> {x.label}</span>
                   <span>{fmtValue(x.value)}</span>
                 </div>
               ))}
@@ -683,6 +686,7 @@ function NoMultiple({ f }: { f: CredentialFigures }) {
   if (f.kind === "api_key" || f.noMultiple == null || f.noMultiple === "meter") return null;
   let text: string;
   if (f.noMultiple === "agents") text = t("costs.fig.noMultipleAgents");
+  else if (f.noMultiple === "outside") text = t("costs.split.noMultipleOutside");
   else if (f.noMultiple === "unpriced") {
     text = f.real && f.real.unpricedPoints > 0
       ? t("costs.fig.noMultipleUnpriced", { n: f.real.unpricedPoints, m: f.real.points })
@@ -741,6 +745,25 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
     }
     return v;
   }, [steps, idx, periods.length]);
+  // Once sessions outside covey report on the meters (#120), the real bar is
+  // split per UTC hour by list-price share: covey's agents, the outside
+  // sessions, and the movement of hours they did not report — split to
+  // nobody, never booked to covey whole.
+  const splitPer = useMemo(() => {
+    if (!f.split || f.secretKey == null) return null;
+    const by = splitPerPeriod(data.external, f.secretKey, f.slot!, bucket);
+    return periods.map((p) => by.get(Date.parse(p)) ?? { covey: 0, outside: 0, unsplit: 0, unsplitHours: 0 });
+  }, [f.split, f.secretKey, f.slot, data.external, bucket, periods]);
+  const realSegs = (i: number) => {
+    const sp = splitPer?.[i];
+    if (!sp) return [{ key: "real", label: t("costs.fig.realEstimate"), color: SOURCE_COLOR.real, value: realPer[i] }];
+    return [
+      { key: "covey", label: t("costs.split.covey"), color: SPLIT_COLOR.covey, value: sp.covey },
+      { key: "outside", label: t("costs.split.outside"), color: SPLIT_COLOR.outside, value: sp.outside },
+      { key: "unsplit", label: bucket === "hour" ? t("costs.split.unsplitHour") : t("costs.split.unsplitHours", { count: sp.unsplitHours }),
+        color: SPLIT_COLOR.unsplit, value: sp.unsplit },
+    ];
+  };
   // The meter's steps of each period: a period's multiple needs its points.
   const stepsPer = useMemo(() => {
     const v = periods.map(() => [] as typeof steps);
@@ -780,8 +803,9 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
       // tile's rule only (from 3 points, its range in the details).
       const list = cs.reduce((a, c) => a + recomputedOf(c, typeList), 0);
       const listAll = cs.reduce((a, c) => a + recomputedOf(c), 0);
-      const real = realPer[i];
-      const m = periodMultiple(listAll, stepsPer[i]);
+      // With outside sessions on the meter, covey's list over the whole
+      // movement is no multiple: the headline has the split ones.
+      const m = f.split ? null : periodMultiple(listAll, stepsPer[i]);
       const segs = byType
         ? typeList.map((k) => ({ key: k, label: t(`costs.stack.${k}`), color: TYPE_COLOR[k], value: cs.reduce((a, c) => a + (c.measured[k] ?? 0), 0) }))
         : [{ key: "m", label: t("costs.fig.recomputed"), color: SOURCE_COLOR.recomputed, value: list }];
@@ -789,7 +813,7 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
       out.push({ key: "real", label: t("costs.fig.realEstimate"), color: SOURCE_COLOR.real, hatched: true, valueLabel: true,
         tag: m?.kind === "estimate" ? `≈ ${times(m.value)}` : undefined,
         tagDetail: m ? t("costs.fig.multipleRange", { low: times(m.low), high: times(m.high) }) : undefined,
-        segs: [{ key: "real", label: t("costs.fig.realEstimate"), color: SOURCE_COLOR.real, value: real }] });
+        segs: realSegs(i) });
       return out;
     }
     if (src.reported) {
@@ -803,8 +827,7 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
       out.push({ key: "recomputed", label: t("costs.fig.recomputed"), color: SOURCE_COLOR.recomputed, segs });
     }
     if (withMoney && showReal) {
-      out.push({ key: "real", label: t("costs.fig.realEstimate"), color: SOURCE_COLOR.real, hatched: true,
-        segs: [{ key: "real", label: t("costs.fig.realEstimate"), color: SOURCE_COLOR.real, value: realPer[i] }] });
+      out.push({ key: "real", label: t("costs.fig.realEstimate"), color: SOURCE_COLOR.real, hatched: true, segs: realSegs(i) });
     }
     if (withMoney && showBilled) {
       out.push({ key: "billed", label: t("costs.fig.billed"), color: SOURCE_COLOR.billed,
@@ -878,6 +901,10 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
       {view === "vs" && layout === "combined" && !vs && !(filtered && (subscription || f.kind === "api_key")) && (
         <p className="muted text-xs mt-1 mb-0" data-vs-absent>{t("costs.fig.vsAbsent")}</p>
       )}
+      {showReal && f.split && <p className="muted text-xs mt-1 mb-0" data-split-note>
+        {t("costs.split.chartNote")}
+        {f.split.unsplit_hours > 0 && <> {t("costs.split.unsplitNote", { count: f.split.unsplit_hours, usd: fmtUSD(f.split.unsplit_real_usd) })}</>}
+      </p>}
       {filtered && (subscription || f.kind === "api_key") && <p className="muted text-xs mt-1 mb-0">{t("costs.fig.filteredRealNote")}</p>}
 
       {f.agents.length > 0 && <AgentTable f={f} agents={agents} subscription={subscription} />}
@@ -896,6 +923,7 @@ function AgentTable({ f, agents, subscription }: { f: CredentialFigures; agents:
         <caption className="muted text-xs" style={{ textAlign: "left", paddingBottom: 4 }}>
           {t("costs.fig.agentsTitle")}
           {subscription && f.real?.priced && f.meter && <span data-span> · {realSpan(t, f, "costs.fig.shareOfRealSpan")}</span>}
+          {subscription && f.real?.priced && f.split && <span data-split-share> · {t("costs.split.agentsShare", { usd: fmtUSD(f.split.covey_real_usd) })}</span>}
         </caption>
         <thead>
           <tr className="muted">
@@ -927,7 +955,7 @@ function AgentTable({ f, agents, subscription }: { f: CredentialFigures; agents:
 }
 
 /** The colour code of the page, explained once. */
-function ColourKey() {
+function ColourKey({ split }: { split: boolean }) {
   const { t } = useTranslation();
   const items: [Source, string, boolean?][] = [
     ["reported", t("costs.fig.keyReported")],
@@ -939,6 +967,11 @@ function ColourKey() {
     <div className="flex flex-wrap items-center gap-3 text-xs muted mb-3" role="note" aria-label={t("costs.fig.key")}>
       {items.map(([s, label, h]) => (
         <span key={s} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Swatch color={SOURCE_COLOR[s]} hatched={h} /> {label}</span>
+      ))}
+      {split && (["outside", "unsplit"] as const).map((k) => (
+        <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 6 }} data-split-key={k}>
+          <Swatch color={SPLIT_COLOR[k]} hatched /> {t(`costs.split.key_${k}`)}
+        </span>
       ))}
     </div>
   );
@@ -969,7 +1002,7 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
 
   return (
     <div>
-      <ColourKey />
+      <ColourKey split={figures.some((f) => f.split != null)} />
       <Row label={t("costs.filter.source")}>
         {SOURCES.map((s) => (
           <Chip key={s} on={src[s]} color={SOURCE_COLOR[s]} hatched={s === "real"} onClick={() => toggleSrc(s)}>

@@ -147,7 +147,10 @@ func TestMeterShare(t *testing.T) {
 	lOut := map[credHour]float64{key(h1): 3, key(h3): 5, key(h4): 2}
 	lCov := map[credHour]float64{key(h1): 1, key(h2): 2, key(h4): 1}
 
-	m := meterShare(links, steps, coverage, lOut, lCov)
+	// The source reported h1 through h4.
+	spans := map[string]reportedSpan{"operator: home": {from: h1, to: h4.Add(5 * time.Minute)}}
+
+	m := meterShare(links, spans, steps, coverage, lOut, lCov)
 	byHour := map[time.Time]ExternalMeterHour{}
 	for _, h := range m.Hours {
 		byHour[h.Hour] = h
@@ -187,7 +190,114 @@ func TestMeterShare(t *testing.T) {
 	}
 
 	// No link, no share: a source billed per use has no meter.
-	if m := meterShare(map[string]MeterCredential{}, steps, coverage, lOut, lCov); len(m.Hours) != 0 || m.Share != nil {
+	if m := meterShare(map[string]MeterCredential{}, spans, steps, coverage, lOut, lCov); len(m.Hours) != 0 || m.Share != nil {
 		t.Errorf("without a link: %+v", m)
+	}
+}
+
+// #120, the headline: an hour the outside sessions did not report is not
+// split — its movement is neither covey's nor theirs — and a seat no source
+// names is all unsplit. Covey's share never takes an hour's whole movement
+// for want of outside data. The three parts add up to the dent, and the
+// split hours carry the list prices and points the multiples need.
+func TestMeterShareLeavesUnreportedHoursUnsplit(t *testing.T) {
+	h0 := time.Date(2026, 11, 18, 8, 0, 0, 0, time.UTC)
+	hr := func(i int) time.Time { return h0.Add(time.Duration(i) * time.Hour) }
+	usd := func(v float64) *float64 { return &v }
+	links := map[string]MeterCredential{"operator: home": {SecretKey: "seat_a", SecretSlot: 0}}
+	coverage := []MeterCoverage{
+		{SecretKey: "seat_a", SecretSlot: 0, CredentialKind: "subscription", Source: "usage_cmd", WindowKind: WindowSevenDay, Readings: 5},
+		// A second seat no source names, and an API key: the key has no meter
+		// to split.
+		{SecretKey: "seat_b", SecretSlot: 0, CredentialKind: "subscription", Source: "inband", WindowKind: WindowSevenDay, Readings: 2},
+		{SecretKey: "api", SecretSlot: 0, CredentialKind: "api_key", Source: "inband", WindowKind: WindowSevenDay, Readings: 2},
+	}
+	step := func(key, src string, h time.Time, points, u float64, resets int) MeterStep {
+		return MeterStep{Period: h, SecretKey: key, SecretSlot: 0, Source: src, WindowKind: WindowSevenDay,
+			Points: points, Readings: 1, Resets: resets, USD: usd(u)}
+	}
+	// seat_a at $4 a point: hour 0 before the uploads, hours 1-3 inside
+	// them, hour 4 after the last outside call.
+	steps := []MeterStep{
+		step("seat_a", "usage_cmd", hr(0), 1, 4, 0),
+		step("seat_a", "usage_cmd", hr(1), 2, 8, 0),
+		step("seat_a", "usage_cmd", hr(2), 1, 4, 0),
+		step("seat_a", "usage_cmd", hr(3), 3, 12, 1),
+		step("seat_a", "usage_cmd", hr(4), 2, 8, 0),
+		step("seat_b", "inband", hr(1), 1, 5, 0),
+	}
+	key := func(k string, i int) credHour { return credHour{hr(i), k, 0} }
+	lOut := map[credHour]float64{key("seat_a", 1): 6, key("seat_a", 3): 1}
+	lCov := map[credHour]float64{key("seat_a", 0): 3, key("seat_a", 1): 2, key("seat_a", 2): 5, key("seat_a", 3): 3,
+		key("seat_a", 4): 9, key("seat_b", 1): 7}
+	spans := map[string]reportedSpan{"operator: home": {from: hr(1), to: hr(3).Add(20 * time.Minute)}}
+
+	m := meterShare(links, spans, steps, coverage, lOut, lCov)
+	at := map[credHour]ExternalMeterHour{}
+	for _, h := range m.Hours {
+		at[credHour{h.Hour, h.SecretKey, h.SecretSlot}] = h
+	}
+	near := func(p *float64, want float64) bool { return p != nil && math.Abs(*p-want) < 1e-9 }
+	for _, c := range []struct {
+		k        credHour
+		reported bool
+		out, cov *float64
+	}{
+		{key("seat_a", 0), false, nil, nil},
+		{key("seat_a", 1), true, usd(8 * 6.0 / 8), usd(8 * 2.0 / 8)},
+		{key("seat_a", 2), true, usd(0), usd(4)},
+		{key("seat_a", 3), true, usd(12 * 1.0 / 4), usd(12 * 3.0 / 4)},
+		{key("seat_a", 4), false, nil, nil},
+		{key("seat_b", 1), false, nil, nil},
+	} {
+		h, ok := at[c.k]
+		if !ok || h.RealUSD == nil || h.OutsideReported != c.reported {
+			t.Errorf("%v: %+v (present %v), want a reading, reported %v", c.k, h, ok, c.reported)
+			continue
+		}
+		if c.out == nil {
+			if h.ExternalRealUSD != nil || h.CoveyRealUSD != nil {
+				t.Errorf("%v: split %v / %v, want no split", c.k, h.ExternalRealUSD, h.CoveyRealUSD)
+			}
+		} else if !near(h.ExternalRealUSD, *c.out) || !near(h.CoveyRealUSD, *c.cov) {
+			t.Errorf("%v: split %v / %v, want %v / %v", c.k, h.ExternalRealUSD, h.CoveyRealUSD, *c.out, *c.cov)
+		}
+	}
+	if _, ok := at[key("api", 1)]; ok {
+		t.Errorf("the API key has meter hours")
+	}
+
+	// The dent: $36 on seat_a and $5 on seat_b. Split: hours 1-3, $24, of
+	// it $9 outside. Unsplit: hours 0 and 4 of seat_a and seat_b's hour.
+	if math.Abs(m.RealUSD-41) > 1e-9 || math.Abs(m.ExternalRealUSD-9) > 1e-9 || math.Abs(m.CoveyRealUSD-15) > 1e-9 ||
+		math.Abs(m.UnsplitRealUSD-17) > 1e-9 || m.UnsplitHours != 3 {
+		t.Errorf("dent = real %v outside %v covey %v unsplit %v (%d hours), want 41, 9, 15, 17 (3)",
+			m.RealUSD, m.ExternalRealUSD, m.CoveyRealUSD, m.UnsplitRealUSD, m.UnsplitHours)
+	}
+	if math.Abs(m.ExternalRealUSD+m.CoveyRealUSD+m.UnsplitRealUSD-m.RealUSD) > 1e-9 {
+		t.Errorf("the parts do not add up to the dent")
+	}
+	if !near(m.Share, 9.0/24) {
+		t.Errorf("share = %v, want 9/24 of the split hours", m.Share)
+	}
+	// The multiples' inputs: the list prices and points of the split hours
+	// only; one run of readings plus the reset in hour 3; $4 a point.
+	if m.SplitExternalListUSD != 7 || m.SplitCoveyListUSD != 10 || m.SplitPoints != 6 || m.SplitRuns != 2 || m.PointRate != 4 {
+		t.Errorf("split list %v / %v, points %v, runs %d, rate %v; want 7 / 10, 6, 2, 4",
+			m.SplitExternalListUSD, m.SplitCoveyListUSD, m.SplitPoints, m.SplitRuns, m.PointRate)
+	}
+	if len(m.Credentials) != 2 || len(m.Credentials[1].Sources) != 0 || m.Credentials[1].UnsplitRealUSD != 5 ||
+		m.Credentials[1].Share != nil {
+		t.Errorf("credentials = %+v, want seat_b with no source, all unsplit, no share", m.Credentials)
+	}
+
+	// A reading in an unsplit hour between two split ones breaks the run:
+	// one source reported hour 1, another hours 3 and 4.
+	links["operator: late"] = MeterCredential{SecretKey: "seat_a", SecretSlot: 0}
+	gap := meterShare(links, map[string]reportedSpan{"operator: home": {from: hr(1), to: hr(1).Add(time.Minute)},
+		"operator: late": {from: hr(3), to: hr(4)}}, steps, coverage, lOut, lCov)
+	// Split: hours 1, 3, 4 (two runs, broken by hour 2) plus the reset.
+	if gap.SplitRuns != 3 || gap.Credentials[0].UnsplitHours != 2 {
+		t.Errorf("runs = %d, unsplit hours %d; want 3 and 2", gap.SplitRuns, gap.Credentials[0].UnsplitHours)
 	}
 }

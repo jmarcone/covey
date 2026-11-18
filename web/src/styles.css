@@ -170,6 +170,13 @@ picture { display: contents; }
   --cost-recomputed: light-dark(#2f6db5, #6fa8e8);
   --cost-real: light-dark(#2e7d3e, #4fbf6a);
   --cost-billed: light-dark(#0e7a7e, #3fc1c0);
+  /* The meter's real cost split between covey and the sessions outside it
+     (#120): covey's share stays green, the outside sessions' share is the
+     same green far darker (light) or lighter (dark), and movement in an hour
+     the outside sessions did not report is a greyed green, split to nobody.
+     All three are drawn hatched, as real cost is. */
+  --cost-outside: light-dark(#1b4d26, #b9f0c6);
+  --cost-unsplit: light-dark(#6b7a70, #8f9a93);
   /* Cost and token types: one blue family, light (cheap, plentiful) to dark
      (dear). Only for types — never for a source or an agent. */
   --cost-type-input: light-dark(#7d9fd0, #9dbbe8);

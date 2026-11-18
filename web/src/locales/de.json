@@ -331,6 +331,36 @@
       "errForbidden": "Deine Rolle darf keinen Tarifpreis setzen ({{msg}}).",
       "form": "Tarifpreis für {{name}} setzen",
       "errGone": "Diese Zugangsdaten sitzen auf keinem Platz mehr — es gibt keinen Ort für den Preis."
+    },
+    "dent": {
+      "title": "Die ganze Delle im Abo",
+      "hint": "Die echten Kosten aller Abo-Zähler im Zeitraum, je UTC-Stunde nach Listenpreis-Anteil aufgeteilt zwischen covey's Agenten und den Claude-Code-Sitzungen außerhalb von covey, die auf denselben Zähler melden.",
+      "total": "Echte Kosten der Zähler",
+      "totalSub": "Quellen außerhalb: {{sources}}",
+      "covey": "covey's Agenten",
+      "outside": "Sitzungen außerhalb von covey",
+      "unsplit": "Nicht aufgeteilt",
+      "partSub": "{{pct}} der Delle · Liste {{list}} · {{x}}",
+      "unsplitSub": "{{pct}} der Delle · Sitzungen außerhalb für {{count}} h nicht gemeldet",
+      "sentence": "Dein Abo hat ≈ {{real}} echte Kosten für {{list}} Arbeit zum Listenpreis gezahlt: {{covey}} durch covey's Agenten, {{outside}} durch die Sitzungen außerhalb von covey, die sie steuern.",
+      "multiples": "Listenpreis je echtem Dollar: {{covey}} für covey's Agenten, {{outside}} für die Sitzungen außerhalb von covey und {{together}} für beide zusammen (Spanne {{low}} bis {{high}}).",
+      "noMultipleMovement": "Noch keine Vielfachen: Die aufgeteilten Stunden haben den Zähler um {{pts}} Punkte bewegt, ein Vielfaches braucht 3.",
+      "noMultipleSplit": "Keine Vielfachen: Die Sitzungen außerhalb von covey haben keine Stunde des Zeitraums mit Zählerablesung gemeldet.",
+      "unsplitNote": "≈ {{usd}} der Bewegung fielen in {{count}} h, die die Sitzungen außerhalb nicht gemeldet haben: Sie werden niemandem zugeteilt, nicht covey's Agenten.",
+      "unmetered": "{{usd}} Arbeit außerhalb zum Listenpreis fielen in Stunden ohne Zählerablesung: Sie haben keinen echten Anteil.",
+      "caveat": "Eine Schätzung: Ein Zähler gilt für das ganze Konto und zeigt ganze Prozent, und die Vielfachen beruhen nur auf den aufgeteilten Stunden."
+    },
+    "split": {
+      "covey": "covey's Agenten",
+      "outside": "Sitzungen außerhalb von covey",
+      "unsplitHour": "Nicht aufgeteilt: Sitzungen außerhalb für diese Stunde nicht gemeldet",
+      "unsplitHours": "Nicht aufgeteilt: Sitzungen außerhalb für {{count}} h nicht gemeldet",
+      "chartNote": "Der Balken der echten Kosten ist je Stunde nach Listenpreis-Anteil aufgeteilt zwischen covey's Agenten und den Sitzungen außerhalb von covey.",
+      "unsplitNote": "≈ {{usd}} in {{count}} h, die die Sitzungen außerhalb nicht gemeldet haben, werden niemandem zugeteilt.",
+      "noMultipleOutside": "Hier kein Vielfaches: Sitzungen außerhalb von covey teilen diesen Zähler, covey's Listenpreis über seine ganze Bewegung würde es zu niedrig angeben. Die aufgeteilten Vielfachen stehen in der Kopfzeile.",
+      "agentsShare": "der echte Anteil bezieht sich nur auf covey's Teil des Zählers (≈ {{usd}})",
+      "key_outside": "Echte Kosten, Sitzungen außerhalb von covey",
+      "key_unsplit": "Echte Kosten nicht aufgeteilt (Sitzungen außerhalb nicht gemeldet)"
     }
   },
   "lang": {

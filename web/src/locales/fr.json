@@ -331,6 +331,36 @@
       "errForbidden": "Votre rôle ne permet pas de définir un prix de forfait ({{msg}}).",
       "form": "Définir le prix du forfait de {{name}}",
       "errGone": "Cet identifiant n'est plus sur aucun poste — il n'y a nulle part où enregistrer le prix."
+    },
+    "dent": {
+      "title": "L'entame complète de l'abonnement",
+      "hint": "Le coût réel de chaque compteur d'abonnement sur la période, réparti par heure UTC selon la part du prix catalogue entre les agents de covey et les sessions Claude Code hors de covey qui déclarent sur le même compteur.",
+      "total": "Coût réel des compteurs",
+      "totalSub": "sources externes : {{sources}}",
+      "covey": "Agents de covey",
+      "outside": "Sessions hors de covey",
+      "unsplit": "Non réparti",
+      "partSub": "{{pct}} de l'entame · catalogue {{list}} · {{x}}",
+      "unsplitSub": "{{pct}} de l'entame · sessions externes non déclarées pendant {{count}} h",
+      "sentence": "Votre abonnement a payé ≈ {{real}} en coût réel pour {{list}} de travail au prix catalogue : {{covey}} par les agents de covey, {{outside}} par les sessions hors de covey qui les pilotent.",
+      "multiples": "Prix catalogue par dollar réel : {{covey}} pour les agents de covey, {{outside}} pour les sessions hors de covey et {{together}} pour les deux ensemble (fourchette de {{low}} à {{high}}).",
+      "noMultipleMovement": "Pas encore de multiples : les heures réparties ont fait bouger le compteur de {{pts}} points, et un multiple en demande 3.",
+      "noMultipleSplit": "Pas de multiples : les sessions hors de covey n'ont déclaré aucune heure de la période avec un relevé du compteur.",
+      "unsplitNote": "≈ {{usd}} du mouvement tombe dans {{count}} h que les sessions externes n'ont pas déclarées : il n'est attribué à personne, pas aux agents de covey.",
+      "unmetered": "{{usd}} de travail externe au prix catalogue tombent dans des heures sans relevé du compteur : sans part réelle.",
+      "caveat": "Une estimation : un compteur couvre tout le compte et affiche des pourcentages entiers, et les multiples ne reposent que sur les heures réparties."
+    },
+    "split": {
+      "covey": "Agents de covey",
+      "outside": "Sessions hors de covey",
+      "unsplitHour": "Non réparti : sessions externes non déclarées pour cette heure",
+      "unsplitHours": "Non réparti : sessions externes non déclarées pendant {{count}} h",
+      "chartNote": "La barre du coût réel est répartie par heure selon la part du prix catalogue entre les agents de covey et les sessions hors de covey.",
+      "unsplitNote": "≈ {{usd}} sur {{count}} h que les sessions externes n'ont pas déclarées n'est attribué à personne.",
+      "noMultipleOutside": "Pas de multiple ici : des sessions hors de covey partagent ce compteur, le prix catalogue de covey sur tout son mouvement le sous-estimerait. Les multiples répartis sont dans l'en-tête.",
+      "agentsShare": "la part réelle ne porte que sur la part de covey du compteur (≈ {{usd}})",
+      "key_outside": "Coût réel, sessions hors de covey",
+      "key_unsplit": "Coût réel non réparti (sessions externes non déclarées)"
     }
   },
   "lang": {

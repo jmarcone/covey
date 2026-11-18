@@ -331,6 +331,36 @@
       "errForbidden": "Il tuo ruolo non può impostare un prezzo del piano ({{msg}}).",
       "form": "Imposta il prezzo del piano di {{name}}",
       "errGone": "Questa credenziale non è più su nessuna postazione — non c'è dove salvare il prezzo."
+    },
+    "dent": {
+      "title": "L'intero consumo dell'abbonamento",
+      "hint": "Il costo reale di ogni contatore d'abbonamento nel periodo, suddiviso per ora UTC in base alla quota di prezzo di listino tra gli agenti di covey e le sessioni di Claude Code fuori da covey che segnalano sullo stesso contatore.",
+      "total": "Costo reale dei contatori",
+      "totalSub": "fonti esterne: {{sources}}",
+      "covey": "Agenti di covey",
+      "outside": "Sessioni fuori da covey",
+      "unsplit": "Non suddiviso",
+      "partSub": "{{pct}} del consumo · listino {{list}} · {{x}}",
+      "unsplitSub": "{{pct}} del consumo · sessioni esterne non segnalate per {{count}} h",
+      "sentence": "Il tuo abbonamento ha pagato ≈ {{real}} di costo reale per {{list}} di lavoro a prezzo di listino: {{covey}} dagli agenti di covey, {{outside}} dalle sessioni fuori da covey che li guidano.",
+      "multiples": "Prezzo di listino per dollaro reale: {{covey}} per gli agenti di covey, {{outside}} per le sessioni fuori da covey e {{together}} per entrambi insieme (intervallo da {{low}} a {{high}}).",
+      "noMultipleMovement": "Ancora nessun multiplo: le ore suddivise hanno mosso il contatore di {{pts}} punti, e un multiplo ne richiede 3.",
+      "noMultipleSplit": "Nessun multiplo: le sessioni fuori da covey non hanno segnalato alcuna ora del periodo con una lettura del contatore.",
+      "unsplitNote": "≈ {{usd}} del movimento cade in {{count}} h non segnalate dalle sessioni esterne: non è assegnato a nessuno, né agli agenti di covey.",
+      "unmetered": "{{usd}} di lavoro esterno a prezzo di listino cadono in ore senza lettura del contatore: nessuna quota reale.",
+      "caveat": "Una stima: un contatore vale per l'intero account e mostra percentuali intere, e i multipli si basano solo sulle ore suddivise."
+    },
+    "split": {
+      "covey": "Agenti di covey",
+      "outside": "Sessioni fuori da covey",
+      "unsplitHour": "Non suddiviso: sessioni esterne non segnalate per quest'ora",
+      "unsplitHours": "Non suddiviso: sessioni esterne non segnalate per {{count}} h",
+      "chartNote": "La barra del costo reale è suddivisa per ora in base alla quota di prezzo di listino tra gli agenti di covey e le sessioni fuori da covey.",
+      "unsplitNote": "≈ {{usd}} in {{count}} h non segnalate dalle sessioni esterne non è assegnato a nessuno.",
+      "noMultipleOutside": "Qui nessun multiplo: sessioni fuori da covey condividono questo contatore, quindi il prezzo di listino di covey sull'intero movimento lo sottostimerebbe. I multipli suddivisi sono nell'intestazione.",
+      "agentsShare": "la quota reale riguarda solo la parte di covey del contatore (≈ {{usd}})",
+      "key_outside": "Costo reale, sessioni fuori da covey",
+      "key_unsplit": "Costo reale non suddiviso (sessioni esterne non segnalate)"
     }
   },
   "lang": {

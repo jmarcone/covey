@@ -824,6 +824,98 @@ export type CostCells = {
   meter?: MeterCoverage[] | null;
   plans?: CredentialPlan[] | null;
   bookings?: BookingBasis[] | null;
+  /** Usage outside covey (#120): its own series, in none of the fields above. */
+  external?: ExternalUsage;
+};
+
+/** A subscription credential named by its secret, as the meter readings name it. */
+export type MeterCredentialRef = { secret_key: string; secret_slot: number };
+
+/** One outside source over the window (an operator's machine). */
+export type ExternalSource = {
+  source: string;
+  /** The seat whose meter the source shares; null: billed per use, no meter share. */
+  meter_credential: MeterCredentialRef | null;
+  calls: number;
+  /** List price of the priced calls; null when none was priced. */
+  list_usd: number | null;
+  reported_usd: number | null;
+  unpriced_tokens: number;
+  unpriced_calls: number;
+  unpriced_models: string[];
+  first_at: string | null;
+  last_at: string | null;
+};
+
+/** One bucket × source × origin of the outside calls. */
+export type ExternalCell = {
+  period: string;
+  source: string;
+  /** main | subagent | workflow; null where the uploader did not say. */
+  origin: string | null;
+  calls: number;
+  list_usd: number | null;
+  measured: Record<string, number>;
+  reported_usd: number | null;
+  reported_calls: number;
+  tokens: Record<string, number>;
+  unpriced_tokens: number;
+  unpriced_calls: number;
+};
+
+/** One UTC hour of one seat's meter, split by list-price share (F3). */
+export type ExternalMeterHour = {
+  hour: string;
+  secret_key: string;
+  secret_slot: number;
+  /** The meter's priced movement in the hour; null without a reading. */
+  real_usd: number | null;
+  points: number;
+  /** A source linked to this meter reported the hour; without it the hour is not split. */
+  outside_reported: boolean;
+  external_list_usd: number;
+  covey_list_usd: number;
+  /** Null without a reading and in an hour the outside calls were not reported for. */
+  external_real_usd: number | null;
+  covey_real_usd: number | null;
+};
+
+/** The split's sums: per seat, and over every seat. */
+export type ExternalMeterSums = {
+  /** Σ real over the hours with a reading: the dent. The three parts below add up to it. */
+  real_usd: number;
+  external_real_usd: number;
+  covey_real_usd: number;
+  unsplit_real_usd: number;
+  /** external_real_usd over the split hours' real cost; null without one. */
+  share: number | null;
+  /** The list prices of the split hours, which the multiples divide. */
+  split_external_list_usd: number;
+  split_covey_list_usd: number;
+  split_points: number;
+  /** Unbroken runs of split readings (and resets): each leaves ±1 point. */
+  split_runs: number;
+  /** The dearest price per point among the split hours. */
+  point_rate: number;
+  unsplit_hours: number;
+  unmetered_list_usd: number;
+};
+
+export type ExternalMeterTotal = ExternalMeterSums & {
+  secret_key: string;
+  secret_slot: number;
+  meter_source: string;
+  /** The outside sources linked to this meter; none: every hour is unsplit. */
+  sources: string[];
+  hours_with_reading: number;
+  hours_without_reading: number;
+  points: number;
+};
+
+export type ExternalUsage = {
+  sources: ExternalSource[];
+  cells: ExternalCell[];
+  meter: ExternalMeterSums & { hours: ExternalMeterHour[]; credentials: ExternalMeterTotal[] };
 };
 
 /** One reading of the provider's meter, with the measured cost on its credential up to it. */

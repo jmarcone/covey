@@ -348,18 +348,21 @@ func TestExternalUsageMeterShare(t *testing.T) {
 	}
 	ord := s.seat(t, rt.ID, daemon.CredSubscription, "claude_code_oauth_token", "sitz", "A")
 	h1 := time.Now().UTC().Truncate(time.Hour).Add(-4 * time.Hour)
-	h2, h3 := h1.Add(time.Hour), h1.Add(2*time.Hour)
+	h2, h3, h4 := h1.Add(time.Hour), h1.Add(2*time.Hour), h1.Add(3*time.Hour)
 	admin.expect(http.MethodPut, fmt.Sprintf("/api/v1/runtime-instances/%s/credentials/%d/plan", rt.ID, ord),
 		map[string]any{"plan_name": "Max", "amount": 200, "currency": "USD", "period": "month", "tax_basis": "net",
 			"valid_from": h1.Add(-48 * time.Hour)}, http.StatusOK)
 	perPoint := 200.0 * 12 / 52 / 100
 
-	// The baseline before the window, then +2 points in h1 and +1 in h2.
+	// The baseline before the window, then +2 points in h1 and +1 in h2,
+	// and +1 in h4, after the last outside call: not split (#120, the
+	// headline).
 	cred := observability.CredentialRef{RuntimeID: rt.ID, Ord: ord, SecretKey: "claude_code_oauth_token", Kind: "subscription"}
 	for _, r := range []struct {
 		at  time.Time
 		pct float64
-	}{{h1.Add(-30 * time.Hour), 10}, {h1.Add(40 * time.Minute), 12}, {h2.Add(40 * time.Minute), 13}} {
+	}{{h1.Add(-30 * time.Hour), 10}, {h1.Add(40 * time.Minute), 12}, {h2.Add(40 * time.Minute), 13},
+		{h4.Add(40 * time.Minute), 14}} {
 		if err := s.obs.AddUsageReading(ctx, s.orgID, observability.MeterReading{Credential: cred,
 			Supported: true, WindowPercent: -1, WeekPercent: r.pct, FetchedAt: r.at}); err != nil {
 			t.Fatal(err)
@@ -407,14 +410,24 @@ func TestExternalUsageMeterShare(t *testing.T) {
 		if h, ok := byHour[h3]; !ok || h.RealUSD != nil || h.ExternalRealUSD != nil || h.ExternalListUSD != 5 {
 			t.Errorf("%s: h3 = %+v (present %v), want L_out 5 and no figure", bucket, h, ok)
 		}
+		// h4 lies after the source's last call: not reported, so not split.
+		if h := byHour[h4]; !near(h.RealUSD, perPoint) || h.OutsideReported || h.ExternalRealUSD != nil || h.CoveyRealUSD != nil {
+			t.Errorf("%s: h4 = %+v, want R %v and no split", bucket, h, perPoint)
+		}
 		for _, h := range m.Hours {
-			if h.RealUSD != nil && math.Abs(*h.ExternalRealUSD+*h.CoveyRealUSD-*h.RealUSD) > 1e-9 {
+			if h.RealUSD != nil && h.OutsideReported && math.Abs(*h.ExternalRealUSD+*h.CoveyRealUSD-*h.RealUSD) > 1e-9 {
 				t.Errorf("%s: %v: R_out + R_cov != R (%+v)", bucket, h.Hour, h)
 			}
 		}
-		if math.Abs(m.RealUSD-(r1+r2)) > 1e-9 || math.Abs(m.ExternalRealUSD-r1*3/4) > 1e-9 ||
+		if math.Abs(m.RealUSD-(r1+r2+perPoint)) > 1e-9 || math.Abs(m.ExternalRealUSD-r1*3/4) > 1e-9 ||
+			math.Abs(m.CoveyRealUSD-(r1/4+r2)) > 1e-9 || math.Abs(m.UnsplitRealUSD-perPoint) > 1e-9 ||
 			!near(m.Share, r1*3/4/(r1+r2)) || m.UnmeteredListUSD != 5 {
-			t.Errorf("%s: totals real %v outside %v share %v unmetered %v", bucket, m.RealUSD, m.ExternalRealUSD, m.Share, m.UnmeteredListUSD)
+			t.Errorf("%s: totals real %v outside %v covey %v unsplit %v share %v unmetered %v", bucket,
+				m.RealUSD, m.ExternalRealUSD, m.CoveyRealUSD, m.UnsplitRealUSD, m.Share, m.UnmeteredListUSD)
+		}
+		if m.SplitExternalListUSD != 3 || math.Abs(m.SplitCoveyListUSD-3) > 1e-9 || m.SplitPoints != 3 || m.SplitRuns != 1 {
+			t.Errorf("%s: split list %v / %v, points %v, runs %d; want 3 / 3, 3, 1", bucket,
+				m.SplitExternalListUSD, m.SplitCoveyListUSD, m.SplitPoints, m.SplitRuns)
 		}
 		if len(m.Credentials) != 1 || strings.Join(m.Credentials[0].Sources, ",") != "operator: home" {
 			t.Errorf("%s: credentials = %+v, want the seat with the home source only", bucket, m.Credentials)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"time"
 	"unicode/utf8"
@@ -389,54 +390,100 @@ type ExternalCell struct {
 	UnpricedCalls  int64            `json:"unpriced_calls"`
 }
 
-// ExternalMeter is F3 over the window: per UTC hour and linked credential,
-// and summed.
+// ExternalMeter is F3 over the window: per UTC hour and seat credential, and
+// summed. It is filled once a source names the meter it shares; then every
+// subscription seat with readings takes part, linked or not, so that the
+// headline holds the whole dent in the meters.
+//
+// An hour is split only where the outside calls were reported for it: it
+// lies within the span of a linked source's uploads (reportedSpan). Any other
+// hour's movement is not split: it is neither covey's nor the outside
+// sessions', and stands as UnsplitRealUSD. Covey's share is never the whole
+// movement of an hour for want of outside data.
 type ExternalMeter struct {
 	Hours       []ExternalMeterHour  `json:"hours"`
 	Credentials []ExternalMeterTotal `json:"credentials"`
-	// RealUSD: Σ R over the hours with a reading, every linked credential;
-	// ExternalRealUSD: Σ R_out over the same hours; Share the one over the
-	// other (nil without real cost). The tile's figures.
-	RealUSD         float64  `json:"real_usd"`
-	ExternalRealUSD float64  `json:"external_real_usd"`
-	Share           *float64 `json:"share"`
+	// RealUSD: Σ R over the hours with a reading, every seat — the dent.
+	// ExternalRealUSD / CoveyRealUSD: Σ R_out / Σ R_cov over the split hours;
+	// UnsplitRealUSD: Σ R over the hours with a reading that were not split.
+	// The three add up to RealUSD.
+	RealUSD         float64 `json:"real_usd"`
+	ExternalRealUSD float64 `json:"external_real_usd"`
+	CoveyRealUSD    float64 `json:"covey_real_usd"`
+	UnsplitRealUSD  float64 `json:"unsplit_real_usd"`
+	// Share: ExternalRealUSD over the real cost of the split hours (nil
+	// without one). The tile's figure.
+	Share *float64 `json:"share"`
+	// SplitExternalListUSD / SplitCoveyListUSD: L_out and L_cov over the
+	// split hours, the list prices the three multiples divide.
+	SplitExternalListUSD float64 `json:"split_external_list_usd"`
+	SplitCoveyListUSD    float64 `json:"split_covey_list_usd"`
+	// SplitPoints: the meter points of the split hours; SplitRuns: how many
+	// unbroken runs of split readings they come from (and resets in them),
+	// each known to ±1 point only, the meter showing whole percents;
+	// PointRate: the dearest price per point among them. Together they give
+	// the multiples' range.
+	SplitPoints float64 `json:"split_points"`
+	SplitRuns   int     `json:"split_runs"`
+	PointRate   float64 `json:"point_rate"`
+	// UnsplitHours: hours with a reading whose outside calls were not
+	// reported.
+	UnsplitHours int `json:"unsplit_hours"`
 	// UnmeteredListUSD: L_out of hours without a reading, whose share has no
 	// figure.
 	UnmeteredListUSD float64 `json:"unmetered_list_usd"`
 }
 
-// ExternalMeterHour is one UTC hour of one linked credential's meter.
+// ExternalMeterHour is one UTC hour of one seat credential's meter.
 type ExternalMeterHour struct {
 	Hour       time.Time `json:"hour"`
 	SecretKey  string    `json:"secret_key"`
 	SecretSlot int       `json:"secret_slot"`
 	// RealUSD: R, the meter's priced movement in the hour; nil without a
-	// reading (or with points no plan prices).
+	// reading (or with points no plan prices). Points: the movement in
+	// points.
 	RealUSD *float64 `json:"real_usd"`
+	Points  float64  `json:"points"`
+	// OutsideReported: a source linked to this meter reported the hour (it
+	// lies within the span of its uploads). Without it the hour is not split.
+	OutsideReported bool `json:"outside_reported"`
 	// ExternalListUSD: L_out; CoveyListUSD: L_cov.
 	ExternalListUSD float64 `json:"external_list_usd"`
 	CoveyListUSD    float64 `json:"covey_list_usd"`
-	// ExternalRealUSD: R_out; CoveyRealUSD: R − R_out. Both nil with R.
+	// ExternalRealUSD: R_out; CoveyRealUSD: R − R_out. Both nil without R
+	// and in an hour the outside calls were not reported for.
 	ExternalRealUSD *float64 `json:"external_real_usd"`
 	CoveyRealUSD    *float64 `json:"covey_real_usd"`
 }
 
-// ExternalMeterTotal is one linked credential over the window.
+// ExternalMeterTotal is one seat credential over the window. The figures are
+// ExternalMeter's, for this credential alone.
 type ExternalMeterTotal struct {
 	SecretKey  string `json:"secret_key"`
 	SecretSlot int    `json:"secret_slot"`
 	// MeterSource: the reading source R is taken from (the one the page
 	// picks: most readings, usage_cmd before manual before inband); empty
 	// without readings in the window.
-	MeterSource string   `json:"meter_source"`
-	Sources     []string `json:"sources"`
+	MeterSource string `json:"meter_source"`
+	// Sources: the outside sources linked to this meter; none for a seat
+	// no source names, whose hours are all unsplit.
+	Sources []string `json:"sources"`
 	// Hours with a reading, and hours with outside calls but none.
-	HoursWithReading    int      `json:"hours_with_reading"`
-	HoursWithoutReading int      `json:"hours_without_reading"`
-	RealUSD             float64  `json:"real_usd"`
-	ExternalRealUSD     float64  `json:"external_real_usd"`
-	Share               *float64 `json:"share"`
-	UnmeteredListUSD    float64  `json:"unmetered_list_usd"`
+	HoursWithReading     int      `json:"hours_with_reading"`
+	HoursWithoutReading  int      `json:"hours_without_reading"`
+	UnsplitHours         int      `json:"unsplit_hours"`
+	RealUSD              float64  `json:"real_usd"`
+	ExternalRealUSD      float64  `json:"external_real_usd"`
+	CoveyRealUSD         float64  `json:"covey_real_usd"`
+	UnsplitRealUSD       float64  `json:"unsplit_real_usd"`
+	Share                *float64 `json:"share"`
+	SplitExternalListUSD float64  `json:"split_external_list_usd"`
+	SplitCoveyListUSD    float64  `json:"split_covey_list_usd"`
+	Points               float64  `json:"points"`
+	SplitPoints          float64  `json:"split_points"`
+	SplitRuns            int      `json:"split_runs"`
+	PointRate            float64  `json:"point_rate"`
+	UnmeteredListUSD     float64  `json:"unmetered_list_usd"`
 }
 
 // externalTokens are one group's summed counts.
@@ -623,18 +670,64 @@ func (s *Store) externalFor(ctx context.Context, orgID uuid.UUID, bucket string,
 		return originOrder(a.Origin) < originOrder(b.Origin)
 	})
 
+	// Until a source names the meter it shares, there is nothing to split
+	// the meters by and no hour to call unreported: the page stays as it was
+	// (a machine billed per use shares no meter).
 	if len(links) == 0 {
 		return out, nil
-	}
-	lOut, lCov, err := s.meterLists(ctx, orgID, since, links)
-	if err != nil {
-		return out, err
 	}
 	steps, coverage, err := hourly()
 	if err != nil {
 		return out, err
 	}
-	out.Meter = meterShare(links, steps, coverage, lOut, lCov)
+	keys := map[string]bool{}
+	for _, m := range links {
+		keys[m.SecretKey] = true
+	}
+	for _, c := range coverage {
+		if c.CredentialKind != "api_key" {
+			keys[c.SecretKey] = true
+		}
+	}
+	lOut, lCov, err := s.meterLists(ctx, orgID, since, links, keys)
+	if err != nil {
+		return out, err
+	}
+	spans, err := s.reportedSpans(ctx, orgID, since, links, out.Sources)
+	if err != nil {
+		return out, err
+	}
+	out.Meter = meterShare(links, spans, steps, coverage, lOut, lCov)
+	return out, nil
+}
+
+// reportedSpan is the stretch of hours a source's uploads cover: from the
+// hour of its first call (the window's first hour when it has calls before
+// the window) through its last call. An hour outside it is one the source
+// did not report: its calls may not have been sent yet, so the meter's
+// movement in it is not split, rather than booked to covey whole.
+type reportedSpan struct{ from, to time.Time }
+
+// reportedSpans are the spans of the linked sources over the window.
+func (s *Store) reportedSpans(ctx context.Context, orgID uuid.UUID, since time.Time,
+	links map[string]MeterCredential, sources []ExternalSource) (map[string]reportedSpan, error) {
+	out := map[string]reportedSpan{}
+	first := since.UTC().Truncate(time.Hour)
+	for _, src := range sources {
+		if _, ok := links[src.Source]; !ok || src.FirstAt == nil || src.LastAt == nil {
+			continue
+		}
+		span := reportedSpan{from: src.FirstAt.Truncate(time.Hour), to: *src.LastAt}
+		var earlier bool
+		if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM external_usage
+			WHERE org_id = $1 AND source = $2 AND ts < $3)`, orgID, src.Source, since).Scan(&earlier); err != nil {
+			return nil, err
+		}
+		if earlier {
+			span.from = first
+		}
+		out[src.Source] = span
+	}
 	return out, nil
 }
 
@@ -653,18 +746,18 @@ type credHour struct {
 	slot int
 }
 
-// meterLists are L_out and L_cov per UTC hour and linked credential: the
-// outside calls of the sources linked to it priced with F1 (a model the list
-// does not know has no figure and is left out), and covey's recomputed list
-// price of the credential's lines (a model the list does not know at the
+// meterLists are L_out and L_cov per UTC hour and seat credential (keys: the
+// linked ones and every metered seat): the outside calls of the sources
+// linked to it priced with F1 (a model the list does not know has no figure
+// and is left out), and covey's recomputed list price of the credential's
+// lines (a model the list does not know at the
 // engine's figure, as the agents' recomputed figure counts it).
-func (s *Store) meterLists(ctx context.Context, orgID uuid.UUID, since time.Time, links map[string]MeterCredential) (map[credHour]float64, map[credHour]float64, error) {
+func (s *Store) meterLists(ctx context.Context, orgID uuid.UUID, since time.Time, links map[string]MeterCredential,
+	keys map[string]bool) (map[credHour]float64, map[credHour]float64, error) {
 	lOut, lCov := map[credHour]float64{}, map[credHour]float64{}
 	names := make([]string, 0, len(links))
-	keys := map[string]bool{}
-	for name, m := range links {
+	for name := range links {
 		names = append(names, name)
-		keys[m.SecretKey] = true
 	}
 	rows, err := s.pool.Query(ctx, `SELECT date_trunc('hour', ts, 'UTC'), source, model,
 		SUM(input), SUM(output), SUM(cache_read), SUM(cache_write_5m), SUM(cache_write_1h)
@@ -775,12 +868,17 @@ func stepReal(st MeterStep) *float64 {
 	return &usd
 }
 
-// meterShare is F3. steps must be cut per UTC hour. An hour enters when the
-// credential's meter was read in it, or when calls of a linked source were
-// made in it; only the first kind has a figure.
-func meterShare(links map[string]MeterCredential, steps []MeterStep, coverage []MeterCoverage,
-	lOut, lCov map[credHour]float64) ExternalMeter {
+// meterShare is F3. steps must be cut per UTC hour. The credentials are the
+// linked ones and every subscription seat the coverage knows. An hour enters
+// when the credential's meter was read in it, or when calls of a linked
+// source were made in it; only the first kind has a figure, and of those
+// only the hours a linked source reported (spans) are split.
+func meterShare(links map[string]MeterCredential, spans map[string]reportedSpan, steps []MeterStep,
+	coverage []MeterCoverage, lOut, lCov map[credHour]float64) ExternalMeter {
 	out := ExternalMeter{Hours: []ExternalMeterHour{}, Credentials: []ExternalMeterTotal{}}
+	if len(links) == 0 {
+		return out
+	}
 	type cred struct {
 		key  string
 		slot int
@@ -789,6 +887,15 @@ func meterShare(links map[string]MeterCredential, steps []MeterStep, coverage []
 	for name, m := range links {
 		c := cred{m.SecretKey, m.SecretSlot}
 		byCred[c] = append(byCred[c], name)
+	}
+	for _, cv := range coverage {
+		if cv.CredentialKind == "api_key" || cv.WindowKind != WindowSevenDay {
+			continue
+		}
+		c := cred{cv.SecretKey, cv.SecretSlot}
+		if _, ok := byCred[c]; !ok {
+			byCred[c] = nil
+		}
 	}
 	creds := make([]cred, 0, len(byCred))
 	for c := range byCred {
@@ -801,15 +908,23 @@ func meterShare(links map[string]MeterCredential, steps []MeterStep, coverage []
 		return creds[i].slot < creds[j].slot
 	})
 
-	var totalOut float64
 	for _, c := range creds {
-		tot := ExternalMeterTotal{SecretKey: c.key, SecretSlot: c.slot, Sources: byCred[c]}
+		tot := ExternalMeterTotal{SecretKey: c.key, SecretSlot: c.slot, Sources: append([]string{}, byCred[c]...)}
 		sort.Strings(tot.Sources)
+		reported := func(h time.Time) bool {
+			for _, name := range tot.Sources {
+				if sp, ok := spans[name]; ok && !h.Before(sp.from) && !sp.to.Before(h) {
+					return true
+				}
+			}
+			return false
+		}
 		hours := map[time.Time]*ExternalMeterHour{}
+		resets := map[time.Time]int{}
 		hour := func(h time.Time) *ExternalMeterHour {
 			eh, ok := hours[h]
 			if !ok {
-				eh = &ExternalMeterHour{Hour: h, SecretKey: c.key, SecretSlot: c.slot}
+				eh = &ExternalMeterHour{Hour: h, SecretKey: c.key, SecretSlot: c.slot, OutsideReported: reported(h)}
 				hours[h] = eh
 			}
 			return eh
@@ -821,6 +936,8 @@ func meterShare(links map[string]MeterCredential, steps []MeterStep, coverage []
 					continue
 				}
 				eh := hour(st.Period.UTC())
+				eh.Points += st.Points
+				resets[eh.Hour] += st.Resets
 				if r := stepReal(st); r != nil {
 					eh.RealUSD = addUSD(eh.RealUSD, *r)
 				}
@@ -831,41 +948,76 @@ func meterShare(links map[string]MeterCredential, steps []MeterStep, coverage []
 				hour(k.hour).ExternalListUSD = v
 			}
 		}
-		for h, eh := range hours {
-			eh.CoveyListUSD = lCov[credHour{h, c.key, c.slot}]
+		order := make([]*ExternalMeterHour, 0, len(hours))
+		for _, eh := range hours {
+			order = append(order, eh)
+		}
+		sort.Slice(order, func(i, j int) bool { return order[i].Hour.Before(order[j].Hour) })
+		// A run of split readings telescopes to its last reading minus the
+		// one before it: ±1 point, whatever its length. It breaks where a
+		// reading falls in an unsplit hour, and a reset starts another.
+		inRun := false
+		for _, eh := range order {
+			eh.CoveyListUSD = lCov[credHour{eh.Hour, c.key, c.slot}]
 			if eh.RealUSD == nil {
 				tot.HoursWithoutReading++
 				tot.UnmeteredListUSD += eh.ExternalListUSD
 				continue
 			}
 			tot.HoursWithReading++
+			tot.RealUSD += *eh.RealUSD
+			tot.Points += eh.Points
+			if !eh.OutsideReported {
+				tot.UnsplitHours++
+				tot.UnsplitRealUSD += *eh.RealUSD
+				inRun = false
+				continue
+			}
 			share := 0.0
 			if eh.ExternalListUSD > 0 {
 				share = *eh.RealUSD * eh.ExternalListUSD / (eh.ExternalListUSD + eh.CoveyListUSD)
 			}
 			rest := *eh.RealUSD - share
 			eh.ExternalRealUSD, eh.CoveyRealUSD = &share, &rest
-			tot.RealUSD += *eh.RealUSD
 			tot.ExternalRealUSD += share
+			tot.CoveyRealUSD += rest
+			tot.SplitExternalListUSD += eh.ExternalListUSD
+			tot.SplitCoveyListUSD += eh.CoveyListUSD
+			tot.SplitPoints += eh.Points
+			if !inRun {
+				tot.SplitRuns++
+				inRun = true
+			}
+			tot.SplitRuns += resets[eh.Hour]
+			if eh.Points > 0 {
+				tot.PointRate = math.Max(tot.PointRate, *eh.RealUSD/eh.Points)
+			}
 		}
-		if tot.RealUSD > 0 {
-			sh := tot.ExternalRealUSD / tot.RealUSD
+		if split := tot.ExternalRealUSD + tot.CoveyRealUSD; split > 0 {
+			sh := tot.ExternalRealUSD / split
 			tot.Share = &sh
 		}
-		for _, eh := range hours {
+		for _, eh := range order {
 			out.Hours = append(out.Hours, *eh)
 		}
 		out.Credentials = append(out.Credentials, tot)
 		out.RealUSD += tot.RealUSD
-		totalOut += tot.ExternalRealUSD
+		out.ExternalRealUSD += tot.ExternalRealUSD
+		out.CoveyRealUSD += tot.CoveyRealUSD
+		out.UnsplitRealUSD += tot.UnsplitRealUSD
+		out.SplitExternalListUSD += tot.SplitExternalListUSD
+		out.SplitCoveyListUSD += tot.SplitCoveyListUSD
+		out.SplitPoints += tot.SplitPoints
+		out.SplitRuns += tot.SplitRuns
+		out.PointRate = math.Max(out.PointRate, tot.PointRate)
+		out.UnsplitHours += tot.UnsplitHours
 		out.UnmeteredListUSD += tot.UnmeteredListUSD
 	}
-	out.ExternalRealUSD = totalOut
-	if out.RealUSD > 0 {
-		sh := out.ExternalRealUSD / out.RealUSD
+	if split := out.ExternalRealUSD + out.CoveyRealUSD; split > 0 {
+		sh := out.ExternalRealUSD / split
 		out.Share = &sh
 	}
-	sort.Slice(out.Hours, func(i, j int) bool {
+	sort.SliceStable(out.Hours, func(i, j int) bool {
 		a, b := out.Hours[i], out.Hours[j]
 		if !a.Hour.Equal(b.Hour) {
 			return a.Hour.Before(b.Hour)

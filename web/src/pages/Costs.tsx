@@ -6,7 +6,8 @@ import { api, ApiError, type IndicatorReport, type Principal, type RunCost } fro
 import { exact, fmtBucket, fmtCount, fmtUSD } from "../format";
 import { PriceList } from "../components/PriceList";
 import { CostInsights } from "./CostInsights";
-import { credentialFigures } from "./costFigures";
+import { credentialFigures, subscriptionDent } from "./costFigures";
+import { SubscriptionDentRow } from "./SubscriptionDent";
 import { canSetPlan } from "./PlanPrice";
 import {
   AgentFilter,
@@ -276,6 +277,10 @@ export default function Costs({ me }: { me?: Principal }) {
     cells: cells.data, billed: billed.data, bucketMs: BUCKET_MS[bucket] ?? BUCKET_MS.day, windowEnd: new Date(),
   }) : []), [cells.data, billed.data, bucket]);
 
+  // The whole dent in the subscription meters, split between covey's agents
+  // and the sessions outside covey (#120): null until a source names a meter.
+  const dent = useMemo(() => subscriptionDent(cells.data?.external), [cells.data]);
+
   // KPIs over the same lines as the charts, narrowed by the same filter.
   const totals = useMemo(() => cellTotals(cells.data, selected), [cells.data, selected]);
   const tok = totals.tokens;
@@ -326,6 +331,9 @@ export default function Costs({ me }: { me?: Principal }) {
       <div className="mb-4">
         <AgentFilter agents={agentList} selected={selected} onChange={setSelected} />
       </div>
+
+      {/* The headline: what the subscription really paid, and for whom. */}
+      {dent && <SubscriptionDentRow d={dent} filtered={selected.size > 0} />}
 
       {/* KPIs: over every credential, dollars and tokens of the same lines. */}
       <div className="flex flex-wrap gap-3 mb-4">
