@@ -493,61 +493,13 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
 
 // --- The meter card ------------------------------------------------------------
 
-export type MeterRatio = {
-  /** $ of list price per 1 % of the week, and its range. Null without movement. */
-  perPoint: number | null;
-  low: number;
-  high: number;
-  /** The list $ and the points over all weeks. */
-  usd: number;
-  points: number;
-  readings: number;
-  weeks: number;
-};
-
 /** The readings of one credential and source on the weekly window that can be
- *  used: supported, fresh, with a figure and a cost; oldest first. */
+ *  used: supported, fresh, with a figure; oldest first. */
 export function usableReadings(rs: readonly UsageReading[], key: string, slot: number, source: string): UsageReading[] {
   return rs
     .filter((r) => r.secret_key === key && r.secret_slot === slot && r.source === source && r.supported && !r.stale
-      && r.week_percent != null && r.cost_usd != null && (r.window_kind === "seven_day" || r.window_kind === ""))
+      && r.week_percent != null && (r.window_kind === "seven_day" || r.window_kind === ""))
     .sort((a, b) => Date.parse(a.fetched_at) - Date.parse(b.fetched_at));
-}
-
-/** A new week starts where the reset time moved forward, or — without reset
- *  times — where the meter collapsed (below half and at least 5 points down). */
-function isReset(prev: UsageReading, cur: UsageReading): boolean {
-  if (prev.resets_at && cur.resets_at) return Date.parse(cur.resets_at) > Date.parse(prev.resets_at) + 3600_000;
-  if (prev.resets_at && Date.parse(prev.resets_at) <= Date.parse(cur.fetched_at)) return true;
-  return cur.week_percent! < prev.week_percent! / 2 && cur.week_percent! <= prev.week_percent! - 5;
-}
-
-/** "$X per 1 %": per week, the list $ between its first and last reading over
- *  the points the meter rose; summed over the weeks. Each week leaves ±1 point. */
-export function meterRatio(rs: readonly UsageReading[]): MeterRatio | null {
-  if (rs.length < 2) return null;
-  let usd = 0, points = 0, weeks = 0;
-  let first = rs[0], top = rs[0].week_percent!;
-  const close = (last: UsageReading) => {
-    usd += (last.cost_usd ?? 0) - (first.cost_usd ?? 0);
-    points += Math.max(0, top - first.week_percent!);
-    weeks++;
-  };
-  let prev = rs[0];
-  for (const r of rs.slice(1)) {
-    if (isReset(prev, r)) {
-      close(prev);
-      first = r;
-      top = r.week_percent!;
-    } else {
-      top = Math.max(top, r.week_percent!);
-    }
-    prev = r;
-  }
-  close(prev);
-  const low = usd / (points + weeks);
-  const high = points - weeks > 0 ? usd / (points - weeks) : Infinity;
-  return { perPoint: points > 0 ? usd / points : null, low, high, usd, points, readings: rs.length, weeks };
 }
 
 /** The meter's whole-percent crossings in each period: "10 % → 11 %". */

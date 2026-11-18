@@ -6,8 +6,10 @@ import { api, ApiError, type IndicatorReport, type RunCost } from "../api";
 import { exact, fmtBucket, fmtCount, fmtUSD } from "../format";
 import { PriceList } from "../components/PriceList";
 import { CostInsights } from "./CostInsights";
+import { credentialFigures } from "./costFigures";
 import {
   AgentFilter,
+  BUCKET_MS,
   CostExplorer,
   SOURCE_COLOR,
   Swatch,
@@ -264,6 +266,12 @@ export default function Costs() {
     if (r) setBucket(r.bucket);
   };
 
+  // The credentials' figures over the whole organisation, for the meter card:
+  // the same the tiles show without an agent filter.
+  const orgFigures = useMemo(() => (cells.data ? credentialFigures({
+    cells: cells.data, billed: billed.data, bucketMs: BUCKET_MS[bucket] ?? BUCKET_MS.day, windowEnd: new Date(),
+  }) : []), [cells.data, billed.data, bucket]);
+
   // KPIs over the same lines as the charts, narrowed by the same filter.
   const totals = useMemo(() => cellTotals(cells.data, selected), [cells.data, selected]);
   const tok = totals.tokens;
@@ -370,7 +378,7 @@ export default function Costs() {
 
       {/* Cost insights: per model as Claude Code reported it, and the
           subscription meter per credential against the list price. Org-wide only. */}
-      {selected.size === 0 && <CostInsights days={days} />}
+      {selected.size === 0 && <CostInsights days={days} figures={orgFigures} />}
     </div>
   );
 }

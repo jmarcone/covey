@@ -3,8 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import { api, type ModelUsageReport, type UsageReading } from "../api";
-import { fmtBucket, fmtCount, fmtNumber, fmtUSD, fmtUSDAxis } from "../format";
-import { credId, meterRatio, usableReadings } from "./costFigures";
+import { fmtBucket, fmtCount, fmtNumber, fmtUSD } from "../format";
+import { usableReadings, type CredentialFigures } from "./costFigures";
 import { SOURCE_COLOR, Swatch } from "./StackedCostChart";
 
 /* Cost insights.
@@ -14,11 +14,11 @@ import { SOURCE_COLOR, Swatch } from "./StackedCostChart";
  *     every result line — an Opus run also makes small Haiku calls — with the
  *     cache writes split by lifetime. The table sets Claude Code's own price
  *     next to the same tokens priced with covey's list: a price-table check.
- *  2. What does a point of the subscription meter buy? Per credential and
- *     source, the provider's weekly meter against the list price of the work
- *     on that credential — one axis each, the meter as the whole-percent
- *     steps it moves in. The meter is account-wide: other use of the account
- *     moves it too. */
+ *  2. What does a point of the subscription meter buy? Per credential, the
+ *     same figures as its tiles above (costFigures.ts): the meter's span,
+ *     the real cost of its movement, the list price of the credential's
+ *     lines over the same span, and the multiple. The meter is
+ *     account-wide: other use of the account moves it too. */
 
 const th: React.CSSProperties = { padding: "4px 8px 8px 0", fontWeight: 500, whiteSpace: "nowrap" };
 const td: React.CSSProperties = { padding: "4px 8px 4px 0", whiteSpace: "nowrap" };
@@ -102,55 +102,71 @@ function ModelTable({ rep }: { rep: ModelUsageReport }) {
   );
 }
 
-/** The meter of one credential and source: week % (y) against the list $ of
- *  the work on the credential (x), one axis each. A dashed step line — the
- *  meter moves in whole percents, so it stays level until the next reading
- *  says otherwise — broken at every new week, labelled at its end. */
-function MeterSteps({ readings, label }: { readings: UsageReading[]; label: string }) {
+/** One credential's meter with the figures of its tiles above: the span the
+ *  meter was read over, the real cost of its movement (or why there is
+ *  none), the list price of the credential's lines over the same span, and
+ *  the multiple. No chart: two independent scales stretched to the same
+ *  height agreed by construction, not by the data. */
+function MeterFigures({ f, readings }: { f: CredentialFigures; readings: UsageReading[] }) {
   const { t } = useTranslation();
-  const W = 560, H = 170, L = 44, R = 96, T = 12, B = 30;
-  const xs = readings.map((r) => r.cost_usd ?? 0);
-  const ps = readings.map((r) => r.week_percent ?? 0);
-  const xMax = Math.max(1e-9, ...xs), pMin = Math.min(...ps), pMax = Math.max(pMin + 1, ...ps);
-  const x = (v: number) => L + (v / xMax) * (W - L - R);
-  const y = (v: number) => T + (1 - (v - pMin) / (pMax - pMin)) * (H - T - B);
-  // A new week begins where the meter collapsed: the line breaks there.
-  const paths: string[] = [];
-  let d = "";
-  readings.forEach((r, i) => {
-    const px = x(xs[i]), py = y(ps[i]);
-    if (i === 0 || ps[i] < ps[i - 1] / 2 && ps[i] <= ps[i - 1] - 5) {
-      if (d) paths.push(d);
-      d = `M${px.toFixed(1)},${py.toFixed(1)}`;
-    } else {
-      d += ` H${px.toFixed(1)} V${py.toFixed(1)}`;
-    }
-  });
-  if (d) paths.push(d);
-  const last = readings[readings.length - 1];
+  const m = f.meter!;
+  const r = f.real;
+  const source = t(`costs.insights.source_${m.source}`, { defaultValue: m.source });
+  const own = readings.filter((x) => x.secret_key === m.secret_key && x.secret_slot === m.secret_slot);
+  const sameWindow = own.filter((x) => x.source === m.source && (x.window_kind === "seven_day" || x.window_kind === ""));
+  const dropped = sameWindow.length - usableReadings(own, m.secret_key, m.secret_slot, m.source).length;
+  const five = own.filter((x) => x.supported && !x.stale && x.window_percent != null).at(-1);
+
+  let real: string;
+  if (!r) real = t("costs.fig.noMeter");
+  else if (!r.priced) real = r.unpricedPoints > 0 ? t("costs.fig.noPlanPricePoints", { n: r.unpricedPoints, m: r.points }) : t("costs.fig.noPlan");
+  else if (r.below) real = `< ${fmtUSD(r.high)} · ${t("costs.fig.realBelow")}`;
+  else real = `≈ ${fmtUSD(r.value)} · ${t("costs.fig.realRange", { low: fmtUSD(r.low), high: fmtUSD(r.high), pts: r.points, pp: fmtUSD(r.value / r.points) })}`;
+
+  let mult: string;
+  if (f.multiple?.kind === "estimate") {
+    mult = `≈ ${times(f.multiple.value)} · ${t("costs.fig.multipleRange", { low: times(f.multiple.low), high: times(f.multiple.high) })}`;
+  } else if (f.noMultiple === "unpriced") {
+    mult = r && r.unpricedPoints > 0 ? t("costs.fig.noMultipleUnpriced", { n: r.unpricedPoints, m: r.points }) : t("costs.fig.noMultipleNoPlan");
+  } else if (f.noMultiple === "movement" && r && r.points >= 1 && f.aligned) {
+    mult = t("costs.fig.notEnoughMovement", { pts: r.points, low: times(f.aligned / r.high), high: times(r.low > 0 ? f.aligned / r.low : Infinity) });
+  } else if (f.noMultiple === "movement") {
+    mult = t("costs.fig.notEnoughMovementNone");
+  } else mult = "–";
+
+  const row = (label: string, value: string, color?: string, hatched?: boolean) => (
+    <div style={{ display: "flex", gap: 8, alignItems: "baseline", padding: "2px 0" }}>
+      <span className="muted text-xs" style={{ display: "inline-flex", alignItems: "center", gap: 6, width: 190, flexShrink: 0 }}>
+        {color && <Swatch color={color} hatched={hatched} />}{label}
+      </span>
+      <span className="text-sm" style={{ fontVariantNumeric: "tabular-nums" }}>{value}</span>
+    </div>
+  );
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }} role="img"
-      aria-label={t("costs.insights.meterAria", { label, from: pMin, to: pMax, usd: fmtUSD(xMax) })}>
-      <title>{label}</title>
-      <line x1={L} y1={H - B} x2={W - R} y2={H - B} stroke="var(--border-strong)" />
-      <line x1={L} y1={T} x2={L} y2={H - B} stroke="var(--border-strong)" />
-      {paths.map((p, i) => <path key={i} d={p} fill="none" stroke={SOURCE_COLOR.real} strokeWidth={2} strokeDasharray="5 3" />)}
-      {readings.map((r, i) => <circle key={i} cx={x(xs[i])} cy={y(ps[i])} r={2.5} fill={SOURCE_COLOR.real} />)}
-      <text x={x(xs[xs.length - 1]) + 6} y={y(ps[ps.length - 1]) + 4} fontSize={10.5} fill="var(--text-primary)">
-        {label} · {last.week_percent} %
-      </text>
-      <text x={L - 6} y={y(pMax) + 4} fontSize={10} fill="var(--text-muted)" textAnchor="end">{pMax} %</text>
-      <text x={L - 6} y={y(pMin) + 4} fontSize={10} fill="var(--text-muted)" textAnchor="end">{pMin} %</text>
-      <text x={L} y={H - B + 14} fontSize={10} fill="var(--text-muted)">{fmtUSDAxis(0)}</text>
-      <text x={W - R} y={H - B + 14} fontSize={10} fill="var(--text-muted)" textAnchor="end">{fmtUSD(xMax)}</text>
-      <text x={(L + W - R) / 2} y={H - 4} fontSize={10} fill="var(--text-muted)" textAnchor="middle">{t("costs.insights.meterAxisX")}</text>
-    </svg>
+    <div className="mb-4" data-meter={f.id}>
+      <div className="text-xs" style={{ fontWeight: 600, marginBottom: 4 }}>{`${m.secret_key} #${m.secret_slot} · ${source}`}</div>
+      {row(t("costs.insights.meterSpan"), t("costs.insights.meterSpanValue", {
+        from: m.baseline_percent, fromAt: fmtBucket(m.baseline_at, "hour"), to: m.last_percent, toAt: fmtBucket(m.last_at, "hour"),
+        pts: m.points, n: m.readings,
+      }))}
+      {row(t("costs.fig.realEstimate"), real, SOURCE_COLOR.real, true)}
+      {row(t("costs.insights.meterList"), f.aligned != null ? fmtUSD(f.aligned) : "–", SOURCE_COLOR.recomputed)}
+      {row(t("costs.fig.multiple"), mult)}
+      <p className="muted text-xs mt-1 mb-0">
+        {five
+          ? t("costs.insights.fiveHour", { pct: five.window_percent, at: fmtBucket(five.fetched_at, "hour") })
+          : t("costs.insights.fiveHourNotReported")}
+        {dropped > 0 && <> · {t("costs.insights.dropped", { count: dropped })}</>}
+      </p>
+    </div>
   );
 }
 
-type MeterGroup = { key: string; secretKey: string; slot: number; source: string; usable: UsageReading[]; dropped: number };
+const times = (v: number) => (Number.isFinite(v) ? `${fmtNumber(v, 1)}×` : "∞");
 
-export function CostInsights({ days }: { days: number }) {
+/** The cards below the chart. `figures` are the credentials' figures over the
+ *  whole organisation — the same the tiles show without an agent filter. */
+export function CostInsights({ days, figures }: { days: number; figures: CredentialFigures[] }) {
   const { t } = useTranslation();
   const models = useQuery({
     queryKey: ["cost", "models", days],
@@ -163,28 +179,7 @@ export function CostInsights({ days }: { days: number }) {
     refetchInterval: 30000,
   });
   const rs = useMemo(() => readings.data ?? [], [readings.data]);
-
-  // Per credential and source: the usable readings, and how many were dropped.
-  const groups = useMemo(() => {
-    const m = new Map<string, MeterGroup>();
-    for (const r of rs) {
-      if (r.secret_key == null || r.secret_slot == null) continue;
-      if (r.window_kind !== "seven_day" && r.window_kind !== "") continue;
-      const key = `${credId(r.secret_key, r.secret_slot)}/${r.source}`;
-      if (!m.has(key)) m.set(key, { key, secretKey: r.secret_key, slot: r.secret_slot, source: r.source, usable: [], dropped: 0 });
-    }
-    for (const g of m.values()) {
-      g.usable = usableReadings(rs, g.secretKey, g.slot, g.source);
-      g.dropped = rs.filter((r) => r.secret_key === g.secretKey && r.secret_slot === g.slot && r.source === g.source
-        && (r.window_kind === "seven_day" || r.window_kind === "")).length - g.usable.length;
-    }
-    return [...m.values()];
-  }, [rs]);
-  // The five-hour window of a credential, when any reading reported it.
-  const fiveHour = (key: string, slot: number) => {
-    const w = rs.filter((r) => r.secret_key === key && r.secret_slot === slot && r.supported && !r.stale && r.window_percent != null);
-    return w.length ? w[w.length - 1] : null;
-  };
+  const metered = figures.filter((f) => f.meter != null && f.kind !== "api_key");
 
   return (
     <div className="grid gap-4 mt-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(420px, 100%), 1fr))" }}>
@@ -196,37 +191,8 @@ export function CostInsights({ days }: { days: number }) {
       <div className="card">
         <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.insights.meterTitle")}</div>
         <p className="muted text-xs mb-3">{t("costs.insights.meterHint")}</p>
-        {groups.length === 0 && <div className="muted text-sm">{t("costs.insights.noReadings")}</div>}
-        {groups.map((g) => {
-          const ratio = meterRatio(g.usable);
-          const five = fiveHour(g.secretKey, g.slot);
-          const label = `${g.secretKey} #${g.slot} · ${t(`costs.insights.source_${g.source}`, { defaultValue: g.source })}`;
-          return (
-            <div key={g.key} className="mb-4">
-              <div className="text-xs" style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600 }}>
-                <Swatch color={SOURCE_COLOR.real} /> {label}
-              </div>
-              {g.usable.length >= 2 ? <MeterSteps readings={g.usable} label={t(`costs.insights.source_${g.source}`, { defaultValue: g.source })} />
-                : <p className="muted text-xs">{t("costs.insights.noUsable")}</p>}
-              {ratio && (
-                <p className="text-sm mt-1 mb-0">
-                  {ratio.perPoint !== null
-                    ? t("costs.insights.ratioPer", {
-                      usd: fmtUSD(ratio.perPoint), low: fmtUSD(ratio.low),
-                      high: Number.isFinite(ratio.high) ? fmtUSD(ratio.high) : "∞", n: ratio.readings,
-                    })
-                    : t("costs.insights.ratioFlat", { dc: fmtUSD(ratio.usd), pct: g.usable[g.usable.length - 1].week_percent })}
-                </p>
-              )}
-              <p className="muted text-xs mt-1 mb-0">
-                {five
-                  ? t("costs.insights.fiveHour", { pct: five.window_percent, at: fmtBucket(five.fetched_at, "hour") })
-                  : t("costs.insights.fiveHourNotReported")}
-                {g.dropped > 0 && <> · {t("costs.insights.dropped", { count: g.dropped })}</>}
-              </p>
-            </div>
-          );
-        })}
+        {metered.length === 0 && <div className="muted text-sm">{t("costs.insights.noReadings")}</div>}
+        {metered.map((f) => <MeterFigures key={f.id} f={f} readings={rs} />)}
         <p className="muted text-xs mt-2 mb-0">{t("costs.fig.accountWideCaveat")}</p>
       </div>
     </div>

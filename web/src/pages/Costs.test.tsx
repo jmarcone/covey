@@ -79,7 +79,7 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     render([1, 1]);
     expect(await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" })).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: MULTIPLE })).toBeNull();
-    expect(screen.getByText(/Kein Vielfaches: Der Zähler bewegte sich um 2 Punkt/)).toBeInTheDocument();
+    expect(document.querySelector("[data-no-multiple]")!.textContent).toMatch(/Kein Vielfaches: Der Zähler bewegte sich um 2 Punkt/);
   });
 
   it("zeigt das Vielfache ab drei Punkten, mit Spanne und ohne es eine Untergrenze zu nennen", async () => {
@@ -198,7 +198,7 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     expect(within(tile).getByText("kein Tarifpreis für 2 von 4 Punkten")).toBeInTheDocument();
     expect(tile.textContent).not.toMatch(/≈/);
     expect(screen.queryByRole("group", { name: MULTIPLE })).toBeNull();
-    expect(screen.getByText(/kein Vielfaches: kein Tarifpreis für 2 von 4 Punkten/)).toBeInTheDocument();
+    expect(document.querySelector("[data-no-multiple]")!.textContent).toMatch(/kein Vielfaches: kein Tarifpreis für 2 von 4 Punkten/);
   });
 
   it("zeigt bei Zugangsdaten ohne Tarif „kein Tarifpreis“, nie ≈ 0", async () => {
@@ -297,6 +297,35 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     expect([...total.querySelectorAll("td")].map((td) => td.textContent)).toEqual([
       "Summe (Liste, Modelle ohne Listenpreis zu Claude Codes Preis)", "12,00 $", "12,50 $",
     ]);
+  });
+
+  // Review C7: the meter card divided Claude Code's own (engine) dollars,
+  // labelled list price, by the meter without a baseline, on a chart of two
+  // independent scales — and so contradicted the tiles.
+  it("zeigt im Zähler-Kärtchen dieselben Zahlen wie die Kacheln, ohne Zwei-Achsen-Diagramm", async () => {
+    const reading = (at: string, pct: number) => ({
+      runtime_id: "rt", credential_ord: 0, secret_key: SEAT, secret_slot: 0, credential_kind: "subscription", source: "usage_cmd",
+      window_kind: "seven_day", supported: true, window_percent: null, week_percent: pct, resets_at: null, status: "", reason: "",
+      stale: false, fetched_at: at, received_at: at, cost_usd: 999,
+    });
+    const { container } = serve(cells([2, 2]), {
+      "/api/v1/cost/usage-readings": [reading("2026-11-17T18:00:00Z", 9), reading("2026-11-17T20:00:00Z", 13)],
+    });
+    const tile = await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+    const mult = screen.getByRole("group", { name: MULTIPLE });
+    const card = await waitFor(() => {
+      const c = container.querySelector<HTMLElement>(`[data-meter="${SEAT}#0"]`);
+      if (!c) throw new Error("no meter card yet");
+      return c;
+    });
+    const real = within(tile).getByText(/^≈ /).textContent!;
+    expect(card.textContent).toContain(real);
+    expect(card.textContent).toContain(within(mult).getByText(/^≈ /).textContent!);
+    // the list $ of the same span as the multiple, not Claude Code's figure on the readings
+    expect(card.textContent).toContain("16,00 $");
+    expect(card.textContent).not.toMatch(/999/);
+    expect(card.textContent).toMatch(/9 % \(17\.11\., 18:00 UTC\) → 13 % \(17\.11\., 20:00 UTC\): 4 Punkte/);
+    expect(card.closest(".card")!.querySelector("svg")).toBeNull();
   });
 
   // Review C4: a cost type switched off under "split by cost type" stayed

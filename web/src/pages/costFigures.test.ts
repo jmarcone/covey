@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { BilledReport, CostCell, CostCells, CredentialPlan, MeterCoverage, MeterStep, UsageReading } from "../api";
+import type { BilledReport, CostCell, CostCells, CredentialPlan, MeterCoverage, MeterStep } from "../api";
 import {
   billedFetchBucket,
   billedFigure,
@@ -9,7 +9,6 @@ import {
   credentialFigures,
   meterCrossings,
   meterRange,
-  meterRatio,
   meterWeeks,
   multiple,
   multipleOf,
@@ -354,34 +353,5 @@ describe("per credential", () => {
     const seat = figs.find((f) => f.id === `${SEAT}#0`)!;
     expect(seat.multiple).toBeNull();
     expect(seat.noMultiple).toBe("movement");
-  });
-});
-
-describe("the meter card's ratio", () => {
-  const r = (at: string, pct: number, cost: number, over: Partial<UsageReading> = {}): UsageReading => ({
-    runtime_id: "rt", credential_ord: 0, secret_key: SEAT, secret_slot: 0, credential_kind: "subscription",
-    source: "usage_cmd", window_kind: "seven_day", supported: true, window_percent: null, week_percent: pct,
-    resets_at: null, status: "", reason: "", stale: false, fetched_at: at, received_at: at, cost_usd: cost, ...over,
-  });
-
-  it("divides the list $ by the points per week, split at a reset", () => {
-    const rs = [
-      r("2026-11-17T10:00:00Z", 90, 0), r("2026-11-17T12:00:00Z", 93, 30),
-      r("2026-11-17T14:00:00Z", 2, 40), r("2026-11-17T16:00:00Z", 6, 80),
-    ];
-    const m = meterRatio(rs)!;
-    // week 1: $30 over 3 points; week 2: $40 over 4 points
-    expect(m.usd).toBe(70);
-    expect(m.points).toBe(7);
-    expect(m.weeks).toBe(2);
-    expect(m.perPoint).toBeCloseTo(10, 10);
-    expect(m.low).toBeCloseTo(70 / 9, 10);
-    expect(m.high).toBeCloseTo(70 / 5, 10);
-  });
-
-  it("does not read a lagging reading as a new week", () => {
-    const m = meterRatio([r("2026-11-17T10:00:00Z", 10, 0), r("2026-11-17T11:00:00Z", 9, 5), r("2026-11-17T12:00:00Z", 13, 20)])!;
-    expect(m.weeks).toBe(1);
-    expect(m.points).toBe(3);
   });
 });
