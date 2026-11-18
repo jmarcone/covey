@@ -226,6 +226,18 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     expect(within(share).getByText(/^echt seit 15\.11\., 06:00 UTC/)).toBeInTheDocument();
   });
 
+  // Review C11: multiples, percents and shares used "." on a German page.
+  it("schreibt Vielfache, Prozente und Anteile mit dem Dezimaltrenner der Sprache", async () => {
+    const { container } = render([2, 2]);
+    const tile = await screen.findByRole("group", { name: MULTIPLE });
+    // 16 $ over 4 points × 0,4615 $
+    expect(within(tile).getByText("≈ 8,7×")).toBeInTheDocument();
+    expect(within(tile).getByText("Spanne 6,9× – 11,6×")).toBeInTheDocument();
+    expect(screen.getAllByText("Preistabellen-Prüfung +0,00 %").length).toBeGreaterThan(0);
+    const share = [...container.querySelectorAll("caption")].find((c) => /Je Agent/.test(c.textContent!))!.closest("table")!;
+    expect(within(share).getByText("100,0 %")).toBeInTheDocument();
+  });
+
   // Review C4: a cost type switched off under "split by cost type" stayed
   // off, invisibly, after the split was switched off again.
   it("lässt einen ausgeblendeten Kostentyp nicht weiterwirken, wenn die Aufteilung aus ist", async () => {

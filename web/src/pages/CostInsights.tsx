@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import { api, type ModelUsageReport, type UsageReading } from "../api";
-import { fmtBucket, fmtCount, fmtUSD, fmtUSDAxis } from "../format";
+import { fmtBucket, fmtCount, fmtNumber, fmtUSD, fmtUSDAxis } from "../format";
 import { credId, meterRatio, usableReadings } from "./costFigures";
 import { SOURCE_COLOR, Swatch } from "./StackedCostChart";
 
@@ -81,7 +81,7 @@ function ModelTable({ rep }: { rep: ModelUsageReport }) {
         </table>
       </div>
       <p className="muted text-xs mt-2 mb-0">
-        {t("costs.insights.priceTableCheck", { pct: `${check >= 0 ? "+" : ""}${check.toFixed(2)}` })}
+        {t("costs.insights.priceTableCheck", { pct: `${check >= 0 ? "+" : ""}${fmtNumber(check, 2)}` })}
         {unpriced > 0 && <> · {t("costs.insights.unpriced", { count: unpriced })}</>}
         {rep.runs_without_breakdown > 0 && (
           <> · {t("costs.insights.without", { count: rep.runs_without_breakdown, usd: fmtUSD(rep.usd_without_breakdown) })}</>

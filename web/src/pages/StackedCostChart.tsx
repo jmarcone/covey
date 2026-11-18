@@ -394,8 +394,10 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
   );
 }
 
-const pct = (v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(2)} %`;
-const times = (v: number) => (Number.isFinite(v) ? `${v.toFixed(1)}×` : "∞");
+// Through the shared formatter: the decimal separator of the UI, as in the
+// amounts next to them.
+const pct = (v: number) => `${v >= 0 ? "+" : ""}${fmtNumber(v, 2)} %`;
+const times = (v: number) => (Number.isFinite(v) ? `${fmtNumber(v, 1)}×` : "∞");
 
 /** "$200/mo plan" — the plan as the server stores it. */
 function usePlanLabel() {
@@ -481,7 +483,7 @@ function CredentialTiles({ f, filtered }: { f: CredentialFigures; filtered: bool
       tiles.push(<Tile key="billed" label={t("costs.fig.billed")} value={fmtUSD(b.usd)} sub={status}
         note={[win, failed].filter(Boolean).join(" · ") || undefined} color={SOURCE_COLOR.billed} />);
       tiles.push(<Tile key="list" label={t("costs.fig.listPerAnthropic")} value={fmtUSD(b.listUsd)} sub={status} />);
-      tiles.push(<Tile key="ratio" label={t("costs.fig.billedPerList")} value={b.ratio != null ? `${(b.ratio * 100).toFixed(1)} %` : "–"}
+      tiles.push(<Tile key="ratio" label={t("costs.fig.billedPerList")} value={b.ratio != null ? `${fmtNumber(b.ratio * 100, 1)} %` : "–"}
         sub={t("costs.fig.billedPerListSub")} />);
     }
   }
@@ -679,7 +681,7 @@ function AgentTable({ f, agents, subscription }: { f: CredentialFigures; agents:
               <td style={td}>{fmtUSD(a.reported)}</td>
               <td style={td}>{fmtUSD(a.recomputed)}</td>
               <td style={td}>{a.gapPct != null ? pct(a.gapPct) : "–"}</td>
-              <td style={td}>{a.share != null ? `${(a.share * 100).toFixed(1)} %` : "–"}</td>
+              <td style={td}>{a.share != null ? `${fmtNumber(a.share * 100, 1)} %` : "–"}</td>
               {subscription && <td style={td}>{a.realShare != null ? `≈ ${fmtUSD(a.realShare)}` : "–"}</td>}
             </tr>
           ))}
