@@ -1,14 +1,25 @@
 import { useState, useEffect, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import i18n from "../../i18n";
+import { uiLocale } from "../../i18n";
 import {
   api,
   post,
   type Dream,
 } from "../../api";
 
-const LOG_PREFIXES = ["neue Seite: ", "ergänzt: ", "gelöscht: ", "bearbeitet: "];
+/* The verbs the wiki writes in front of a page title (internal/memory). They
+   are English today; the German ones stay for log rows written before. */
+const LOG_PREFIXES = [
+  "new page: ",
+  "appended: ",
+  "edited: ",
+  "deleted: ",
+  "neue Seite: ",
+  "ergänzt: ",
+  "bearbeitet: ",
+  "gelöscht: ",
+];
 
 // logDetail decides whether the summary adds anything beyond the page name.
 // Usually it reads `<Vorgang>: <Seitentitel>` — then the same stands twice
@@ -38,7 +49,7 @@ export function logDetail(summary: string, pageName: string): string {
 export function Dreams({ agentId, canManage }: { agentId: string; canManage: boolean }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
-  const locale = i18n.language === "de" ? "de-DE" : "en-US";
+  const locale = uiLocale();
   const [note, setNote] = useState("");
   const [open, setOpen] = useState<Set<string>>(new Set());
 

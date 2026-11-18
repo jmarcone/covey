@@ -638,7 +638,7 @@ function AgentSettingsGeneral({ agent, editable }: { agent: Agent; editable: boo
             </div>
           )}
           {deleteAgent.isError && (
-            <p className="danger-text text-xs mt-2">{String((deleteAgent.error as Error)?.message ?? "Fehler")}</p>
+            <p className="danger-text text-xs mt-2">{String((deleteAgent.error as Error)?.message ?? t("agent.settings.deleteFailed"))}</p>
           )}
         </div>
       )}

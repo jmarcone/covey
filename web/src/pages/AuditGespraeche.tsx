@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, type AuditConversation, type ConversationMessage, type LegacyThread } from "../api";
 import { Modal } from "../components/Modal";
+import { uiLocale } from "../i18n";
 
 /* Supervision → Audit → Conversations (#440): every conversation of the
  * organisation, and the shared per-agent threads from before conversations
@@ -53,7 +54,7 @@ export default function AuditGespraeche({ daten }: { daten: { conversations: Aud
                       <span className="muted"> · {c.kind === "group" ? t("audit.group") : t("audit.direct")}</span>
                     </td>
                     <td className="mono text-xs">{c.messages}</td>
-                    <td className="muted text-xs">{new Date(c.last_message_at).toLocaleString()}</td>
+                    <td className="muted text-xs">{new Date(c.last_message_at).toLocaleString(uiLocale())}</td>
                     <td className="text-xs">
                       <Export o={o} />
                     </td>
@@ -73,7 +74,7 @@ export default function AuditGespraeche({ daten }: { daten: { conversations: Aud
                       </span>
                     </td>
                     <td className="mono text-xs">{l.messages}</td>
-                    <td className="muted text-xs">{new Date(l.last_at).toLocaleString()}</td>
+                    <td className="muted text-xs">{new Date(l.last_at).toLocaleString(uiLocale())}</td>
                     <td className="text-xs">
                       <Export o={o} />
                     </td>
@@ -122,7 +123,7 @@ function Lesen({ offen, onClose }: { offen: Offen; onClose: () => void }) {
           {(q.data?.messages ?? []).map((m) => (
             <tr key={m.id}>
               <td className="muted text-xs" style={{ width: 150, verticalAlign: "top" }}>
-                {new Date(m.created_at).toLocaleString()}
+                {new Date(m.created_at).toLocaleString(uiLocale())}
               </td>
               <td className="text-xs" style={{ width: 160, verticalAlign: "top" }}>
                 {wer(m)}

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, del, post } from "../api";
 import { useMemberships } from "./OrgSwitcher";
+import { uiLocale } from "../i18n";
 
 type ApiKey = {
   id: string;
@@ -28,9 +29,9 @@ type Fresh = { key: CreatedKey; rotated: boolean };
 // the answer that created it — so the card holds it until it is dismissed
 // rather than re-fetching it, because there is nothing to re-fetch.
 export default function ApiKeys() {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const qc = useQueryClient();
-  const locale = i18n.language === "de" ? "de-DE" : "en-US";
+  const locale = uiLocale();
   const [name, setName] = useState("");
   const [days, setDays] = useState("");
   const [fresh, setFresh] = useState<Fresh | null>(null);

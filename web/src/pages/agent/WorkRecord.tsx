@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { api, type AgentReview, type WorkRecord as Record } from "../../api";
 import { fmtUSD } from "../../format";
 import { Markdown } from "../../components/Markdown";
+import { uiLocale } from "../../i18n";
 
 /* The work record (spec/21).
 
@@ -129,7 +130,7 @@ export function WorkRecord({ agentId }: { agentId: string }) {
             <div key={s.id} className="rec-row">
               <span className="text-xs flex-1 min-w-0 truncate">{s.title}</span>
               <span className="muted mono text-xs">{s.correlation_key}</span>
-              <span className="muted text-xs">{new Date(s.blocked_since).toLocaleDateString()}</span>
+              <span className="muted text-xs">{new Date(s.blocked_since).toLocaleDateString(uiLocale())}</span>
             </div>
           ))}
         </div>
@@ -162,7 +163,7 @@ export function WorkRecord({ agentId }: { agentId: string }) {
             <span className="text-xs flex-1 min-w-0 truncate">{task.title}</span>
             <span className="muted text-xs mono">{task.origin.split(":")[0]}</span>
             {task.cost_usd > 0 && <span className="muted text-xs">{fmtUSD(task.cost_usd)}</span>}
-            <span className="muted text-xs">{new Date(task.created_at).toLocaleDateString()}</span>
+            <span className="muted text-xs">{new Date(task.created_at).toLocaleDateString(uiLocale())}</span>
           </div>
         ))}
       </div>
@@ -215,7 +216,7 @@ function FrictionList({ label, rows }: { label: string; rows: { key: string; cou
    consequence: its prompt carries only the active config version, its memory
    is scoped to itself, and there is no action that reads reviews. */
 function Reviews({ agentId }: { agentId: string }) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const [alle, setAlle] = useState(false);
   const q = useQuery({
     queryKey: ["agent-reviews", agentId],
@@ -224,7 +225,7 @@ function Reviews({ agentId }: { agentId: string }) {
   });
   const list = q.data ?? [];
   if (list.length === 0) return null;
-  const locale = i18n.language === "de" ? "de-DE" : "en-US";
+  const locale = uiLocale();
   const gezeigt = alle ? list : list.slice(0, 1);
 
   return (

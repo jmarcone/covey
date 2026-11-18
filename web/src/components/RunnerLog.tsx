@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, post } from "../api";
+import { uiLocale } from "../i18n";
 
 type LogLine = {
   id: number;
@@ -36,9 +37,9 @@ export default function RunnerLog({
   ships: boolean;
   manage: boolean;
 }) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const qc = useQueryClient();
-  const locale = i18n.language === "de" ? "de-DE" : "en-US";
+  const locale = uiLocale();
   const [show, setShow] = useState<"info" | "debug">("info");
   const [search, setSearch] = useState("");
   const [note, setNote] = useState("");

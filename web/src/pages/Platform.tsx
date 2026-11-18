@@ -12,6 +12,7 @@ import Organizations from "./Organizations";
 import PlatformHeader from "./platform/Header";
 import Mail from "./platform/Mail";
 import Push from "./platform/Push";
+import { uiLocale } from "../i18n";
 
 // The platform panel: the installation, not an organisation inside it.
 //
@@ -133,7 +134,7 @@ function AccountRow({
         </div>
         <span className="muted text-xs account-last">
           {account.last_login_at
-            ? t("platform.lastLogin", { date: new Date(account.last_login_at).toLocaleDateString() })
+            ? t("platform.lastLogin", { date: new Date(account.last_login_at).toLocaleDateString(uiLocale()) })
             : t("platform.neverSignedIn")}
         </span>
         <span className="member-chev" aria-hidden="true">{open ? "⌄" : "›"}</span>
@@ -568,7 +569,7 @@ function CreateCode({ orgs, onDone }: { orgs: Organization[]; onDone: () => void
           </div>
           <div style={{ width: 150 }}>
             <label>{t("platform.codePattern")}</label>
-            <input value={pattern} onChange={(e) => setPattern(e.target.value)} placeholder="@firma.de" />
+            <input value={pattern} onChange={(e) => setPattern(e.target.value)} placeholder="@example.org" />
           </div>
           <button className="btn primary" disabled={mut.isPending}>{t("platform.createCode")}</button>
         </div>
@@ -609,7 +610,7 @@ function CodeRow({ code, orgs, onChanged }: { code: WaitlistCode; orgs: Organiza
           <div className="text-sm font-medium">{code.label || t("platform.codeNoLabel")}</div>
           <div className="muted text-xs">
             {t("platform.codeUses", { used: code.used_count, max: code.max_uses })}
-            {code.expires_at && ` · ${t("platform.codeUntil", { date: new Date(code.expires_at).toLocaleDateString() })}`}
+            {code.expires_at && ` · ${t("platform.codeUntil", { date: new Date(code.expires_at).toLocaleDateString(uiLocale()) })}`}
             {org && ` · ${t("platform.codeJoins", { org: org.name })}`}
             {code.email_pattern && ` · ${code.email_pattern}`}
           </div>

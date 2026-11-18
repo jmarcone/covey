@@ -79,6 +79,11 @@ const (
 	TypeInjectPlatformAction  = "inject_platform_action"
 	// #nosec G101 — the name of a message kind, not a secret.
 	TypeRequestSecret = "request_secret"
+	// TypeRequestTasks/TypeInjectTasks: the meta actions covey/list_tasks and
+	// covey/get_task — the agent reads its own backlog and the tasks it
+	// handed out, instead of rebuilding their state from wiki pages.
+	TypeRequestTasks = "request_tasks"
+	TypeInjectTasks  = "inject_tasks"
 )
 
 // Control plane → daemon (answers to request_create_task / request_hiring).
@@ -338,6 +343,31 @@ type RequestWiki struct {
 }
 
 type InjectWiki struct {
+	RequestID string          `json:"request_id"`
+	OK        bool            `json:"ok"`
+	Error     string          `json:"error,omitempty"`
+	Data      json.RawMessage `json:"data,omitempty"`
+}
+
+// RequestTasks/InjectTasks are the read-only meta actions covey/list_tasks
+// (Op "list") and covey/get_task (Op "get"). Which tasks the agent may read
+// is decided in the control plane, from the agent the connection belongs to:
+// its own tasks, and the ones it created with covey/create_task — nothing a
+// request could widen. Data is the answer as the action hands it out.
+type RequestTasks struct {
+	RequestID string `json:"request_id"`
+	Op        string `json:"op"` // list | get
+	// list: own | created | all (empty = all), states (empty = any), archived
+	// to include the archive, limit (0 = the default).
+	Scope    string   `json:"scope,omitempty"`
+	States   []string `json:"states,omitempty"`
+	Archived bool     `json:"archived,omitempty"`
+	Limit    int      `json:"limit,omitempty"`
+	// get: the full id or a prefix of at least 8 hex characters.
+	ID string `json:"id,omitempty"`
+}
+
+type InjectTasks struct {
 	RequestID string          `json:"request_id"`
 	OK        bool            `json:"ok"`
 	Error     string          `json:"error,omitempty"`

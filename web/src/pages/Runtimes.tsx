@@ -82,7 +82,7 @@ export default function Runtimes({ me, embedded = false }: { me: Principal; embe
                   title={t("runtimes.showInfo")}
                   onClick={() => setOpenInfo((cur) => (cur === rt.name ? null : rt.name))}
                 >
-                  ⓘ Info
+                  ⓘ {t("runtimes.info")}
                 </button>
               )}
             </div>

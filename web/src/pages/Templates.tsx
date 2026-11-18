@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { api, del, post, type AgentTemplate, type Agent, type Principal } from "../api";
 import { slugify } from "../names";
 import { Modal } from "../components/Modal";
+import { uiLocale } from "../i18n";
 
 export default function Templates({ me }: { me: Principal }) {
   const { t, i18n } = useTranslation();
@@ -22,7 +23,7 @@ export default function Templates({ me }: { me: Principal }) {
 
   const [instantiating, setInstantiating] = useState<AgentTemplate | null>(null);
   const [previewing, setPreviewing] = useState<AgentTemplate | null>(null);
-  const locale = i18n.language === "de" ? "de-DE" : "en-US";
+  const locale = uiLocale();
   const list = templates.data ?? [];
 
   return (
@@ -123,7 +124,7 @@ function TemplateCard({
             <div className="muted text-xs" style={{ marginTop: 2 }}>{template.description}</div>
           )}
           <div className="muted text-xs" style={{ marginTop: 6 }}>
-            Engine: <span className="mono">{runtime}</span>
+            {t("templates.engineLabel")} <span className="mono">{runtime}</span>
             {model && <> · {t("templates.modelLabel")} <span className="mono">{model}</span></>}
             {template.builtin ? (
               <> · {t("templates.builtinSource")}</>

@@ -127,7 +127,7 @@ export function SkillEditor({
             className="mono"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="ticket-aufbereiten"
+            placeholder="prepare-ticket"
             disabled={!isNew}
             title={isNew ? undefined : t("skills.nameLocked")}
             required
@@ -218,7 +218,7 @@ export function SkillEditor({
             className="mono"
             value={newPath}
             onChange={(e) => setNewPath(e.target.value)}
-            placeholder="referenz.md"
+            placeholder="reference.md"
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
