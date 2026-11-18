@@ -69,7 +69,7 @@ export const TOKEN_TYPES = ["cache_read", "cache_write_5m", "cache_write_1h", "i
 
 const AGENT_COLORS = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => `var(--agent-${i})`);
 
-export const BUCKET_MS: Record<string, number> = { hour: 3600_000, day: 86400_000, week: 7 * 86400_000, month: 30 * 86400_000 };
+export const BUCKET_MS: Record<string, number> = { "10min": 600_000, hour: 3600_000, "10hour": 36_000_000, day: 86400_000, week: 7 * 86400_000, month: 30 * 86400_000 };
 
 export function useCostCells(days: number, bucket: string) {
   return useQuery({
@@ -114,10 +114,12 @@ export function agentColor(agents: readonly { id: string }[], id: string) {
   return AGENT_COLORS[(i < 0 ? 0 : i) % AGENT_COLORS.length];
 }
 
-export function Chip({ on, color, hatched, children, onClick, onDoubleClick, locked, title }: {
+export function Chip({ on, color, hatched, children, onClick, onDoubleClick, locked, title, disabled }: {
   on: boolean; color?: string; hatched?: boolean; children: React.ReactNode; onClick: () => void; onDoubleClick?: () => void;
   /** The last chip that is on: it stays, and says so instead of ignoring the click. */
   locked?: boolean; title?: string;
+  /** Not available here (e.g. Real and Billed at 10 minutes); title says why. */
+  disabled?: boolean;
 }) {
   return (
     <button
@@ -126,6 +128,7 @@ export function Chip({ on, color, hatched, children, onClick, onDoubleClick, loc
       onDoubleClick={onDoubleClick}
       aria-pressed={on}
       aria-disabled={locked || undefined}
+      disabled={disabled}
       title={title}
       className="text-xs"
       style={{
@@ -133,7 +136,7 @@ export function Chip({ on, color, hatched, children, onClick, onDoubleClick, loc
         border: `1px solid ${on ? "var(--border-strong)" : "var(--border)"}`,
         background: on ? "var(--surface-2)" : "transparent",
         color: on ? "var(--text-primary)" : "var(--text-muted)",
-        cursor: locked ? "default" : "pointer", lineHeight: 1.2,
+        cursor: disabled ? "not-allowed" : locked ? "default" : "pointer", lineHeight: 1.2, opacity: disabled ? 0.45 : 1,
       }}
     >
       {color && <Swatch color={color} hatched={hatched} dim={!on} />}
@@ -1049,13 +1052,20 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
     const n = { ...v, [s]: !v[s] };
     return n.reported || n.recomputed || n.real || n.billed ? n : v; // keep at least one
   });
+  // The meter and the bill are hourly (#120): at 10 minutes Real and Billed
+  // are off and say why; the user's choice comes back at a coarser bucket.
+  const hourly = (s: Source) => bucket === "10min" && (s === "real" || s === "billed");
+  const shown: Record<Source, boolean> = bucket === "10min"
+    ? { ...src, real: false, billed: false, recomputed: src.recomputed || !src.reported }
+    : src;
 
   return (
     <div>
       <ColourKey split={figures.some((f) => f.split != null)} />
       <Row label={t("costs.filter.source")}>
         {SOURCES.map((s) => (
-          <Chip key={s} on={src[s]} color={SOURCE_COLOR[s]} hatched={s === "real"} onClick={() => toggleSrc(s)}>
+          <Chip key={s} on={shown[s]} color={SOURCE_COLOR[s]} hatched={s === "real"} onClick={() => toggleSrc(s)}
+            disabled={hourly(s)} title={hourly(s) ? t("costs.outside.tenMinNoMeter") : undefined}>
             {sourceLabel(t, s)}
           </Chip>
         ))}
@@ -1090,7 +1100,7 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
           ))}
         </Row>
       )}
-      {src.recomputed && layout === "combined" && split === "type" && (
+      {shown.recomputed && layout === "combined" && split === "type" && (
         <Row label={t("costs.filter.types")}>
           {COST_TYPES.map((k) => (
             <Chip key={k} on={types.has(k)} color={TYPE_COLOR[k]} onClick={() => toggleType(k)}>{t(`costs.stack.${k}`)}</Chip>
@@ -1102,7 +1112,7 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
         <div className="muted text-sm" style={{ padding: "40px 0", textAlign: "center" }}>{t("costs.empty")}</div>
       ) : figures.map((f) => (
         <CredentialBlock key={f.id} f={f} data={data!} billed={billed} readings={readings} canSetPlan={canSetPlan} bucket={bucket} fmtPeriod={fmtPeriod} selected={selected}
-          src={src} split={split} types={types} layout={layout} view={view} sharedScale={sharedScale} asTable={asTable} />
+          src={shown} split={split} types={types} layout={layout} view={view} sharedScale={sharedScale} asTable={asTable} />
       ))}
     </div>
   );

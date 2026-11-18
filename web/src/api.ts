@@ -2615,3 +2615,36 @@ export async function saveWorkflow(
   if (!res.ok) throw new ApiError(res.status, body.error ?? res.statusText);
   return { ok: true, version: body.version, warning: body.warning };
 }
+
+/** GET /cost/external-usage: the sessions outside covey per model (#120), for their detailed view. */
+export type ExternalModelCell = {
+  period: string;
+  source: string;
+  /** main | subagent | workflow; null where the uploader did not say. */
+  origin: string | null;
+  model: string;
+  calls: number;
+  /** F1 over the cell; null for a model the list does not know (never 0). */
+  list_usd: number | null;
+  measured: Record<string, number>;
+  /** $ per token type (input, output, cache_read, cache_write_5m, cache_write_1h); empty when unpriced. */
+  type_usd: Record<string, number>;
+  reported_usd: number | null;
+  reported_calls: number;
+  tokens: Record<string, number>;
+  unpriced_tokens: number;
+  unpriced_calls: number;
+};
+
+export type ExternalModelUsage = {
+  bucket: string;
+  since: string;
+  /** The source the cells are narrowed to; null for every source. */
+  source: string | null;
+  /** Every source of the window, as /cost/cells has them. */
+  sources: ExternalSource[];
+  models: { model: string; priced: boolean }[];
+  cells: ExternalModelCell[];
+  /** F3, exactly the external.meter of /cost/cells (always the whole meter). */
+  meter: ExternalUsage["meter"];
+};
