@@ -514,6 +514,20 @@ describe("Neue Aufgabe hinter einem Knopf", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  // `required` only stops "": a title of blanks would go to the server, whose
+  // refusal is English text inside a German screen.
+  it("schickt einen Titel aus Leerzeichen nicht ab und zeigt keinen Serverfehler", async () => {
+    const { posts } = server(antwortet(400, { error: "title is required" }));
+    renderWithProviders(<Backlog agentId="a1" canManage onShowRecording={() => {}} />);
+    await userEvent.click(await screen.findByRole("button", KNOPF));
+    await userEvent.type(titel(), "   {Enter}");
+
+    expect(posts).toEqual([]);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(titel().value).toBe("");
+    expect(document.activeElement).toBe(titel());
+  });
+
   describe("während die Aufgabe unterwegs ist", () => {
     async function absenden(post: () => Promise<Antwort>) {
       const s = server(post);

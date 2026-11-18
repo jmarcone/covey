@@ -104,10 +104,8 @@ function AgentBacklog({ agentId, phase, canManage, onShowRecording }: BacklogPro
       invalBacklog();
     },
   });
-  // Not while the POST is out: both fields are read-only then (readOnly, not
-  // disabled, so the focus stays and Escape is still heard), because the answer
-  // clears them and would take whatever was typed meanwhile. Resetting the
-  // mutation then detaches it from the form, Add comes back enabled on the same draft (a second task), and the
+  // Not while the POST is out: resetting the mutation then detaches it from
+  // the form, Add comes back enabled on the same draft (a second task), and the
   // answer that is still on its way would close or clear a form opened since,
   // or lose its error. The form stays as it is until the answer is there.
   const closeComposer = () => {
@@ -293,6 +291,14 @@ function AgentBacklog({ agentId, phase, canManage, onShowRecording }: BacklogPro
           className="card mb-4"
           onSubmit={(e) => {
             e.preventDefault();
+            // `required` stops "" but not blanks, and the server's refusal of
+            // them is English. A blank title is emptied instead, so the next
+            // press meets `required` in the user's language, as "" does.
+            if (!title.trim()) {
+              setTitle("");
+              titleRef.current?.focus();
+              return;
+            }
             create.mutate();
           }}
           onKeyDown={(e) => {
@@ -313,6 +319,9 @@ function AgentBacklog({ agentId, phase, canManage, onShowRecording }: BacklogPro
             placeholder={t("agent.backlog.titlePlaceholder")}
             className="mb-2"
             required
+            // readOnly, not disabled, so the focus stays and Escape is still
+            // heard. The answer clears both fields and would take whatever was
+            // typed while the POST was out, so they take no input until then.
             readOnly={create.isPending}
           />
           <textarea
