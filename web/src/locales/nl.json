@@ -291,7 +291,22 @@
     },
     "weekOf": "week van {{date}}",
     "hourTooLong": "Per uur alleen tot {{days}} dagen",
-    "orgWide": "hele organisatie: volgt het agentfilter niet"
+    "orgWide": "hele organisatie: volgt het agentfilter niet",
+    "plan": {
+      "current": "Abonnement: {{price}}/{{per}} sinds {{since}}",
+      "none": "Geen abonnementsprijs",
+      "set": "Abonnementsprijs instellen",
+      "amount": "Bedrag (USD)",
+      "period": "Periode",
+      "month": "per maand",
+      "year": "per jaar",
+      "validFrom": "Geldig vanaf",
+      "save": "Opslaan",
+      "saving": "Opslaan…",
+      "cancel": "Annuleren",
+      "fromHintWeek": "Vooringevuld: het begin van de huidige meterweek.",
+      "fromHintNow": "Nog geen meterstand, vooringevuld: nu."
+    }
   },
   "lang": {
     "label": "Taal"

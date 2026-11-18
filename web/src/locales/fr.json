@@ -291,7 +291,22 @@
     },
     "weekOf": "semaine du {{date}}",
     "hourTooLong": "Par heure seulement jusqu'à {{days}} jours",
-    "orgWide": "toute l'organisation : ne suit pas le filtre d'agents"
+    "orgWide": "toute l'organisation : ne suit pas le filtre d'agents",
+    "plan": {
+      "current": "Forfait : {{price}}/{{per}} depuis le {{since}}",
+      "none": "Aucun prix de forfait",
+      "set": "Définir le prix du forfait",
+      "amount": "Montant (USD)",
+      "period": "Période",
+      "month": "par mois",
+      "year": "par an",
+      "validFrom": "Valide à partir de",
+      "save": "Enregistrer",
+      "saving": "Enregistrement…",
+      "cancel": "Annuler",
+      "fromHintWeek": "Valeur par défaut : le début de la semaine actuelle du compteur.",
+      "fromHintNow": "Pas encore de relevé du compteur, valeur par défaut : maintenant."
+    }
   },
   "lang": {
     "label": "Langue"

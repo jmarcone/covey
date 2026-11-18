@@ -291,7 +291,22 @@
     },
     "weekOf": "{{date}} からの週",
     "hourTooLong": "時間単位は {{days}} 日までのみ",
-    "orgWide": "組織全体：エージェントフィルターは適用されません"
+    "orgWide": "組織全体：エージェントフィルターは適用されません",
+    "plan": {
+      "current": "プラン: {{since}}から {{price}}/{{per}}",
+      "none": "プラン価格なし",
+      "set": "プラン価格を設定",
+      "amount": "金額 (USD)",
+      "period": "期間",
+      "month": "月額",
+      "year": "年額",
+      "validFrom": "適用開始",
+      "save": "保存",
+      "saving": "保存中…",
+      "cancel": "キャンセル",
+      "fromHintWeek": "初期値: 現在のメーター週の開始。",
+      "fromHintNow": "メーターの読み取りがまだないため、初期値は現在時刻です。"
+    }
   },
   "lang": {
     "label": "言語"

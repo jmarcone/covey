@@ -291,7 +291,22 @@
     },
     "weekOf": "semana de {{date}}",
     "hourTooLong": "Por hora só até {{days}} dias",
-    "orgWide": "toda a organização: não segue o filtro de agentes"
+    "orgWide": "toda a organização: não segue o filtro de agentes",
+    "plan": {
+      "current": "Plano: {{price}}/{{per}} desde {{since}}",
+      "none": "Sem preço de plano",
+      "set": "Definir preço do plano",
+      "amount": "Valor (USD)",
+      "period": "Período",
+      "month": "por mês",
+      "year": "por ano",
+      "validFrom": "Válido a partir de",
+      "save": "Guardar",
+      "saving": "A guardar…",
+      "cancel": "Cancelar",
+      "fromHintWeek": "Predefinido: o início da semana atual do contador.",
+      "fromHintNow": "Ainda sem leitura do contador, predefinido: agora."
+    }
   },
   "lang": {
     "label": "Idioma"

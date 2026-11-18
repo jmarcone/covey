@@ -291,7 +291,22 @@
     },
     "weekOf": "week of {{date}}",
     "hourTooLong": "Hourly only for up to {{days}} days",
-    "orgWide": "whole organization: does not follow the agent filter"
+    "orgWide": "whole organization: does not follow the agent filter",
+    "plan": {
+      "current": "Plan: {{price}}/{{per}} since {{since}}",
+      "none": "No plan price",
+      "set": "Set plan price",
+      "amount": "Amount (USD)",
+      "period": "Period",
+      "month": "per month",
+      "year": "per year",
+      "validFrom": "Valid from",
+      "save": "Save",
+      "saving": "Saving…",
+      "cancel": "Cancel",
+      "fromHintWeek": "Preset: the start of the current meter week.",
+      "fromHintNow": "No meter reading yet, preset: now."
+    }
   },
   "lang": {
     "label": "Language"
