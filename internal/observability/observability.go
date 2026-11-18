@@ -649,8 +649,17 @@ type Booked struct {
 }
 
 // BookRun books a run of an engine whose result lines leave model_usage rows
-// (Claude Code), and links the task's rows not booked yet to the entry — in
+// (Claude Code), and links the run's rows not booked yet to the entry — in
 // one statement, so that two bookings of the same task cannot both claim them.
+//
+// The run's rows are the task's rows of the run's session (e.SessionID).
+// One task books more than one run: the agent's own and every sub-run it
+// starts, each a session of its own and each with its own cost message. A
+// booking that took every unlinked row of the task linked a sub-run's lines
+// to whichever run reported first — and with fromLines the first booking took
+// the others' money too, while the next one, finding no line, booked its
+// daemon's figure on top. Only without a session (a daemon from before the
+// field) are all the task's unlinked rows taken, as before.
 //
 // fromLines=false: the daemon sent the run's own spend (basis invocation); the
 // entry is booked as sent and the lines are the cross-check (LinesUSD).
@@ -667,6 +676,7 @@ func (s *Store) BookRun(ctx context.Context, e CostEntry, fromLines bool) (Booke
 				cache_write_5m_tokens + cache_write_1h_tokens AS cache_creation_tokens
 			FROM model_usage
 			WHERE task_id = $2::uuid AND cost_entry_id IS NULL AND basis <> '`+BasisGap+`'
+			  AND ($14::text = '' OR session_id = $14::text)
 			FOR UPDATE),
 		s AS (
 			SELECT count(*) AS n, COALESCE(SUM(engine_usd),0) AS usd,

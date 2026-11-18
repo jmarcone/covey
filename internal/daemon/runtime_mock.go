@@ -214,6 +214,14 @@ func (Mock) Run(ctx context.Context, spec RunSpec, onEvent func(kind string, pay
 		case "line":
 			if json.Valid([]byte(arg)) {
 				onEvent("runtime", json.RawMessage(arg))
+				// The session is the stream's, as Claude Code reports it:
+				// the run's cost names the session its lines belong to.
+				var l struct {
+					SessionID string `json:"session_id"`
+				}
+				if json.Unmarshal([]byte(arg), &l) == nil && l.SessionID != "" {
+					res.SessionID = l.SessionID
+				}
 			}
 		case "cost":
 			var c Cost
@@ -227,6 +235,9 @@ func (Mock) Run(ctx context.Context, spec RunSpec, onEvent func(kind string, pay
 			res.CacheReadTokens, res.CacheCreationTokens = c.CacheReadTokens, c.CacheCreationTokens
 			if c.Model != "" {
 				res.Model = c.Model
+			}
+			if c.SessionID != "" {
+				res.SessionID = c.SessionID
 			}
 		case "prompt":
 			// Makes the assembled system prompt inspectable (platform protocol,
