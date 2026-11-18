@@ -2671,7 +2671,7 @@ func (o *Orchestrator) bookCost(ctx context.Context, agent agents.Agent, taskID 
 		Tokens: observability.Tokens{Input: c.InputTokens, Output: c.OutputTokens,
 			CacheRead: c.CacheReadTokens, CacheCreation: c.CacheCreationTokens},
 		Model: c.Model, Credential: s.credential(), Basis: c.Basis, SessionID: c.SessionID}
-	if d, ok := daemon.Describe(agent.Runtime); !ok || !d.Capabilities.ResultUsage {
+	if !engineResultUsage(agent.Runtime) {
 		if e.Basis == "" {
 			e.Basis = observability.BasisInvocation
 		}
@@ -2704,6 +2704,14 @@ func (o *Orchestrator) bookCost(ctx context.Context, agent agents.Agent, taskID 
 // costTolerance is the rounding of one stored dollar figure (NUMERIC(…,6)).
 const costTolerance = 1e-6
 
+// engineResultUsage says whether the engine's result lines carry its usage per
+// model, priced the way covey's list prices it (Claude Code): only then are
+// they filed as model_usage and its runs booked against them.
+func engineResultUsage(engine string) bool {
+	d, ok := daemon.Describe(engine)
+	return ok && d.Capabilities.ResultUsage
+}
+
 // bookUnreported books the task's result lines no cost message claimed, once
 // the task's message loop has ended. Normally there are none: the daemon sends
 // a run's cost before its completion, and the booking links the run's lines.
@@ -2715,10 +2723,7 @@ const costTolerance = 1e-6
 // It cannot book twice: it takes only lines no entry holds and links them, and
 // after the loop no cost message of that run can arrive any more.
 func (o *Orchestrator) bookUnreported(ctx context.Context, agent agents.Agent, taskID uuid.UUID) {
-	if o.Obs == nil {
-		return
-	}
-	if d, ok := daemon.Describe(agent.Runtime); !ok || !d.Capabilities.ResultUsage {
+	if o.Obs == nil || !engineResultUsage(agent.Runtime) {
 		return
 	}
 	b, err := o.Obs.BookUnreported(ctx, agent.ID, taskID)
@@ -2780,9 +2785,20 @@ func (o *Orchestrator) handleDaemonMessage(ctx context.Context, agent agents.Age
 			// credential of this phase. The line itself is filed even when
 			// that fails; the failure is said, not swallowed — a missing
 			// per-model row is a hole in the measurement nobody would find.
-			if err := o.Obs.RecordRuntime(ctx, agent.OrgID, agent.ID, &taskID, s.credential(), payload); err != nil {
-				o.Log.Warn("filing a runtime line failed",
-					"agent", agent.Slug, "task", taskID, "err", err)
+			//
+			// Only for an engine that declares such lines (ResultUsage). An
+			// engine that drives the same binary against another endpoint
+			// (educa-ai) writes lines of the same shape, but its models are
+			// not on covey's price list and its runs are booked as sent: its
+			// rows would land in the measured figures as unpriced spend
+			// beside a booking that never links them.
+			if engineResultUsage(agent.Runtime) {
+				if err := o.Obs.RecordRuntime(ctx, agent.OrgID, agent.ID, &taskID, s.credential(), payload); err != nil {
+					o.Log.Warn("filing a runtime line failed",
+						"agent", agent.Slug, "task", taskID, "err", err)
+				}
+			} else {
+				_ = o.Obs.Record(ctx, agent.OrgID, agent.ID, &taskID, kind, payload)
 			}
 			// A rate_limit_event is the provider's meter, in band: every
 			// window it names (five_hour, seven_day, …) with its utilisation
