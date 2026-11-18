@@ -82,11 +82,20 @@ const billingKeysDays = 30
 
 // handleBilled: the bill per bucket (hour | day | week), API key and model,
 // each point with the credential the key is mapped to (none: other use of
-// the account). ?days= and ?bucket= as on the other cost endpoints.
+// the account) — the chart's bars. And `window`: per mapped credential the
+// bill over whole billed buckets with the reported and recomputed figures of
+// the same window — the tiles, which must never set a bill over one span
+// against lines over another. ?days= and ?bucket= as on the other cost
+// endpoints.
 func (s *Server) handleBilled(w http.ResponseWriter, r *http.Request) {
 	p := principalFrom(r)
 	bucket, since := costWindow(r)
 	series, err := s.Obs.BilledSeries(r.Context(), p.OrgID, bucket, since)
+	if err != nil {
+		mapErr(w, err)
+		return
+	}
+	window, err := s.Obs.BilledWindowFor(r.Context(), p.OrgID, since, time.Now())
 	if err != nil {
 		mapErr(w, err)
 		return
@@ -96,7 +105,7 @@ func (s *Server) handleBilled(w http.ResponseWriter, r *http.Request) {
 		mapErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"bucket": series.Bucket, "points": series.Points, "sync": sync})
+	writeJSON(w, http.StatusOK, map[string]any{"bucket": series.Bucket, "points": series.Points, "window": window, "sync": sync})
 }
 
 // handleReconcile: per UTC day × mapped credential × model, what Claude Code

@@ -2,7 +2,7 @@ import { useId, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, type BilledReport, type CellAgent, type CostCell, type CostCells } from "../api";
-import { fmtClockUTC, fmtCount, fmtUSD, fmtUSDAxis } from "../format";
+import { fmtBucket, fmtClockUTC, fmtCount, fmtUSD, fmtUSDAxis } from "../format";
 import {
   credentialFigures,
   credId,
@@ -22,9 +22,10 @@ import {
  *                 check of the price table, not of the tokens;
  *   real        — a subscription's meter movement × the plan's price per
  *                 point, an estimate with a range (green, hatched); or what
- *                 Anthropic billed an API key, complete up to its mark (teal);
+ *                 Anthropic billed an API key over the window it names,
+ *                 complete up to its mark (teal), or why there is no figure;
  *   multiple    — list $ per real $, only from 3 points of movement, with its
- *                 range, labelled a floor.
+ *                 range, and a note that it can be off in both directions.
  *
  * The booked figure (cost_entries) is not shown as a figure anywhere: a
  * booking-check row says when some bookings are an older daemon's running
@@ -429,9 +430,9 @@ function CredentialTiles({ f, filtered }: { f: CredentialFigures; filtered: bool
       tiles.push(<Tile key="real" label={t("costs.fig.realEstimate")} value="–" sub={t("costs.fig.noMeter")} color={SOURCE_COLOR.real} hatched />);
     }
     if (f.multiple?.kind === "estimate") {
-      tiles.push(<Tile key="mult" label={t("costs.fig.multipleFloor")} value={`≈ ${times(f.multiple.value)}`}
+      tiles.push(<Tile key="mult" label={t("costs.fig.multiple")} value={`≈ ${times(f.multiple.value)}`}
         sub={t("costs.fig.multipleRange", { low: times(f.multiple.low), high: times(f.multiple.high) })}
-        note={t("costs.fig.multipleFloorHint")} />);
+        note={t("costs.fig.multipleHint")} />);
     }
   }
   if (f.kind === "api_key" && f.billed) {
@@ -440,8 +441,25 @@ function CredentialTiles({ f, filtered }: { f: CredentialFigures; filtered: bool
       : b.status.completeTo ? t("costs.fig.billedCompleteTo", { time: fmtClockUTC(b.status.completeTo) }) : t("costs.fig.billedPending");
     if (filtered) {
       tiles.push(<Tile key="billed" label={t("costs.fig.billed")} value="–" sub={t("costs.fig.filteredRealNote")} color={SOURCE_COLOR.billed} />);
+    } else if (b.state !== "measured") {
+      // No bill could be read: say why, never "$0.00".
+      const why = b.state === "unconfigured" ? t("costs.fig.billedUnconfigured")
+        : b.state === "unmapped" ? t("costs.fig.billedUnmapped")
+        : b.state === "failed" ? t("costs.fig.billedSyncFailed", { error: b.error || "–" })
+        : b.state === "not_landed" ? t("costs.fig.billedNotLanded")
+        : t("costs.fig.billedUnavailable");
+      tiles.push(<Tile key="billed" label={t("costs.fig.billed")} value="–" sub={why} color={SOURCE_COLOR.billed} />);
     } else {
-      tiles.push(<Tile key="billed" label={t("costs.fig.billed")} value={fmtUSD(b.usd)} sub={status} color={SOURCE_COLOR.billed} />);
+      // The bill covers whole billed buckets; the same window's reported and
+      // recomputed figures stand beside it, not the page's.
+      const win = b.window ? t("costs.fig.billedWindow", {
+        from: fmtBucket(b.window.start.toISOString(), "hour"),
+        unit: t(b.window.width === "1h" ? "costs.fig.billedUnitHours" : "costs.fig.billedUnitDays"),
+        reported: fmtUSD(b.reported), list: fmtUSD(b.recomputed),
+      }) : undefined;
+      const failed = b.error ? t("costs.fig.billedLastSyncFailed", { error: b.error }) : undefined;
+      tiles.push(<Tile key="billed" label={t("costs.fig.billed")} value={fmtUSD(b.usd)} sub={status}
+        note={[win, failed].filter(Boolean).join(" · ") || undefined} color={SOURCE_COLOR.billed} />);
       tiles.push(<Tile key="list" label={t("costs.fig.listPerAnthropic")} value={fmtUSD(b.listUsd)} sub={status} />);
       tiles.push(<Tile key="ratio" label={t("costs.fig.billedPerList")} value={b.ratio != null ? `${(b.ratio * 100).toFixed(1)} %` : "–"}
         sub={t("costs.fig.billedPerListSub")} />);

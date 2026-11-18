@@ -405,6 +405,14 @@ type MeterCoverage struct {
 	LongestGapSecs float64 `json:"longest_gap_secs"`
 	// Segments are the weeks the window spans: a new one at every reset.
 	Segments []MeterSegment `json:"segments"`
+	// MeasuredUSD is the recomputed list price of the credential's lines
+	// between the baseline and the last reading — created_at in (BaselineAt,
+	// LastAt], by the lines' own timestamps — the spend the movement above
+	// was made of. A line of a model the list does not know counts at the
+	// engine's figure, as in the cells. It is what the multiple divides, so it
+	// must not depend on the chart's bucket: a cell holds only part of its
+	// bucket at both ends of the window, and the baseline can lie before it.
+	MeasuredUSD float64 `json:"measured_usd"`
 }
 
 // MeterSegment is one week of a credential's meter within the window.
@@ -602,8 +610,52 @@ func (s *Store) meterSteps(ctx context.Context, orgID uuid.UUID, bucket string, 
 		}
 		start = end
 	}
+	for i := range coverage {
+		usd, err := s.measuredBetween(ctx, orgID, coverage[i].SecretKey, coverage[i].SecretSlot,
+			coverage[i].BaselineAt, coverage[i].LastAt)
+		if err != nil {
+			return nil, nil, err
+		}
+		coverage[i].MeasuredUSD = usd
+	}
 	sort.SliceStable(steps, func(i, j int) bool { return steps[i].Period.Before(steps[j].Period) })
 	return steps, coverage, nil
+}
+
+// measuredBetween is the recomputed list price of one credential's lines with
+// created_at in (from, to]: every model priced per token type with covey's
+// list, a model the list does not know at the engine's own figure.
+func (s *Store) measuredBetween(ctx context.Context, orgID uuid.UUID, key string, slot int, from, to time.Time) (float64, error) {
+	if !to.After(from) {
+		return 0, nil
+	}
+	rows, err := s.pool.Query(ctx, `SELECT model, SUM(input_tokens), SUM(output_tokens), SUM(cache_read_tokens),
+		SUM(cache_write_5m_tokens), SUM(cache_write_1h_tokens), SUM(web_search_requests), SUM(engine_usd)::float8
+		FROM model_usage
+		WHERE org_id = $1 AND secret_key = $2 AND secret_slot = $3 AND created_at > $4 AND created_at <= $5
+		GROUP BY model`, orgID, key, slot, from, to)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	var usd float64
+	for rows.Next() {
+		var (
+			model  string
+			t      ModelTokens
+			engine float64
+		)
+		if err := rows.Scan(&model, &t.Input, &t.Output, &t.CacheRead, &t.CacheWrite5m, &t.CacheWrite1h,
+			&t.WebSearches, &engine); err != nil {
+			return 0, err
+		}
+		if pr, ok := ListPrice(model); ok {
+			usd += pr.Cost(t)
+		} else {
+			usd += engine
+		}
+	}
+	return usd, rows.Err()
 }
 
 // meterPartition is one credential × source × window: its steps per period

@@ -643,6 +643,142 @@ func (s *Store) BilledSeries(ctx context.Context, orgID uuid.UUID, bucket string
 	return out, rows.Err()
 }
 
+// billedHourlyReach is how far back the poller re-reads the bill per hour on
+// every sync (billingHourlyBack in the orchestrator): inside it the bill is
+// known per hour, before it only per UTC day.
+const billedHourlyReach = 48 * time.Hour
+
+// BilledWindow is the bill of every mapped credential over ONE window made of
+// whole billed buckets, with what Claude Code reported and what covey's list
+// recomputes for exactly the same window. The bill is only known per bucket
+// (an hour, or a UTC day further back), so a window that starts mid-bucket
+// cannot be billed as it stands: the window starts at the first whole bucket
+// at or after `since`, and the other two figures are cut to it too, by the
+// lines' own timestamps. Comparing a bill over 34 hours with lines over 24
+// would invent a gap that is not there.
+type BilledWindow struct {
+	Start time.Time `json:"start"`
+	End   time.Time `json:"end"`
+	// Width is the bucket the window is made of: 1h within the hourly reach,
+	// 1d before it.
+	Width  string        `json:"width"`
+	Totals []BilledTotal `json:"totals"`
+}
+
+// BilledTotal is one credential with a mapping to an API key valid in the
+// window — also when nothing was billed, so "mapped, nothing billed" can be
+// told from "not mapped". Both sides stay inside the mapping's interval.
+type BilledTotal struct {
+	SecretKey  string `json:"secret_key"`
+	SecretSlot int    `json:"secret_slot"`
+	// HasBilled: the mapped key has any billed row in the window.
+	HasBilled     bool   `json:"has_billed"`
+	BilledUSD     string `json:"billed_usd"`
+	BilledListUSD string `json:"billed_list_usd"`
+	// ReportedUSD: Σ Claude Code's costUSD of the credential's lines in the
+	// window; ListUSD: their tokens at covey's list (a model the list does
+	// not know at the engine's figure, as in the cost cells).
+	ReportedUSD float64 `json:"reported_usd"`
+	ListUSD     float64 `json:"list_usd"`
+}
+
+// billedWindowStart is the first whole billed bucket at or after since, and
+// its width.
+func billedWindowStart(since, now time.Time) (time.Time, string) {
+	since = since.UTC()
+	width, step := billing.Day, 24*time.Hour
+	if !since.Before(now.Add(-billedHourlyReach)) {
+		width, step = billing.Hour, time.Hour
+	}
+	start := since.Truncate(step)
+	if start.Before(since) {
+		start = start.Add(step)
+	}
+	return start, width
+}
+
+// BilledWindowFor sums the bill and the credential's own lines per mapped
+// credential over the whole billed buckets in [since, now].
+func (s *Store) BilledWindowFor(ctx context.Context, orgID uuid.UUID, since, now time.Time) (BilledWindow, error) {
+	start, width := billedWindowStart(since, now)
+	out := BilledWindow{Start: start, End: now.UTC(), Width: width, Totals: []BilledTotal{}}
+	src := chosenRows("billed_cost", "cpick", "bcost")
+	if width == billing.Hour {
+		src = `bcost AS (SELECT t.* FROM billed_cost t
+			WHERE t.org_id = $1 AND t.bucket_width = '1h' AND t.bucket_start >= $2)`
+	}
+	maps := `maps AS (
+	SELECT secret_key, secret_slot::int AS secret_slot, api_key_id, workspace_id, valid_from,
+		COALESCE(valid_to, 'infinity'::timestamptz) AS valid_to
+	FROM credential_billing_keys
+	WHERE org_id = $1 AND COALESCE(valid_to, 'infinity'::timestamptz) > $2 AND valid_from < $3)`
+	rows, err := s.pool.Query(ctx, `WITH `+maps+`, `+src+`
+		SELECT m.secret_key, m.secret_slot, count(c.api_key_id) > 0,
+			round(COALESCE(SUM(c.amount_cents), 0) / 100, 8)::text, round(COALESCE(SUM(c.list_amount_cents), 0) / 100, 8)::text
+		FROM maps m
+		LEFT JOIN bcost c ON c.api_key_id = m.api_key_id AND (m.workspace_id = '' OR c.workspace_id = m.workspace_id)
+			AND c.bucket_end > m.valid_from AND c.bucket_start < m.valid_to AND c.bucket_start < $3
+		GROUP BY 1, 2
+		ORDER BY 1, 2`, orgID, start, now)
+	if err != nil {
+		return out, err
+	}
+	index := map[string]int{}
+	for rows.Next() {
+		var b BilledTotal
+		if err := rows.Scan(&b.SecretKey, &b.SecretSlot, &b.HasBilled, &b.BilledUSD, &b.BilledListUSD); err != nil {
+			rows.Close()
+			return out, err
+		}
+		index[fmt.Sprintf("%s#%d", b.SecretKey, b.SecretSlot)] = len(out.Totals)
+		out.Totals = append(out.Totals, b)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+
+	// Our side: the credential's lines in the same window, inside each
+	// mapping's interval (a value replaced mid-window was another key).
+	rows, err = s.pool.Query(ctx, `WITH `+maps+`
+		SELECT m.secret_key, m.secret_slot, mu.model,
+			SUM(mu.input_tokens), SUM(mu.output_tokens), SUM(mu.cache_read_tokens),
+			SUM(mu.cache_write_5m_tokens), SUM(mu.cache_write_1h_tokens), SUM(mu.web_search_requests),
+			SUM(mu.engine_usd)::float8
+		FROM (SELECT DISTINCT secret_key, secret_slot, valid_from, valid_to FROM maps) m
+		JOIN model_usage mu ON mu.org_id = $1 AND mu.secret_key = m.secret_key AND mu.secret_slot = m.secret_slot
+			AND mu.created_at >= GREATEST(m.valid_from, $2) AND mu.created_at < LEAST(m.valid_to, $3)
+		GROUP BY 1, 2, 3`, orgID, start, now)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			key, model string
+			slot       int
+			t          ModelTokens
+			engine     float64
+		)
+		if err := rows.Scan(&key, &slot, &model, &t.Input, &t.Output, &t.CacheRead, &t.CacheWrite5m,
+			&t.CacheWrite1h, &t.WebSearches, &engine); err != nil {
+			return out, err
+		}
+		i, ok := index[fmt.Sprintf("%s#%d", key, slot)]
+		if !ok {
+			continue
+		}
+		b := &out.Totals[i]
+		b.ReportedUSD += engine
+		if pr, ok := ListPrice(model); ok {
+			b.ListUSD += pr.Cost(t)
+		} else {
+			b.ListUSD += engine
+		}
+	}
+	return out, rows.Err()
+}
+
 // BillingKey is an API key the bill names, with what it cost over the window,
 // and the credential it is mapped to, if any.
 type BillingKey struct {

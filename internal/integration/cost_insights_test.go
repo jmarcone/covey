@@ -1046,6 +1046,68 @@ func TestMeterStepsCases(t *testing.T) {
 	}
 }
 
+// The spend the meter's movement is divided into is the credential's lines
+// between the baseline and the last reading, by their own timestamps: the
+// same whatever bucket the chart is drawn in, including a line after the
+// baseline but before the window (a cell would not hold it) and none outside.
+func TestMeterMeasuredSpendIndependentOfBucket(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	agent := s.newSupportAgent("zaehler-spanne")
+	seat := observability.CredentialRef{RuntimeID: uuid.New(), SecretKey: "spanne_token", Kind: "subscription"}
+	other := observability.CredentialRef{RuntimeID: seat.RuntimeID, Ord: 1, SecretKey: "spanne_token", SecretSlot: 1, Kind: "subscription"}
+	now := time.Now().UTC().Truncate(time.Second)
+	since := now.Add(-24 * time.Hour)
+
+	line := func(c observability.CredentialRef, at time.Time, outputTokens int) {
+		t.Helper()
+		task := uuid.New()
+		l := fmt.Sprintf(`{"type":"result","session_id":"s-%s","modelUsage":{"claude-opus-5-5":{"costUSD":1,"outputTokens":%d}}}`, task, outputTokens)
+		if err := s.obs.RecordRuntime(ctx, agent.OrgID, agent.ID, &task, c, json.RawMessage(l)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.pool.Exec(ctx, `UPDATE model_usage SET created_at = $1 WHERE task_id = $2`, at, task); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Opus output is $20 per million: 250000 tokens are $5.
+	line(seat, since.Add(-3*time.Hour), 250000) // before the baseline: out
+	line(seat, since.Add(-1*time.Hour), 250000) // after it, before the window: in ($5)
+	line(seat, since.Add(5*time.Hour), 125000)  // in ($2.50)
+	line(other, since.Add(6*time.Hour), 250000) // another value: out
+	line(seat, since.Add(19*time.Hour), 50000)  // in ($1)
+	line(seat, since.Add(21*time.Hour), 250000) // after the last reading: out
+	for _, r := range []struct {
+		at  time.Time
+		pct float64
+	}{{since.Add(-2 * time.Hour), 9}, {since.Add(time.Hour), 12}, {since.Add(20 * time.Hour), 30}} {
+		if err := s.obs.AddUsageReading(ctx, agent.OrgID, observability.MeterReading{Credential: seat,
+			Supported: true, WindowPercent: -1, WeekPercent: r.pct, FetchedAt: r.at}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, bucket := range []string{"hour", "day", "week", "month"} {
+		cells, err := s.obs.CostCellsFor(ctx, agent.OrgID, bucket, since)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var found bool
+		for _, m := range cells.Meter {
+			if m.SecretKey != "spanne_token" || m.SecretSlot != 0 {
+				continue
+			}
+			found = true
+			if !m.BaselineBefore || m.Points != 21 || math.Abs(m.MeasuredUSD-8.5) > 1e-9 {
+				t.Errorf("bucket %s: baseline before %v, %v points, measured %v USD — want 21 points and 8.50 USD",
+					bucket, m.BaselineBefore, m.Points, m.MeasuredUSD)
+			}
+		}
+		if !found {
+			t.Errorf("bucket %s: no coverage for the seat", bucket)
+		}
+	}
+}
+
 // A plan price is dated: a change mid-window prices the points before it at
 // the old rate and the points after it at the new one, and PUT only ever
 // appends — the row before is closed, never rewritten.

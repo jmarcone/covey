@@ -36,6 +36,7 @@ function cells(points: [number, number]): CostCells {
       baseline_at: "2026-11-17T18:00:00Z", baseline_percent: 9, baseline_before_window: false,
       last_at: "2026-11-17T20:00:00Z", last_percent: 9 + total, readings: 4, points: total,
       points_low: Math.max(total - 1, 0), points_high: total + 1, longest_gap_secs: 900, segments: null,
+      measured_usd: 16,
     }],
     plans: [{
       runtime_id: null, ord: 0, secret_key: SEAT, secret_slot: 0, plan_name: "Max", amount: 200, currency: "USD", period: "month",
@@ -58,7 +59,7 @@ function render(points: [number, number]) {
   return renderWithProviders(<Costs />);
 }
 
-const MULTIPLE = "Listen-$ je echtem $ (Untergrenze)";
+const MULTIPLE = "Listen-$ je echtem $";
 
 describe("Kosten — Zahlen je Zugangsdaten", () => {
   beforeEach(() => useGerman());
@@ -70,11 +71,44 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     expect(screen.getByText(/Kein Vielfaches: Der Zähler bewegte sich um 2 Punkt/)).toBeInTheDocument();
   });
 
-  it("zeigt das Vielfache ab drei Punkten, mit Spanne und als Untergrenze", async () => {
+  it("zeigt das Vielfache ab drei Punkten, mit Spanne und ohne es eine Untergrenze zu nennen", async () => {
     render([2, 2]);
     const tile = await screen.findByRole("group", { name: MULTIPLE });
     expect(within(tile).getByText(/^≈ .*×$/)).toBeInTheDocument();
     expect(within(tile).getByText(/^Spanne .*× – .*×$/)).toBeInTheDocument();
+    // both directions: an unused allowance lowers it, other use of the account raises it
+    expect(within(tile).getByText(/keine Schranke: niedriger, .* höher, /)).toBeInTheDocument();
+    expect(tile.textContent).not.toMatch(/Untergrenze/);
+  });
+
+  it("zeigt bei einem API-Schlüssel ohne Admin-Schlüssel keinen Betrag, sondern den Grund", async () => {
+    const KEY = "anthropic_api_key";
+    const data = cells([2, 2]);
+    data.cells.push({
+      period: "2026-11-17T18:00:00Z", agent_id: "a1", secret_key: KEY, secret_slot: 0, credential_kind: "api_key",
+      reported_usd: BOOKED, measured: { output: 4 }, engine_usd: 4, tokens: { output: 200_000 },
+    });
+    mockFetch({
+      "/api/v1/cost/cells": data,
+      "/api/v1/cost/billed": { bucket: "hour", points: [],
+        window: { start: "2026-11-17T18:00:00Z", end: "2026-11-17T23:00:00Z", width: "1h", totals: [] },
+        sync: { configured: false, last_attempt_at: null, last_success_at: null, last_daily_at: null, data_refreshed_at: null,
+          last_status: "", last_error: "" } },
+      "/api/v1/cost/runs": [],
+      "/api/v1/cost/models": { rows: [], runs_without_breakdown: 0, usd_without_breakdown: 0 },
+      "/api/v1/cost/usage-readings": [],
+    });
+    const { container } = renderWithProviders(<Costs />);
+    const block = await waitFor(() => {
+      const b = container.querySelector<HTMLElement>(`[data-credential="${KEY}#0"]`);
+      if (!b) throw new Error("no block for the API key yet");
+      return b;
+    });
+    const tile = within(block).getByRole("group", { name: "Von Anthropic berechnet" });
+    expect(within(tile).getByText("–")).toBeInTheDocument();
+    expect(within(tile).getByText(/kein Anthropic-Admin-Schlüssel hinterlegt/)).toBeInTheDocument();
+    expect(tile.textContent).not.toMatch(/0,00/);
+    expect(within(block).queryByRole("group", { name: "Listenpreis laut Anthropic" })).toBeNull();
   });
 
   it("zeigt die gebuchte Zahl in keiner Kachel", async () => {

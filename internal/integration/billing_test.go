@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -360,6 +361,111 @@ func TestBillingSyncAndReconcile(t *testing.T) {
 	}
 	if !closed {
 		t.Error("the mapping stayed open after the value was replaced")
+	}
+}
+
+// The bill beside the lines covers the same window as the lines: whole billed
+// buckets from the first one at or after `since` — hours within the hourly
+// reach, UTC days before it — and the reported and recomputed figures of the
+// credential are cut to exactly that window. A bucket that straddles `since`
+// is not billed in part; a mapped credential without a bill is listed as
+// mapped, with nothing billed.
+func TestBillingWindowSameAsTheLines(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	admin := login(t, s, "admin@test.local", "admin-passwort")
+	agent := s.newSupportAgent("rechnungsfenster")
+	now := time.Now().UTC()
+	since := now.Add(-24 * time.Hour)
+	start := since.Truncate(time.Hour).Add(time.Hour)
+	if since.Truncate(time.Hour).Equal(since) {
+		start = since
+	}
+
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := s.pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("%v\n%s", err, sql)
+		}
+	}
+	exec(`INSERT INTO credential_billing_keys (org_id, secret_key, secret_slot, api_key_id, valid_from)
+		VALUES ($1, 'anthropic_api_key', 0, 'apikey_win', $2), ($1, 'anthropic_api_key', 1, 'apikey_quiet', $2)`,
+		s.orgID, now.Add(-10*24*time.Hour))
+	bill := func(width string, at time.Time, key, amount, list string, fetched time.Time) {
+		t.Helper()
+		d := map[string]time.Duration{"1h": time.Hour, "1d": 24 * time.Hour}[width]
+		exec(`INSERT INTO billed_cost (org_id, bucket_width, bucket_start, bucket_end, api_key_id, model, cost_type, token_type,
+			amount_cents, list_amount_cents, data_refreshed_at, fetched_at)
+			VALUES ($1,$2,$3,$4,$5,'claude-opus-5-5','tokens','output_tokens',$6::numeric * 100,$7::numeric * 100,$8,$9)`,
+			s.orgID, width, at, at.Add(d), key, amount, list, now.Add(-6*time.Hour), fetched)
+	}
+	hourly, daily := now.Add(-time.Hour), now.Add(-2*time.Hour)           // the hourly read is the fresher one
+	bill("1h", since.Truncate(time.Hour), "apikey_win", "7", "7", hourly) // straddles since: not in the 24 h window
+	bill("1h", start.Add(2*time.Hour), "apikey_win", "3", "4", hourly)
+	bill("1h", start.Add(10*time.Hour), "apikey_win", "2", "2", hourly)
+	bill("1h", start.Add(3*time.Hour), "apikey_other", "50", "50", hourly) // not mapped: other use
+	bill("1d", since.Truncate(24*time.Hour), "apikey_win", "100", "100", daily)
+	weekAgo := now.Add(-7 * 24 * time.Hour)
+	bill("1d", weekAgo.Truncate(24*time.Hour), "apikey_win", "20", "20", daily) // straddles a 7-day since
+	bill("1d", weekAgo.Truncate(24*time.Hour).Add(24*time.Hour), "apikey_win", "10", "10", daily)
+
+	cred := observability.CredentialRef{RuntimeID: uuid.New(), SecretKey: "anthropic_api_key", Kind: daemon.CredAPIKey}
+	line := func(at time.Time, outputTokens int) {
+		t.Helper()
+		task := uuid.New()
+		l := fmt.Sprintf(`{"type":"result","session_id":"s-%s","modelUsage":{"claude-opus-5-5":{"costUSD":1,"outputTokens":%d}}}`, task, outputTokens)
+		if err := s.obs.RecordRuntime(ctx, agent.OrgID, agent.ID, &task, cred, json.RawMessage(l)); err != nil {
+			t.Fatal(err)
+		}
+		exec(`UPDATE model_usage SET created_at = $1 WHERE task_id = $2`, at, task)
+	}
+	line(start.Add(-time.Second), 250000)              // before the window's first whole hour ($5)
+	line(start.Add(2*time.Hour+5*time.Minute), 125000) // $2.50
+	line(start.Add(10*time.Hour), 50000)               // $1
+
+	total := func(w observability.BilledWindow, slot int) observability.BilledTotal {
+		t.Helper()
+		for _, b := range w.Totals {
+			if b.SecretKey == "anthropic_api_key" && b.SecretSlot == slot {
+				return b
+			}
+		}
+		t.Fatalf("no total for slot %d in %+v", slot, w.Totals)
+		return observability.BilledTotal{}
+	}
+	day, err := s.obs.BilledWindowFor(ctx, s.orgID, since, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if day.Width != billing.Hour || !day.Start.Equal(start) || len(day.Totals) != 2 {
+		t.Fatalf("24 h window: %s from %v with %d totals, want 1h from %v and 2", day.Width, day.Start, len(day.Totals), start)
+	}
+	if b := total(day, 0); !b.HasBilled || b.BilledUSD != "5.00000000" || b.BilledListUSD != "6.00000000" ||
+		math.Abs(b.ReportedUSD-2) > 1e-9 || math.Abs(b.ListUSD-3.5) > 1e-9 {
+		t.Errorf("24 h window, the mapped key: %+v — want billed 5, list 6, reported 2, recomputed 3.50", b)
+	}
+	if q := total(day, 1); q.HasBilled || q.BilledUSD != "0.00000000" {
+		t.Errorf("a mapped credential without a bill: %+v", q)
+	}
+
+	week, err := s.obs.BilledWindowFor(ctx, s.orgID, weekAgo, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := weekAgo.Truncate(24 * time.Hour).Add(24 * time.Hour); week.Width != billing.Day || !week.Start.Equal(want) {
+		t.Fatalf("7-day window: %s from %v, want 1d from %v", week.Width, week.Start, want)
+	}
+	// The whole days from the first midnight after since: the 1d row of that
+	// day, and the days the hourly read is fresher for, from their hours.
+	if b := total(week, 0); b.BilledUSD != "22.00000000" || b.BilledListUSD != "23.00000000" ||
+		math.Abs(b.ReportedUSD-3) > 1e-9 || math.Abs(b.ListUSD-8.5) > 1e-9 {
+		t.Errorf("7-day window, the mapped key: %+v — want billed 22, list 23, reported 3, recomputed 8.50", b)
+	}
+
+	got := admin.expect(http.MethodGet, "/api/v1/cost/billed?days=1&bucket=hour", nil, http.StatusOK)
+	w, _ := got["window"].(map[string]any)
+	if w == nil || w["width"] != "1h" || len(w["totals"].([]any)) != 2 {
+		t.Errorf("GET /cost/billed window = %v", got["window"])
 	}
 }
 

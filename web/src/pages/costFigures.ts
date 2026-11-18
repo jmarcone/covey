@@ -23,11 +23,18 @@ import type {
  *                 movement × the plan's price per point, an ESTIMATE with a
  *                 range (the meter shows whole percents, it is account-wide,
  *                 and a point only costs its price if the week's allowance is
- *                 used up). On an API key what Anthropic billed, complete only
- *                 up to its data_refreshed_at;
+ *                 used up). On an API key what Anthropic billed over whole
+ *                 billed buckets, beside the reported and recomputed figures
+ *                 of exactly that window, complete only up to its
+ *                 data_refreshed_at — and no dollar figure at all where no
+ *                 bill could be read (no admin key, no mapping, a failed or
+ *                 not yet landed sync);
  *   multiple    — recomputed list $ per real $, only from 3 points of
- *                 movement, always with its range, and a FLOOR: other use of
- *                 the account moves the meter too.
+ *                 movement, always with its range. It is NOT a bound in
+ *                 either direction: other use of the account moves the meter
+ *                 too (the true multiple is higher), and a week whose
+ *                 allowance is not used up makes each used point dearer than
+ *                 its price here (the true multiple is lower).
  *
  * Nothing here reads the booked figure (cost_entries) except the
  * booking-check, which says when bookings are an older daemon's running
@@ -201,25 +208,6 @@ export function multipleOf(M: number, real: Pick<RealCost, "value" | "low" | "hi
   return { kind: "estimate", value: M / real.value, low, high };
 }
 
-// --- Window alignment ------------------------------------------------------------
-
-/** The recomputed list $ of one credential inside [from, to]. A cell covers
- *  [period, period + bucket); one that straddles an edge counts with the
- *  share of its time inside (spend assumed even within the bucket). */
-export function alignedMeasured(cells: readonly CostCell[], cred: string, from: Date, to: Date, bucketMs: number): number {
-  const a = from.getTime(), b = to.getTime();
-  if (!(b > a)) return 0;
-  let s = 0;
-  for (const c of cells) {
-    if (credId(c.secret_key, c.secret_slot) !== cred) continue;
-    const p0 = Date.parse(c.period), p1 = p0 + bucketMs;
-    const overlap = Math.min(p1, b) - Math.max(p0, a);
-    if (overlap <= 0) continue;
-    s += recomputedOf(c) * Math.min(1, overlap / bucketMs);
-  }
-  return s;
-}
-
 // --- The bill --------------------------------------------------------------------
 
 export type BilledStatus = { state: "complete" | "pending"; completeTo: Date | null };
@@ -230,6 +218,58 @@ export function billedStatus(windowEnd: Date, dataRefreshedAt: string | null | u
   if (!dataRefreshedAt) return { state: "pending", completeTo: null };
   const r = new Date(dataRefreshedAt);
   return r.getTime() >= windowEnd.getTime() ? { state: "complete", completeTo: r } : { state: "pending", completeTo: r };
+}
+
+/** What can be said about an API key's bill:
+ *  - unavailable:  the bill could not be read from covey at all;
+ *  - unconfigured: no anthropic_admin_key is stored;
+ *  - unmapped:     the credential is not mapped to an Anthropic API key;
+ *  - failed:       nothing billed in the window and the last sync failed;
+ *  - not_landed:   nothing billed yet and the window is not complete;
+ *  - measured:     a figure — $0.00 only when configured, mapped and complete.
+ *  Only "measured" carries a dollar figure; every other state is "no figure",
+ *  never "$0.00". */
+export type BilledState = "unavailable" | "unconfigured" | "unmapped" | "failed" | "not_landed" | "measured";
+
+export type BilledFigure = {
+  state: BilledState;
+  usd: number;
+  listUsd: number;
+  ratio: number | null;
+  /** Claude Code's figure and covey's recomputed list for the SAME window as the bill. */
+  reported: number;
+  recomputed: number;
+  /** The window the bill covers: whole billed buckets (1h or 1d) from the
+   *  first one at or after the page's start. */
+  window: { start: Date; end: Date; width: string } | null;
+  status: BilledStatus;
+  /** The last sync's error when it failed (it carries no secret). */
+  error: string;
+};
+
+/** The bill of one API-key credential, from the server's window totals —
+ *  never from the chart's points, which cover whole buckets back to the
+ *  midnight before the page's start. */
+export function billedFigure(report: BilledReport | null | undefined, key: string, slot: number, windowEnd: Date): BilledFigure {
+  const sync = report?.sync;
+  const w = report?.window;
+  const window = w ? { start: new Date(w.start), end: new Date(w.end), width: w.width } : null;
+  const base: BilledFigure = {
+    state: "measured", usd: 0, listUsd: 0, ratio: null, reported: 0, recomputed: 0, window,
+    status: billedStatus(window?.end ?? windowEnd, sync?.data_refreshed_at),
+    error: sync?.last_status === "failed" ? sync.last_error ?? "" : "",
+  };
+  if (!report || !sync || !w) return { ...base, state: "unavailable" };
+  if (!sync.configured) return { ...base, state: "unconfigured" };
+  const tot = (w.totals ?? []).find((t) => t.secret_key === key && t.secret_slot === slot);
+  if (!tot) return { ...base, state: "unmapped" };
+  const usd = Number(tot.billed_usd) || 0, list = Number(tot.billed_list_usd) || 0;
+  const fig: BilledFigure = { ...base, usd, listUsd: list, ratio: list > 0 ? usd / list : null,
+    reported: tot.reported_usd, recomputed: tot.list_usd };
+  if (!tot.has_billed && base.status.state !== "complete") {
+    return { ...fig, state: sync.last_status === "failed" ? "failed" : "not_landed" };
+  }
+  return fig;
 }
 
 // --- Per credential --------------------------------------------------------------
@@ -263,12 +303,15 @@ export type CredentialFigures = {
   unattributed: number;
   meter: MeterCoverage | null;
   real: RealFigure | null;
-  /** Recomputed list $ inside [baseline_at, last_at] of the meter. */
+  /** Recomputed list $ of the credential's lines between the meter's baseline
+   *  and its last reading, by the lines' own timestamps (the server's figure:
+   *  the cells hold only part of a bucket at both ends of the window, and the
+   *  baseline can lie before it). Null without one. */
   aligned: number | null;
   multiple: Multiple | null;
   /** Why there is no multiple: "agents" (filtered or per agent), "movement" (< 3 points), "meter" (no reading). */
   noMultiple: "agents" | "movement" | "meter" | null;
-  billed: { usd: number; listUsd: number; ratio: number | null; status: BilledStatus } | null;
+  billed: BilledFigure | null;
   /** Bookings of an older daemon's running totals (legacy, cumulative). */
   bookingCheck: BookingBasis[];
   agents: AgentFigure[];
@@ -315,6 +358,7 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
   for (const c of data.cells) touch(c.secret_key, c.secret_slot, c.credential_kind).cells.push(c);
   for (const m of meter) touch(m.secret_key, m.secret_slot, m.credential_kind);
   for (const p of input.billed?.points ?? []) if (p.secret_key != null) touch(p.secret_key, p.secret_slot, "api_key");
+  for (const b of input.billed?.window?.totals ?? []) if (b.has_billed) touch(b.secret_key, b.secret_slot, "api_key");
 
   const out: CredentialFigures[] = [];
   for (const [id, a] of by) {
@@ -344,25 +388,15 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
       cov = pickMeter(meter, a.key, a.slot!);
       if (cov) {
         real = realFromWeeks(meterWeeks(cov, steps, plans, bucketMs));
-        aligned = alignedMeasured(a.cells, id, new Date(cov.baseline_at), new Date(cov.last_at), bucketMs);
+        aligned = cov.measured_usd ?? null;
       }
       if (sel.size > 0 || input.layout === "agents") noMultiple = "agents";
-      else if (!cov || !real) noMultiple = "meter";
+      else if (!cov || !real || aligned == null) noMultiple = "meter";
       else if (real.points < 3) noMultiple = "movement";
-      else mult = multipleOf(aligned ?? 0, real);
+      else mult = multipleOf(aligned, real);
     }
 
-    let billed: CredentialFigures["billed"] = null;
-    if (a.key != null && kind === "api_key") {
-      let usd = 0, list = 0;
-      for (const p of input.billed?.points ?? []) {
-        if (p.secret_key !== a.key || p.secret_slot !== a.slot) continue;
-        usd += Number(p.billed_usd) || 0;
-        list += Number(p.billed_list_usd) || 0;
-      }
-      billed = { usd, listUsd: list, ratio: list > 0 ? usd / list : null,
-        status: billedStatus(windowEnd, input.billed?.sync?.data_refreshed_at) };
-    }
+    const billed = a.key != null && kind === "api_key" ? billedFigure(input.billed, a.key, a.slot!, windowEnd) : null;
 
     const agents: AgentFigure[] = [...per.entries()].map(([aid, p]) => {
       const share = all > 0 ? p.recomputed / all : null;

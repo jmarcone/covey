@@ -777,6 +777,9 @@ export type MeterCoverage = {
   points_high: number;
   longest_gap_secs: number;
   segments: MeterSegment[] | null;
+  /** The credential's recomputed list $ with created_at in (baseline_at, last_at],
+   *  by the lines' own timestamps: what the multiple divides. */
+  measured_usd?: number;
 };
 
 /** A credential's dated plan price (0145), for measurement only. */
@@ -870,9 +873,32 @@ export type BilledPoint = {
   complete: boolean;
 };
 
+/** One mapped credential's bill over the window of whole billed buckets, with
+ *  its lines' reported and recomputed figures over exactly the same window. */
+export type BilledTotal = {
+  secret_key: string;
+  secret_slot: number;
+  has_billed: boolean;
+  billed_usd: string;
+  billed_list_usd: string;
+  reported_usd: number;
+  list_usd: number;
+};
+
+/** The window the bill's totals cover: from the first whole billed bucket
+ *  (an hour, or a UTC day beyond the hourly reach) at or after the page's start. */
+export type BilledWindow = {
+  start: string;
+  end: string;
+  /** 1h | 1d */
+  width: string;
+  totals: BilledTotal[] | null;
+};
+
 export type BilledReport = {
   bucket: string;
   points: BilledPoint[] | null;
+  window?: BilledWindow | null;
   sync: BillingSyncStatus;
 };
 

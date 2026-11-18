@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import type { CostCell, CostCells, CredentialPlan, MeterCoverage, MeterStep, UsageReading } from "../api";
+import type { BilledReport, CostCell, CostCells, CredentialPlan, MeterCoverage, MeterStep, UsageReading } from "../api";
 import {
-  alignedMeasured,
+  billedFigure,
   billedStatus,
   credentialFigures,
   meterCrossings,
@@ -42,7 +42,7 @@ const coverage = (over: Partial<MeterCoverage> = {}): MeterCoverage => ({
   secret_key: SEAT, secret_slot: 0, credential_kind: "subscription", source: "usage_cmd", window_kind: "seven_day",
   baseline_at: "2026-11-17T18:00:00Z", baseline_percent: 9, baseline_before_window: false,
   last_at: "2026-11-17T21:00:00Z", last_percent: 13, readings: 8, points: 4, points_low: 3, points_high: 5,
-  longest_gap_secs: 1800, segments: null, ...over,
+  longest_gap_secs: 1800, segments: null, measured_usd: 30, ...over,
 });
 
 const step = (period: string, points: number, over: Partial<MeterStep> = {}): MeterStep => ({
@@ -121,17 +121,7 @@ describe("the meter and the multiple", () => {
 describe("window alignment", () => {
   const hourly = ["17", "18", "19", "20", "21", "22"].map((h) => cell(`2026-11-17T${h}:00:00Z`, { output: 10 }));
 
-  it("counts only the cost inside [baseline_at, last_at]", () => {
-    const m = alignedMeasured(hourly, `${SEAT}#0`, new Date("2026-11-17T18:00:00Z"), new Date("2026-11-17T21:00:00Z"), HOUR);
-    expect(m).toBeCloseTo(30, 10); // 18, 19, 20 — not 17, not 21 or 22
-  });
-
-  it("counts the share of a bucket the window covers", () => {
-    const m = alignedMeasured(hourly, `${SEAT}#0`, new Date("2026-11-17T18:30:00Z"), new Date("2026-11-17T21:15:00Z"), HOUR);
-    expect(m).toBeCloseTo(5 + 10 + 10 + 2.5, 10);
-  });
-
-  it("feeds the multiple with the aligned figure, not the whole window", () => {
+  it("feeds the multiple with the server's spend between baseline and last reading, not the whole window", () => {
     const data = cells({
       cells: hourly,
       meter: [coverage()],
@@ -145,6 +135,45 @@ describe("window alignment", () => {
     expect(seat.multiple.value).toBeCloseTo(want.value, 9);
     expect(seat.multiple.low).toBeCloseTo(want.low, 9);
     expect(seat.multiple.high).toBeCloseTo(want.high, 9);
+  });
+
+  // The live case of the review: one day at day buckets, read at 01:50 UTC.
+  // The window starts mid-day (Nov 17, 01:50), the meter's baseline is 18:06
+  // and its last reading 01:41; the Nov 17 cell holds $131, the Nov 18 cell
+  // $159, about $270 of it between the two readings. Prorating the cells by
+  // their share of a whole day gave ≈ $43 and a multiple of ≈ 4.5×; the
+  // figure must be the same as at hour buckets, ≈ 28×.
+  it("gives the same multiple at day buckets when the window starts mid-day", () => {
+    const DAY = 24 * HOUR;
+    const cov = coverage({ baseline_at: "2026-11-17T18:06:00Z", baseline_percent: 9, baseline_before_window: false,
+      last_at: "2026-11-18T01:41:00Z", last_percent: 30, points: 21, points_low: 20, points_high: 22, measured_usd: 270 });
+    const daily = cells({
+      cells: [cell("2026-11-17T00:00:00Z", { output: 131 }), cell("2026-11-18T00:00:00Z", { output: 159 })],
+      meter: [cov],
+      subscription: [step("2026-11-17T00:00:00Z", 13), step("2026-11-18T00:00:00Z", 8)],
+    });
+    const hourlyCells = cells({
+      cells: [cell("2026-11-17T18:00:00Z", { output: 131 }), cell("2026-11-18T01:00:00Z", { output: 159 })],
+      meter: [cov],
+      subscription: [step("2026-11-17T20:00:00Z", 13), step("2026-11-18T01:00:00Z", 8)],
+    });
+    const end = new Date("2026-11-18T01:50:00Z");
+    const [byDay] = credentialFigures({ cells: daily, bucketMs: DAY, windowEnd: end });
+    const [byHour] = credentialFigures({ cells: hourlyCells, bucketMs: HOUR, windowEnd: end });
+    if (byDay.multiple?.kind !== "estimate" || byHour.multiple?.kind !== "estimate") throw new Error("no estimate");
+    expect(byDay.aligned).toBe(270);
+    expect(byDay.multiple.value).toBeCloseTo(270 / (21 * PP), 9);
+    expect(byDay.multiple.value.toFixed(1)).toBe("27.9");
+    expect(byDay.multiple.value).toBeCloseTo(byHour.multiple.value, 9);
+  });
+
+  it("shows no multiple without the server's spend figure", () => {
+    const [seat] = credentialFigures({
+      cells: cells({ cells: hourly, meter: [coverage({ measured_usd: undefined })], subscription: [step("2026-11-17T18:00:00Z", 4)] }),
+      bucketMs: HOUR, windowEnd: new Date("2026-11-17T23:00:00Z"),
+    });
+    expect(seat.multiple).toBeNull();
+    expect(seat.noMultiple).toBe("meter");
   });
 });
 
@@ -201,21 +230,59 @@ describe("per credential", () => {
     expect(perAgent.find((f) => f.id === `${SEAT}#0`)!.multiple).toBeNull();
   });
 
-  it("marks an API key's bill pending while the window ends after data_refreshed_at", () => {
-    const refreshed = "2026-11-17T20:00:00Z";
-    const billed = {
-      bucket: "hour",
-      sync: { configured: true, last_attempt_at: null, last_success_at: null, last_daily_at: null, data_refreshed_at: refreshed, last_status: "ok", last_error: "" },
-      points: [{ bucket: "2026-11-17T18:00:00Z", api_key_id: "apikey_01", workspace_id: "", model: "claude-opus-5-5",
-        secret_key: KEY, secret_slot: 1, billed_usd: "80.50", billed_list_usd: "100.00", complete: true }],
-    };
-    const figs = credentialFigures({ cells: mixed, billed, bucketMs: HOUR, windowEnd: new Date("2026-11-17T23:00:00Z") });
-    const key = figs.find((f) => f.id === `${KEY}#1`)!;
-    expect(key.billed).toMatchObject({ usd: 80.5, listUsd: 100, ratio: 0.805 });
+  const sync = (over: Partial<BilledReport["sync"]> = {}): BilledReport["sync"] => ({
+    configured: true, last_attempt_at: "2026-11-17T22:00:00Z", last_success_at: "2026-11-17T22:00:00Z", last_daily_at: null,
+    data_refreshed_at: "2026-11-17T20:00:00Z", last_status: "ok", last_error: "", ...over,
+  });
+  const report = (over: Partial<BilledReport> = {}): BilledReport => ({
+    bucket: "hour",
+    // The chart's points reach back to the midnight before the page's start:
+    // they must not be what the tile adds up.
+    points: [
+      { bucket: "2026-11-17T00:00:00Z", api_key_id: "apikey_01", workspace_id: "", model: "claude-opus-5-5",
+        secret_key: KEY, secret_slot: 1, billed_usd: "500.00", billed_list_usd: "500.00", complete: true },
+      { bucket: "2026-11-17T18:00:00Z", api_key_id: "apikey_01", workspace_id: "", model: "claude-opus-5-5",
+        secret_key: KEY, secret_slot: 1, billed_usd: "80.50", billed_list_usd: "100.00", complete: true },
+    ],
+    window: { start: "2026-11-17T18:00:00Z", end: "2026-11-17T23:00:00Z", width: "1h",
+      totals: [{ secret_key: KEY, secret_slot: 1, has_billed: true, billed_usd: "80.50", billed_list_usd: "100.00",
+        reported_usd: 95, list_usd: 99 }] },
+    sync: sync(),
+    ...over,
+  });
+  const keyOf = (billed: BilledReport | null) =>
+    credentialFigures({ cells: mixed, billed, bucketMs: HOUR, windowEnd: new Date("2026-11-17T23:00:00Z") }).find((f) => f.id === `${KEY}#1`)!;
+
+  it("sums an API key's bill over the window the server names, beside the same window's lines, pending after data_refreshed_at", () => {
+    const key = keyOf(report());
+    expect(key.billed).toMatchObject({ state: "measured", usd: 80.5, listUsd: 100, ratio: 0.805, reported: 95, recomputed: 99 });
+    expect(key.billed?.window?.start.toISOString()).toBe("2026-11-17T18:00:00.000Z");
+    expect(key.billed?.window?.width).toBe("1h");
     expect(key.billed?.status.state).toBe("pending");
     expect(key.billed?.status.completeTo?.toISOString()).toBe("2026-11-17T20:00:00.000Z");
-    expect(billedStatus(new Date("2026-11-17T19:00:00Z"), refreshed).state).toBe("complete");
+    expect(billedStatus(new Date("2026-11-17T19:00:00Z"), "2026-11-17T20:00:00Z").state).toBe("complete");
     expect(billedStatus(new Date("2026-11-17T19:00:00Z"), null)).toEqual({ state: "pending", completeTo: null });
+  });
+
+  it("gives no dollar figure where no bill could be read, and says why", () => {
+    const quiet = { secret_key: KEY, secret_slot: 1, has_billed: false, billed_usd: "0.00000000", billed_list_usd: "0.00000000",
+      reported_usd: 95, list_usd: 99 };
+    const win = (totals: typeof quiet[]) => ({ start: "2026-11-17T18:00:00Z", end: "2026-11-17T23:00:00Z", width: "1h", totals });
+    expect(keyOf(null).billed?.state).toBe("unavailable");
+    expect(keyOf(report({ points: [], window: win([]), sync: sync({ configured: false, data_refreshed_at: null }) })).billed?.state).toBe("unconfigured");
+    expect(keyOf(report({ points: [], window: win([]) })).billed?.state).toBe("unmapped");
+    expect(keyOf(report({ points: [], window: win([quiet]) })).billed?.state).toBe("not_landed");
+    const failed = keyOf(report({ points: [], window: win([quiet]),
+      sync: sync({ last_status: "failed", last_error: "HTTP 401", last_success_at: null, data_refreshed_at: null }) })).billed!;
+    expect(failed.state).toBe("failed");
+    expect(failed.error).toBe("HTTP 401");
+    // $0.00 only when configured, mapped and the window is complete
+    const zero = billedFigure(report({ points: [], window: win([quiet]), sync: sync({ data_refreshed_at: "2026-11-18T00:00:00Z" }) }),
+      KEY, 1, new Date("2026-11-17T23:00:00Z"));
+    expect(zero).toMatchObject({ state: "measured", usd: 0 });
+    // a failed sync after data had landed keeps the figure and names the failure
+    const stale = keyOf(report({ sync: sync({ last_status: "failed", last_error: "HTTP 500" }) })).billed!;
+    expect(stale).toMatchObject({ state: "measured", usd: 80.5, error: "HTTP 500" });
   });
 
   it("says why there is no multiple below 3 points", () => {
