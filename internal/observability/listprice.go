@@ -46,7 +46,7 @@ func ListPrice(model string) (ListPriceModel, bool) {
 // Cost prices tokens. Output already includes thinking tokens, as Claude Code reports them.
 func (p ListPriceModel) Cost(t ModelTokens) float64 {
 	const perMillion = 1_000_000.0
-	return (float64(t.Input)*p.Input + float64(t.Output)*p.Output + float64(t.CacheRead)*p.CacheRead +
-		float64(t.CacheWrite5m)*p.CacheWrite5m + float64(t.CacheWrite1h)*p.CacheWrite1h) / perMillion +
+	return (float64(t.Input)*p.Input+float64(t.Output)*p.Output+float64(t.CacheRead)*p.CacheRead+
+		float64(t.CacheWrite5m)*p.CacheWrite5m+float64(t.CacheWrite1h)*p.CacheWrite1h)/perMillion +
 		float64(t.WebSearches)*WebSearchUSD
 }

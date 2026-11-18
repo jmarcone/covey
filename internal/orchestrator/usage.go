@@ -169,8 +169,10 @@ func (o *Orchestrator) noteUsage(rep daemon.UsageReport, cred observability.Cred
 	if o.usage.firstWarning(credentialName(cred), rep.Reason) {
 		// The reason is a code; rep.Error is the daemon's own text and goes
 		// nowhere but here, unprinted.
+		// Runtime and position identify the credential; the secret's name stays
+		// out of the log (CodeQL treats any SecretKey access as sensitive).
 		o.Log.Warn("utilisation not reported", "runtime", cred.RuntimeID, "ord", cred.Ord,
-			"secret", cred.SecretKey, "slot", cred.SecretSlot, "reason", rep.Reason)
+			"reason", rep.Reason)
 	}
 }
 

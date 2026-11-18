@@ -608,7 +608,10 @@ type CostEntry struct {
 const costInsertCols = `(agent_id, task_id, usd, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, model,
 		runtime_id, credential_ord, secret_key, secret_slot, basis, session_id)`
 
+// #nosec G101 -- an SQL fragment that selects the secret_key/secret_slot columns, not a credential.
 const costSecretKey = `COALESCE($11::text, (SELECT secret_key FROM runtime_credentials WHERE runtime_id = $9::uuid AND ord = $10::smallint))`
+
+// #nosec G101 -- an SQL fragment that selects the secret_key/secret_slot columns, not a credential.
 const costSecretSlot = `COALESCE($12::smallint, (SELECT secret_slot FROM runtime_credentials WHERE runtime_id = $9::uuid AND ord = $10::smallint))`
 
 func (e CostEntry) args() []any {
