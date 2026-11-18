@@ -37,6 +37,7 @@ sections:
       - guard-rails
       - identity-and-secrets
       - backlog-and-lifecycle
+      - costs
 
   # The overview stands first, the recipes after it alphabetically: whoever
   # looks for a target system looks for it under its name.
