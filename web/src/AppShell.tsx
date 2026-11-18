@@ -28,7 +28,7 @@ import {
 import i18n, { initialLang, ladeSprache, uiLocale } from "./i18n";
 import HelpDrawer from "./components/HelpDrawer";
 import { NavIcon } from "./components/navicons";
-import Rail, { rememberAgentsView } from "./components/Rail";
+import Rail from "./components/Rail";
 import { useDrawer, useNarrow } from "./components/ConsoleDrawer";
 import Suche, { useSucheKuerzel } from "./components/Suche";
 import AgentsFrame from "./pages/agents/AgentsFrame";
@@ -203,8 +203,6 @@ export default function AppShell({ me, onLogout }: { me: Principal; onLogout: ()
   const menuButton = useRef<HTMLButtonElement>(null);
   const closeMenu = useCallback(() => setMenuOpen(false), []);
   useEffect(() => setMenuOpen(false), [location.pathname, narrow]);
-  // Which agents view was used last: the rail's Agents entry opens it.
-  useEffect(() => rememberAgentsView(location.pathname), [location.pathname]);
   useDrawer(drawerOpen, closeMenu, menuPanel, menuButton);
 
   // "?" opens the help from anywhere — except while typing in form fields.
