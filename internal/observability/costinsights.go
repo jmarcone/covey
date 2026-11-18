@@ -65,8 +65,22 @@ func (c CredentialRef) columns() (rt *uuid.UUID, ord *int, key *string, slot *in
 // anything that is not a JSON number. A line is the engine's to shape: a value
 // written as 1.2e3 or as a string must not make the insert fail. Numbers go
 // through numeric first, so 1.2e3 still lands as 1200.
-func jsonInt(field string) string {
-	return "CASE WHEN jsonb_typeof(m.value->'" + field + "') = 'number' THEN (m.value->>'" + field + "')::numeric::bigint ELSE 0 END"
+func jsonInt(field string) string { return jsonIntOf("m.value", field) }
+
+// jsonIntOf is jsonInt for the entry the JSON expression v names.
+func jsonIntOf(v, field string) string {
+	return "CASE WHEN jsonb_typeof(" + v + "->'" + field + "') = 'number' THEN (" + v + "->>'" + field + "')::numeric::bigint ELSE 0 END"
+}
+
+// cacheWrite5m is the entry's 5-minute cache write — or, where the entry has
+// no split by lifetime (an older CLI writes only cacheCreationInputTokens),
+// the plain sum. The daemon books the plain sum in that case (cacheCreation),
+// and a row without it would hold fewer tokens than the booking and price
+// them at nothing. The plain sum goes to 5 minutes, the API's default
+// lifetime; the 1-hour write is opt-in and came with the split.
+func cacheWrite5m(v string) string {
+	five, hour := jsonIntOf(v, "cacheCreationEphemeral5mInputTokens"), jsonIntOf(v, "cacheCreationEphemeral1hInputTokens")
+	return "CASE WHEN (" + five + ") + (" + hour + ") = 0 THEN " + jsonIntOf(v, "cacheCreationInputTokens") + " ELSE " + five + " END"
 }
 
 // modelUsageInsert files the model_usage rows of one recording event ($1).
@@ -89,7 +103,7 @@ v AS (
 		` + jsonInt("outputTokens") + ` AS output_tokens,
 		` + jsonInt("thinkingTokens") + ` AS thinking_tokens,
 		` + jsonInt("cacheReadInputTokens") + ` AS cache_read_tokens,
-		` + jsonInt("cacheCreationEphemeral5mInputTokens") + ` AS cache_write_5m_tokens,
+		` + cacheWrite5m("m.value") + ` AS cache_write_5m_tokens,
 		` + jsonInt("cacheCreationEphemeral1hInputTokens") + ` AS cache_write_1h_tokens,
 		` + jsonInt("webSearchRequests") + ` AS web_search_requests,
 		CASE WHEN jsonb_typeof(m.value->'costUSD') = 'number' THEN (m.value->>'costUSD')::numeric ELSE 0 END AS engine_usd,
@@ -144,22 +158,24 @@ ON CONFLICT DO NOTHING`
 
 // usageFigures reads one per-model entry — the JSON expression v — into the
 // figures model_usage keeps, each column named with the prefix p. Guarded
-// like jsonInt: what is not a JSON number is 0.
+// like jsonInt: what is not a JSON number is 0; the 5-minute cache write falls
+// back to the plain sum like cacheWrite5m.
 func usageFigures(v, p string) string {
-	num := func(field, cast string) string {
-		return "CASE WHEN jsonb_typeof(" + v + "->'" + field + "') = 'number' THEN (" + v + "->>'" + field + "')::numeric" + cast + " ELSE 0 END"
+	cols := []struct{ name, expr string }{
+		{"input_tokens", jsonIntOf(v, "inputTokens")},
+		{"output_tokens", jsonIntOf(v, "outputTokens")},
+		{"thinking_tokens", jsonIntOf(v, "thinkingTokens")},
+		{"cache_read_tokens", jsonIntOf(v, "cacheReadInputTokens")},
+		{"cache_write_5m_tokens", cacheWrite5m(v)},
+		{"cache_write_1h_tokens", jsonIntOf(v, "cacheCreationEphemeral1hInputTokens")},
+		{"web_search_requests", jsonIntOf(v, "webSearchRequests")},
+		{"engine_usd", "CASE WHEN jsonb_typeof(" + v + "->'costUSD') = 'number' THEN (" + v + "->>'costUSD')::numeric ELSE 0 END"},
 	}
-	cols := []struct{ name, field string }{
-		{"input_tokens", "inputTokens"}, {"output_tokens", "outputTokens"}, {"thinking_tokens", "thinkingTokens"},
-		{"cache_read_tokens", "cacheReadInputTokens"}, {"cache_write_5m_tokens", "cacheCreationEphemeral5mInputTokens"},
-		{"cache_write_1h_tokens", "cacheCreationEphemeral1hInputTokens"}, {"web_search_requests", "webSearchRequests"},
+	parts := make([]string, len(cols))
+	for i, c := range cols {
+		parts[i] = c.expr + " AS " + p + c.name
 	}
-	var b strings.Builder
-	for _, c := range cols {
-		b.WriteString(num(c.field, "::bigint") + " AS " + p + c.name + ",\n\t\t")
-	}
-	b.WriteString(num("costUSD", "") + " AS " + p + "engine_usd")
-	return b.String()
+	return strings.Join(parts, ",\n\t\t")
 }
 
 // modelUsageGapInsert files the gap a result line ($1) reveals, per model:
