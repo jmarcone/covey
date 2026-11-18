@@ -4,6 +4,10 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { api, type BilledReport, type CellAgent, type CostCell, type CostCells, type UsageReading } from "../api";
 import { fmtBucket, fmtClockUTC, fmtCount, fmtCountAxis, fmtNumber, fmtUSD, fmtUSDAxis } from "../format";
+import { SOURCES, SOURCE_COLOR, sourceHint, sourceLabel, type Source } from "./costSources";
+
+export { SOURCE_COLOR };
+
 import {
   billedFetchBucket,
   billedPerPeriod,
@@ -34,16 +38,7 @@ import { PlanPrice } from "./PlanPrice";
  * totals. */
 
 export type Split = "type" | "none";
-type Source = "reported" | "recomputed" | "real" | "billed";
 type Layout = "combined" | "agents";
-
-/** One colour per source, everywhere on the page (styles.css). */
-export const SOURCE_COLOR: Record<Source, string> = {
-  reported: "var(--cost-reported)",
-  recomputed: "var(--cost-recomputed)",
-  real: "var(--cost-real)",
-  billed: "var(--cost-billed)",
-};
 
 /** Cost types: one blue family from light (cheap, plentiful) to dark (dear).
  *  Shared with the cost-types card and the token chart. */
@@ -109,7 +104,7 @@ export function agentColor(agents: readonly { id: string }[], id: string) {
   return AGENT_COLORS[(i < 0 ? 0 : i) % AGENT_COLORS.length];
 }
 
-function Chip({ on, color, hatched, children, onClick, onDoubleClick }: {
+export function Chip({ on, color, hatched, children, onClick, onDoubleClick }: {
   on: boolean; color?: string; hatched?: boolean; children: React.ReactNode; onClick: () => void; onDoubleClick?: () => void;
 }) {
   return (
@@ -755,23 +750,21 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
     const n = { ...v, [s]: !v[s] };
     return n.reported || n.recomputed || n.real || n.billed ? n : v; // keep at least one
   });
-  const hint = (s: Source) => t(s === "reported" ? "costs.filter.reportedHint" : s === "recomputed" ? "costs.filter.measuredHint"
-    : s === "real" ? "costs.filter.subscriptionHint" : "costs.filter.billedHint");
 
   return (
     <div>
       <ColourKey />
       <Row label={t("costs.filter.source")}>
-        {(["reported", "recomputed", "real", "billed"] as Source[]).map((s) => (
+        {SOURCES.map((s) => (
           <Chip key={s} on={src[s]} color={SOURCE_COLOR[s]} hatched={s === "real"} onClick={() => toggleSrc(s)}>
-            {t(s === "real" ? "costs.fig.realEstimate" : `costs.fig.${s}`)}
+            {sourceLabel(t, s)}
           </Chip>
         ))}
       </Row>
       <details className="text-xs muted mb-2" style={{ marginLeft: 92 }}>
         <summary style={{ cursor: "pointer" }}>{t("costs.filter.sourceHints")}</summary>
         <ul style={{ margin: "4px 0 0 0", paddingLeft: 16, maxWidth: 760 }}>
-          {(["reported", "recomputed", "real", "billed"] as Source[]).map((s) => <li key={s}>{hint(s)}</li>)}
+          {SOURCES.map((s) => <li key={s}>{sourceHint(t, s)}</li>)}
         </ul>
       </details>
       <Row label={t("costs.filter.layout")}>

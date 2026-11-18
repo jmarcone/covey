@@ -295,7 +295,7 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     expect(unpriced.textContent).toMatch(/davon Modelle ohne Listenpreis \(1\).*2,00 \$2,00 \$$/);
     const total = unpriced.parentElement!.querySelector("tr[data-total]")!;
     expect([...total.querySelectorAll("td")].map((td) => td.textContent)).toEqual([
-      "Summe (Liste, Modelle ohne Listenpreis zu Claude Codes Preis)", "12,00 $", "12,50 $",
+      "Summe (nachgerechnet, Modelle ohne Listenpreis zum gemeldeten Preis)", "12,00 $", "12,50 $",
     ]);
   });
 
