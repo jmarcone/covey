@@ -305,7 +305,8 @@
       "saving": "Saving…",
       "cancel": "Cancel",
       "fromHintWeek": "Preset: the start of the current meter week.",
-      "fromHintNow": "No weekly reset known yet, preset: now."
+      "fromHintNow": "No weekly reset known yet, preset: now.",
+      "errMoved": "Saved to another credential — the credentials were reordered; check both plans."
     }
   },
   "lang": {

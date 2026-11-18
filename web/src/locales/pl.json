@@ -305,7 +305,8 @@
       "saving": "Zapisywanie…",
       "cancel": "Anuluj",
       "fromHintWeek": "Domyślnie: początek bieżącego tygodnia licznika.",
-      "fromHintNow": "Nie znamy jeszcze tygodniowego resetu, domyślnie: teraz."
+      "fromHintNow": "Nie znamy jeszcze tygodniowego resetu, domyślnie: teraz.",
+      "errMoved": "Zapisano przy innym poświadczeniu — kolejność poświadczeń się zmieniła; sprawdź oba plany."
     }
   },
   "lang": {

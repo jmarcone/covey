@@ -305,7 +305,8 @@
       "saving": "Opslaan…",
       "cancel": "Annuleren",
       "fromHintWeek": "Vooringevuld: het begin van de huidige meterweek.",
-      "fromHintNow": "Nog geen wekelijkse reset bekend, vooringevuld: nu."
+      "fromHintNow": "Nog geen wekelijkse reset bekend, vooringevuld: nu.",
+      "errMoved": "Opgeslagen bij een andere referentie — de referenties zijn opnieuw geordend; controleer beide abonnementen."
     }
   },
   "lang": {

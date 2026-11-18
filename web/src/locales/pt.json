@@ -305,7 +305,8 @@
       "saving": "A guardar…",
       "cancel": "Cancelar",
       "fromHintWeek": "Predefinido: o início da semana atual do contador.",
-      "fromHintNow": "Ainda sem reinício semanal conhecido, predefinido: agora."
+      "fromHintNow": "Ainda sem reinício semanal conhecido, predefinido: agora.",
+      "errMoved": "Guardado noutra credencial — as credenciais foram reordenadas; verifique ambos os planos."
     }
   },
   "lang": {

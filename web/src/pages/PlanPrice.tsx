@@ -75,6 +75,15 @@ function currentPlan(t: TFunction, p: CredentialPlan): string {
   });
 }
 
+/** The server stored the price at another credential than the form's. */
+class PlanMoved extends Error {}
+
+/** What a failed save says, in the reader's language. */
+function saveError(t: TFunction, err: Error): string {
+  if (err instanceof PlanMoved) return t("costs.plan.errMoved");
+  return err.message;
+}
+
 /** One credential's plan line: what is stored, and for the roles that may,
  *  the form that stores a new one. */
 export function PlanPrice({ f, readings, editable }: { f: CredentialFigures; readings: readonly UsageReading[]; editable: boolean }) {
@@ -98,8 +107,18 @@ export function PlanPrice({ f, readings, editable }: { f: CredentialFigures; rea
   });
   const place = planPlace(f, instances.data);
   const save = useMutation({
-    mutationFn: (body: { amount: number; currency: string; period: string; valid_from: string }) =>
-      put(`/runtime-instances/${place!.runtimeId}/credentials/${place!.ord}/plan`, body),
+    mutationFn: async (body: { amount: number; currency: string; period: string; valid_from: string }) => {
+      const saved = await put<CredentialPlan>(`/runtime-instances/${place!.runtimeId}/credentials/${place!.ord}/plan`, body);
+      // The server resolved the place when the request arrived. A reorder
+      // since the list was fetched gave it to another secret, and the price
+      // is stored there now: say so, and look again for the next try.
+      if (saved?.secret_key !== f.secretKey || saved?.secret_slot !== f.slot) {
+        void qc.invalidateQueries({ queryKey: ["cost"] });
+        void qc.invalidateQueries({ queryKey: ["runtime-instances"] });
+        throw new PlanMoved();
+      }
+      return saved;
+    },
     // The real figure and the multiple read the plan: every cost query is stale.
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["cost"] });
@@ -109,7 +128,8 @@ export function PlanPrice({ f, readings, editable }: { f: CredentialFigures; rea
 
   const show = () => {
     // A reorder since the list was fetched moves the ord: look again while the
-    // form is filled in, the place is read when it is saved.
+    // form is filled in, the place is read when it is saved. Save waits for
+    // the answer.
     void instances.refetch();
     const d = defaultValidFrom(f, readings, new Date());
     setFallback(d);
@@ -139,7 +159,7 @@ export function PlanPrice({ f, readings, editable }: { f: CredentialFigures; rea
           aria-label={t("costs.plan.set")}
           onSubmit={(e) => {
             e.preventDefault();
-            if (!valid || save.isPending) return;
+            if (!valid || save.isPending || instances.isFetching) return;
             save.mutate({ amount: amountNum, currency: "USD", period, valid_from: new Date(whenMs).toISOString() });
           }}
         >
@@ -161,7 +181,7 @@ export function PlanPrice({ f, readings, editable }: { f: CredentialFigures; rea
               <input id={`${uid}-from`} type="datetime-local" required value={from} onChange={(e) => setFrom(e.target.value)} />
             </label>
             <div className="flex gap-2">
-              <button type="submit" className="btn sm primary" disabled={!valid || save.isPending}>
+              <button type="submit" className="btn sm primary" disabled={!valid || save.isPending || instances.isFetching}>
                 {save.isPending ? t("costs.plan.saving") : t("costs.plan.save")}
               </button>
               <button type="button" className="btn sm ghost" disabled={save.isPending} onClick={() => setOpen(false)}>{t("costs.plan.cancel")}</button>
@@ -173,7 +193,7 @@ export function PlanPrice({ f, readings, editable }: { f: CredentialFigures; rea
             {t(hasReset ? "costs.plan.fromHintWeek" : "costs.plan.fromHintNow")}
           </p>
           {save.error && (
-            <p className="text-xs mt-1 mb-0" role="alert" style={{ color: "var(--text-danger)" }}>{(save.error as Error).message}</p>
+            <p className="text-xs mt-1 mb-0" role="alert" style={{ color: "var(--text-danger)" }}>{saveError(t, save.error)}</p>
           )}
         </form>
       )}

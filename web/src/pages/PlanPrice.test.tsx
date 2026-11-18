@@ -65,22 +65,33 @@ type Put = { url: string; body: Record<string, unknown> };
 
 /** The page's endpoints, with the plan endpoint answered by `plan` and its
  *  requests recorded. Cells are served from `state`, so a saved plan can show
- *  up in the refetch. */
+ *  up in the refetch. The instances are served from `srv`: a test reorders
+ *  the credentials there, or holds the answer back with a gate. Without
+ *  `plan`, the plan endpoint answers like the server: it resolves the place
+ *  when the request arrives and names the secret it found there. */
 function serve(opts: { readings?: UsageReading[]; instances?: RuntimeInstance[]; plan?: (body: Record<string, unknown>) => Response; state?: { cells: CostCells } } = {}) {
   const puts: Put[] = [];
   const state = opts.state ?? { cells: cells() };
+  const srv = { instances: opts.instances ?? HOME, gate: null as Promise<void> | null };
   let cellFetches = 0;
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = (init?.method ?? "GET").toUpperCase();
-    const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "Content-Type": "application/json" } });
+    const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { "Content-Type": "application/json" } });
     if (method === "PUT" && url.includes("/plan")) {
       const body = JSON.parse(String(init?.body));
       puts.push({ url, body });
-      return opts.plan ? opts.plan(body) : json({});
+      if (opts.plan) return opts.plan(body);
+      const [, rt, ord] = url.match(/\/runtime-instances\/([^/]+)\/credentials\/(\d+)\/plan$/) ?? [];
+      const c = srv.instances.find((r) => r.id === rt)?.creds.find((x) => x.ord === Number(ord));
+      if (!c) return json({ error: "not found" }, 404);
+      return json({ ...body, runtime_id: rt, ord: Number(ord), secret_key: c.secret_key, secret_slot: c.secret_slot, valid_to: null });
     }
     const path = url.split("?")[0];
-    if (path.endsWith("/runtime-instances")) return json(opts.instances ?? HOME);
+    if (path.endsWith("/runtime-instances")) {
+      if (srv.gate) await srv.gate;
+      return json(srv.instances);
+    }
     if (path.endsWith("/cost/cells")) { cellFetches++; return json(state.cells); }
     if (path.endsWith("/cost/billed")) return json(NO_BILL);
     if (path.endsWith("/cost/runs")) return json([]);
@@ -88,8 +99,11 @@ function serve(opts: { readings?: UsageReading[]; instances?: RuntimeInstance[];
     if (path.endsWith("/cost/usage-readings")) return json(opts.readings ?? []);
     return new Response(JSON.stringify({ error: "not mocked" }), { status: 404 });
   }));
-  return { puts, state, cellFetches: () => cellFetches };
+  return { puts, state, srv, cellFetches: () => cellFetches };
 }
+
+// the seat moved to ord 0 by a reorder
+const REORDERED = [instance(RT, [[SEAT, 0], ["other_key", 0]])];
 
 const page = (me: Principal) => renderWithProviders(<Costs me={me} />);
 const block = async (c: HTMLElement) => waitFor(() => {
@@ -226,6 +240,55 @@ describe("Kosten — Tarifpreis setzen", () => {
     await userEvent.click(within(b).getByRole("button", { name: "Speichern" }));
     await waitFor(() => expect(s.puts).toHaveLength(1));
     expect(s.puts[0].url).toBe(`/api/v1/runtime-instances/${RT}/credentials/0/plan`);
+  });
+
+  it("sperrt Speichern, bis die Instanzen neu geladen sind, und schickt dann an die neue Stelle", async () => {
+    const s = serve({ readings: [reading()] });
+    const { container } = page(testPrincipal("org_admin"));
+    const b = await block(container);
+    const setBtn = await within(b).findByRole("button", { name: "Tarifpreis setzen" });
+    // the credentials were reordered since the page loaded; the look the form
+    // takes on opening is still under way
+    let release: () => void = () => {};
+    s.srv.gate = new Promise<void>((r) => { release = r; });
+    s.srv.instances = REORDERED;
+    await userEvent.click(setBtn);
+    await userEvent.type(within(b).getByLabelText("Betrag (USD)"), "200");
+    // the cached place (ord 1) is the other secret's now: no saving on it
+    expect(within(b).getByRole("button", { name: "Speichern" })).toBeDisabled();
+    fireEvent.submit(within(b).getByRole("form"));
+    expect(s.puts).toHaveLength(0);
+
+    release();
+    await waitFor(() => expect(within(b).getByRole("button", { name: "Speichern" })).toBeEnabled());
+    await userEvent.click(within(b).getByRole("button", { name: "Speichern" }));
+    await waitFor(() => expect(s.puts).toHaveLength(1));
+    expect(s.puts[0].url).toBe(`/api/v1/runtime-instances/${RT}/credentials/0/plan`);
+    await waitFor(() => expect(within(b).queryByRole("form")).toBeNull());
+  });
+
+  it("meldet, wenn der Server den Preis bei anderen Zugangsdaten gespeichert hat, und behält das Formular", async () => {
+    const s = serve({ readings: [reading()] });
+    const { container } = page(testPrincipal("org_admin"));
+    const b = await block(container);
+    await userEvent.click(await within(b).findByRole("button", { name: "Tarifpreis setzen" }));
+    await userEvent.type(within(b).getByLabelText("Betrag (USD)"), "200");
+    await waitFor(() => expect(within(b).getByRole("button", { name: "Speichern" })).toBeEnabled());
+    // reordered after the form looked: the PUT to ord 1 lands at other_key
+    s.srv.instances = REORDERED;
+    await userEvent.click(within(b).getByRole("button", { name: "Speichern" }));
+
+    const alert = await within(b).findByRole("alert");
+    expect(alert).toHaveTextContent("Bei anderen Zugangsdaten gespeichert — die Zugangsdaten wurden umsortiert; prüfe beide Tarife.");
+    expect(within(b).getByLabelText("Betrag (USD)")).toHaveValue(200);
+    expect(s.puts[0].url).toBe(`/api/v1/runtime-instances/${RT}/credentials/1/plan`);
+
+    // the form looked again: the next save goes to where the seat sits now
+    await waitFor(() => expect(within(b).getByRole("button", { name: "Speichern" })).toBeEnabled());
+    await userEvent.click(within(b).getByRole("button", { name: "Speichern" }));
+    await waitFor(() => expect(s.puts).toHaveLength(2));
+    expect(s.puts[1].url).toBe(`/api/v1/runtime-instances/${RT}/credentials/0/plan`);
+    await waitFor(() => expect(within(b).queryByRole("form")).toBeNull());
   });
 
   it("zeigt den gewählten Beginn in UTC unter dem Feld", async () => {

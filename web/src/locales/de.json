@@ -305,7 +305,8 @@
       "saving": "Speichern …",
       "cancel": "Abbrechen",
       "fromHintWeek": "Vorbelegt: Beginn der aktuellen Zählerwoche.",
-      "fromHintNow": "Noch kein Wochen-Reset bekannt, vorbelegt: jetzt."
+      "fromHintNow": "Noch kein Wochen-Reset bekannt, vorbelegt: jetzt.",
+      "errMoved": "Bei anderen Zugangsdaten gespeichert — die Zugangsdaten wurden umsortiert; prüfe beide Tarife."
     }
   },
   "lang": {

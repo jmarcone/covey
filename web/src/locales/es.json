@@ -305,7 +305,8 @@
       "saving": "Guardando…",
       "cancel": "Cancelar",
       "fromHintWeek": "Valor inicial: el comienzo de la semana actual del contador.",
-      "fromHintNow": "Aún no se conoce el reinicio semanal; valor inicial: ahora."
+      "fromHintNow": "Aún no se conoce el reinicio semanal; valor inicial: ahora.",
+      "errMoved": "Guardado en otra credencial: las credenciales se reordenaron; revisa ambos planes."
     }
   },
   "lang": {
