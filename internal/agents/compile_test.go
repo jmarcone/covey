@@ -30,6 +30,21 @@ func TestCompilePromptOrderAndProtocol(t *testing.T) {
 	}
 }
 
+// An agent learns from the protocol that it can read its own tasks, with the
+// call to make — on the shell route and in the covey tool's description.
+func TestProtocolNamesTheTaskActions(t *testing.T) {
+	for _, call := range []string{"/actions/covey/list_tasks -d", "/actions/covey/get_task -d"} {
+		if !strings.Contains(ProtocolInstructions, call) {
+			t.Errorf("the protocol has no curl line for %s", call)
+		}
+	}
+	for _, action := range []string{"list_tasks {", "get_task {"} {
+		if !strings.Contains(CoveyActionsDoc, action) {
+			t.Errorf("the covey tool description does not name %s", action)
+		}
+	}
+}
+
 func TestCompilePromptEmptyFiles(t *testing.T) {
 	p := CompilePrompt(map[string]string{"SOUL.md": "  \n"})
 	if !strings.HasPrefix(p, "## covey platform protocol") {
