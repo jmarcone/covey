@@ -480,7 +480,10 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
   // The meter's readings of each period, for its details.
   const readingsAt = useMemo(() => {
     const m = new Map<number, MeterPoint[]>();
-    for (const p of meter?.points ?? []) m.set(p.slot, [...(m.get(p.slot) ?? []), p]);
+    for (const p of meter?.points ?? []) {
+      const at = m.get(p.slot);
+      if (at) at.push(p); else m.set(p.slot, [p]);
+    }
     return m;
   }, [meter]);
   // A chart with the meter's axis scrolls with its newest period in view: the
@@ -907,7 +910,13 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
     const points = meterPoints(readings, f.meter, periods, bucket);
     return points.length > 0 ? points : undefined;
   }, [f.meter, f.kind, readings, periods, bucket]);
-  const fmtReadingAt = (iso: string) => (bucket === "week" || bucket === "month" ? fmtBucket(iso, "hour") : fmtClockUTC(iso));
+  // One object per change of its inputs, so the chart's per-period readings
+  // are not rebuilt on every hover or focus.
+  const meterProp = useMemo(() => meterLine && {
+    points: meterLine,
+    label: t("costs.fig.meterLine"),
+    fmtAt: (iso: string) => (bucket === "week" || bucket === "month" ? fmtBucket(iso, "hour") : fmtClockUTC(iso)),
+  }, [meterLine, bucket, t]);
 
   const barsFor = (cs: CostCell[], i: number, withMoney: boolean): Bar[] => {
     const out: Bar[] = [];
@@ -1001,7 +1010,7 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
           )}
           <BarChart title={`${t("costs.chartCost")} · ${name}`} periods={periods} groups={combined} fmtPeriod={fmtPeriod}
             fmtValue={fmtUSD} fmtAxis={fmtUSDAxis} notes={notes} asTable={asTable} wide={vs}
-            meter={meterLine && { points: meterLine, label: t("costs.fig.meterLine"), fmtAt: fmtReadingAt }} />
+            meter={meterProp} />
         </>
       ) : (
         <div style={{ display: "grid", gap: 6 }}>

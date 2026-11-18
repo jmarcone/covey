@@ -157,6 +157,29 @@ describe("weekly meter line", () => {
     expect(container.querySelector("[data-meter-axis]")!.getAttribute("aria-hidden")).toBe("true");
   });
 
+  it("hides the legend under \"Show as table\"", () => {
+    const rs = [reading(iso(18, 18, 5), 9), reading(iso(18, 18, 50), 10)];
+    const { container } = chart(cellsOf([iso(18, 18)], [seg(iso(18, 18, 5), iso(18, 18, 50))]), rs, "hour");
+    expect(container.querySelector("[data-meter-legend]")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show as table" }));
+    expect(container.querySelector("table")).not.toBeNull();
+    expect(container.querySelector("[data-meter-legend]")).toBeNull();
+  });
+
+  it("says \"nothing\" for a period without cost, but not when it has readings", () => {
+    const days = [iso(18, 0), iso(19, 0)];
+    const data = cellsOf(days, [seg(iso(18, 12), iso(19, 12))]);
+    // no cost on either day; only the first has a reading
+    data.cells = data.cells.map((c) => ({ ...c, reported_usd: 0, measured: { output: 0 }, engine_usd: 0, tokens: { output: 0 } }));
+    const { container } = chart(data, [reading(iso(18, 12), 9)], "day");
+    const [withReading, without] = [...container.querySelectorAll<SVGGElement>("g[data-period]")];
+    fireEvent.focusIn(withReading);
+    expect(within(screen.getByRole("tooltip")).getByText(/9 %/)).toBeInTheDocument();
+    expect(screen.getByRole("tooltip").textContent).not.toContain("nothing");
+    fireEvent.focusIn(without);
+    expect(screen.getByRole("tooltip").textContent).toContain("nothing");
+  });
+
   it("is drawn in the real-vs-list view too, and not in the per-agent charts", () => {
     const rs = [reading(iso(18, 18, 5), 9), reading(iso(18, 18, 50), 10)];
     const { container } = chart(cellsOf([iso(18, 18)], [seg(iso(18, 18, 5), iso(18, 18, 50))]), rs, "hour");
@@ -267,8 +290,8 @@ describe("meterPoints", () => {
   it("draws nothing for a reading in no segment, in no period, or without segments", () => {
     const rs = [reading(iso(18, 17, 5), 5), reading(iso(18, 18, 5), 9), reading(iso(18, 20, 5), 11)];
     const segs = [seg(iso(18, 18, 5), iso(18, 20, 5))];
-    // 17:05 is in no segment, 20:05 is in no period of the chart
-    expect(meterPoints(rs, cov(segs), [iso(18, 18)], "hour").map((p) => p.pct)).toEqual([9]);
+    // 17:05 lies in a period of the chart but in no segment, 20:05 is in no period of the chart
+    expect(meterPoints(rs, cov(segs), [iso(18, 17), iso(18, 18)], "hour").map((p) => p.pct)).toEqual([9]);
     expect(meterPoints(rs, cov(null), [iso(18, 18)], "hour")).toEqual([]);
   });
 
