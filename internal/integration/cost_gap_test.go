@@ -306,3 +306,94 @@ func TestMigration0147CostGap(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A line whose filing failed (a transient error in the per-model rows, the
+// gap or its booking — one transaction) still stands in the recording, and
+// its run is booked by the daemon all the same. The session's next line has
+// to measure its gap from that line, not from the last line that left a row:
+// otherwise the failed line's share is booked a second time, as a gap.
+func TestCostGapAfterAFailedFiling(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	agent := s.newSupportAgent("gap-nach-fehler")
+	task := uuid.New()
+	sid := uuid.NewString()
+	none := observability.CredentialRef{}
+	at := func(usd float64, out int64) ccUsage { return ccUsage{USD: usd, Out: out} }
+	lines := []recordedLine{
+		{0, 1000, 0.2, map[string]ccUsage{opus: at(0.2, 200)}, map[string]ccUsage{opus: at(0.2, 200)}},
+		// Its filing fails: recorded, booked by the daemon, no row.
+		{1, 1000, 1.0, map[string]ccUsage{opus: at(1.0, 1000)}, map[string]ccUsage{opus: at(0.8, 800)}},
+		// The next resume after a process WITH a result line: no gap.
+		{2, 1000, 1.5, map[string]ccUsage{opus: at(1.5, 1500)}, map[string]ccUsage{opus: at(0.5, 500)}},
+		// A process died without a line (0.3), then this resume (0.4): the
+		// 0.3 is a gap, measured from line 2.
+		{3, 1000, 2.2, map[string]ccUsage{opus: at(2.2, 2200)}, map[string]ccUsage{opus: at(0.4, 400)}},
+	}
+	for n, l := range lines {
+		raw := json.RawMessage(l.json(sid, n, true))
+		if n == 1 {
+			// What RecordRuntime leaves when fileModelUsage fails: the
+			// recording row and nothing derived from it.
+			if err := s.obs.Record(ctx, agent.OrgID, agent.ID, &task, observability.KindRuntime, raw); err != nil {
+				t.Fatal(err)
+			}
+		} else if err := s.obs.RecordRuntime(ctx, agent.OrgID, agent.ID, &task, none, raw); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.obs.BookRun(ctx, observability.CostEntry{AgentID: agent.ID, TaskID: &task, USD: l.since[opus].USD,
+			Model: opus, Basis: observability.BasisInvocation, SessionID: sid}, false); err != nil {
+			t.Fatal(err)
+		}
+		if n == 2 {
+			if g := readGap(t, s, agent.ID); g.rows != 0 || g.entries != 0 || math.Abs(g.booked-1.5) > 1e-6 {
+				t.Fatalf("the failed line's 0.8 is booked by its run; the next line must not book it again as a gap: %+v", g)
+			}
+		}
+	}
+	g := readGap(t, s, agent.ID)
+	if g.rows != 1 || g.entries != 1 || math.Abs(g.entryUSD-0.3) > 1e-6 || g.out != 300 {
+		t.Fatalf("the dead process's 0.3 is one gap, measured from the line before it: %+v", g)
+	}
+	if math.Abs(g.booked-2.2) > 1e-6 {
+		t.Errorf("booked %v, want the session's 2.2", g.booked)
+	}
+}
+
+// A line without a uuid that arrives again after a later line (L1, L2, L1')
+// is filed again, and it is the session's latest line by arrival. Its running
+// total is older than L2's: the next line (L3) has to measure from the
+// largest running total the session's lines report, not from L1'.
+func TestCostGapAfterALateLineWithoutUUID(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	agent := s.newSupportAgent("gap-spaete-zeile")
+	task := uuid.New()
+	sid := uuid.NewString()
+	none := observability.CredentialRef{}
+	at := func(usd float64, out int64) ccUsage { return ccUsage{USD: usd, Out: out} }
+	lines := []recordedLine{
+		{0, 1000, 0.5, map[string]ccUsage{opus: at(0.5, 500)}, map[string]ccUsage{opus: at(0.5, 500)}},
+		{1, 1000, 1.2, map[string]ccUsage{opus: at(1.2, 1200)}, map[string]ccUsage{opus: at(0.7, 700)}},
+		{2, 1000, 1.5, map[string]ccUsage{opus: at(1.5, 1500)}, map[string]ccUsage{opus: at(0.3, 300)}},
+	}
+	file := func(n int) {
+		t.Helper()
+		var line map[string]any
+		if err := json.Unmarshal([]byte(lines[n].json(sid, n, true)), &line); err != nil {
+			t.Fatal(err)
+		}
+		delete(line, "uuid")
+		raw, _ := json.Marshal(line)
+		if err := s.obs.RecordRuntime(ctx, agent.OrgID, agent.ID, &task, none, raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+	file(0)
+	file(1)
+	file(0) // re-sent late
+	file(2)
+	if g := readGap(t, s, agent.ID); g.rows != 0 || g.entries != 0 {
+		t.Fatalf("no process died: the late copy of the first line must not make L2's 0.7 a gap: %+v", g)
+	}
+}

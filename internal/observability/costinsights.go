@@ -156,12 +156,16 @@ WHERE d.input_tokens <> 0 OR d.output_tokens <> 0 OR d.thinking_tokens <> 0 OR d
    OR d.cache_write_5m_tokens <> 0 OR d.cache_write_1h_tokens <> 0 OR d.web_search_requests <> 0 OR d.engine_usd <> 0
 ON CONFLICT DO NOTHING`
 
-// usageFigures reads one per-model entry — the JSON expression v — into the
-// figures model_usage keeps, each column named with the prefix p. Guarded
-// like jsonInt: what is not a JSON number is 0; the 5-minute cache write falls
-// back to the plain sum like cacheWrite5m.
-func usageFigures(v, p string) string {
-	cols := []struct{ name, expr string }{
+// figure is one of the figures model_usage keeps per model, and the
+// expression that reads it out of a per-model entry.
+type figure struct{ name, expr string }
+
+// usageColumns reads one per-model entry — the JSON expression v — into the
+// figures model_usage keeps. Guarded like jsonInt: what is not a JSON number
+// is 0; the 5-minute cache write falls back to the plain sum like
+// cacheWrite5m.
+func usageColumns(v string) []figure {
+	return []figure{
 		{"input_tokens", jsonIntOf(v, "inputTokens")},
 		{"output_tokens", jsonIntOf(v, "outputTokens")},
 		{"thinking_tokens", jsonIntOf(v, "thinkingTokens")},
@@ -171,9 +175,25 @@ func usageFigures(v, p string) string {
 		{"web_search_requests", jsonIntOf(v, "webSearchRequests")},
 		{"engine_usd", "CASE WHEN jsonb_typeof(" + v + "->'costUSD') = 'number' THEN (" + v + "->>'costUSD')::numeric ELSE 0 END"},
 	}
+}
+
+// usageFigures is usageColumns as a select list, each column named with the
+// prefix p.
+func usageFigures(v, p string) string {
+	cols := usageColumns(v)
 	parts := make([]string, len(cols))
 	for i, c := range cols {
 		parts[i] = c.expr + " AS " + p + c.name
+	}
+	return strings.Join(parts, ",\n\t\t")
+}
+
+// usageEach applies x to the name of each figure, named with the prefix p.
+func usageEach(x func(name string) string, p string) string {
+	cols := usageColumns("")
+	parts := make([]string, len(cols))
+	for i, c := range cols {
+		parts[i] = x(c.name) + " AS " + p + c.name
 	}
 	return strings.Join(parts, ",\n\t\t")
 }
@@ -186,19 +206,36 @@ func usageFigures(v, p string) string {
 // without a result line, whose cost Claude Code kept in the running total.
 // $2..$6 are the credential, as for modelUsageInsert.
 //
-// The previous line is the latest earlier recording event of the session that
-// left a model_usage row (of any basis, a gap row included), read back from
-// the recording. Measured from line to line, not against the sum of the
-// session's rows: a session whose earlier lines were never filed (before
-// 0142, or pruned before its backfill) would otherwise have its whole history
-// booked again as a gap. Without a previous line — the session's first line
-// here, or a previous recording already pruned — nothing is filed: a gap is
-// only booked where both ends are known.
+// The running total before this line is, per model and per figure, the
+// largest one the session's earlier RECORDED lines report — read back from
+// the recording, not from the rows a line left. Two kinds of line count:
+//
+//   - every earlier line that left a model_usage row (of any basis, a gap row
+//     included), and
+//   - every result line of the session recorded after the latest of those,
+//     found in the agent's recording between the two. That is a line whose
+//     filing failed (an error in the rows, the gap or its booking — one
+//     transaction): the recording stands, the daemon booked its run all the
+//     same, and its share must not come back as a gap.
+//
+// The largest, not the latest: a running total cannot shrink, so the largest
+// is the session's latest state whatever order the lines arrived in. A line
+// without a uuid that is sent again after later lines is filed again; as the
+// latest line it would put the running total back and book the lines after
+// it a second time.
+//
+// Measured from line to line, not against the sum of the session's rows: a
+// session whose earlier lines were never filed (before 0142, or pruned before
+// its backfill) would otherwise have its whole history booked again as a gap.
+// Without an earlier line — the session's first line here, a session none of
+// whose lines was filed yet, or earlier recordings already pruned — nothing
+// is filed: a gap is only booked where both ends are known.
 //
 // It cannot book anything twice:
 //
 //   - After a process WITH a result line, that line is the previous one and
-//     the running total grew by exactly this line's share: no gap.
+//     the running total grew by exactly this line's share: no gap. This holds
+//     where that line's filing failed, too.
 //   - After one WITHOUT, the growth holds its spend once, and this line is the
 //     previous one for every later line: none of them finds it again.
 //   - The turn-limit handover resumes the same session and writes a line of
@@ -206,9 +243,9 @@ func usageFigures(v, p string) string {
 //     next line, if the session is resumed again.
 //   - Covey's sub-agent runs are sessions of their own; Claude Code's own
 //     sub-agents are inside the line's share.
-//   - A line filed twice (a retried event) has its first copy as previous
-//     line: the growth is 0, the difference minus its share. The same for a
-//     copy arriving after later lines — the running total cannot shrink.
+//   - A line filed twice (a retried event) finds its first copy: the growth
+//     is 0, the difference minus its share. The same for a copy arriving after
+//     later lines, and for every line after that copy.
 //
 // Only a difference above a millionth of a dollar is filed, and only upwards:
 // a negative difference is never booked. Tokens follow the money, each floored
@@ -223,21 +260,42 @@ WITH e AS (
 	  AND jsonb_typeof(payload->'session_id') = 'string' AND payload->>'session_id' <> ''
 	  AND jsonb_typeof(payload->'model_usage_since_last_result') = 'object'
 	  AND jsonb_typeof(payload->'modelUsage') = 'object'),
-prev AS (
+filed AS (
+	SELECT DISTINCT p.event_id AS id
+	FROM model_usage p, e
+	WHERE p.session_id = e.session_id AND p.event_id < e.id),
+lines AS (
+	SELECT id FROM filed
+	UNION
+	SELECT r.id
+	FROM recording_events r, e
+	WHERE r.agent_id = e.agent_id AND r.id > (SELECT max(id) FROM filed) AND r.id < e.id
+	  AND r.kind = '` + KindRuntime + `' AND r.payload->>'type' = 'result'
+	  AND r.payload->>'session_id' = e.session_id),
+known AS (
 	SELECT r.payload->'modelUsage' AS usage
 	FROM recording_events r
-	WHERE r.id = (SELECT max(p.event_id) FROM model_usage p, e
-	              WHERE p.session_id = e.session_id AND p.event_id < e.id)
-	  AND jsonb_typeof(r.payload->'modelUsage') = 'object'),
+	WHERE r.id IN (SELECT id FROM lines) AND jsonb_typeof(r.payload->'modelUsage') = 'object'),
+f AS (
+	SELECT m.key AS model,
+		` + usageFigures("m.value", "") + `
+	FROM known
+	CROSS JOIN LATERAL jsonb_each(CASE WHEN jsonb_typeof(known.usage) = 'object' THEN known.usage ELSE '{}'::jsonb END) AS m(key, value)
+	WHERE jsonb_typeof(m.value) = 'object'),
+prev AS (
+	SELECT f.model,
+		` + usageEach(func(n string) string { return "max(f." + n + ")" }, "p_") + `
+	FROM f
+	GROUP BY f.model),
 g AS (
 	SELECT e.id, e.org_id, e.agent_id, e.task_id, e.created_at, e.session_id, m.key AS model,
 		` + usageFigures("m.value", "c_") + `,
-		` + usageFigures("(prev.usage->m.key)", "p_") + `,
+		` + usageEach(func(n string) string { return "COALESCE(prev.p_" + n + ", 0)" }, "p_") + `,
 		` + usageFigures("(e.payload->'model_usage_since_last_result'->m.key)", "s_") + `
 	FROM e
-	CROSS JOIN prev
 	CROSS JOIN LATERAL jsonb_each(e.payload->'modelUsage') AS m(key, value)
-	WHERE jsonb_typeof(m.value) = 'object')
+	LEFT JOIN prev ON prev.model = m.key
+	WHERE jsonb_typeof(m.value) = 'object' AND EXISTS (SELECT 1 FROM known))
 INSERT INTO model_usage (org_id, agent_id, task_id, event_id, session_id, model,
 	input_tokens, output_tokens, thinking_tokens, cache_read_tokens,
 	cache_write_5m_tokens, cache_write_1h_tokens, web_search_requests,
