@@ -542,6 +542,10 @@ const (
 	SplitNoReportedCall = "moved_without_reported_call"
 	// SplitUnpriced: points no plan prices; the step is out of the dent.
 	SplitUnpriced = "unpriced"
+	// SplitIdle: a reported reading that did not move, with no call on
+	// either side: nothing to split. It is neither a split nor an unsplit
+	// step, and the run of split steps goes on through it.
+	SplitIdle = "idle"
 )
 
 // ExternalMeter is F3 over the window: per reading step of every seat, the
@@ -603,7 +607,9 @@ type ExternalMeterSums struct {
 	PointRateMixed bool    `json:"point_rate_mixed"`
 	// StepCount: the readings in the window with a span (the first reading
 	// of a meter, its baseline, has none); SplitSteps / UnsplitSteps of them,
-	// UnsplitSteps counting the priced ones that moved.
+	// UnsplitSteps counting the priced ones that moved. An idle step
+	// (SplitIdle) is in neither: a seat whose only reported steps are idle
+	// has no split.
 	StepCount    int `json:"step_count"`
 	SplitSteps   int `json:"split_steps"`
 	UnsplitSteps int `json:"unsplit_steps"`
@@ -1336,9 +1342,10 @@ func (r splitRun) tv(f func(k int) float64) float64 {
 // reported step with no list on either side that moved the meter is not
 // split: neither covey nor a linked source made that movement. One that did
 // not move either (R = 0, both lists 0: an idle reading) has nothing to
-// split; it neither starts nor ends a run, so the runs' ranges see through
-// it, as the meter, unmoved, does. Any other unsplit step ends the run, and
-// a reset starts a new one.
+// split and is no split step (SplitIdle, #126 finding 25); it neither
+// starts nor ends a run, so the runs' ranges see through it, as the meter,
+// unmoved, does. Any other unsplit step ends the run, and a reset starts a
+// new one.
 func splitSeat(seat meterSeat, sources []string, steps []shareStep) (ExternalMeterTotal, []ExternalMeterStep) {
 	tot := ExternalMeterTotal{SecretKey: seat.key, SecretSlot: seat.slot, Sources: append([]string{}, sources...),
 		Agents: []ExternalMeterAgent{}}
@@ -1369,7 +1376,6 @@ func splitSeat(seat meterSeat, sources []string, steps []shareStep) (ExternalMet
 		tot.SplitCoveySlackUSD += run.tv(func(k int) float64 { return (1 - run.share[k]) * run.rate[k] })
 		run = splitRun{}
 	}
-	lastRate := 0.0
 	for _, in := range steps {
 		st := ExternalMeterStep{At: in.At, From: in.From, SecretKey: seat.key, SecretSlot: seat.slot,
 			Points: in.Points, Reset: in.Reset, ExternalListUSD: in.LOut, CoveyListUSD: in.LCov, Reported: in.Reported}
@@ -1397,7 +1403,6 @@ func splitSeat(seat meterSeat, sources []string, steps []shareStep) (ExternalMet
 		r := 0.0
 		if in.Rate != nil {
 			r = in.Points * *in.Rate
-			lastRate = *in.Rate
 			if in.Points != 0 {
 				rates[*in.Rate] = true
 				tot.PointRate = math.Max(tot.PointRate, *in.Rate)
@@ -1408,7 +1413,7 @@ func splitSeat(seat meterSeat, sources []string, steps []shareStep) (ExternalMet
 		tot.Points += in.Points
 		lists := in.LOut + in.LCov
 		switch {
-		case !in.Reported || (lists == 0 && r != 0):
+		case !in.Reported || (lists == 0 && in.Points != 0):
 			st.Reason = SplitNotReported
 			if in.Reported {
 				st.Reason = SplitNoReportedCall
@@ -1420,11 +1425,10 @@ func splitSeat(seat meterSeat, sources []string, steps []shareStep) (ExternalMet
 			}
 			unsplitList()
 			endRun()
+		case lists == 0:
+			st.Reason = SplitIdle
 		default:
-			share := 0.0
-			if lists > 0 {
-				share = in.LOut / lists
-			}
+			share := in.LOut / lists
 			rOut := r * share
 			rCov := r - rOut
 			st.Split, st.ExternalRealUSD, st.CoveyRealUSD = true, &rOut, &rCov
@@ -1443,16 +1447,15 @@ func splitSeat(seat meterSeat, sources []string, steps []shareStep) (ExternalMet
 					a.RealUSD += rCov * l / in.LCov
 				}
 			}
-			if lists > 0 {
-				// The price of a reading that did not move is the plan's
-				// all the same; without one, the run's last.
-				rate := lastRate
-				if in.Rate != nil {
-					rate = *in.Rate
-				}
-				run.share = append(run.share, share)
-				run.rate = append(run.rate, rate)
+			// The price of a reading that did not move is the plan's all the
+			// same; without a plan it has none, so its $ coefficient is 0
+			// (#126 finding 24), not the price of an earlier reading.
+			rate := 0.0
+			if in.Rate != nil {
+				rate = *in.Rate
 			}
+			run.share = append(run.share, share)
+			run.rate = append(run.rate, rate)
 		}
 		out = append(out, st)
 	}

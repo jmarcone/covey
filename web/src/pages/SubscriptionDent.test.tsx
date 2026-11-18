@@ -22,7 +22,8 @@ const H18 = "2026-11-17T18:00:00Z", H19 = "2026-11-17T19:00:00Z", H20 = "2026-11
 const times = (v: number) => `${fmtNumber(v, 1)}×`;
 
 /** One reading step as the server returns it: split by list-price share
- *  when reported and some list is there, else unsplit. */
+ *  when reported and some list is there, else unsplit — idle when reported
+ *  with neither list nor movement. */
 function step(at: string, from: string, points: number, reported: boolean, outList: number, covList: number, key = SEAT): ExternalMeterStep {
   const real = points * PP;
   const split = reported && outList + covList > 0;
@@ -30,7 +31,7 @@ function step(at: string, from: string, points: number, reported: boolean, outLi
   return {
     at, from, secret_key: key, secret_slot: 0, points, reset: false, real_usd: real,
     external_list_usd: outList, covey_list_usd: covList, reported, split,
-    reason: split ? undefined : "not_reported",
+    reason: split ? undefined : reported && points === 0 && outList + covList === 0 ? "idle" : "not_reported",
     external_real_usd: out, covey_real_usd: out == null ? null : real - out, unsplit_real_usd: split ? 0 : real,
   };
 }
@@ -260,6 +261,25 @@ describe("one rule for the headline, the chart and the agents", () => {
       expect(a.realShare).toBeGreaterThan(0);
     }
     expect(s.agents.reduce((a, x) => a + x.realShare!, 0)).toBeCloseTo(s.real!.value, 9);
+  });
+
+  it("keeps covey-only bounds on a linked seat whose only reported reading is idle, never ≈ $0.00 (finding 25)", () => {
+    // Reported but unmoved with no call on either side, then a reading the
+    // outside sessions had not reported: the server counts no split step.
+    const b = [
+      step("2026-11-17T18:40:00Z", "2026-11-17T17:40:00Z", 0, true, 0, 0),
+      step("2026-11-17T19:40:00Z", "2026-11-17T18:40:00Z", 3, false, 0, 2),
+    ];
+    expect(b[0].split).toBe(false);
+    expect(b[0].reason).toBe("idle");
+    const total = seat(b, { split_runs: 0, split_slack_points: 0, split_slack_usd: 0 });
+    expect(total.split_steps).toBe(0);
+    const [s] = credentialFigures({ cells: cells(external([{ steps: b, total }]), [0, 3, 0]), bucketMs: 3600_000,
+      windowEnd: new Date("2026-11-17T21:00:00Z") });
+    expect(s.split).toBeNull();
+    expect(s.outsideUnreported).toBe(true);
+    expect(s.noMultiple).not.toBe("outside");
+    for (const a of s.agents) expect(a.realBound).toBe("upTo");
   });
 });
 

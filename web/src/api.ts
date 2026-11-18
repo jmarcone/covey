@@ -888,7 +888,7 @@ export type ExternalMeterStep = {
   reported: boolean;
   /** Split: the two parts are set and add up to real_usd. Otherwise reason says why not. */
   split: boolean;
-  reason?: "not_reported" | "moved_without_reported_call" | "unpriced";
+  reason?: "not_reported" | "moved_without_reported_call" | "unpriced" | "idle";
   external_real_usd: number | null;
   covey_real_usd: number | null;
   unsplit_real_usd: number;

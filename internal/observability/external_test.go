@@ -396,9 +396,58 @@ func TestSplitSeatMovedWithoutACall(t *testing.T) {
 		return tot
 	}
 	with, without := run(true), run(false)
-	if with.SplitRuns != 1 || with.SplitExternalSlackPoints != without.SplitExternalSlackPoints || with.SplitSteps != 3 {
-		t.Errorf("with an idle reading: %d runs, slack %v (%v without), %d split steps", with.SplitRuns,
-			with.SplitExternalSlackPoints, without.SplitExternalSlackPoints, with.SplitSteps)
+	if with.SplitRuns != 1 || with.SplitExternalSlackPoints != without.SplitExternalSlackPoints || with.SplitSteps != 2 ||
+		with.UnsplitSteps != 0 {
+		t.Errorf("with an idle reading: %d runs, slack %v (%v without), %d split steps, %d unsplit", with.SplitRuns,
+			with.SplitExternalSlackPoints, without.SplitExternalSlackPoints, with.SplitSteps, with.UnsplitSteps)
+	}
+}
+
+// #126 finding 25: an idle reading is no split step. A seat whose only
+// reported reading is idle, followed by one the outside sessions had not
+// reported, has no split at all, so the page keeps covey-only bounds for it.
+func TestSplitSeatIdleIsNoSplitStep(t *testing.T) {
+	tot, steps := splitSeat(meterSeat{"seat", 0}, []string{"src"}, []shareStep{
+		{From: tm("10:00"), At: tm("11:00"), Points: 0, Rate: rate(4), Reported: true},
+		{From: tm("11:00"), At: tm("12:00"), Points: 3, Rate: rate(4), LCov: 2, Reported: false},
+	})
+	if s := steps[0]; s.Split || s.Reason != SplitIdle || !nearP(s.RealUSD, 0) || s.ExternalRealUSD != nil || s.CoveyRealUSD != nil {
+		t.Errorf("the idle step = %+v, want not split (%s), R 0", s, SplitIdle)
+	}
+	if s := steps[1]; s.Split || s.Reason != SplitNotReported || !near(s.UnsplitRealUSD, 12) {
+		t.Errorf("the unreported step = %+v, want unsplit 12 (%s)", s, SplitNotReported)
+	}
+	if tot.SplitSteps != 0 || tot.UnsplitSteps != 1 || tot.SplitPoints != 0 || tot.CoveyRealUSD != 0 ||
+		tot.SplitRuns != 0 || !near(tot.UnsplitRealUSD, 12) || tot.Share != nil || tot.StepCount != 2 {
+		t.Errorf("split steps %d, unsplit %d, split points %v, covey %v, runs %d, unsplit $%v, share %v, steps %d; "+
+			"want 0, 1, 0, 0, 0, 12, nil, 2", tot.SplitSteps, tot.UnsplitSteps, tot.SplitPoints, tot.CoveyRealUSD,
+			tot.SplitRuns, tot.UnsplitRealUSD, tot.Share, tot.StepCount)
+	}
+	m := meterSums([]ExternalMeterTotal{tot}, steps)
+	if len(m.Hours) != 2 || m.Hours[0].SplitSteps != 0 || m.Hours[0].Steps != 1 || m.SplitSteps != 0 {
+		t.Errorf("hours %+v, split steps %d; want two hours, none split", m.Hours, m.SplitSteps)
+	}
+}
+
+// #126 finding 24: a reading without a plan has no price, so its $
+// coefficient in the run's range is 0, not the price of the reading before
+// it. 2 pts @ $4, 0 pts without a plan, 2 pts @ $4, each with L_out 1 and
+// L_cov 1: rates 4, 0, 4 → ½(4 + 4 + 4 + 4) = 8; the outside part's
+// coefficients 2, 0, 2 → ½(2 + 2 + 2 + 2) = 4.
+func TestSplitSeatRangeWithoutAPlan(t *testing.T) {
+	tot, steps := splitSeat(meterSeat{"seat", 0}, []string{"src"}, []shareStep{
+		{From: tm("10:00"), At: tm("11:00"), Points: 2, Rate: rate(4), LOut: 1, LCov: 1, Reported: true},
+		{From: tm("11:00"), At: tm("12:00"), Points: 0, Rate: nil, LOut: 1, LCov: 1, Reported: true},
+		{From: tm("12:00"), At: tm("13:00"), Points: 2, Rate: rate(4), LOut: 1, LCov: 1, Reported: true},
+	})
+	if !steps[1].Split || tot.SplitSteps != 3 || tot.SplitRuns != 1 {
+		t.Errorf("middle step %+v, %d split steps, %d runs; want split, 3, 1", steps[1], tot.SplitSteps, tot.SplitRuns)
+	}
+	if !near(tot.SplitSlackUSD, 8) || !near(tot.SplitExternalSlackUSD, 4) || !near(tot.SplitCoveySlackUSD, 4) {
+		t.Errorf("slack whole %v outside %v covey %v, want 8, 4, 4", tot.SplitSlackUSD, tot.SplitExternalSlackUSD, tot.SplitCoveySlackUSD)
+	}
+	if !near(tot.SplitSlackPoints, 1) || !near(tot.SplitExternalSlackPoints, 0.5) {
+		t.Errorf("slack points %v outside %v, want 1, 0.5", tot.SplitSlackPoints, tot.SplitExternalSlackPoints)
 	}
 }
 
