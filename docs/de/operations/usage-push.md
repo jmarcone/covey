@@ -31,7 +31,13 @@ covey usage push ~/.claude/projects/<projekt> --source "operator: laptop" \
   Modell), und sendet nichts. Dafür braucht es weder URL noch Schlüssel.
 - `--key-file PFAD` liest den Schlüssel aus einer Datei statt aus
   `COVEY_API_KEY`. Die Datei darf für Gruppe und andere nicht lesbar sein
-  (`chmod 600`). Von der Kommandozeile wird der Schlüssel nie genommen.
+  (`chmod 600`); unter Windows wird die ACL der Datei nicht geprüft, also
+  gehört sie ins eigene Profil. Von der Kommandozeile wird der Schlüssel nie
+  genommen.
+- Ein Verzeichnis kann ein Projekt (`~/.claude/projects/<projekt>`), ganz
+  `~/.claude/projects` oder der Ordner einer Sitzung sein: Sitzung und
+  Herkunft ergeben sich aus dem Ort jeder Datei, nicht aus dem genannten
+  Verzeichnis.
 - Mehrere Verzeichnisse sind möglich. Gelesen werden Hauptsitzungen,
   `subagents/` und `workflows/`; gestreamte Kopien eines Aufrufs zählen einmal.
 

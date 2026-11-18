@@ -80,14 +80,54 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 			m.SecretSlot = n
 		}
 	}
-	h := *host
+	h := strings.TrimSpace(*host)
 	if h == "" {
 		h, _ = os.Hostname()
+	}
+	if h == "" || len(h) > 256 {
+		return errors.New("covey usage push: --host is required (1-256 bytes) when the host name is unknown")
+	}
+
+	// A real push checks its URL and key before reading anything.
+	var base, key string
+	if !*dry {
+		base = *url
+		if base == "" {
+			base = getenv("COVEY_URL")
+		}
+		if base == "" {
+			return errors.New("covey usage push: --url or COVEY_URL is required")
+		}
+		k, err := apiKey(*keyFile, getenv)
+		if err != nil {
+			return err
+		}
+		key = k
 	}
 
 	rows, st, err := usagepush.Read(dirs, h, sinceT)
 	if err != nil {
 		return err
+	}
+	if st.Files == 0 {
+		return fmt.Errorf("covey usage push: no *.jsonl transcripts under %s", strings.Join(dirs, ", "))
+	}
+	// The intake refuses a ts later than now + 5 min. Calls stamped ahead of
+	// this clock wait for a later run rather than fail the whole batch.
+	held := 0
+	if limit := time.Now().Add(4 * time.Minute); len(rows) > 0 {
+		kept := rows[:0]
+		for _, r := range rows {
+			if r.TS.After(limit) {
+				held++
+				continue
+			}
+			kept = append(kept, r)
+		}
+		rows = kept
+	}
+	if held > 0 {
+		fmt.Fprintf(stdout, "%d calls are stamped more than 4 min ahead of this clock; they wait for a later run\n", held)
 	}
 	if *dry {
 		sum := usagepush.Summarize(rows)
@@ -116,17 +156,6 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 		return nil
 	}
 
-	base := *url
-	if base == "" {
-		base = getenv("COVEY_URL")
-	}
-	if base == "" {
-		return errors.New("covey usage push: --url or COVEY_URL is required")
-	}
-	key, err := apiKey(*keyFile, getenv)
-	if err != nil {
-		return err
-	}
 	batches, err := usagepush.Batches(strings.TrimSpace(*source), m, rows)
 	if err != nil {
 		return err
@@ -136,6 +165,10 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 	for i, b := range batches {
 		r, err := c.Post(context.Background(), b)
 		if err != nil {
+			if i > 0 {
+				fmt.Fprintf(stdout, "accepted before the failure: %d calls in %d requests: %d new, %d updated, %d unchanged\n",
+					tot.Received, i, tot.Inserted, tot.Updated, tot.Unchanged)
+			}
 			return fmt.Errorf("batch %d of %d: %w", i+1, len(batches), err)
 		}
 		tot.Received += r.Received
@@ -149,7 +182,8 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 }
 
 // apiKey reads the key from --key-file or COVEY_API_KEY. A key file others can
-// read is refused (on systems with Unix permissions).
+// read is refused on systems with Unix permissions; on Windows the file's ACL
+// is not checked.
 func apiKey(path string, getenv func(string) string) (string, error) {
 	if path == "" {
 		k := strings.TrimSpace(getenv("COVEY_API_KEY"))

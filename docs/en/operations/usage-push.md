@@ -29,8 +29,12 @@ covey usage push ~/.claude/projects/<project> --source "operator: laptop" \
 - `--dry-run` prints what would be sent (calls and tokens per origin and per
   model) and sends nothing. It needs neither URL nor key.
 - `--key-file PATH` reads the key from a file instead of `COVEY_API_KEY`. The
-  file must not be readable by group or others (`chmod 600`). The key is never
+  file must not be readable by group or others (`chmod 600`); on Windows the
+  file's ACL is not checked, so keep it in your own profile. The key is never
   taken from the command line.
+- A directory may be one project (`~/.claude/projects/<project>`), all of
+  `~/.claude/projects`, or one session's folder: the session and its origin
+  come from each file's own place, not from the directory named.
 - Several directories may be named at once. Main sessions, `subagents/` and
   `workflows/` transcripts are read; streamed copies of one call count once.
 

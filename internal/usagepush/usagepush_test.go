@@ -209,3 +209,47 @@ func itoa(i int) string {
 	b, _ := json.Marshal(i)
 	return string(b)
 }
+
+// The session and origin come from each file's own place, whatever root is
+// named: all projects, one project, or one session's folder (#145 review).
+func TestReadPlacesFilesWhateverTheRoot(t *testing.T) {
+	root := t.TempDir()
+	line := func(id string) string {
+		return `{"type":"assistant","timestamp":"2026-11-18T10:00:00Z","message":{"id":"` + id +
+			`","model":"claude-opus-5-5","usage":{"input_tokens":1,"output_tokens":2}}}` + "\n"
+	}
+	files := map[string]string{
+		"-home-me-proj/s1.jsonl":                                  line("m-main"),
+		"-home-me-proj/s1/subagents/agent-a.jsonl":                line("m-sub"),
+		"-home-me-proj/s1/subagents/workflows/wf_1/agent-b.jsonl": line("m-wf"),
+		"-home-me-other/s2.jsonl":                                 line("m-other"),
+	}
+	for p, body := range files {
+		full := filepath.Join(root, filepath.FromSlash(p))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := map[string][2]string{
+		"m-main": {"s1", OriginMain}, "m-sub": {"s1", OriginSubagent},
+		"m-wf": {"s1", OriginWorkflow}, "m-other": {"s2", OriginMain},
+	}
+	for _, r := range []string{root, filepath.Join(root, "-home-me-proj"), filepath.Join(root, "-home-me-proj", "s1")} {
+		rows, _, err := Read([]string{r}, "h", time.Time{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) == 0 {
+			t.Fatalf("root %s: no rows", r)
+		}
+		for _, row := range rows {
+			w := want[row.MessageID]
+			if row.SessionID != w[0] || row.Origin != w[1] {
+				t.Errorf("root %s, %s: session %q origin %q, want %q %q", r, row.MessageID, row.SessionID, row.Origin, w[0], w[1])
+			}
+		}
+	}
+}

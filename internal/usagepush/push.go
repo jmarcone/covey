@@ -86,6 +86,10 @@ func (c Client) Post(ctx context.Context, body []byte) (Result, error) {
 	}
 	url := strings.TrimRight(c.BaseURL, "/") + "/api/v1/cost/external-usage"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err == nil {
+		// Error messages name the URL without any user:password in it.
+		url = req.URL.Redacted()
+	}
 	if err != nil {
 		return res, err
 	}

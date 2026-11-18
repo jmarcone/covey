@@ -21,6 +21,7 @@ package usagepush
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -100,6 +101,11 @@ func Read(roots []string, host string, since time.Time) ([]Row, Stats, error) {
 	}
 	seen := map[string]*kept{}
 	for _, root := range roots {
+		// A root that is itself a symlink (a dotfiles setup) is followed;
+		// WalkDir alone would list nothing below it.
+		if r, err := filepath.EvalSymlinks(root); err == nil {
+			root = r
+		}
 		var files []string
 		err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 			if err != nil {
@@ -115,13 +121,11 @@ func Read(roots []string, host string, since time.Time) ([]Row, Stats, error) {
 		}
 		sort.Strings(files)
 		for _, f := range files {
-			rel, err := filepath.Rel(root, f)
+			abs, err := filepath.Abs(f)
 			if err != nil {
 				return nil, st, err
 			}
-			parts := strings.Split(filepath.ToSlash(rel), "/")
-			session := strings.TrimSuffix(parts[0], ".jsonl")
-			origin := originOf(parts)
+			session, origin := place(abs)
 			st.Files++
 			if err := readFile(f, func(l *line) {
 				m := l.Message
@@ -189,20 +193,26 @@ func Read(roots []string, host string, since time.Time) ([]Row, Stats, error) {
 	return rows, st, nil
 }
 
-// originOf names the origin by the transcript's path below the root:
-// <session>.jsonl is the main session; anything under a workflows/ directory
-// is a workflow agent; anything else below the session directory (subagents/)
-// is a subagent.
-func originOf(parts []string) string {
-	if len(parts) == 1 {
-		return OriginMain
-	}
-	for _, p := range parts[:len(parts)-1] {
-		if p == "workflows" {
-			return OriginWorkflow
+// place names a transcript's session and origin by the file's own position,
+// whatever root was given (a project directory, ~/.claude/projects, or one
+// session's directory): <session>/subagents/agent-*.jsonl is a subagent of
+// <session>, <session>/subagents/workflows/<wf>/agent-*.jsonl a workflow
+// agent, and any other <session>.jsonl a main session.
+func place(abs string) (session, origin string) {
+	parts := strings.Split(filepath.ToSlash(filepath.Clean(abs)), "/")
+	for i := len(parts) - 2; i >= 1; i-- {
+		if parts[i] != "subagents" {
+			continue
 		}
+		origin = OriginSubagent
+		for _, p := range parts[i+1 : len(parts)-1] {
+			if p == "workflows" {
+				origin = OriginWorkflow
+			}
+		}
+		return parts[i-1], origin
 	}
-	return OriginSubagent
+	return strings.TrimSuffix(parts[len(parts)-1], ".jsonl"), OriginMain
 }
 
 func readFile(path string, each func(*line)) error {
@@ -217,7 +227,7 @@ func readFile(path string, each func(*line)) error {
 		b := sc.Bytes()
 		// Cheap filter before decoding, as the script does: most lines are
 		// user turns and tool results without a usage.
-		if !strings.Contains(string(b), `"usage"`) {
+		if !bytes.Contains(b, []byte(`"usage"`)) {
 			continue
 		}
 		var l line
