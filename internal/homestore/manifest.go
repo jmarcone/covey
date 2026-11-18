@@ -318,14 +318,21 @@ var errChanged = errors.New("changed under the scan")
 // at exactly that moment.
 var openRefusedHook func(rel string)
 
-// refusedLink reports whether an open through the root failed because the
-// name led through a link: ELOOP when the link was gone again before the root
-// could read it (or there were too many of them), "path escapes from parent"
-// when its target lies outside the home. The second is a plain error in the
-// os package with no exported value to compare against, hence the text; a
-// test pins it (TestOpenOfFileSwappedForLinkAndBackIsAChange).
-func refusedLink(err error) bool {
-	if errors.Is(err, syscall.ELOOP) {
+// refusedChanged reports whether an open through the root failed in a way
+// only a change under the walk explains. The walk saw every component of rel
+// as a directory, and rel itself as a regular file, so whatever the root
+// meets that is anything else is new:
+//   - ELOOP: a link, which the root gives up on when it was gone again before
+//     it could read it or when there are more than its own limit of eight
+//     (rootMaxSymlinks in os/root.go, not the kernel's 40);
+//   - ENOTDIR: a component that is no longer a directory — a parent replaced
+//     by a file or by a link to one, or rel replaced by a link through a file;
+//   - "path escapes from parent": a link whose target lies outside the home.
+//     It is a plain error in the os package with no exported value to compare
+//     against, hence the text; a test pins it
+//     (TestOpenOfFileSwappedForLinkAndBackIsAChange).
+func refusedChanged(err error) bool {
+	if errors.Is(err, syscall.ELOOP) || errors.Is(err, syscall.ENOTDIR) {
 		return true
 	}
 	var pe *os.PathError
@@ -346,12 +353,13 @@ func openSame(home *os.Root, rel string, want fs.FileInfo) (*os.File, fs.FileInf
 		// rather than at the identity check. Either way it is a change, not
 		// a fault of the sync.
 		//
-		// The refusal itself says so: the walk classified a regular file, and
-		// the root met a link under that name. Asking the name again
-		// afterwards cannot tell — by then a writer may have put a regular
-		// file back, and a file just created may carry the inode number the
-		// classified one freed, so os.SameFile vouches for it (#11).
-		if refusedLink(err) {
+		// The refusal itself says so: the walk classified a regular file
+		// beneath directories, and the root met something else on the way.
+		// Asking the name again afterwards cannot tell — by then a writer may
+		// have put a regular file back, and a file just created may carry the
+		// inode number the classified one freed, so os.SameFile vouches for
+		// it (#11).
+		if refusedChanged(err) {
 			return nil, nil, fmt.Errorf("%s: %w", rel, errChanged)
 		}
 		if now, lerr := home.Lstat(filepath.FromSlash(rel)); lerr != nil || !os.SameFile(now, want) {

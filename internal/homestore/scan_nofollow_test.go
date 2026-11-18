@@ -40,6 +40,12 @@ func withScanHook(t *testing.T, hook func(rel string)) {
 	t.Cleanup(func() { scanHook = nil })
 }
 
+func withOpenRefusedHook(t *testing.T, hook func(rel string)) {
+	t.Helper()
+	openRefusedHook = hook
+	t.Cleanup(func() { openRefusedHook = nil })
+}
+
 // swapForLink replaces path with a symlink to target, atomically, the way a
 // process in the sandbox would.
 func swapForLink(t *testing.T, path, target string) {
@@ -103,46 +109,60 @@ func TestScanSkipsFileSwappedForLinkBeforeRead(t *testing.T) {
 func TestOpenOfFileSwappedForLinkAndBackIsAChange(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		// The link that stands in for f while it is opened: one out of the
-		// home ("path escapes from parent") and one the root gives up on
-		// (ELOOP).
+		// open is the file the walk classified; swap is the name that stands
+		// in as a link while it is opened — the file itself or its parent.
+		open, swap string
+		// link is where the stand-in points: out of the home ("path escapes
+		// from parent"), to itself (ELOOP), or through the regular file g
+		// (ENOTDIR).
 		link func(outFile string) string
 	}{
-		{"link out of the home", func(outFile string) string { return outFile }},
-		{"link loop", func(string) string { return "f" }},
+		{"link out of the home", "f", "f", func(outFile string) string { return outFile }},
+		{"link loop", "f", "f", func(string) string { return "f" }},
+		{"link through a file", "f", "f", func(string) string { return "g/x" }},
+		{"parent link to a file", "d/f", "d", func(string) string { return "g" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home, outFile, _, secret := outsideHome(t)
-			f := filepath.Join(home, "f")
+			swapped := filepath.Join(home, filepath.FromSlash(tc.swap))
 			kept := filepath.Join(home, ".kept")
-			if err := os.WriteFile(f, []byte("harmless"), 0o644); err != nil {
+			if err := os.MkdirAll(filepath.Join(home, "d"), 0o755); err != nil {
 				t.Fatal(err)
+			}
+			for _, rel := range []string{"f", "d/f"} {
+				if err := os.WriteFile(filepath.Join(home, filepath.FromSlash(rel)), []byte("harmless"), 0o644); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if err := os.WriteFile(filepath.Join(home, "g"), []byte("inside"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			withScanHook(t, func(rel string) {
-				if rel != "f" {
+				if rel != tc.open {
 					return
 				}
-				if err := os.Rename(f, kept); err != nil {
+				if err := os.Rename(swapped, kept); err != nil {
 					t.Error(err)
 				}
-				if err := os.Symlink(tc.link(outFile), f); err != nil {
+				if err := os.Symlink(tc.link(outFile), swapped); err != nil {
 					t.Error(err)
 				}
 			})
 			var refused bool
-			openRefusedHook = func(rel string) {
-				if rel != "f" {
+			withOpenRefusedHook(t, func(rel string) {
+				if rel != tc.open {
 					return
 				}
 				refused = true
-				if err := os.Rename(kept, f); err != nil {
+				// A directory is not renamed over a link; take the link away
+				// first.
+				if err := os.Remove(swapped); err != nil {
 					t.Error(err)
 				}
-			}
-			t.Cleanup(func() { openRefusedHook = nil })
+				if err := os.Rename(kept, swapped); err != nil {
+					t.Error(err)
+				}
+			})
 
 			m, err := Scan(home, nil, func(_ string, data []byte) error {
 				if bytes.Equal(data, secret) {
@@ -154,12 +174,12 @@ func TestOpenOfFileSwappedForLinkAndBackIsAChange(t *testing.T) {
 				t.Fatalf("scan: %v", err)
 			}
 			if !refused {
-				t.Fatalf("the open of f was not refused; the test did not reach its window")
+				t.Fatalf("the open of %s was not refused; the test did not reach its window", tc.open)
 			}
 			var g bool
 			for _, e := range m.Entries {
-				if e.Path == "f" && len(e.Blocks) > 0 {
-					t.Errorf("f was a link when it was opened and still carries content: %+v", e)
+				if e.Path == tc.open && len(e.Blocks) > 0 {
+					t.Errorf("%s led through a link when it was opened and still carries content: %+v", tc.open, e)
 				}
 				if e.Path == "g" && len(e.Blocks) == 1 {
 					g = true
