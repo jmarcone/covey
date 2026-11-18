@@ -58,6 +58,19 @@ func (s *Store) ReplaceBilled(ctx context.Context, orgID uuid.UUID, width string
 	if width != billing.Hour && width != billing.Day {
 		return fmt.Errorf("billed rows: unknown bucket width %q", width)
 	}
+	// Every billed figure is a sum of amount_cents read as US cents. A row in
+	// another currency would be added to them as if it were dollars, so a read
+	// with one is refused whole, before anything is replaced.
+	if cost != nil && cost.Landed {
+		for i, r := range cost.Rows {
+			cur := strings.ToUpper(strings.TrimSpace(r.Currency))
+			if cur != "USD" {
+				return fmt.Errorf("billed cost row at %s is in %q: covey sums US dollars only, nothing of this read is stored",
+					r.Start.UTC().Format(time.RFC3339), r.Currency)
+			}
+			cost.Rows[i].Currency = cur
+		}
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err

@@ -93,6 +93,51 @@ func TestBillingWindowComparedUntilDataRefreshed(t *testing.T) {
 	}
 }
 
+// Every billed figure sums amount_cents as US cents: a read with a row in
+// another currency is refused whole — the sync fails and says why, and
+// nothing of it is stored — rather than summed as if it were dollars.
+func TestBillingRefusesAnotherCurrency(t *testing.T) {
+	ctx := context.Background()
+	fake := &fakeAnalytics{currency: "EUR", refreshed: time.Now().UTC().Add(-time.Hour)}
+	fake.hours = []billedHour{{start: time.Now().UTC().Add(-3 * time.Hour).Truncate(time.Hour), apiKey: "apikey_eur",
+		model: opus, tier: "standard", costs: map[string][2]string{"output_tokens": {"500.000000", "500.000000"}}, out: 250}}
+	s := billingStack(t, fake)
+	if err := s.secrets.Put(ctx, s.orgID, secrets.AdminKey, fakeAdminKey); err != nil {
+		t.Fatal(err)
+	}
+	err := s.orch.SyncBillingOrg(ctx, s.orgID, true)
+	if err == nil || !strings.Contains(err.Error(), "EUR") {
+		t.Fatalf("sync of a bill in EUR: %v, want an error naming the currency", err)
+	}
+	var rows int
+	if err := s.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM billed_cost WHERE org_id = $1)
+		+ (SELECT count(*) FROM billed_usage WHERE org_id = $1)`, s.orgID).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Errorf("%d billed rows stored from a read in EUR, want none", rows)
+	}
+	st, err := s.obs.BillingSync(ctx, s.orgID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.LastStatus != "failed" || !strings.Contains(st.LastError, "EUR") {
+		t.Errorf("billing sync state = %+v, want failed naming EUR", st)
+	}
+
+	// Lower case is the same currency, not another one.
+	fake.mu.Lock()
+	fake.currency = "usd"
+	fake.mu.Unlock()
+	if err := s.orch.SyncBillingOrg(ctx, s.orgID, true); err != nil {
+		t.Fatalf("sync of a bill in usd: %v", err)
+	}
+	var cur string
+	if err := s.pool.QueryRow(ctx, `SELECT DISTINCT currency FROM billed_cost WHERE org_id = $1`, s.orgID).Scan(&cur); err != nil || cur != "USD" {
+		t.Errorf("stored currency %q (%v), want USD", cur, err)
+	}
+}
+
 // One API key is billed to one credential at a time. A second credential
 // mapped to a key another one holds over any part of the same interval is
 // refused — its bill would count twice — whether that mapping is open or was

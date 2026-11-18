@@ -33,7 +33,9 @@ CREATE TABLE IF NOT EXISTS billed_cost (
     token_type        TEXT NOT NULL DEFAULT '',
     amount_cents      NUMERIC(24,8) NOT NULL,
     list_amount_cents NUMERIC(24,8) NOT NULL,
-    currency          TEXT NOT NULL DEFAULT 'USD',
+    -- Every reader sums amount_cents as US cents; another currency is
+    -- refused where the bill is written (ReplaceBilled), and here.
+    currency          TEXT NOT NULL DEFAULT 'USD' CHECK (currency = 'USD'),
     -- The response's data_refreshed_at: complete data ends there. NULL when
     -- the API did not say.
     data_refreshed_at TIMESTAMPTZ,

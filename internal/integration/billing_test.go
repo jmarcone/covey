@@ -45,6 +45,7 @@ type fakeAnalytics struct {
 	refreshed time.Time
 	status    int // non-zero: every request answers this
 	requests  int
+	currency  string // of every cost row; empty: USD
 }
 
 func (f *fakeAnalytics) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -86,7 +87,11 @@ func (f *fakeAnalytics) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					g = group(h, "tokens", tt)
 				}
 				x := row(g)
-				x["cost"] = map[string]any{"currency": "USD", "amount": c[0], "list_amount": c[1], "requests": nil}
+				currency := f.currency
+				if currency == "" {
+					currency = "USD"
+				}
+				x["cost"] = map[string]any{"currency": currency, "amount": c[0], "list_amount": c[1], "requests": nil}
 				data = append(data, x)
 			}
 			continue
