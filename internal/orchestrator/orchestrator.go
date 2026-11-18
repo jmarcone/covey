@@ -3082,9 +3082,11 @@ func (o *Orchestrator) handleDaemonMessage(ctx context.Context, agent agents.Age
 			}
 		}
 		// Ensure + move + cleanup of empty agent columns in one transaction.
+		// The store moves only the agent's own tasks; another agent's task
+		// fails as not found, the same as an unknown id (#66).
 		stage, err := o.Backlog.SetTaskStageByName(ctx, agent.ID, target, ss.Stage)
 		if err != nil {
-			o.Log.Warn("set_stage: task could not be moved", "err", err)
+			o.Log.Warn("set_stage: task could not be moved", "agent", agent.Slug, "task", target, "err", err)
 			return false, nil
 		}
 		_ = o.Obs.Record(ctx, agent.OrgID, agent.ID, &target, observability.KindLifecycle,

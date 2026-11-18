@@ -296,6 +296,8 @@ type Report struct {
 	Fields map[string]string `json:"fields"`
 }
 
+// SetStage carries covey/set_stage. TaskID defaults to the running task; the
+// control plane moves only a task of the calling agent's own (#66).
 type SetStage struct {
 	TaskID string `json:"task_id,omitempty"`
 	Stage  string `json:"stage"`
