@@ -9,6 +9,8 @@ import { CostInsights } from "./CostInsights";
 import { credentialFigures, subscriptionDent } from "./costFigures";
 import { SubscriptionDentRow } from "./SubscriptionDent";
 import { canSetPlan } from "./PlanPrice";
+import { OutsideOverview } from "./OutsideSessions";
+import { RANGES, bucketOptions, rangeOptions } from "./outsideFigures";
 import {
   AgentFilter,
   BUCKET_MS,
@@ -52,7 +54,7 @@ function Kpi({ label, value, sub, color }: { label: string; value: string; sub?:
 
 // --- Segmented switches ------------------------------------------------------
 
-function Seg<T extends string | number>({
+export function Seg<T extends string | number>({
   value,
   options,
   onChange,
@@ -99,16 +101,8 @@ function Seg<T extends string | number>({
 
 // --- Page --------------------------------------------------------------------
 
-/** Hourly buckets only up to this many days: 90 days by the hour are 2,160
- *  periods, more than a chart (or a table) can show. */
-const HOUR_MAX_DAYS = 7;
-
-const RANGES: { v: number; bucket: string }[] = [
-  { v: 1, bucket: "hour" },
-  { v: 7, bucket: "day" },
-  { v: 30, bucket: "day" },
-  { v: 90, bucket: "week" },
-];
+// The ranges and buckets (10 min up to 2 days, hour up to 7, 10 h up to 30)
+// live in outsideFigures.ts, shared with the outside sessions' own view.
 
 /** The token types side by side. They stand here because the dollar figure
  *  alone hides the key observation: the weight lies almost entirely on the
@@ -310,22 +304,8 @@ export default function Costs({ me }: { me?: Principal }) {
       {/* Controls */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <div style={{ flex: 1 }} />
-        <Seg
-          value={days}
-          onChange={setRange}
-          options={RANGES.map((r) => ({ v: r.v, label: r.v === 1 ? t("costs.range24h") : t("costs.rangeDays", { count: r.v }) }))}
-        />
-        <Seg
-          value={bucket}
-          onChange={setBucket}
-          options={[
-            // 90 days by the hour are 2,160 periods: hours only up to a week.
-            { v: "hour", label: t("costs.bHour"), disabled: days > HOUR_MAX_DAYS, title: days > HOUR_MAX_DAYS ? t("costs.hourTooLong", { days: HOUR_MAX_DAYS }) : undefined },
-            { v: "day", label: t("costs.bDay") },
-            { v: "week", label: t("costs.bWeek") },
-            { v: "month", label: t("costs.bMonth") },
-          ]}
-        />
+        <Seg value={days} onChange={setRange} options={rangeOptions(t)} />
+        <Seg value={bucket} onChange={setBucket} options={bucketOptions(t, days)} />
       </div>
 
       <div className="mb-4">
@@ -364,6 +344,9 @@ export default function Costs({ me }: { me?: Principal }) {
           <TokenExplorer data={cells.data} selected={selected} fmtPeriod={fmtPeriod} />
         )}
       </div>
+
+      {/* The sessions outside covey (#120): apart or combined, never folded in unannounced. */}
+      <OutsideOverview data={cells.data} selected={selected} days={days} bucket={bucket} fmtPeriod={fmtPeriod} />
 
       {/* Price list + token types + priciest runs: they hold for every scope */}
       <div className="grid gap-4 mb-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(320px, 100%), 1fr))" }}>
