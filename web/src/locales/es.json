@@ -310,7 +310,8 @@
       "fromHintCorrect": "Ya empieza un precio en esta semana del contador; valor inicial: ahora.",
       "errConflict": "Ya hay un plan que empieza en ese momento: elige un comienzo posterior.",
       "errInvalid": "El servidor rechazó el precio ({{msg}}).",
-      "errForbidden": "Tu rol no puede fijar un precio de plan ({{msg}})."
+      "errForbidden": "Tu rol no puede fijar un precio de plan ({{msg}}).",
+      "form": "Fijar precio del plan de {{name}}"
     }
   },
   "lang": {

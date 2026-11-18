@@ -310,7 +310,8 @@
       "fromHintCorrect": "In deze meterweek begint al een prijs, vooringevuld: nu.",
       "errConflict": "Op dat moment begint al een abonnement — kies een later begin.",
       "errInvalid": "De server heeft de prijs geweigerd ({{msg}}).",
-      "errForbidden": "Uw rol mag geen abonnementsprijs instellen ({{msg}})."
+      "errForbidden": "Uw rol mag geen abonnementsprijs instellen ({{msg}}).",
+      "form": "Abonnementsprijs instellen voor {{name}}"
     }
   },
   "lang": {

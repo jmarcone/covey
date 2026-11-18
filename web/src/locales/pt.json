@@ -310,7 +310,8 @@
       "fromHintCorrect": "Já começa um preço nesta semana do contador, predefinido: agora.",
       "errConflict": "Já há um plano que começa nesse momento — escolha um início posterior.",
       "errInvalid": "O servidor rejeitou o preço ({{msg}}).",
-      "errForbidden": "O seu papel não pode definir um preço de plano ({{msg}})."
+      "errForbidden": "O seu papel não pode definir um preço de plano ({{msg}}).",
+      "form": "Definir preço do plano de {{name}}"
     }
   },
   "lang": {

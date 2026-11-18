@@ -310,7 +310,8 @@
       "fromHintCorrect": "In questa settimana del contatore inizia già un prezzo, preimpostato: adesso.",
       "errConflict": "Un piano inizia già in quel momento — scegli un inizio successivo.",
       "errInvalid": "Il server ha rifiutato il prezzo ({{msg}}).",
-      "errForbidden": "Il tuo ruolo non può impostare un prezzo del piano ({{msg}})."
+      "errForbidden": "Il tuo ruolo non può impostare un prezzo del piano ({{msg}}).",
+      "form": "Imposta il prezzo del piano di {{name}}"
     }
   },
   "lang": {

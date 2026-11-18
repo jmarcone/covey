@@ -310,7 +310,8 @@
       "fromHintCorrect": "In dieser Zählerwoche beginnt schon ein Preis, vorbelegt: jetzt.",
       "errConflict": "Zu diesem Zeitpunkt beginnt schon ein Tarif — wähle einen späteren Beginn.",
       "errInvalid": "Der Server hat den Preis abgelehnt ({{msg}}).",
-      "errForbidden": "Deine Rolle darf keinen Tarifpreis setzen ({{msg}})."
+      "errForbidden": "Deine Rolle darf keinen Tarifpreis setzen ({{msg}}).",
+      "form": "Tarifpreis für {{name}} setzen"
     }
   },
   "lang": {

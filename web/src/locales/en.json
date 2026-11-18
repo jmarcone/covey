@@ -310,7 +310,8 @@
       "fromHintCorrect": "A price already starts in this meter week, preset: now.",
       "errConflict": "A plan already starts at that moment — pick a later start.",
       "errInvalid": "The server rejected the price ({{msg}}).",
-      "errForbidden": "Your role may not set a plan price ({{msg}})."
+      "errForbidden": "Your role may not set a plan price ({{msg}}).",
+      "form": "Set plan price for {{name}}"
     }
   },
   "lang": {

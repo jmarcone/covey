@@ -16,6 +16,7 @@ const SEAT = "claude_code_oauth_token";
 const RT = "0b0e0000-0000-4000-8000-000000000001";
 const RESET = "2026-11-20T16:00:00Z"; // the weekly reset the readings name
 const WEEK_START = "2026-11-13T16:00:00.000Z"; // RESET − 7 days
+const FORM = `Tarifpreis für ${SEAT} #0 setzen`; // the form's accessible name
 // The page's clock in the integration tests: inside the week RESET ends. The
 // preset steps an old reset forward to the week that contains now, so on the
 // real clock these tests would fail once RESET has passed.
@@ -132,7 +133,7 @@ describe("Kosten — Tarifpreis setzen", () => {
     const b = await block(container);
     await userEvent.click(await within(b).findByRole("button", { name: "Tarifpreis setzen" }));
 
-    const form = within(b).getByRole("form", { name: "Tarifpreis setzen" });
+    const form = within(b).getByRole("form", { name: FORM });
     // preset: the reset minus seven days, not "now" — 13 Nov 16:00 UTC is
     // 14 Nov 01:00 on the reader's clock in Tokyo
     expect(within(form).getByLabelText("Gültig ab")).toHaveValue("2026-11-14T01:00");
@@ -149,7 +150,7 @@ describe("Kosten — Tarifpreis setzen", () => {
     const { container } = page(testPrincipal("security"));
     const b = await block(container);
     await userEvent.click(await within(b).findByRole("button", { name: "Tarifpreis setzen" }));
-    const form = within(b).getByRole("form", { name: "Tarifpreis setzen" });
+    const form = within(b).getByRole("form", { name: FORM });
     await userEvent.type(within(form).getByLabelText("Betrag (USD)"), "2000.5");
     await userEvent.selectOptions(within(form).getByLabelText("Zeitraum"), "year");
     fireEvent.change(within(form).getByLabelText("Gültig ab"), { target: { value: "2026-11-15T08:30" } });
@@ -178,6 +179,42 @@ describe("Kosten — Tarifpreis setzen", () => {
     await waitFor(() => expect(s.cellFetches()).toBeGreaterThan(before));
     await waitFor(() => expect(within(b).queryByRole("form")).toBeNull());
     expect(within(b).getByText(/^Tarif: .*200.*\/Monat seit /)).toBeInTheDocument();
+    // focus is back on the button that opened the form
+    expect(within(b).getByRole("button", { name: "Tarifpreis setzen" })).toHaveFocus();
+  });
+
+  it("setzt beim Öffnen den Fokus auf den Betrag und nennt die Zugangsdaten im Namen des Formulars", async () => {
+    serve({ readings: [reading()] });
+    const { container } = page(testPrincipal("org_admin"));
+    const b = await block(container);
+    await userEvent.click(await within(b).findByRole("button", { name: "Tarifpreis setzen" }));
+    expect(within(b).getByRole("form", { name: `Tarifpreis für ${SEAT} #0 setzen` })).toBeInTheDocument();
+    expect(within(b).getByLabelText("Betrag (USD)")).toHaveFocus();
+    // the start field is described by the UTC echo and the hint
+    const hint = within(b).getByText(/Vorbelegt: Beginn der aktuellen Zählerwoche\.$/);
+    expect(within(b).getByLabelText("Gültig ab").getAttribute("aria-describedby")).toBe(hint.id);
+  });
+
+  it("bricht mit Escape ab und gibt den Fokus an die Schaltfläche zurück", async () => {
+    const s = serve({ readings: [reading()] });
+    const { container } = page(testPrincipal("org_admin"));
+    const b = await block(container);
+    await userEvent.click(await within(b).findByRole("button", { name: "Tarifpreis setzen" }));
+    await userEvent.type(within(b).getByLabelText("Betrag (USD)"), "200");
+    await userEvent.keyboard("{Escape}");
+    expect(within(b).queryByRole("form")).toBeNull();
+    expect(within(b).getByRole("button", { name: "Tarifpreis setzen" })).toHaveFocus();
+    expect(s.puts).toHaveLength(0);
+  });
+
+  it("gibt nach Abbrechen den Fokus an die Schaltfläche zurück", async () => {
+    serve({ readings: [reading()] });
+    const { container } = page(testPrincipal("org_admin"));
+    const b = await block(container);
+    await userEvent.click(await within(b).findByRole("button", { name: "Tarifpreis setzen" }));
+    await userEvent.click(within(b).getByRole("button", { name: "Abbrechen" }));
+    expect(within(b).queryByRole("form")).toBeNull();
+    expect(within(b).getByRole("button", { name: "Tarifpreis setzen" })).toHaveFocus();
   });
 
   /** Opens the form, types 200 and saves against a plan endpoint that refuses
@@ -196,23 +233,32 @@ describe("Kosten — Tarifpreis setzen", () => {
     // the form stays, with what was typed
     expect(within(b).getByLabelText("Betrag (USD)")).toHaveValue(200);
     expect(s.puts).toHaveLength(1);
-    return alert;
+    return { alert, amount: within(b).getByLabelText("Betrag (USD)"), from: within(b).getByLabelText("Gültig ab") };
   }
 
   it("zeigt bei einem 400 den Text des Servers in Klammern als Gefahrenzeile und behält das Formular", async () => {
-    const alert = await refused(400, 'invalid plan: period must be "month" or "year"');
+    const { alert, amount, from } = await refused(400, 'invalid plan: period must be "month" or "year"');
     expect(alert).toHaveTextContent('Der Server hat den Preis abgelehnt (invalid plan: period must be "month" or "year").');
     expect(alert.getAttribute("style")).toContain("var(--text-danger)");
+    // the line belongs to the fields, and they say they are in error
+    expect(alert.id).not.toBe("");
+    for (const el of [amount, from]) {
+      expect(el.getAttribute("aria-describedby")?.split(" ")).toContain(alert.id);
+      expect(el).toHaveAttribute("aria-invalid", "true");
+    }
   });
 
   it("sagt bei einem 403, dass die Rolle es nicht darf", async () => {
-    const alert = await refused(403, "forbidden");
+    const { alert } = await refused(403, "forbidden");
     expect(alert).toHaveTextContent("Deine Rolle darf keinen Tarifpreis setzen (forbidden).");
   });
 
   it("sagt bei einem 409, dass zu dem Zeitpunkt schon ein Tarif beginnt", async () => {
-    const alert = await refused(409, "runtimes: a plan already starts at that moment");
+    const { alert, amount, from } = await refused(409, "runtimes: a plan already starts at that moment");
     expect(alert).toHaveTextContent("Zu diesem Zeitpunkt beginnt schon ein Tarif — wähle einen späteren Beginn.");
+    // only the start is at fault
+    expect(from).toHaveAttribute("aria-invalid", "true");
+    expect(amount).not.toHaveAttribute("aria-invalid");
   });
 
   it("belegt beim Korrigieren eines Preises dieser Woche jetzt vor, auf die Minute", async () => {

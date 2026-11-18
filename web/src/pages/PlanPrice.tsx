@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -109,11 +109,29 @@ function saveError(t: TFunction, err: Error): string {
 
 /** One credential's plan line: what is stored, and for the roles that may,
  *  the form that stores a new one. */
-export function PlanPrice({ f, readings, editable }: { f: CredentialFigures; readings: readonly UsageReading[]; editable: boolean }) {
+export function PlanPrice({ f, name, readings, editable }: {
+  f: CredentialFigures; /** The credential as its block names it. */ name: string; readings: readonly UsageReading[]; editable: boolean;
+}) {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const uid = useId();
   const [open, setOpen] = useState(false);
+  const amountRef = useRef<HTMLInputElement>(null);
+  const setRef = useRef<HTMLButtonElement>(null);
+  // Set when the form closes by Save or Cancel: focus goes back to the
+  // button that opened it, not to the top of the page.
+  const refocus = useRef(false);
+  useEffect(() => {
+    if (open) amountRef.current?.focus();
+    else if (refocus.current) {
+      refocus.current = false;
+      setRef.current?.focus();
+    }
+  }, [open]);
+  const close = () => {
+    refocus.current = true;
+    setOpen(false);
+  };
   const [amount, setAmount] = useState("");
   const [period, setPeriod] = useState("month");
   const [from, setFrom] = useState("");
@@ -146,7 +164,7 @@ export function PlanPrice({ f, readings, editable }: { f: CredentialFigures; rea
     // The real figure and the multiple read the plan: every cost query is stale.
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["cost"] });
-      setOpen(false);
+      close();
     },
   });
 
@@ -169,29 +187,42 @@ export function PlanPrice({ f, readings, editable }: { f: CredentialFigures; rea
   const whenMs = from === toLocalInput(fallback) ? fallback.getTime() : new Date(from).getTime();
   const valid = Number.isFinite(amountNum) && amountNum >= 0 && Number.isFinite(whenMs);
   const hint = { week: "costs.plan.fromHintWeek", now: "costs.plan.fromHintNow", correct: "costs.plan.fromHintCorrect" }[why];
+  const error = save.error ? saveError(t, save.error) : null;
+  // A 409 is about the start alone; anything else may be about either field.
+  const badAmount = error != null && !(save.error instanceof ApiError && save.error.status === 409);
+  const hintId = `${uid}-hint`;
+  const errorId = `${uid}-error`;
+  const described = (...ids: string[]) => [...ids, ...(error ? [errorId] : [])].join(" ") || undefined;
 
   return (
     <div className="mb-2" data-plan-price={f.id}>
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <span className="muted text-xs">{f.plan ? currentPlan(t, f.plan) : t("costs.plan.none")}</span>
         {editable && place && !open && (
-          <button type="button" className="btn sm ghost" onClick={show}>{t("costs.plan.set")}</button>
+          <button ref={setRef} type="button" className="btn sm ghost" onClick={show}>{t("costs.plan.set")}</button>
         )}
       </div>
       {editable && place && open && (
         <form
           className="mt-3"
-          aria-label={t("costs.plan.set")}
+          aria-label={t("costs.plan.form", { name })}
           onSubmit={(e) => {
             e.preventDefault();
             if (!valid || save.isPending || instances.isFetching) return;
             save.mutate({ amount: amountNum, currency: "USD", period, valid_from: new Date(whenMs).toISOString() });
           }}
+          // Escape is Cancel, and like Cancel it waits while a save is under way.
+          onKeyDown={(e) => {
+            if (e.key !== "Escape" || save.isPending) return;
+            e.preventDefault();
+            close();
+          }}
         >
           <div className="flex flex-wrap items-end gap-3">
             <label className="text-xs" htmlFor={`${uid}-amount`}>
               <span className="block mb-1">{t("costs.plan.amount")}</span>
-              <input id={`${uid}-amount`} type="number" inputMode="decimal" min="0" step="0.01" required value={amount}
+              <input ref={amountRef} id={`${uid}-amount`} type="number" inputMode="decimal" min="0" step="0.01" required value={amount}
+                aria-invalid={badAmount || undefined} aria-describedby={described()}
                 style={{ width: 120 }} onChange={(e) => setAmount(e.target.value)} />
             </label>
             <label className="text-xs" htmlFor={`${uid}-period`}>
@@ -203,22 +234,24 @@ export function PlanPrice({ f, readings, editable }: { f: CredentialFigures; rea
             </label>
             <label className="text-xs" htmlFor={`${uid}-from`}>
               <span className="block mb-1">{t("costs.plan.validFrom")}</span>
-              <input id={`${uid}-from`} type="datetime-local" required value={from} onChange={(e) => setFrom(e.target.value)} />
+              <input id={`${uid}-from`} type="datetime-local" required value={from}
+                aria-invalid={error != null || undefined} aria-describedby={described(hintId)}
+                onChange={(e) => setFrom(e.target.value)} />
             </label>
             <div className="flex gap-2">
               <button type="submit" className="btn sm primary" disabled={!valid || save.isPending || instances.isFetching}>
                 {save.isPending ? t("costs.plan.saving") : t("costs.plan.save")}
               </button>
-              <button type="button" className="btn sm ghost" disabled={save.isPending} onClick={() => setOpen(false)}>{t("costs.plan.cancel")}</button>
+              <button type="button" className="btn sm ghost" disabled={save.isPending} onClick={close}>{t("costs.plan.cancel")}</button>
             </div>
           </div>
-          <p className="muted text-xs mt-1 mb-0">
+          <p id={hintId} className="muted text-xs mt-1 mb-0">
             {/* The input is the reader's clock; the cost page is UTC. */}
             {Number.isFinite(whenMs) && <>{fmtBucket(new Date(whenMs).toISOString(), "hour")} · </>}
             {t(hint)}
           </p>
-          {save.error && (
-            <p className="text-xs mt-1 mb-0" role="alert" style={{ color: "var(--text-danger)" }}>{saveError(t, save.error)}</p>
+          {error && (
+            <p id={errorId} className="text-xs mt-1 mb-0" role="alert" style={{ color: "var(--text-danger)" }}>{error}</p>
           )}
         </form>
       )}

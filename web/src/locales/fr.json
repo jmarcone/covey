@@ -310,7 +310,8 @@
       "fromHintCorrect": "Un prix commence déjà dans cette semaine du compteur, valeur par défaut : maintenant.",
       "errConflict": "Un forfait commence déjà à ce moment — choisissez un début plus tardif.",
       "errInvalid": "Le serveur a refusé le prix ({{msg}}).",
-      "errForbidden": "Votre rôle ne permet pas de définir un prix de forfait ({{msg}})."
+      "errForbidden": "Votre rôle ne permet pas de définir un prix de forfait ({{msg}}).",
+      "form": "Définir le prix du forfait de {{name}}"
     }
   },
   "lang": {
