@@ -15,6 +15,7 @@ import {
   credId,
   isSeat,
   meterCrossings,
+  periodMultiple,
   pricePerPoint,
   recomputedOf,
   stepRate,
@@ -230,6 +231,8 @@ export type Bar = {
   valueLabel?: boolean;
   /** A small label above the value, e.g. a multiple. */
   tag?: string;
+  /** What the tag leaves out, in the period's details, e.g. the multiple's range. */
+  tagDetail?: string;
 };
 
 const sum = (s: Seg[]) => s.reduce((a, x) => a + x.value, 0);
@@ -424,6 +427,7 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Swatch color={b.color} hatched={b.hatched} /> {b.label}</span>
                 <span>{fmtValue(sum(b.segs))}</span>
               </div>
+              {b.tag && <div className="muted" data-tag-detail style={{ paddingLeft: 16 }}>{b.tag}{b.tagDetail ? ` · ${b.tagDetail}` : ""}</div>}
               {b.segs.filter((x) => x.value > 0).length > 1 && b.segs.filter((x) => x.value > 0).map((x) => (
                 <div key={x.key} className="muted" style={{ display: "flex", justifyContent: "space-between", gap: 12, paddingLeft: 16 }}>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Swatch color={x.color} /> {x.label}</span>
@@ -599,6 +603,15 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
     }
     return v;
   }, [steps, idx, periods.length]);
+  // The meter's steps of each period: a period's multiple needs its points.
+  const stepsPer = useMemo(() => {
+    const v = periods.map(() => [] as typeof steps);
+    for (const s of steps) {
+      const i = idx.get(Date.parse(s.period));
+      if (i != null) v[i].push(s);
+    }
+    return v;
+  }, [steps, idx, periods]);
   const billedPer = useMemo(() => {
     const v = new Array<number>(periods.length).fill(0);
     for (const [at, usd] of bill) {
@@ -625,15 +638,19 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
       // reported figure is not part of this comparison. The multiple is of
       // every cost type, as the tile's is: the meter crossed its points for
       // all of them, so a type switched off only shortens the list bar.
+      // A period is a few points of ±1 each: it gets a multiple by the
+      // tile's rule only (from 3 points, its range in the details).
       const list = cs.reduce((a, c) => a + recomputedOf(c, typeList), 0);
       const listAll = cs.reduce((a, c) => a + recomputedOf(c), 0);
       const real = realPer[i];
+      const m = periodMultiple(listAll, stepsPer[i]);
       const segs = byType
         ? typeList.map((k) => ({ key: k, label: t(`costs.stack.${k}`), color: TYPE_COLOR[k], value: cs.reduce((a, c) => a + (c.measured[k] ?? 0), 0) }))
         : [{ key: "m", label: t("costs.fig.recomputed"), color: SOURCE_COLOR.recomputed, value: list }];
       out.push({ key: "recomputed", label: t("costs.fig.recomputed"), color: SOURCE_COLOR.recomputed, segs });
       out.push({ key: "real", label: t("costs.fig.realEstimate"), color: SOURCE_COLOR.real, hatched: true, valueLabel: true,
-        tag: real > 0 && listAll > 0 ? times(listAll / real) : undefined,
+        tag: m?.kind === "estimate" ? `≈ ${times(m.value)}` : undefined,
+        tagDetail: m ? t("costs.fig.multipleRange", { low: times(m.low), high: times(m.high) }) : undefined,
         segs: [{ key: "real", label: t("costs.fig.realEstimate"), color: SOURCE_COLOR.real, value: real }] });
       return out;
     }

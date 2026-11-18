@@ -293,7 +293,7 @@
       "noMultipleNoPlan": "Sin coste real ni múltiplo: no hay precio de plan guardado para esta credencial.",
       "realSince": "real desde {{from}} (lectura base del medidor), última lectura {{to}}",
       "shareOfRealSpan": "la parte real se refiere al coste real desde {{from}} (lectura base del medidor) hasta {{to}}, no solo al periodo",
-      "vsNote": "× es el precio de lista de un periodo ÷ su coste real. El medidor se mueve en puntos enteros, así que el múltiplo de un periodo con pocos puntos es aproximado; el múltiplo de la ficha indica su rango."
+      "vsNote": "× es el precio de lista de un periodo ÷ su coste real. El medidor se mueve en puntos enteros, así que el coste real de un periodo es ±1 punto: un periodo solo muestra × a partir de 3 puntos de movimiento, como la ficha, y su rango aparece en los detalles del periodo."
     },
     "kpiAllCredentials": "todas las credenciales, de las líneas",
     "tok": {

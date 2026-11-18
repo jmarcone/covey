@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import Costs from "./Costs";
 import type { CostCells } from "../api";
 import { mockFetch, renderWithProviders, useGerman } from "../test/render";
+import { multipleOf, realCost } from "./costFigures";
 
 // The Costs page is argued with, so what it may and may not show is pinned:
 // the multiple only from three points of meter movement, never the booked
@@ -439,44 +440,92 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
       expect(realCol(container).col).toBe(-1);
     });
 
+    const tags = (container: HTMLElement) => [...container.querySelectorAll("[data-tag]")].map((e) => e.textContent);
+
     it("zeigt in „Echt gegen Liste“ den echten Wert am Balken und das Vielfache der Periode", async () => {
-      const { container } = render([2, 0]);
+      const { container } = render([4, 0]);
       await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
       expect(container.querySelector("[data-value]")).toBeNull();
       await click("Echt gegen Liste");
       // the list bar and the real bar of each hour; the gap hour has no real value, hence no multiple
       expect(container.querySelectorAll("g[data-period]")[0].querySelectorAll("rect").length).toBe(3);
-      expect([...container.querySelectorAll("[data-value]")].map((e) => e.textContent)).toEqual(["0,92 $"]);
-      // 8 $ list over 2 points × 0,4615 $
-      expect([...container.querySelectorAll("[data-tag]")].map((e) => e.textContent)).toEqual(["8,7×"]);
+      expect([...container.querySelectorAll("[data-value]")].map((e) => e.textContent)).toEqual(["1,85 $"]);
+      // 8 $ list over 4 points × 0,4615 $, ±1 point in the details as the tile's range
+      expect(tags(container)).toEqual(["≈ 4,3×"]);
+      fireEvent.focus(container.querySelectorAll("g[data-period]")[0]);
+      expect(container.querySelector("[data-tag-detail]")!.textContent).toBe("≈ 4,3× · Spanne 3,5× – 5,8×");
       expect(container.querySelector("[data-vs-note]")).not.toBeNull();
       await click("Beträge");
       expect(container.querySelector("[data-tag]")).toBeNull();
     });
 
+    // PR #80 review: an hour is 1–3 points of ±1 each; the tile shows no
+    // multiple below 3 points, and neither does a period.
+    it("zeigt für eine Stunde unter drei Punkten kein Vielfaches, auch bei hohem Listenpreis", async () => {
+      const data = cells([1, 2]);
+      data.cells[0] = { ...data.cells[0], measured: { output: 148, cache_read: 2 }, engine_usd: 150 };
+      const { container } = serve(data);
+      await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+      await click("Echt gegen Liste");
+      expect([...container.querySelectorAll("[data-value]")].map((e) => e.textContent)).toEqual(["0,46 $", "0,92 $"]);
+      expect(tags(container)).toEqual([]);
+      expect(container.textContent).not.toMatch(/325,0×/);
+    });
+
+    it("zeigt für eine Periode mit Listenpreis von wenigen Cent kein Vielfaches", async () => {
+      const data = cells([4, 4]);
+      data.cells[0] = { ...data.cells[0], measured: { output: 0.02 }, engine_usd: 0.02 };
+      data.cells[1] = { ...data.cells[1], measured: { output: 0.004 }, engine_usd: 0.004 };
+      const { container } = serve(data);
+      await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+      await click("Echt gegen Liste");
+      expect([...container.querySelectorAll("[data-value]")].map((e) => e.textContent)).toEqual(["1,85 $", "1,85 $"]);
+      expect(tags(container)).toEqual([]);
+      expect(container.textContent).not.toContain("0,0×");
+    });
+
+    it("zeigt für einen Tag mit vier Punkten das Vielfache, das multipleOf nennt", async () => {
+      const data = cells([4, 2]);
+      const day = (p: string) => p.replace(/^2026-11-17T18:00:00Z$/, "2026-11-16T00:00:00Z").replace(/^2026-11-17T19:00:00Z$/, "2026-11-17T00:00:00Z");
+      data.periods = data.periods.map(day);
+      data.cells = data.cells.map((c) => ({ ...c, period: day(c.period) }));
+      data.subscription = data.subscription!.map((s) => ({ ...s, period: day(s.period) }));
+      data.meter![0] = { ...data.meter![0], baseline_at: "2026-11-16T00:00:00Z", last_at: "2026-11-17T20:00:00Z" };
+      const { container } = serve(data);
+      await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+      await act(async () => { await userEvent.click(screen.getByRole("button", { name: "7 Tage" })); });
+      await click("Echt gegen Liste");
+      // the day's whole list (6 + 2 $) over its 4 points, by the tile's rule
+      const m = multipleOf(8, realCost(4, PP))!;
+      expect(m.kind).toBe("estimate");
+      const fmt = (v: number) => `${v.toFixed(1).replace(".", ",")}×`;
+      expect(tags(container)).toEqual([`≈ ${fmt((m as { value: number }).value)}`]);
+      fireEvent.focus(container.querySelectorAll("g[data-period]")[0]);
+      expect(container.querySelector("[data-tag-detail]")!.textContent).toContain(`Spanne ${fmt(m.low)} – ${fmt(m.high)}`);
+    });
+
     // Review 1: the multiple is the whole list over the real cost, as the
     // tile's; a cost type switched off only shortens the list bar.
     it("lässt das Vielfache der Periode bei einem ausgeblendeten Kostentyp unverändert", async () => {
-      const { container } = render([2, 2]);
+      const { container } = render([4, 4]);
       await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
       await click("Echt gegen Liste");
-      const tags = () => [...container.querySelectorAll("[data-tag]")].map((e) => e.textContent);
-      expect(tags()).toEqual(["8,7×", "8,7×"]);
+      expect(tags(container)).toEqual(["≈ 4,3×", "≈ 4,3×"]);
       await click("Kostenart");
       await click("Ausgabe");
-      expect(tags()).toEqual(["8,7×", "8,7×"]);
+      expect(tags(container)).toEqual(["≈ 4,3×", "≈ 4,3×"]);
     });
 
     // Review 3: meter moved, but no list costs in the period (other use of the account).
     it("zeigt für eine Periode mit Zählerbewegung, aber ohne Listenkosten kein Vielfaches", async () => {
-      const data = cells([2, 2]);
+      const data = cells([4, 4]);
       data.cells = [data.cells[0]];
       const { container } = serve(data);
       await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
       await click("Echt gegen Liste");
       expect([...container.querySelectorAll("g[data-period]")]).toHaveLength(2);
-      expect([...container.querySelectorAll("[data-value]")].map((e) => e.textContent)).toEqual(["0,92 $", "0,92 $"]);
-      expect([...container.querySelectorAll("[data-tag]")].map((e) => e.textContent)).toEqual(["8,7×"]);
+      expect([...container.querySelectorAll("[data-value]")].map((e) => e.textContent)).toEqual(["1,85 $", "1,85 $"]);
+      expect(tags(container)).toEqual(["≈ 4,3×"]);
       expect(container.textContent).not.toContain("0,0×");
     });
 

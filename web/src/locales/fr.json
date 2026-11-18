@@ -293,7 +293,7 @@
       "noMultipleNoPlan": "Ni coût réel ni multiple : aucun prix de forfait n'est enregistré pour cet identifiant.",
       "realSince": "réel depuis {{from}} (relevé de référence du compteur), dernier relevé {{to}}",
       "shareOfRealSpan": "la part réelle porte sur le coût réel depuis {{from}} (relevé de référence du compteur) jusqu'à {{to}}, pas sur la seule période",
-      "vsNote": "× est le prix catalogue d’une période ÷ son coût réel. Le compteur avance par points entiers : le multiple d’une période de quelques points est approximatif ; celui de la tuile indique sa fourchette."
+      "vsNote": "× est le prix catalogue d’une période ÷ son coût réel. Le compteur avance par points entiers, le coût réel d’une période est donc à ±1 point : une période n’affiche un × qu’à partir de 3 points de mouvement, comme la tuile, et sa fourchette figure dans les détails de la période."
     },
     "kpiAllCredentials": "tous les identifiants, d'après les lignes",
     "tok": {

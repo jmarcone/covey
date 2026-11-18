@@ -293,7 +293,7 @@
       "noMultipleNoPlan": "Geen werkelijke kosten en geen veelvoud: voor deze inloggegevens is geen abonnementsprijs opgeslagen.",
       "realSince": "werkelijk sinds {{from}} (basisaflezing van de meter), laatste aflezing {{to}}",
       "shareOfRealSpan": "het werkelijke aandeel is van de werkelijke kosten sinds {{from}} (basisaflezing van de meter) tot {{to}}, niet van alleen de periode",
-      "vsNote": "× is de lijstprijs van een periode ÷ de echte kosten ervan. De meter beweegt in hele punten, dus de factor van een periode met weinig punten is ruw; die van de tegel heeft zijn bereik erbij."
+      "vsNote": "× is de lijstprijs van een periode ÷ de echte kosten ervan. De meter beweegt in hele punten, dus de echte kosten van een periode zijn ±1 punt: een periode krijgt pas een × vanaf 3 punten beweging, net als de tegel, en het bereik staat in de details van de periode."
     },
     "kpiAllCredentials": "alle referenties, uit de regels",
     "tok": {

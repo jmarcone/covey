@@ -293,7 +293,7 @@
       "noMultipleNoPlan": "Brak rzeczywistego kosztu i krotności: dla tych danych uwierzytelniających nie zapisano ceny planu.",
       "realSince": "rzeczywisty od {{from}} (odczyt bazowy licznika), ostatni odczyt {{to}}",
       "shareOfRealSpan": "rzeczywisty udział dotyczy rzeczywistego kosztu od {{from}} (odczyt bazowy licznika) do {{to}}, nie tylko okresu",
-      "vsNote": "× to cena cennikowa okresu ÷ jego rzeczywisty koszt. Licznik rusza się o pełne punkty, więc krotność okresu z kilkoma punktami jest przybliżona; krotność na kafelku podaje swój zakres."
+      "vsNote": "× to cena cennikowa okresu ÷ jego rzeczywisty koszt. Licznik rusza się o pełne punkty, więc rzeczywisty koszt okresu ma dokładność ±1 punktu: okres dostaje × dopiero od 3 punktów ruchu, jak kafelek, a jego zakres jest w szczegółach okresu."
     },
     "kpiAllCredentials": "wszystkie poświadczenia, z linii",
     "tok": {
