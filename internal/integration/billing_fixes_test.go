@@ -1,0 +1,90 @@
+package integration
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"math"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+
+	"covey/internal/daemon"
+	"covey/internal/observability"
+)
+
+// billingFixture is a stack with one mapped API-key credential and a way to
+// put lines on it at a given time.
+type billingFixture struct {
+	s     *stack
+	ctx   context.Context
+	agent uuid.UUID
+	org   uuid.UUID
+}
+
+func (f billingFixture) exec(t *testing.T, sql string, args ...any) {
+	t.Helper()
+	if _, err := f.s.pool.Exec(f.ctx, sql, args...); err != nil {
+		t.Fatalf("%v\n%s", err, sql)
+	}
+}
+
+// line files a Claude Code result line on the credential: costUSD 1, Opus
+// output tokens at $20 per million.
+func (f billingFixture) line(t *testing.T, cred observability.CredentialRef, at time.Time, outputTokens int) {
+	t.Helper()
+	task := uuid.New()
+	l := fmt.Sprintf(`{"type":"result","session_id":"s-%s","modelUsage":{"claude-opus-5-5":{"costUSD":1,"outputTokens":%d}}}`, task, outputTokens)
+	if err := f.s.obs.RecordRuntime(f.ctx, f.org, f.agent, &task, cred, json.RawMessage(l)); err != nil {
+		t.Fatal(err)
+	}
+	f.exec(t, `UPDATE model_usage SET created_at = $1 WHERE task_id = $2`, at, task)
+}
+
+func newBillingFixture(t *testing.T, slug string) billingFixture {
+	s := newStack(t)
+	a := s.newSupportAgent(slug)
+	return billingFixture{s: s, ctx: context.Background(), agent: a.ID, org: a.OrgID}
+}
+
+// The bill is complete only up to its data_refreshed_at, so the reported and
+// recomputed side of the billed comparison ends there too: a line after it is
+// not compared with a bill that cannot contain it yet. Before any read of the
+// bill has landed nothing is compared.
+func TestBillingWindowComparedUntilDataRefreshed(t *testing.T) {
+	f := newBillingFixture(t, "rechnung-stand")
+	now := time.Now().UTC()
+	since := now.Add(-24 * time.Hour)
+	f.exec(t, `INSERT INTO credential_billing_keys (org_id, secret_key, secret_slot, api_key_id, valid_from)
+		VALUES ($1, 'anthropic_api_key', 0, 'apikey_stand', $2)`, f.s.orgID, now.Add(-10*24*time.Hour))
+	cred := observability.CredentialRef{RuntimeID: uuid.New(), SecretKey: "anthropic_api_key", Kind: daemon.CredAPIKey}
+	f.line(t, cred, now.Add(-12*time.Hour), 50000) // before data_refreshed_at: $1
+	f.line(t, cred, now.Add(-2*time.Hour), 125000) // after it: $2.50, not yet billable
+
+	w, err := f.s.obs.BilledWindowFor(f.ctx, f.s.orgID, since, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !w.ComparedUntil.Equal(w.Start) || len(w.Totals) != 1 || w.Totals[0].ReportedUSD != 0 || w.Totals[0].ListUSD != 0 {
+		t.Errorf("before any bill landed: compared until %v (start %v), totals %+v — want nothing compared",
+			w.ComparedUntil, w.Start, w.Totals)
+	}
+
+	refreshed := now.Add(-6 * time.Hour).Truncate(time.Microsecond)
+	at := now.Add(-12 * time.Hour).Truncate(time.Hour)
+	f.exec(t, `INSERT INTO billed_cost (org_id, bucket_width, bucket_start, bucket_end, api_key_id, model, cost_type, token_type,
+		amount_cents, list_amount_cents, data_refreshed_at, fetched_at)
+		VALUES ($1,'1h',$2,$3,'apikey_stand','claude-opus-5-5','tokens','output_tokens',100,100,$4,$5)`,
+		f.s.orgID, at, at.Add(time.Hour), refreshed, now.Add(-time.Hour))
+	w, err = f.s.obs.BilledWindowFor(f.ctx, f.s.orgID, since, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !w.ComparedUntil.Equal(refreshed) || !w.End.Equal(now) {
+		t.Errorf("compared until %v, end %v — want the bill's data_refreshed_at %v and now", w.ComparedUntil, w.End, refreshed)
+	}
+	if b := w.Totals[0]; b.BilledUSD != "1.00000000" || math.Abs(b.ReportedUSD-1) > 1e-9 || math.Abs(b.ListUSD-1) > 1e-9 {
+		t.Errorf("totals %+v — want billed 1 beside reported 1 and recomputed 1 (the line after data_refreshed_at left out)", b)
+	}
+}

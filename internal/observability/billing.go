@@ -661,8 +661,14 @@ type BilledWindow struct {
 	End   time.Time `json:"end"`
 	// Width is the bucket the window is made of: 1h within the hourly reach,
 	// 1d before it.
-	Width  string        `json:"width"`
-	Totals []BilledTotal `json:"totals"`
+	Width string `json:"width"`
+	// ComparedUntil is where the reported and recomputed figures of the
+	// totals end: the bill's data_refreshed_at (its data is complete only up
+	// to there) when that is before End, else End; Start when no read of the
+	// bill has landed yet. Lines after it are not in ReportedUSD/ListUSD — a
+	// bill complete to 06:00 beside lines up to now would invent a gap.
+	ComparedUntil time.Time     `json:"compared_until"`
+	Totals        []BilledTotal `json:"totals"`
 }
 
 // BilledTotal is one credential with a mapping to an API key valid in the
@@ -676,8 +682,9 @@ type BilledTotal struct {
 	BilledUSD     string `json:"billed_usd"`
 	BilledListUSD string `json:"billed_list_usd"`
 	// ReportedUSD: Σ Claude Code's costUSD of the credential's lines in the
-	// window; ListUSD: their tokens at covey's list (a model the list does
-	// not know at the engine's figure, as in the cost cells).
+	// window up to ComparedUntil; ListUSD: their tokens at covey's list (a
+	// model the list does not know at the engine's figure, as in the cost
+	// cells).
 	ReportedUSD float64 `json:"reported_usd"`
 	ListUSD     float64 `json:"list_usd"`
 }
@@ -698,7 +705,8 @@ func billedWindowStart(since, now time.Time) (time.Time, string) {
 }
 
 // BilledWindowFor sums the bill and the credential's own lines per mapped
-// credential over the whole billed buckets in [since, now].
+// credential over the whole billed buckets in [since, now] — the lines only
+// up to where the bill is complete (ComparedUntil).
 func (s *Store) BilledWindowFor(ctx context.Context, orgID uuid.UUID, since, now time.Time) (BilledWindow, error) {
 	start, width := billedWindowStart(since, now)
 	out := BilledWindow{Start: start, End: now.UTC(), Width: width, Totals: []BilledTotal{}}
@@ -738,6 +746,29 @@ func (s *Store) BilledWindowFor(ctx context.Context, orgID uuid.UUID, since, now
 		return out, err
 	}
 
+	// Our side ends where the bill is known to be complete: the latest
+	// data_refreshed_at of the stored bill (the last landed read's), else of
+	// the poller's state; nothing at all before a read has landed.
+	var refreshed *time.Time
+	if err := s.pool.QueryRow(ctx, `SELECT max(data_refreshed_at) FROM billed_cost WHERE org_id = $1`,
+		orgID).Scan(&refreshed); err != nil {
+		return out, err
+	}
+	if refreshed == nil {
+		sync, err := s.BillingSync(ctx, orgID)
+		if err != nil {
+			return out, err
+		}
+		refreshed = sync.DataRefreshedAt
+	}
+	out.ComparedUntil = out.End
+	switch {
+	case refreshed == nil || !refreshed.After(start):
+		out.ComparedUntil = start
+	case refreshed.Before(out.End):
+		out.ComparedUntil = refreshed.UTC()
+	}
+
 	// Our side: the credential's lines in the same window, inside each
 	// mapping's interval (a value replaced mid-window was another key).
 	rows, err = s.pool.Query(ctx, `WITH `+maps+`
@@ -748,7 +779,7 @@ func (s *Store) BilledWindowFor(ctx context.Context, orgID uuid.UUID, since, now
 		FROM (SELECT DISTINCT secret_key, secret_slot, valid_from, valid_to FROM maps) m
 		JOIN model_usage mu ON mu.org_id = $1 AND mu.secret_key = m.secret_key AND mu.secret_slot = m.secret_slot
 			AND mu.created_at >= GREATEST(m.valid_from, $2) AND mu.created_at < LEAST(m.valid_to, $3)
-		GROUP BY 1, 2, 3`, orgID, start, now)
+		GROUP BY 1, 2, 3`, orgID, start, out.ComparedUntil)
 	if err != nil {
 		return out, err
 	}
