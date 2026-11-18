@@ -136,7 +136,11 @@ jobs:
           # and costs nothing while the tests pass: a wait returns when its
           # condition holds, not when the timer runs out.
           COVEY_TEST_WAIT_FACTOR: "3"
-        run: go test -timeout 45m -coverprofile=coverage.out -coverpkg="$(go list ./... | paste -sd, -)" ./...
+          # -count=1 below: setup-go restores the Go build cache, and that
+          # cache holds test results too. A rerun of an unchanged tree could
+          # replay "ok (cached)" instead of running the suite against the
+          # fresh Postgres, and a flaky test would look stable.
+        run: go test -timeout 45m -count=1 -coverprofile=coverage.out -coverpkg="$(go list ./... | paste -sd, -)" ./...
       # The total is the number the README shows. `go tool cover` prints it as
       # the last line of its table; the awk cuts the percent sign off so the
       # badge job gets something it can compare.
