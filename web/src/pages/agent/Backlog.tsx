@@ -294,7 +294,9 @@ function AgentBacklog({ agentId, phase, canManage, onShowRecording }: BacklogPro
             // `required` stops "" but not blanks, and the server's refusal of
             // them is English. A blank title is emptied instead, so the next
             // press meets `required` in the user's language, as "" does.
-            if (!title.trim()) {
+            // Blank is what Go's strings.TrimSpace calls blank, which the
+            // server applies: it also removes U+0085, trim() keeps it.
+            if (!title.replace(/\u0085/g, "").trim()) {
               setTitle("");
               titleRef.current?.focus();
               return;

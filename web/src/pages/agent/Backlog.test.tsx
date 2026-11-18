@@ -515,16 +515,37 @@ describe("Neue Aufgabe hinter einem Knopf", () => {
   });
 
   // `required` only stops "": a title of blanks would go to the server, whose
-  // refusal is English text inside a German screen.
-  it("schickt einen Titel aus Leerzeichen nicht ab und zeigt keinen Serverfehler", async () => {
+  // refusal is English text inside a German screen. U+0085 (NEL) is blank for
+  // the server (Go's TrimSpace) but not for JS trim().
+  it.each([
+    ["Leerzeichen", "   "],
+    ["U+0085", "\u0085"],
+    ["Leerzeichen um U+0085", " \u0085 "],
+  ])("schickt einen Titel aus %s nicht ab und zeigt keinen Serverfehler", async (_name, blank) => {
     const { posts } = server(antwortet(400, { error: "title is required" }));
     renderWithProviders(<Backlog agentId="a1" canManage onShowRecording={() => {}} />);
     await userEvent.click(await screen.findByRole("button", KNOPF));
-    await userEvent.type(titel(), "   {Enter}");
+    await userEvent.click(titel());
+    await userEvent.paste(blank);
+    expect(titel().value).toBe(blank);
+    await userEvent.keyboard("{Enter}");
 
     expect(posts).toEqual([]);
     expect(screen.queryByRole("alert")).toBeNull();
     expect(titel().value).toBe("");
+    expect(document.activeElement).toBe(titel());
+  });
+
+  // The click moves the focus to the button, so only the refusal itself can
+  // put it back in Title.
+  it("gibt nach einem abgelehnten leeren Titel dem Titel den Fokus zurück", async () => {
+    const { posts } = server(antwortet(400, { error: "title is required" }));
+    renderWithProviders(<Backlog agentId="a1" canManage onShowRecording={() => {}} />);
+    await userEvent.click(await screen.findByRole("button", KNOPF));
+    await userEvent.type(titel(), "   ");
+    await userEvent.click(screen.getByRole("button", { name: "Ins Backlog" }));
+
+    expect(posts).toEqual([]);
     expect(document.activeElement).toBe(titel());
   });
 
