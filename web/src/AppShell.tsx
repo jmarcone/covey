@@ -33,6 +33,7 @@ import { NavIcon } from "./components/navicons";
 import Rail, { rememberAgentsView } from "./components/Rail";
 import { useDrawer, useNarrow } from "./components/ConsoleDrawer";
 import Suche, { useSucheKuerzel } from "./components/Suche";
+import AgentsFrame from "./pages/agents/AgentsFrame";
 
 /* The look of the interface comes with it, not before it — see app.css. */
 import "./app.css";
@@ -419,6 +420,9 @@ export default function AppShell({ me, onLogout }: { me: Principal; onLogout: ()
             the right. Reading width is therefore the business of the content
             that needs it (see `.measure` in styles.css), not of the
             frame. */}
+        {/* The agents area's bar stands outside the keyed page below: it
+            neither remounts nor fades when one view gives way to another. */}
+        {inAgents && <AgentsFrame teamSurface={!!me.TeamSurface} />}
         <div key={location.pathname} className="fade flex-1 konsole-inhalt">
           {/* Every page is its own bundle and arrives only when it is
               called for. No placeholder: the frame already stands, and a

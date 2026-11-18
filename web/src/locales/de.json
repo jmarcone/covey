@@ -432,7 +432,6 @@
   },
   "agent": {
     "notFound": "Agent nicht gefunden.",
-    "breadcrumb": "Agenten",
     "sandbox": "Sandbox aktiv",
     "wake": "Wecken",
     "resume": "Fortsetzen",
@@ -970,6 +969,13 @@
       "syncFailed": "Seit {{when}} wurde der Arbeitsplatz nicht mehr gesichert: {{error}} — die Zahlen unten beschreiben einen älteren Stand."
     },
     "wakeFailedWhy": "{{n}} Weckversuche gescheitert: {{err}}"
+  },
+  "agents": {
+    "views": "Ansichten der Agenten",
+    "view": {
+      "list": "Liste"
+    },
+    "backTo": "Zurück: {{view}}"
   },
   "approvals": {
     "approve": "Freigeben",
@@ -3183,8 +3189,8 @@
       "text": "Ihre Kolleginnen und Kollegen hier sind KI-Agenten. Sie geben ihnen Arbeit, wie Sie sie einem Menschen geben würden: indem Sie ihnen schreiben. In einer Minute zeigen wir, wo was ist."
     },
     "buero": {
-      "titel": "Das Büro",
-      "text": "Die Belegschaft als Gebäude: ein Raum je Abteilung, ein Tisch je Kollegin. Ein leuchtender Tisch heißt, dort läuft gerade eine Aufgabe. Die Zahl zeigt, wie viele Entscheidungen auf Sie warten."
+      "titel": "Agenten",
+      "text": "Hier sind Ihre Kolleginnen und Kollegen. Das Büro zeigt die Belegschaft als Gebäude, die Liste jeden Agenten mit dem, was er gerade tut, und ein Klick auf einen Namen öffnet seine Seite. Die Zahl zeigt, wie viele Entscheidungen auf Sie warten."
     },
     "team": {
       "titel": "Das Team",

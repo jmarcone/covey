@@ -1,6 +1,6 @@
 import type { ReactElement } from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { screen, render, waitFor } from "@testing-library/react";
+import { screen, render, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 import App from "./App";
@@ -200,7 +200,11 @@ describe("App und die Team-Oberfläche", () => {
        and no Admin column stands beside it, as none stands beside the
        list. */
     expect(screen.getByRole("link", { name: "Agenten" })).toHaveAttribute("aria-current", "page");
-    expect(screen.queryByRole("link", { name: /^Büro/ })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("navigation", { name: "Bereiche" })).queryByRole("link", { name: /^Büro/ })).not.toBeInTheDocument();
+    // Its place is the switch in the area's bar, and it is the view one is in.
+    expect(
+      within(screen.getByRole("navigation", { name: "Ansichten der Agenten" })).getByRole("link", { name: "Büro" }),
+    ).toHaveAttribute("aria-current", "page");
     expect(container.querySelector("#konsole-nav")).toBeNull();
     // Admin lands on the org chart, the first item of its column.
     expect(screen.getByRole("link", { name: "Verwaltung" }).getAttribute("href")).toBe("/org");

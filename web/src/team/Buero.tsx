@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "react-router";
+import { Link, useNavigate } from "react-router";
 import * as THREE from "three";
 import { api, post, type Agent, type Department, type Human, type Laufend, type OfficeFurnishing, type Organization, type Principal } from "../api";
 import { canManage } from "../pages/agent/roles";
+import { fromView } from "../pages/agents/views";
 import Gesicht from "../components/Gesicht";
 import Dauer from "../components/Dauer";
 import { hausBauen } from "./buero/plan";
@@ -678,7 +679,7 @@ export default function Buero({
  * triage. It only does not answer: what the colleague makes of it stands in
  * the conversation, and the link below leads there.
  */
-function BuKarte({
+export function BuKarte({
   agent,
   laeuft,
   wartet,
@@ -724,7 +725,11 @@ function BuKarte({
       <header className="bu-karte-kopf">
         <Gesicht schluessel={agent.slug} zustand={agent.killed ? "killed" : agent.status === "sleeping" ? "sleeping" : "working"} groesse={28} />
         <span className="bu-karte-wer">
-          <strong>{agent.display_name}</strong>
+          <strong>
+            <Link to={`/agents/${agent.id}`} state={fromView("office")} className="bu-karte-name">
+              {agent.display_name}
+            </Link>
+          </strong>
           <span className="bu-karte-rolle">{agent.job_title || agent.slug}</span>
         </span>
         <button className="bu-karte-zu" onClick={onSchliessen} aria-label={t("team.abbrechen")}>
@@ -771,9 +776,15 @@ function BuKarte({
           conversation, and the link below leads there. Claiming it was done
           here would be exactly the untruth #304 removed. */}
       {ab && <p className="bu-karte-ab">{t("team.angenommen")}</p>}
-      <button className="bu-karte-hin" onClick={onOeffnen}>
-        {t("team.gespraech")}
-      </button>
+      <div className="bu-karte-fuss">
+        <button className="bu-karte-hin" onClick={onOeffnen}>
+          {t("team.gespraech")}
+        </button>
+        {/* The agent's own page, with the office as the way back. */}
+        <Link to={`/agents/${agent.id}`} state={fromView("office")} className="bu-karte-hin">
+          {t("conversation.profile")}
+        </Link>
+      </div>
     </div>
   );
 }
