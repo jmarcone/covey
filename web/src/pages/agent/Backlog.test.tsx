@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Backlog } from "./Backlog";
@@ -110,5 +110,62 @@ describe("Befund aus einer Aufgaben-Notiz melden", () => {
 
     expect(await screen.findByText(NOTE.content)).toBeTruthy();
     expect(screen.queryByText("↗ nach oben melden")).toBeNull();
+  });
+});
+
+// A phone shows the stages stacked: one heading per stage, folded by its
+// button. What you came for is open — the first stage with a task and the
+// stage holding the running one — and the rest stays shut.
+describe("Backlog auf dem Telefon", () => {
+  beforeEach(() => {
+    useGerman();
+    vi.stubGlobal("matchMedia", (q: string) => ({
+      matches: q === "(max-width: 768px)",
+      media: q,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  const stufen = [
+    { id: "s1", name: "Neu", color: "", position: 0 },
+    { id: "s2", name: "Läuft", color: "", position: 1 },
+    { id: "s3", name: "Fertig", color: "", position: 2 },
+    { id: "s4", name: "Leer", color: "", position: 3 },
+  ];
+  const aufgabe = (id: string, stage_id: string, state: string) => ({
+    ...TASK,
+    id,
+    title: `Aufgabe ${id}`,
+    stage_id,
+    state,
+  });
+
+  it("öffnet die erste gefüllte Stufe und die mit der laufenden Aufgabe", async () => {
+    mockFetch({
+      ...routen(),
+      "/api/v1/agents/a1/stages": stufen,
+      "/api/v1/agents/a1/backlog": [
+        aufgabe("x1", "s2", "in_progress"),
+        aufgabe("x2", "s3", "done"),
+      ],
+    });
+    renderWithProviders(<Backlog agentId="a1" canManage onShowRecording={() => {}} />);
+
+    const laeuft = await screen.findByRole("button", { name: /Läuft/ });
+    const neu = screen.getByRole("button", { name: /Neu/ });
+    const fertig = screen.getByRole("button", { name: /Fertig/ });
+    // "Neu" is empty, so the first stage with a task is "Läuft" — which also
+    // holds the running task. "Fertig" stays shut.
+    expect(neu).toHaveAttribute("aria-expanded", "false");
+    expect(laeuft).toHaveAttribute("aria-expanded", "true");
+    expect(fertig).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByText("Aufgabe x1")).toBeVisible();
+    expect(screen.queryByText("Aufgabe x2")).not.toBeVisible();
+
+    await userEvent.click(fertig);
+    expect(fertig).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Aufgabe x2")).toBeVisible();
   });
 });

@@ -16,6 +16,8 @@ import {
 import { fmtUSD } from "../../format";
 import { upstreamIssueURL } from "../../upstream";
 import { PhaseBadge } from "../../components/PhaseBadge";
+import { useNarrow } from "../../components/ConsoleDrawer";
+import { useEdgeFade } from "../../components/useEdgeFade";
 
 export function Backlog({
   agentId,
@@ -104,6 +106,19 @@ export function Backlog({
     ...stageList.map((s) => ({ id: s.id, name: s.name, color: s.color || "var(--text-secondary)" })),
   ];
 
+  // Up to 768 px the stages stack, one heading per stage as a button. Open by
+  // default: the first stage with a task in it and the stage holding the
+  // running one — what you came to look at. A stage you toggled stays as you
+  // left it.
+  const stacked = useNarrow(STACK_BELOW);
+  const [folded, setFolded] = useState<Map<string, boolean>>(new Map());
+  const stageKey = (id: string | null) => id ?? "__none";
+  const firstFilled = columns.find((c) => (tasks.data ?? []).some((tk) => inStage(tk, c.id)));
+  const running = columns.find((c) => (tasks.data ?? []).some((tk) => tk.state === "in_progress" && inStage(tk, c.id)));
+  const stageOpen = (id: string | null) =>
+    folded.get(stageKey(id)) ?? (firstFilled?.id === id || running?.id === id);
+  const boardRef = useEdgeFade<HTMLDivElement>([columns.length, stacked]);
+
   const drop = (stageId: string | null) => {
     if (dragTask) move.mutate({ taskId: dragTask, stageId });
     setDragTask(null);
@@ -141,7 +156,7 @@ export function Backlog({
       )}
       {tasks.data && stages.data && (
         <>
-          <div className="flex items-center gap-2 mb-3">
+          <div className="flex items-center gap-2 mb-3 bl-bar">
             <input
               type="search"
               className="bl-search"
@@ -201,52 +216,74 @@ export function Backlog({
           ) : columns.length === 0 ? (
             <p className="muted">{t("agent.backlog.empty")}</p>
           ) : (
-            <div className="kanban" style={{ ["--kcols" as string]: columns.length }}>
+            <div
+              className={`kanban${stacked ? " stacked" : ""}`}
+              style={{ ["--kcols" as string]: columns.length }}
+              ref={boardRef}
+            >
               {columns.map((col) => {
                 const all = (tasks.data ?? [])
                   .filter((tk) => inStage(tk, col.id))
                   .sort((a, b) => b.created_at.localeCompare(a.created_at));
-                const key = col.id ?? "__none";
+                const key = stageKey(col.id);
                 const open = unfolded.has(key);
                 const items = open ? all : all.slice(0, COLUMN_LIMIT);
                 const hidden = all.length - items.length;
+                const shown = !stacked || stageOpen(col.id);
                 return (
                   <div
                     className={`kcol${dragTask ? " droppable" : ""}`}
-                    key={col.id ?? "__none"}
+                    key={key}
                     onDragOver={(e) => {
                       if (dragTask) e.preventDefault();
                     }}
                     onDrop={() => drop(col.id)}
                   >
-                    <div className="kh">
-                      <span className="dot" style={{ background: col.color }} />
-                      <span className="knm" title={col.name}>{col.name}</span>
-                      <span className="n">{all.length}</span>
+                    {stacked ? (
+                      <button
+                        type="button"
+                        className="kh kh-btn"
+                        aria-expanded={shown}
+                        aria-controls={`kcol-${key}`}
+                        onClick={() => setFolded((prev) => new Map(prev).set(key, !shown))}
+                      >
+                        <span className="dot" style={{ background: col.color }} />
+                        <span className="knm" title={col.name}>{col.name}</span>
+                        <span className="n">{all.length}</span>
+                        <span className="chev" aria-hidden="true">›</span>
+                      </button>
+                    ) : (
+                      <div className="kh">
+                        <span className="dot" style={{ background: col.color }} />
+                        <span className="knm" title={col.name}>{col.name}</span>
+                        <span className="n">{all.length}</span>
+                      </div>
+                    )}
+                    <div id={`kcol-${key}`} className={stacked ? "kc-stage" : undefined} hidden={!shown}>
+                      {items.map((tk) => (
+                        <TaskCard
+                          key={tk.id}
+                          task={tk}
+                          agentId={agentId}
+                          phase={phase}
+                          canManage={canManage}
+                          onShowRecording={onShowRecording}
+                          onDragStart={() => setDragTask(tk.id)}
+                          onDragEnd={() => setDragTask(null)}
+                        />
+                      ))}
+                      {all.length === 0 && <div className="kc-empty">—</div>}
+                      {hidden > 0 && (
+                        <button className="btn sm kc-more" onClick={() => toggleUnfold(key)}>
+                          {t("agent.backlog.showOlder", { count: hidden })}
+                        </button>
+                      )}
+                      {open && all.length > COLUMN_LIMIT && (
+                        <button className="btn sm kc-more" onClick={() => toggleUnfold(key)}>
+                          {t("agent.backlog.showFewer")}
+                        </button>
+                      )}
                     </div>
-                    {items.map((tk) => (
-                      <TaskCard
-                        key={tk.id}
-                        task={tk}
-                        agentId={agentId}
-                        phase={phase}
-                        canManage={canManage}
-                        onShowRecording={onShowRecording}
-                        onDragStart={() => setDragTask(tk.id)}
-                        onDragEnd={() => setDragTask(null)}
-                      />
-                    ))}
-                    {all.length === 0 && <div className="kc-empty">—</div>}
-                    {hidden > 0 && (
-                      <button className="btn sm kc-more" onClick={() => toggleUnfold(key)}>
-                        {t("agent.backlog.showOlder", { count: hidden })}
-                      </button>
-                    )}
-                    {open && all.length > COLUMN_LIMIT && (
-                      <button className="btn sm kc-more" onClick={() => toggleUnfold(key)}>
-                        {t("agent.backlog.showFewer")}
-                      </button>
-                    )}
                   </div>
                 );
               })}
@@ -448,6 +485,8 @@ function originLabel(origin: string): string {
 const terminalStates = ["done", "failed", "cancelled"];
 
 const COLUMN_LIMIT = 7;
+// Below this width the board stacks, one folding heading per stage.
+const STACK_BELOW = "(max-width: 768px)";
 
 // SEARCH_LIMIT mirrors backlog.SearchMaxResults — only so that the list can say
 // when it is showing the cap rather than the whole truth.
