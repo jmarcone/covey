@@ -10,6 +10,10 @@ export type AgentsView = "office" | "list";
  * can clash with /agents/<id>. */
 const BASE: Record<AgentsView, string> = { office: "/", list: "/agents" };
 
+/* The view's own address, without anything remembered: what a link that
+ * starts a filter of its own builds on (the crumb's department step). */
+export const viewPath = (v: AgentsView): string => BASE[v];
+
 /* The views this installation offers, in the order of the switch. The office
  * needs the team surface: its card and rows open conversations. */
 export function viewsFor(teamSurface: boolean): AgentsView[] {

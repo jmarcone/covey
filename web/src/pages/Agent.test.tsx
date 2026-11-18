@@ -119,6 +119,17 @@ describe("Reiter der Agenten-Seite", () => {
   });
 });
 
+// The path through the organisation is the agents area's bar (AgentsFrame);
+// a crumb on the page as well would be a second one.
+describe("Kopf der Agenten-Seite", () => {
+  it("zeichnet keinen Pfad durch die Organisation und fragt das Organigramm nicht", async () => {
+    const { netz } = zeigeAgent(`/agents/${AGENT_ID}`);
+    await screen.findByRole("heading", { name: "Test-Agent" });
+    expect(screen.queryByRole("navigation", { name: "Organisationspfad" })).not.toBeInTheDocument();
+    expect(netz.calls.filter((c) => c.includes("/org/chart"))).toHaveLength(0);
+  });
+});
+
 describe("Rollen", () => {
   it("verbirgt die Dateien vor Rollen ohne Zugriff", async () => {
     zeigeAgent(`/agents/${AGENT_ID}`, "auditor");
