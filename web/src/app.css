@@ -4174,12 +4174,10 @@ a.tm-file:hover { background: var(--tint); }
 .av-switch a.on { background: var(--surface-2); color: var(--text-primary); box-shadow: 0 0 0 0.5px var(--border); }
 .av-switch a[aria-current="page"] { font-weight: 550; }
 .av-switch a:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: -2px; }
-.av-crumb { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--text-secondary); }
 /* The settings column of an agent's page (Settings, Tooling) sticks below
    the bar, not under it. Elsewhere — a runner's page — there is no bar, and
    it keeps its 12 px. */
 .av-bar ~ .konsole-inhalt .settings-nav { top: 64px; }
-@media (max-width: 768px) { .av-crumb { display: none; } }
 
 /* Phone width (#463): the console's navigation leaves the row and becomes a
    drawer behind a button in a bar above the page, so the page gets the whole
@@ -5120,3 +5118,40 @@ a.tm-file:hover { background: var(--tint); }
 .ps-photo-remove { background: none; border: 0; padding: 0; font: inherit; font-size: 11.5px; color: var(--text-muted); cursor: pointer; }
 .ps-photo-remove:hover { color: var(--text-danger); }
 @media (min-width: 641px) { .field-grid.two { grid-template-columns: 1fr 1fr; } }
+
+/* The agent page's organisation path (#20), in the agents area's bar after the
+   view switch. One row: the steps clip at 24 ch (the agent at 32) with the
+   full name in `title`, and every step is led in by the › that follows the
+   switch. */
+.acrumb { display: flex; align-items: center; gap: 0 8px; flex: 1 1 auto; min-width: 0; font-size: 13px; color: var(--text-secondary); }
+.acrumb ol { display: flex; align-items: center; min-width: 0; margin: 0; padding: 0; list-style: none; }
+.acrumb li { display: inline-flex; align-items: center; min-width: 0; }
+.acrumb li::before { content: "›"; margin: 0 7px; color: var(--text-muted); }
+.acrumb-step { display: inline-block; max-width: 24ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: inherit; text-decoration: none; vertical-align: bottom; }
+a.acrumb-step:hover, .acrumb-link:hover { text-decoration: underline; text-underline-offset: 2px; }
+.acrumb-step .ic { width: 13px; height: 13px; margin-right: 4px; vertical-align: -2px; stroke: currentColor; fill: none; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.acrumb-here { max-width: 32ch; color: var(--text-primary); font-weight: 500; }
+.acrumb-link { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.acrumb-note { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }
+.acrumb-note::before { content: "·"; margin-right: 6px; }
+.acrumb a:focus-visible, .acrumb-more:focus-visible { outline: 2px solid var(--text-accent); outline-offset: 2px; border-radius: 4px; }
+.acrumb-fold { position: relative; display: inline-block; }
+.acrumb-more { border: 0.5px solid var(--border); border-radius: 6px; background: var(--tint-weak); color: var(--text-secondary); font: inherit; line-height: 1; padding: 1px 7px 3px; cursor: pointer; }
+.acrumb-more:hover, .acrumb-more[aria-expanded="true"] { background: var(--tint); color: var(--text-primary); }
+.acrumb-menu { position: absolute; left: 0; top: calc(100% + 6px); z-index: 30; min-width: 260px; max-width: 360px; padding: 4px; background: var(--surface-2); border: 0.5px solid var(--border); border-radius: 10px; box-shadow: 0 10px 28px var(--shadow-sm); }
+.acrumb-menu-head { padding: 4px 9px 6px; font-size: 12px; color: var(--text-muted); }
+.acrumb-menu a { display: flex; align-items: center; gap: 6px; padding: 6px 9px; border-radius: 6px; color: var(--text-primary); font-size: 13px; text-decoration: none; }
+.acrumb-menu a:hover, .acrumb-menu a:focus-visible { background: var(--tint); }
+.acrumb-menu a:focus-visible { outline: 2px solid var(--text-accent); outline-offset: -2px; }
+.acrumb-menu .ic { width: 13px; height: 13px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.acrumb-gap { width: 13px; flex: none; }
+.acrumb-clip { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* On a phone the menu hangs from the bar, not from the button, so it cannot
+   run off the right edge. */
+@media (max-width: 768px) {
+  .acrumb-fold { position: static; }
+  .acrumb-menu { left: 16px; right: 16px; max-width: none; }
+}
+/* The room a department step pointed at (?dept=), outlined on the floor for
+   two seconds. */
+.bu-ziel polygon { fill: color-mix(in srgb, var(--text-accent) 10%, transparent); stroke: var(--text-accent); stroke-width: 2; stroke-linejoin: round; }

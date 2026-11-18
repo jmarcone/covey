@@ -37,6 +37,18 @@ export function matches(a: Agent, deptName: string, q: string, states: string[] 
     .some((v) => String(v).toLowerCase().includes(needle));
 }
 
+// deptFilter narrows to one department: its id, or "none" for the agents
+// without one. This is the ?dept= the agent page's crumb links to; the empty
+// string is no filter. "Without one" means what the list's own group and the
+// office's room mean: no department id, or an id the department list no
+// longer has. `known` is that list's ids, null until it has loaded — then
+// only the first half can be told.
+export function deptFilter(a: Agent, dept: string, known: ReadonlySet<string> | null = null): boolean {
+  if (!dept) return true;
+  if (dept !== "none") return a.department_id === dept;
+  return !a.department_id || (known !== null && !known.has(a.department_id));
+}
+
 // stateOf sums up what the badge on the row shows. The platform knows five
 // states, but "triggered" and "triage" are seconds on the way to working —
 // as their own filters they would be buttons that almost never match.
@@ -68,13 +80,16 @@ export function groupByDepartment(
   departments: Department[],
   q: string,
   states: string[] = [],
+  dept = "",
+  departmentsLoaded = true,
 ): Group[] {
   const byId = new Map(departments.map((d) => [d.id, d]));
+  const known = departmentsLoaded ? new Set(byId.keys()) : null;
   const groups = new Map<string, Group>();
   const ohne: Group = { id: null, name: "", color: "", agents: [] };
   for (const a of agents) {
     const d = a.department_id ? byId.get(a.department_id) : undefined;
-    if (!matches(a, d?.name ?? "", q, states)) continue;
+    if (!deptFilter(a, dept, known) || !matches(a, d?.name ?? "", q, states)) continue;
     if (!d) {
       ohne.agents.push(a);
       continue;
@@ -100,8 +115,12 @@ export default function Dashboard({ me }: { me: Principal }) {
   const [sp, setSp] = useSearchParams();
   const q = sp.get("q") ?? "";
   const states = (sp.get("status") ?? "").split(",").filter(Boolean);
+  // The department the agent page's crumb linked to (?dept=<id|none>).
+  const dept = sp.get("dept") ?? "";
   const searchRef = useRef<HTMLInputElement>(null);
-  const setParam = (key: string, v: string) =>
+  // Typing and toggling replace the entry; taking a department filter off
+  // is a step of its own, and Back brings it back.
+  const setParam = (key: string, v: string, replace = true) =>
     setSp(
       (prev) => {
         const n = new URLSearchParams(prev);
@@ -109,7 +128,7 @@ export default function Dashboard({ me }: { me: Principal }) {
         else n.delete(key);
         return n;
       },
-      { replace: true },
+      { replace },
     );
   const setQ = (v: string) => setParam("q", v);
   const toggleState = (st: string) =>
@@ -157,8 +176,28 @@ export default function Dashboard({ me }: { me: Principal }) {
 
   const all = agents.data ?? [];
   const depts = departments.data ?? [];
-  const drafts = all.filter(isDraft).filter((a) => matches(a, "", q, states));
-  const groups = groupByDepartment(all.filter((a) => !isDraft(a)), depts, q, states);
+  const known = departments.isSuccess ? new Set(depts.map((d) => d.id)) : null;
+  const drafts = all.filter(isDraft).filter((a) => deptFilter(a, dept, known) && matches(a, "", q, states));
+  const groups = groupByDepartment(all.filter((a) => !isDraft(a)), depts, q, states, dept, departments.isSuccess);
+  // The name is only there once the departments are in; an id nobody has
+  // stays without one. The chip does not wait for it, and never shows the id
+  // in its place: that is a UUID, nothing a person can read.
+  const deptName = dept === "none" ? t("dashboard.withoutDepartment") : depts.find((d) => d.id === dept)?.name;
+  const deptUnknown = !!dept && !deptName && departments.isSuccess;
+  // Why nothing is shown. Under a department filter alone the sentence names
+  // the department, so it waits for the departments instead of printing a
+  // name that is not there yet; if they fail, the sentence goes without one.
+  const emptyText = deptUnknown
+    ? t("dashboard.deptUnknown")
+    : dept && !q && states.length === 0
+      ? departments.isLoading
+        ? null
+        : dept === "none"
+          ? t("dashboard.deptEmptyNone")
+          : deptName
+            ? t("dashboard.deptEmpty", { name: deptName })
+            : t("dashboard.deptEmptyUnnamed")
+      : t("dashboard.noMatch", { q });
   const shown = groups.reduce((n, g) => n + g.agents.length, 0) + drafts.length;
 
   const fleetMut = useMutation({
@@ -222,7 +261,17 @@ export default function Dashboard({ me }: { me: Principal }) {
                 {t(`status.${st}`)}
               </button>
             ))}
-            {(q || states.length > 0) && (
+            {dept && !deptUnknown && (
+              <button
+                className="badge"
+                title={t("dashboard.deptFilterRemove")}
+                style={{ cursor: "pointer", outline: "1px solid var(--text-accent)" }}
+                onClick={() => setParam("dept", "", false)}
+              >
+                {t("dashboard.deptFilter", { name: deptName ?? t("dashboard.deptNamePending") })} ×
+              </button>
+            )}
+            {(q || states.length > 0 || dept) && (
               <span className="secondary text-xs">
                 {t("dashboard.countFiltered", { shown, count: all.length })}
               </span>
@@ -335,7 +384,16 @@ export default function Dashboard({ me }: { me: Principal }) {
         </section>
       ))}
       {all.length === 0 && <p className="muted">{t("dashboard.noAgents")}</p>}
-      {all.length > 0 && shown === 0 && <p className="muted">{t("dashboard.noMatch", { q })}</p>}
+      {all.length > 0 && shown === 0 && (
+        <div>
+          {emptyText && <p className="muted mb-3">{emptyText}</p>}
+          {dept && (
+            <button className="btn sm" onClick={() => setParam("dept", "", false)}>
+              {t("dashboard.allAgents")}
+            </button>
+          )}
+        </div>
+      )}
 
       {hiring && <HireDialog agent={hiring} onClose={() => setHiring(null)} />}
       {rejecting && (
@@ -514,7 +572,7 @@ function CreateAgentModal({ onClose, onDone }: { onClose: () => void; onDone: (i
 
   const handleDone = (agent: Agent) => {
     onDone(agent.id);
-    navigate(`/agents/${agent.id}`);
+    navigate(`/agents/${agent.id}`, { state: fromView("list") });
   };
 
   const titles: Record<CreatePath, string> = {

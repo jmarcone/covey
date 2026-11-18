@@ -10,6 +10,10 @@ export type AgentsView = "office" | "list";
  * can clash with /agents/<id>. */
 const BASE: Record<AgentsView, string> = { office: "/", list: "/agents" };
 
+/* The view's own address, without anything remembered: what a link that
+ * starts a filter of its own builds on (the crumb's department step). */
+export const viewPath = (v: AgentsView): string => BASE[v];
+
 /* The views this installation offers, in the order of the switch. The office
  * needs the team surface: its card and rows open conversations. */
 export function viewsFor(teamSurface: boolean): AgentsView[] {
@@ -24,8 +28,17 @@ const key = (v: AgentsView) => `covey.agents.url.${v}`;
 
 /* The address with its filters, kept per view for the length of the tab: the
  * way back from an agent's page lands where the person left, not on the
- * unfiltered list. */
+ * unfiltered list. `?dept=` is the exception in both views: an id belongs to
+ * one organisation, and the tab outlives a switch of organisation, so a
+ * remembered one would reopen the view on another organisation's department.
+ * The office's is no filter but a pointer, and the list's comes with the
+ * crumb's link; either stays in the address, so a reload or a shared link shows
+ * it again, but the switch does not keep it. */
 export function rememberViewUrl(view: AgentsView, path: string, search: string) {
+  const params = new URLSearchParams(search);
+  params.delete("dept");
+  const rest = params.toString();
+  search = rest ? `?${rest}` : "";
   try {
     sessionStorage.setItem(key(view), path + search);
   } catch {
