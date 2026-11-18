@@ -288,7 +288,8 @@
       "input": "Entrée (hors cache)",
       "output": "Sortie (réflexion comprise)",
       "unit": "jetons"
-    }
+    },
+    "weekOf": "semaine du {{date}}"
   },
   "lang": {
     "label": "Langue"

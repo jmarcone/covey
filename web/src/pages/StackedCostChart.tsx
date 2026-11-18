@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { api, type BilledReport, type CellAgent, type CostCell, type CostCells } from "../api";
-import { fmtBucket, fmtClockUTC, fmtCount, fmtUSD, fmtUSDAxis } from "../format";
+import { fmtBucket, fmtClockUTC, fmtCount, fmtNumber, fmtUSD, fmtUSDAxis } from "../format";
 import {
   billedFetchBucket,
   billedPerPeriod,
@@ -403,7 +403,7 @@ function usePlanLabel() {
   return (f: CredentialFigures) => {
     if (!f.plan) return f.kind === "subscription" ? t("costs.fig.noPlan") : "";
     const p = f.plan;
-    const price = p.currency.toUpperCase() === "USD" ? `$${p.amount}` : `${p.amount} ${p.currency}`;
+    const price = p.currency.toUpperCase() === "USD" ? fmtUSD(p.amount) : `${fmtNumber(p.amount, p.amount % 1 ? 2 : 0)} ${p.currency}`;
     return t("costs.fig.planLabel", { price, per: t(p.period === "year" ? "costs.fig.perYear" : "costs.fig.perMonth") });
   };
 }

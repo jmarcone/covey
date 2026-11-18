@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import i18n from "./i18n";
-import { exact, fmtBytes, fmtCount, fmtDelta, fmtUSD, fmtUSDAxis } from "./format";
+import { exact, fmtBucket, fmtBytes, fmtCount, fmtDelta, fmtUSD, fmtUSDAxis } from "./format";
 
 /* The reason stood on the cost side: 147952885 read cache tokens. Nobody reads
    that as a hundred forty-eight million — you count it through digit by digit.
@@ -65,8 +65,17 @@ describe("fmtUSD", () => {
   // With a comma in German — once `12.30 $` stood here next to `2.746 $`, and
   // the same point meant two things in two lines.
   it("behält die Stellen, die ein Betrag noch trägt", () => {
-    expect(fmtUSD(0.0042)).toBe("0,0042 $");
     expect(fmtUSD(12.3)).toBe("12,30 $");
+    expect(fmtUSD(0.4615)).toBe("0,46 $");
+  });
+
+  // Review C14: `0,0000 $` for a run that cost a fraction of a cent, and four
+  // digits below a dollar that the figures do not carry.
+  it("zeigt weniger als einen Cent als <0,01 $ und null als 0,00 $", () => {
+    expect(fmtUSD(0.0042)).toBe("<0,01 $");
+    expect(fmtUSD(0.00004)).toBe("<0,01 $");
+    expect(fmtUSD(0)).toBe("0,00 $");
+    expect(fmtUSD(-12.3)).toBe("-12,30 $");
   });
 
   it("trennt Tausender, wo sie anfangen zu helfen", () => {
@@ -103,9 +112,10 @@ describe("englische Schreibweise", () => {
   });
 
   it("dreht Tausender- und Dezimaltrenner um", () => {
-    expect(fmtUSD(2746)).toBe("2,746 $");
-    expect(fmtUSD(12.3)).toBe("12.30 $");
-    expect(fmtUSD(0.0042)).toBe("0.0042 $");
+    // and the symbol goes where English puts it
+    expect(fmtUSD(2746)).toBe("$2,746");
+    expect(fmtUSD(12.3)).toBe("$12.30");
+    expect(fmtUSD(0.0042)).toBe("<$0.01");
     expect(exact(147_952_885)).toBe("147,952,885");
     expect(fmtCount(12_345)).toBe("12.3 k");
     expect(fmtCount(2_499_833_356)).toBe("2.5 B");
@@ -115,7 +125,7 @@ describe("englische Schreibweise", () => {
   // one produces a spelling that is right in neither language.
   it("mischt die beiden nie", () => {
     expect(fmtCount(9999)).toBe("9,999");
-    expect(fmtUSD(1_234_567)).toBe("1,234,567 $");
+    expect(fmtUSD(1_234_567)).toBe("$1,234,567");
   });
 });
 
@@ -146,13 +156,25 @@ describe("andere Sprachen", () => {
   });
 });
 
+describe("fmtBucket", () => {
+  // Review C14: day and week buckets are cut in UTC; a week is named by its
+  // first day.
+  it("nennt UTC bei Tag und Woche und die Woche nach ihrem ersten Tag", async () => {
+    await i18n.changeLanguage("de");
+    expect(fmtBucket("2026-11-17T00:00:00Z", "day")).toBe("17.11. UTC");
+    expect(fmtBucket("2026-11-16T00:00:00Z", "week")).toBe("Woche ab 16.11. UTC");
+    await i18n.changeLanguage("en");
+    expect(fmtBucket("2026-11-16T00:00:00Z", "week")).toBe("week of 11/16 UTC");
+  });
+});
+
 describe("fmtUSDAxis", () => {
   it("keeps an axis tick as short as its step", async () => {
     await i18n.changeLanguage("en");
-    expect(fmtUSDAxis(0)).toBe("0 $");
-    expect(fmtUSDAxis(0.25)).toBe("0.25 $");
-    expect(fmtUSDAxis(2.5)).toBe("2.5 $");
-    expect(fmtUSDAxis(12)).toBe("12 $");
-    expect(fmtUSDAxis(1500)).toBe("1.5 k $");
+    expect(fmtUSDAxis(0)).toBe("$0");
+    expect(fmtUSDAxis(0.25)).toBe("$0.25");
+    expect(fmtUSDAxis(2.5)).toBe("$2.5");
+    expect(fmtUSDAxis(12)).toBe("$12");
+    expect(fmtUSDAxis(1500)).toBe("$1.5 k");
   });
 });

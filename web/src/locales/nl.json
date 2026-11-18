@@ -288,7 +288,8 @@
       "input": "Invoer (niet gecachet)",
       "output": "Uitvoer (incl. denken)",
       "unit": "tokens"
-    }
+    },
+    "weekOf": "week van {{date}}"
   },
   "lang": {
     "label": "Taal"

@@ -288,7 +288,8 @@
       "input": "Wejście (bez cache)",
       "output": "Wyjście (z myśleniem)",
       "unit": "tokenów"
-    }
+    },
+    "weekOf": "tydzień od {{date}}"
   },
   "lang": {
     "label": "Język"

@@ -288,7 +288,8 @@
       "input": "Eingabe (ungecacht)",
       "output": "Ausgabe (inkl. Denken)",
       "unit": "Tokens"
-    }
+    },
+    "weekOf": "Woche ab {{date}}"
   },
   "lang": {
     "label": "Sprache"

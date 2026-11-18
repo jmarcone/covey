@@ -288,7 +288,8 @@
       "input": "Entrada (sin caché)",
       "output": "Salida (incl. razonamiento)",
       "unit": "tokens"
-    }
+    },
+    "weekOf": "semana del {{date}}"
   },
   "lang": {
     "label": "Idioma"

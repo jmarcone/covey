@@ -288,7 +288,8 @@
       "input": "输入（未缓存）",
       "output": "输出（含思考）",
       "unit": "token"
-    }
+    },
+    "weekOf": "{{date}} 起的一周"
   },
   "lang": {
     "label": "语言"

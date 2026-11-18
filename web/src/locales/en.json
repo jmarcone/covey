@@ -288,7 +288,8 @@
       "input": "Input (uncached)",
       "output": "Output (incl. thinking)",
       "unit": "tokens"
-    }
+    },
+    "weekOf": "week of {{date}}"
   },
   "lang": {
     "label": "Language"
