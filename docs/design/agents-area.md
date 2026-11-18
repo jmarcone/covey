@@ -96,7 +96,8 @@ The **Office** rail entry goes away: Office is now a view of Agents. The tour st
 
 ### Detail: a view of its own, not a panel
 The detail has seven tabs and a five-column backlog, so it needs the full width; squeezing it is what overflowed in 02a7904f.
-- **In the bar:** the switch stays in its place. The view you came from (`location.state.from` = `office|list|board`) is marked, with the title `agents.backTo` “Back to List”. After it comes the crumb `/ Cost Controller`.
+- **In the bar:** the switch stays in its place. The view you came from (`office|list|board`) is marked, with the title `agents.backTo` “Back to List”. After it comes the crumb `/ Cost Controller`.
+- **The origin is remembered per agent.** Entering a detail with `location.state.from` stores it in `sessionStorage` under `covey.agents.from.<agent id>`; when the router state is missing it is read from there. Router state alone is not enough: every in-page change (`?tab=`, a memory page, a files folder) pushes a history entry without it, so the origin would fall back to List on the first tab click.
 - **Without an origin** (a bookmark, a link in an agent message, a notification), the origin is **List**.
 - **Back:** click the marked segment, which restores that view's last URL with its filters (kept per view in `sessionStorage`), or use browser back.
 - **Page head:** the breadcrumb row inside the page (`Agent.tsx:124-129`) goes. The head becomes name, state badge and runtime/model, with “Open conversation” (team surface only), Wake and Stop on the right.
@@ -110,7 +111,7 @@ The detail has seven tabs and a five-column backlog, so it needs the full width;
   - Use `nowrap` and sideways scroll, with a fade on the clipped edge (≤ 768 px).
   - The selected tab scrolls into view.
 - **D3 Stats cards** (CostBar, Performance). At 390 px four squeezed columns broke “Total cost 119.92 $” over four lines. Use `repeat(auto-fit, minmax(140px, 1fr))`: four across on desktop, 2 × 2 on a phone.
-- **D4 Costs page** (Admin): the chip row needs 3108 px and gets 1067 px. This is not part of this frame; it is cut item 6.
+- **D4 Costs page** (Admin): the chip row needs 3108 px and gets 1067 px. This is not part of this frame; see cut item 6.
 
 ## 4. What stays in Admin (every item of `AppShell.tsx:312-387` placed)
 | Today | After | Reason |
@@ -166,12 +167,12 @@ The column becomes: *Org Chart* · TOOLS (5) · SECURITY (4) · ORGANIZATION (4)
 ## 8. Implementation cut (for covey-lead)
 | PR | Content | Depends on |
 |---|---|---|
-| 1 | Rail entry + routes: `RailPlace` `agents`/`inbox`/`costs`; Agents, Inbox and Costs entries in the §1 order; `inCosts` hides the Admin column on `/costs`; Admin → `/org`; `imTeam` without `/`; AppShell renders `/` (Office) with the column hidden for Agents and Inbox; tour target. Vitest for the path → rail place mapping. | — |
+| 1 | Rail entry + routes: `RailPlace` `agents`/`inbox`/`costs`; Agents, Inbox and Costs entries in the §1 order; `inCosts` hides the Admin column on `/costs`; Admin → `/org`; `imTeam` without `/`; AppShell renders `/` (Office) with the column hidden for Agents and Inbox; tour target. Vitest for the path → rail place mapping. **Built without Costs (PR #9); the Costs rail entry is still pending.** | — |
 | 2 | Shared frame: `AgentsFrame`, `ViewSwitch`, `scrollbar-gutter`, Office padding and h1, origin state, crumb, office card links, “Open conversation” on the detail, strings. | 1 |
-| 3 | Admin column cleanup (§4): Agents, Inbox, Setup and Costs leave it. | 1 |
+| 3 | Admin column cleanup (§4): Agents, Inbox, Setup and Costs leave it. **Built without Costs (PR #62): Costs stays in the column until its rail entry lands.** | 1 |
 | 4 | Board view at `/agents/board`, plus the API from board proposal §8 (4a backend, 4b view). | 2 (view), — (API) |
 | 5 | Detail overflow D1–D3 (CSS + `Agent.tsx` tabs). | — (check again after 2) |
-| 6 | Costs page overflow (D4). Its own place gives 240 px, but the chip row needs 3108 px, so the overflow fix is still needed. | — |
+| 6 | Costs page overflow (D4). Its own place gives 240 px, but the chip row needs 3108 px, so the overflow fix is still needed. **Do not build it separately:** the cost-page top design (`docs/design/cost-page-top.md`, PR #8) replaces the chip row with one filter bar. | — |
 | 7 | Agent list redesign (proposal c81907df) inside the frame. | 2 |
 
 ## 9. Open points for product-owner (defaults apply)
