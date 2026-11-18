@@ -225,3 +225,74 @@ func TestBilledSeriesMappingAtBucketTime(t *testing.T) {
 		}
 	}
 }
+
+// The billed tile gives a bucket to the same one mapping the billed series
+// does — the one valid at the bucket's time, the latest when one ended inside
+// it — so the tile and the sum of the chart agree. A value re-saved inside a
+// day (the old mapping closed, a new one opened on the same key) does not bill
+// that day twice to the credential, and a key that changed hands inside a day
+// bills it to the new holder only, not to both.
+func TestBilledWindowOneMappingPerBucket(t *testing.T) {
+	f := newBillingFixture(t, "rechnung-eine-zuordnung")
+	now := time.Now().UTC()
+	today := now.Truncate(24 * time.Hour)
+	resaved, handed := today.Add(-3*24*time.Hour), today.Add(-2*24*time.Hour)
+	f.exec(t, `INSERT INTO credential_billing_keys (org_id, secret_key, secret_slot, api_key_id, valid_from, valid_to)
+		VALUES ($1, 'key_a', 0, 'apikey_a', $2, $3), ($1, 'key_a', 0, 'apikey_a', $3, NULL),
+			($1, 'key_b', 0, 'apikey_x', $2, $4), ($1, 'key_c', 0, 'apikey_x', $4, NULL)`,
+		f.s.orgID, now.Add(-10*24*time.Hour), resaved.Add(10*time.Hour), handed.Add(10*time.Hour))
+	for _, r := range []struct {
+		day   time.Time
+		key   string
+		cents int
+	}{{resaved, "apikey_a", 4000}, {handed, "apikey_x", 1000}} {
+		f.exec(t, `INSERT INTO billed_cost (org_id, bucket_width, bucket_start, bucket_end, api_key_id, model, cost_type, token_type,
+			amount_cents, list_amount_cents, data_refreshed_at, fetched_at)
+			VALUES ($1,'1d',$2,$3,$4,'claude-opus-5-5','tokens','output_tokens',$5,$5,$6,$6)`,
+			f.s.orgID, r.day, r.day.Add(24*time.Hour), r.key, r.cents, now)
+	}
+
+	since := now.Add(-5 * 24 * time.Hour)
+	w, err := f.s.obs.BilledWindowFor(f.ctx, f.s.orgID, since, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Width != "1d" {
+		t.Fatalf("window width %q, want 1d", w.Width)
+	}
+	type shown struct {
+		hasBilled bool
+		usd       string
+	}
+	tile := map[string]shown{}
+	for _, b := range w.Totals {
+		tile[b.SecretKey] = shown{b.HasBilled, b.BilledUSD}
+	}
+	for key, want := range map[string]shown{"key_a": {true, "40.00000000"}, "key_b": {false, "0.00000000"},
+		"key_c": {true, "10.00000000"}} {
+		if tile[key] != want {
+			t.Errorf("tile of %s: %+v, want %+v", key, tile[key], want)
+		}
+	}
+
+	series, err := f.s.obs.BilledSeries(f.ctx, f.s.orgID, "day", since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chart := map[string]float64{}
+	for _, p := range series.Points {
+		if p.SecretKey == nil || p.Bucket.Before(w.Start) {
+			continue
+		}
+		var usd float64
+		fmt.Sscan(p.BilledUSD, &usd)
+		chart[*p.SecretKey] += usd
+	}
+	for _, b := range w.Totals {
+		var usd float64
+		fmt.Sscan(b.BilledUSD, &usd)
+		if math.Abs(usd-chart[b.SecretKey]) > 1e-9 {
+			t.Errorf("%s: tile %s, chart sums to %v — want the same", b.SecretKey, b.BilledUSD, chart[b.SecretKey])
+		}
+	}
+}
