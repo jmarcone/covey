@@ -15,7 +15,7 @@ faq:
     a: 'Not yet. Only runs of covey''s agents are in any figure. Sessions that drive covey from outside still move a shared subscription''s meter.'
 ---
 
-The cost page (*Cost & Tokens* in the sidebar) shows what the agents' work
+The cost page (*Costs* in the *Admin* column of the sidebar; the page is headed *Cost & Tokens*) shows what the agents' work
 consumed. Every role can read it; setting a plan price is for organisation
 admins and the security role. All periods are cut in UTC: UTC days, weeks that
 begin on Monday UTC.
@@ -32,7 +32,7 @@ says what money means on it.
 |---|---|---|---|
 | **Reported by Claude Code** | Claude Code's own price of its lines: the sum of the `costUSD` it writes on each result line, one line's own share at a time. Not covey's booking. | The run is on the Claude Code engine and its result line carries usage per model. | The engine writes no such line (Codex reports tokens and no money; see [Runtimes](runtimes.md)). A run that was cut off before its result line is covered below. |
 | **Recomputed from tokens** | The same lines' tokens priced per type — input, output, cache read, cache write for 5 minutes and for 1 hour, web searches — with covey's built-in price table. | The model is in the table. | The table does not know the model: its lines then count at Claude Code's own figure and are marked *Unknown model (engine price)*, without a split by type. |
-| **Real cost (estimate)** | What a subscription seat's weekly meter moved, times the plan's price per point. | The credential is a subscription, its meter has been read, and a plan price is stored. | The credential is an API key; no agent has woken on it yet (*no meter reading for this credential*); no plan price (*no plan price stored*); or the meter did not move a whole point. |
+| **Real cost (estimate)** | What a subscription seat's weekly meter moved, times the plan's price per point. | The credential is a subscription, its meter has been read, and a plan price is stored. If the meter did not move a whole point, the tile shows only an upper bound, *less than one point's price* (e.g. *< $0.46*), not an estimate. | The credential is an API key; no agent has woken on it yet (*no meter reading for this credential*); or no plan price (*no plan price stored*). |
 | **Billed by Anthropic** | What Anthropic's Usage and Cost API reports for the API key behind the credential, after discounts and before credits. | The credential is an API key, an Anthropic admin key is stored, the credential is mapped to its API key, and the bill for the window has landed. | Any of those is missing. The page then says which — *no Anthropic admin key is stored*, *not mapped to an Anthropic API key*, *the bill sync failed*, *Anthropic's data has not landed* — and shows no figure. It never shows $0.00 for a bill that could not be read. |
 
 Two things follow from where the first two come from:
@@ -126,11 +126,13 @@ the credential or while a run streams, so:
 list price of the credential's lines between the meter's baseline and its last
 reading by the real cost of the same span. Only over a range is it meaningful:
 
-- It is shown only from **3 points** of movement, with its range. Below that the
-  page says how few points the meter moved, and shows the range only.
+- It is shown only from **3 points** of movement, with its range. At 1 or 2
+  points the page says how few points the meter moved, and shows the range only.
+  At 0 points it says the meter did not move a whole point, and shows no range.
 - A single hour rarely reaches 3 points, and its points are not the hour's work
   (see above). A period in the chart gets a multiple by the tile's rule — from
-  3 points, at least one cent of list price — and its range is in the period's
+  3 points with a plan price for each, at least one cent of list price, and not
+  where the figure would read under 0.05× — and its range is in the period's
   details.
 - It is not a bound in either direction. Other use of the account moves the
   meter too, which makes the true multiple higher; an allowance that is not used
@@ -234,8 +236,9 @@ amount in US dollars, the period (per month or per year) and *Valid from*. Only
 an organisation admin or the security role sees it as editable.
 
 - *Valid from* starts at the beginning of the current meter week (the latest
-  weekly reset the readings name, minus seven days). If a price already starts in
-  this week, the form corrects it and starts now, to the minute.
+  weekly reset the readings name, minus seven days). When no reading names a
+  weekly reset, it starts now. If a price already starts in this week, the form
+  corrects it and starts now, to the minute.
 - A price is added, never overwritten. The plan valid at *Valid from* ends
   there; one that starts later bounds the new one. A second price at the same
   instant is refused, and the form says to pick a later start.

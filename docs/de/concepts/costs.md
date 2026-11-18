@@ -32,7 +32,7 @@ Abo-Token); ihre Art sagt, was Geld dort bedeutet.
 |---|---|---|---|
 | **Von Claude Code gemeldet** | Der eigene Preis von Claude Code für seine Zeilen: die Summe der `costUSD`, die es auf jede Ergebniszeile schreibt, jeweils der eigene Anteil einer Zeile. Keine Buchung von covey. | Der Lauf geht über die Engine Claude Code und seine Ergebniszeile trägt die Nutzung je Modell. | Die Engine schreibt keine solche Zeile (Codex meldet Tokens und kein Geld, siehe [Runtimes](runtimes.md)). Ein Lauf, der vor seiner Ergebniszeile abgebrochen wurde, steht weiter unten. |
 | **Aus Tokens nachgerechnet** | Die Tokens derselben Zeilen, je Art bepreist — Eingabe, Ausgabe, Cache-Lesen, Cache-Schreiben für 5 Minuten und für 1 Stunde, Websuchen — mit der eingebauten Preistabelle von covey. | Das Modell steht in der Tabelle. | Die Tabelle kennt das Modell nicht: Seine Zeilen zählen dann mit dem eigenen Betrag von Claude Code, ohne Aufteilung nach Art, und sind als *Unbekanntes Modell (Preis der Engine)* markiert. |
-| **Echte Kosten (Schätzung)** | Was der Wochenzähler eines Abo-Platzes sich bewegt hat, mal der Preis je Punkt des Tarifs. | Die Zugangsdaten sind ein Abonnement, ihr Zähler wurde gelesen und ein Tarifpreis ist hinterlegt. | Die Zugangsdaten sind ein API-Schlüssel; noch kein Agent ist auf ihnen aufgewacht (*keine Zählerablesung für diese Zugangsdaten*); kein Tarifpreis (*kein Tarifpreis hinterlegt*); oder der Zähler hat sich keinen ganzen Punkt bewegt. |
+| **Echte Kosten (Schätzung)** | Was der Wochenzähler eines Abo-Platzes sich bewegt hat, mal der Preis je Punkt des Tarifs. | Die Zugangsdaten sind ein Abonnement, ihr Zähler wurde gelesen und ein Tarifpreis ist hinterlegt. Hat sich der Zähler keinen ganzen Punkt bewegt, zeigt die Kachel nur eine Obergrenze, *weniger als der Preis eines Punkts* (z. B. *< 0,46 $*), keine Schätzung. | Die Zugangsdaten sind ein API-Schlüssel; noch kein Agent ist auf ihnen aufgewacht (*keine Zählerablesung für diese Zugangsdaten*); oder kein Tarifpreis (*kein Tarifpreis hinterlegt*). |
 | **Von Anthropic berechnet** | Was die Usage-and-Cost-API von Anthropic für den API-Schlüssel hinter den Zugangsdaten meldet, nach Rabatten und vor Gutschriften. | Die Zugangsdaten sind ein API-Schlüssel, ein Anthropic-Admin-Schlüssel ist hinterlegt, die Zugangsdaten sind ihrem API-Schlüssel zugeordnet und die Rechnung für den Zeitraum ist eingetroffen. | Eines davon fehlt. Die Seite sagt dann welches — *kein Anthropic-Admin-Schlüssel hinterlegt*, *keinem Anthropic-API-Schlüssel zugeordnet*, *der Abgleich der Rechnung schlug fehl*, *Anthropics Daten sind noch nicht da* — und zeigt keine Zahl. Für eine Rechnung, die nicht gelesen werden konnte, steht nie 0,00 $. |
 
 Aus der Herkunft der ersten beiden folgt:
@@ -136,13 +136,15 @@ nachgerechneten Listenpreis der Zeilen der Zugangsdaten zwischen dem Ausgangspun
 des Zählers und seiner letzten Ablesung durch die echten Kosten desselben
 Zeitraums. Nur über einen Zeitraum hat es Aussagekraft:
 
-- Es erscheint erst ab **3 Punkten** Bewegung, mit seiner Spanne. Darunter sagt
-  die Seite, wie wenige Punkte sich der Zähler bewegt hat, und zeigt nur die
-  Spanne.
+- Es erscheint erst ab **3 Punkten** Bewegung, mit seiner Spanne. Bei 1 oder 2
+  Punkten sagt die Seite, wie wenige Punkte sich der Zähler bewegt hat, und zeigt
+  nur die Spanne. Bei 0 Punkten sagt sie, dass sich der Zähler um keinen ganzen
+  Punkt bewegt hat, und zeigt keine Spanne.
 - Eine einzelne Stunde erreicht selten 3 Punkte, und ihre Punkte sind nicht die
   Arbeit der Stunde (siehe oben). Ein Zeitraum im Diagramm bekommt ein Vielfaches
-  nach der Regel der Kachel — ab 3 Punkten, mindestens ein Cent Listenpreis —, und
-  seine Spanne steht in den Details des Zeitraums.
+  nach der Regel der Kachel — ab 3 Punkten mit je einem Tarifpreis, mindestens ein
+  Cent Listenpreis und nicht, wo die Zahl unter 0,05× läge —, und seine Spanne
+  steht in den Details des Zeitraums.
 - Es ist keine Schranke, in keiner Richtung. Andere Nutzung des Kontos bewegt den
   Zähler mit, wodurch das wahre Vielfache höher liegt; ein nicht ausgeschöpftes
   Kontingent macht jeden Punkt teurer als sein Preis hier, wodurch es niedriger
@@ -256,7 +258,8 @@ Betrag in US-Dollar, dem Zeitraum (pro Monat oder pro Jahr) und *Gültig ab*. Nu
 Organisationsadmins und die Sicherheitsrolle sehen es als bearbeitbar.
 
 - *Gültig ab* beginnt am Anfang der laufenden Zählerwoche (das letzte
-  Wochen-Zurücksetzen, das die Ablesungen nennen, minus sieben Tage). Beginnt in
+  Wochen-Zurücksetzen, das die Ablesungen nennen, minus sieben Tage). Nennt keine
+  Ablesung ein Wochen-Zurücksetzen, beginnt es jetzt. Beginnt in
   dieser Woche schon ein Preis, korrigiert das Formular ihn und beginnt jetzt,
   auf die Minute.
 - Ein Preis wird hinzugefügt, nie überschrieben. Der bei *Gültig ab* geltende
