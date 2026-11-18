@@ -276,7 +276,9 @@
       "scaleOwn": "Eigen per agent",
       "noPlanPricePoints": "geen abonnementsprijs voor {{n}} van {{m}} punten",
       "noMultipleUnpriced": "Geen werkelijke kosten en geen veelvoud: geen abonnementsprijs voor {{n}} van {{m}} punten.",
-      "noMultipleNoPlan": "Geen werkelijke kosten en geen veelvoud: voor deze inloggegevens is geen abonnementsprijs opgeslagen."
+      "noMultipleNoPlan": "Geen werkelijke kosten en geen veelvoud: voor deze inloggegevens is geen abonnementsprijs opgeslagen.",
+      "realSince": "werkelijk sinds {{from}} (basisaflezing van de meter), laatste aflezing {{to}}",
+      "shareOfRealSpan": "het werkelijke aandeel is van de werkelijke kosten sinds {{from}} (basisaflezing van de meter) tot {{to}}, niet van alleen de periode"
     },
     "kpiAllCredentials": "alle referenties, uit de regels",
     "tok": {

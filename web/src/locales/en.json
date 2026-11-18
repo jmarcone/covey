@@ -276,7 +276,9 @@
       "scaleOwn": "Own per agent",
       "noPlanPricePoints": "no plan price for {{n}} of {{m}} points",
       "noMultipleUnpriced": "No real figure and no multiple: no plan price for {{n}} of {{m}} points.",
-      "noMultipleNoPlan": "No real figure and no multiple: no plan price is stored for this credential."
+      "noMultipleNoPlan": "No real figure and no multiple: no plan price is stored for this credential.",
+      "realSince": "real since {{from}} (meter baseline), last reading {{to}}",
+      "shareOfRealSpan": "the real share is of the real cost since {{from}} (meter baseline) to {{to}}, not of the window alone"
     },
     "kpiAllCredentials": "all credentials, from the lines",
     "tok": {

@@ -276,7 +276,9 @@
       "scaleOwn": "Własna dla agenta",
       "noPlanPricePoints": "brak ceny planu dla {{n}} z {{m}} punktów",
       "noMultipleUnpriced": "Brak rzeczywistego kosztu i krotności: brak ceny planu dla {{n}} z {{m}} punktów.",
-      "noMultipleNoPlan": "Brak rzeczywistego kosztu i krotności: dla tych danych uwierzytelniających nie zapisano ceny planu."
+      "noMultipleNoPlan": "Brak rzeczywistego kosztu i krotności: dla tych danych uwierzytelniających nie zapisano ceny planu.",
+      "realSince": "rzeczywisty od {{from}} (odczyt bazowy licznika), ostatni odczyt {{to}}",
+      "shareOfRealSpan": "rzeczywisty udział dotyczy rzeczywistego kosztu od {{from}} (odczyt bazowy licznika) do {{to}}, nie tylko okresu"
     },
     "kpiAllCredentials": "wszystkie poświadczenia, z linii",
     "tok": {

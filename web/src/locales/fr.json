@@ -276,7 +276,9 @@
       "scaleOwn": "Propre à chaque agent",
       "noPlanPricePoints": "pas de prix de forfait pour {{n}} des {{m}} points",
       "noMultipleUnpriced": "Ni coût réel ni multiple : pas de prix de forfait pour {{n}} des {{m}} points.",
-      "noMultipleNoPlan": "Ni coût réel ni multiple : aucun prix de forfait n'est enregistré pour cet identifiant."
+      "noMultipleNoPlan": "Ni coût réel ni multiple : aucun prix de forfait n'est enregistré pour cet identifiant.",
+      "realSince": "réel depuis {{from}} (relevé de référence du compteur), dernier relevé {{to}}",
+      "shareOfRealSpan": "la part réelle porte sur le coût réel depuis {{from}} (relevé de référence du compteur) jusqu'à {{to}}, pas sur la seule période"
     },
     "kpiAllCredentials": "tous les identifiants, d'après les lignes",
     "tok": {

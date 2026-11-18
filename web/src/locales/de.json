@@ -276,7 +276,9 @@
       "scaleOwn": "Eigene je Agent",
       "noPlanPricePoints": "kein Tarifpreis für {{n}} von {{m}} Punkten",
       "noMultipleUnpriced": "Keine echten Kosten und kein Vielfaches: kein Tarifpreis für {{n}} von {{m}} Punkten.",
-      "noMultipleNoPlan": "Keine echten Kosten und kein Vielfaches: Für diese Zugangsdaten ist kein Tarifpreis hinterlegt."
+      "noMultipleNoPlan": "Keine echten Kosten und kein Vielfaches: Für diese Zugangsdaten ist kein Tarifpreis hinterlegt.",
+      "realSince": "echt seit {{from}} (Ausgangsablesung des Zählers), letzte Ablesung {{to}}",
+      "shareOfRealSpan": "der echte Anteil bezieht sich auf die echten Kosten seit {{from}} (Ausgangsablesung des Zählers) bis {{to}}, nicht nur auf den Zeitraum"
     },
     "kpiAllCredentials": "alle Zugangsdaten, aus den Zeilen",
     "tok": {

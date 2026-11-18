@@ -276,7 +276,9 @@
       "scaleOwn": "Propia por agente",
       "noPlanPricePoints": "sin precio de plan para {{n}} de {{m}} puntos",
       "noMultipleUnpriced": "Sin coste real ni múltiplo: sin precio de plan para {{n}} de {{m}} puntos.",
-      "noMultipleNoPlan": "Sin coste real ni múltiplo: no hay precio de plan guardado para esta credencial."
+      "noMultipleNoPlan": "Sin coste real ni múltiplo: no hay precio de plan guardado para esta credencial.",
+      "realSince": "real desde {{from}} (lectura base del medidor), última lectura {{to}}",
+      "shareOfRealSpan": "la parte real se refiere al coste real desde {{from}} (lectura base del medidor) hasta {{to}}, no solo al periodo"
     },
     "kpiAllCredentials": "todas las credenciales, de las líneas",
     "tok": {

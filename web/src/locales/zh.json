@@ -276,7 +276,9 @@
       "scaleOwn": "每个代理独立",
       "noPlanPricePoints": "{{m}} 个点中有 {{n}} 个没有套餐价格",
       "noMultipleUnpriced": "无实际成本，也无倍数：{{m}} 个点中有 {{n}} 个没有套餐价格。",
-      "noMultipleNoPlan": "无实际成本，也无倍数：此凭据未保存套餐价格。"
+      "noMultipleNoPlan": "无实际成本，也无倍数：此凭据未保存套餐价格。",
+      "realSince": "实际成本自 {{from}}（计量基准读数）起，最后读数 {{to}}",
+      "shareOfRealSpan": "实际份额针对的是自 {{from}}（计量基准读数）至 {{to}} 的实际成本，而不仅是所选时段"
     },
     "kpiAllCredentials": "所有凭据，按各行汇总",
     "tok": {

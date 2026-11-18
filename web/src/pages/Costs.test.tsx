@@ -211,6 +211,21 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     expect(tile.textContent).not.toMatch(/≈|0,00|< /);
   });
 
+  // Review C5: the meter's baseline can lie days before the window; the
+  // real figure (and every share of it) covers that span, not the window.
+  it("sagt, seit wann die echten Kosten und ihr Anteil gelten", async () => {
+    const data = cells([2, 2]);
+    data.meter![0] = { ...data.meter![0], baseline_at: "2026-11-15T06:00:00Z", baseline_before_window: true };
+    const { container } = serve(data);
+    const tile = await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+    expect(within(tile).getByText(/^echt seit 15\.11\., 06:00 UTC .*letzte Ablesung 17\.11\., 20:00 UTC$/)).toBeInTheDocument();
+    const caption = container.querySelector("caption [data-span]")!;
+    expect(caption.textContent).toMatch(/seit 15\.11\., 06:00 UTC .* bis 17\.11\., 20:00 UTC/);
+    await act(async () => { await userEvent.click(screen.getByRole("button", { name: /^Coordinator/ })); });
+    const share = await screen.findByRole("group", { name: "≈ Anteil an den echten Kosten (Schätzung)" });
+    expect(within(share).getByText(/^echt seit 15\.11\., 06:00 UTC/)).toBeInTheDocument();
+  });
+
   // Review C4: a cost type switched off under "split by cost type" stayed
   // off, invisibly, after the split was switched off again.
   it("lässt einen ausgeblendeten Kostentyp nicht weiterwirken, wenn die Aufteilung aus ist", async () => {

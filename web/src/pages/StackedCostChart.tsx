@@ -1,6 +1,7 @@
 import { useId, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { api, type BilledReport, type CellAgent, type CostCell, type CostCells } from "../api";
 import { fmtBucket, fmtClockUTC, fmtCount, fmtUSD, fmtUSDAxis } from "../format";
 import {
@@ -165,8 +166,8 @@ export function AgentFilter({ agents, selected, onChange }: {
   );
 }
 
-function Tile({ label, value, sub, note, color, hatched }: {
-  label: string; value: string; sub?: string; note?: string; color?: string; hatched?: boolean;
+function Tile({ label, value, sub, span, note, color, hatched }: {
+  label: string; value: string; sub?: string; span?: string; note?: string; color?: string; hatched?: boolean;
 }) {
   return (
     <div role="group" aria-label={label} data-tile
@@ -177,6 +178,7 @@ function Tile({ label, value, sub, note, color, hatched }: {
       </div>
       <div style={{ fontSize: 20, fontWeight: 600, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>{value}</div>
       {sub && <div className="muted text-xs" style={{ marginTop: 2 }}>{sub}</div>}
+      {span && <div className="muted text-xs" data-span style={{ marginTop: 2 }}>{span}</div>}
       {note && <div className="muted text-xs" style={{ marginTop: 2, fontStyle: "italic" }}>{note}</div>}
     </div>
   );
@@ -406,6 +408,13 @@ function usePlanLabel() {
   };
 }
 
+/** "real since <baseline>, last reading <last>": the span the real figure
+ *  covers. Undefined without a meter. */
+function realSpan(t: TFunction, f: CredentialFigures, key = "costs.fig.realSince"): string | undefined {
+  if (!f.meter) return undefined;
+  return t(key, { from: fmtBucket(f.meter.baseline_at, "hour"), to: fmtBucket(f.meter.last_at, "hour") });
+}
+
 /** The tiles of one credential. */
 function CredentialTiles({ f, filtered }: { f: CredentialFigures; filtered: boolean }) {
   const { t } = useTranslation();
@@ -418,6 +427,9 @@ function CredentialTiles({ f, filtered }: { f: CredentialFigures; filtered: bool
     const r = f.real;
     // The price per point the server priced the movement at, on average.
     const pp = r && r.points > 0 ? r.value / r.points : null;
+    // The real figure covers the meter's span, which can begin days before
+    // the window: say so wherever it (or a share of it) stands.
+    const span = realSpan(t, f);
     if (r && !r.priced) {
       // Points without a plan price: no figure, never "≈ $0.00".
       tiles.push(<Tile key="real" label={t("costs.fig.realEstimate")} value="–"
@@ -426,21 +438,21 @@ function CredentialTiles({ f, filtered }: { f: CredentialFigures; filtered: bool
     } else if (filtered && r) {
       const share = f.agents.reduce((a, x) => a + (x.realShare ?? 0), 0);
       tiles.push(<Tile key="real" label={t("costs.fig.shareOfReal")} value={`≈ ${fmtUSD(share)}`}
-        sub={t("costs.fig.shareOfRealSub", { usd: fmtUSD(r.value) })} note={t("costs.fig.accountWideCaveat")} color={SOURCE_COLOR.real} hatched />);
+        sub={t("costs.fig.shareOfRealSub", { usd: fmtUSD(r.value) })} span={span} note={t("costs.fig.accountWideCaveat")} color={SOURCE_COLOR.real} hatched />);
     } else if (r && r.below) {
       tiles.push(<Tile key="real" label={t("costs.fig.realEstimate")} value={`< ${fmtUSD(r.high)}`}
-        sub={t("costs.fig.realBelow")} note={t("costs.fig.accountWideCaveat")} color={SOURCE_COLOR.real} hatched />);
+        sub={t("costs.fig.realBelow")} span={span} note={t("costs.fig.accountWideCaveat")} color={SOURCE_COLOR.real} hatched />);
     } else if (r) {
       tiles.push(<Tile key="real" label={t("costs.fig.realEstimate")} value={`≈ ${fmtUSD(r.value)}`}
         sub={t("costs.fig.realRange", { low: fmtUSD(r.low), high: fmtUSD(r.high), pts: r.points, pp: pp != null ? fmtUSD(pp) : "–" })}
-        note={t("costs.fig.accountWideCaveat")} color={SOURCE_COLOR.real} hatched />);
+        span={span} note={t("costs.fig.accountWideCaveat")} color={SOURCE_COLOR.real} hatched />);
     } else {
       tiles.push(<Tile key="real" label={t("costs.fig.realEstimate")} value="–" sub={t("costs.fig.noMeter")} color={SOURCE_COLOR.real} hatched />);
     }
     if (f.multiple?.kind === "estimate") {
       tiles.push(<Tile key="mult" label={t("costs.fig.multiple")} value={`≈ ${times(f.multiple.value)}`}
         sub={t("costs.fig.multipleRange", { low: times(f.multiple.low), high: times(f.multiple.high) })}
-        note={t("costs.fig.multipleHint")} />);
+        span={span} note={t("costs.fig.multipleHint")} />);
     }
   }
   if (f.kind === "api_key" && f.billed) {
@@ -644,7 +656,10 @@ function AgentTable({ f, agents, subscription }: { f: CredentialFigures; agents:
   return (
     <div style={{ overflowX: "auto", marginTop: 8 }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-        <caption className="muted text-xs" style={{ textAlign: "left", paddingBottom: 4 }}>{t("costs.fig.agentsTitle")}</caption>
+        <caption className="muted text-xs" style={{ textAlign: "left", paddingBottom: 4 }}>
+          {t("costs.fig.agentsTitle")}
+          {subscription && f.real?.priced && f.meter && <span data-span> · {realSpan(t, f, "costs.fig.shareOfRealSpan")}</span>}
+        </caption>
         <thead>
           <tr className="muted">
             <th scope="col" style={{ ...th, textAlign: "left" }}>{t("costs.fig.agent")}</th>
