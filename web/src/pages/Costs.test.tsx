@@ -47,16 +47,26 @@ function cells(points: [number, number]): CostCells {
   };
 }
 
-function render(points: [number, number]) {
+const NO_BILL = { bucket: "hour", points: [], sync: { configured: false, last_attempt_at: null, last_success_at: null,
+  last_daily_at: null, data_refreshed_at: null, last_status: "", last_error: "" } };
+
+/** The page's endpoints with these cells; `over` replaces or adds routes
+ *  (a pattern with a query goes first, so it wins over the plain one). */
+function serve(data: CostCells, over: Record<string, unknown> = {}) {
   mockFetch({
-    "/api/v1/cost/cells": cells(points),
-    "/api/v1/cost/billed": { bucket: "hour", points: [], sync: { configured: false, last_attempt_at: null, last_success_at: null,
-      last_daily_at: null, data_refreshed_at: null, last_status: "", last_error: "" } },
+    ...over,
+    "/api/v1/cost/cells": data,
+    "/api/v1/cost/billed": NO_BILL,
     "/api/v1/cost/runs": [],
     "/api/v1/cost/models": { rows: [], runs_without_breakdown: 0, usd_without_breakdown: 0 },
     "/api/v1/cost/usage-readings": [],
+    ...over,
   });
   return renderWithProviders(<Costs />);
+}
+
+function render(points: [number, number]) {
+  return serve(cells(points));
 }
 
 const MULTIPLE = "Listen-$ je echtem $";
@@ -138,6 +148,15 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
     fireEvent.keyDown(period, { key: "Enter" });
     expect(await screen.findByRole("tooltip")).toBeInTheDocument();
+  });
+
+  // Review C1: cache writes were counted as hits, so 94 % read the cache
+  // as 100 %.
+  it("rechnet Cache-Schreibvorgänge nicht als Treffer", async () => {
+    const data = cells([2, 2]);
+    for (const c of data.cells) c.tokens = { cache_read: 47, cache_write_1h: 3, output: 1 };
+    serve(data);
+    expect(await screen.findByText("94 % aus dem Prompt-Cache")).toBeInTheDocument();
   });
 
   it("zeigt als Tabelle dieselben Summen wie das Diagramm", async () => {

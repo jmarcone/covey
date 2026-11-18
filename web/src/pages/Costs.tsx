@@ -250,7 +250,9 @@ export default function Costs() {
   const totals = useMemo(() => cellTotals(cells.data, selected), [cells.data, selected]);
   const tok = totals.tokens;
   const input = (tok.input ?? 0) + (tok.cache_read ?? 0) + (tok.cache_write_5m ?? 0) + (tok.cache_write_1h ?? 0);
-  const cached = (tok.cache_read ?? 0) + (tok.cache_write_5m ?? 0) + (tok.cache_write_1h ?? 0);
+  // The hit rate: what was read from the cache, of all input. A cache write
+  // is a miss that pays extra to be a hit next time, not a hit.
+  const cached = tok.cache_read ?? 0;
   const output = tok.output ?? 0;
 
   const agentList = cells.data?.agents ?? [];
