@@ -3,7 +3,7 @@
 // callers build over their own translation keys. The one exception stands at
 // milliarde() and justifies itself there.
 
-import i18n from "./i18n";
+import i18n, { uiLocale } from "./i18n";
 
 // fmtBytes brings a file size to the coarsest unit that still
 // describes it — `812 B`, `14,2 kB`, `3,1 MB`. Used by the file browser of the
@@ -105,17 +105,30 @@ function trim(v: number): string {
 // The two separators, and the one place where they are decided. They hang
 // together: whoever sets the point as the thousands separator has to set the
 // comma as the decimal separator, otherwise `1.234,5` against `1,234.5` makes a
-// mishmash that is right in neither of the two languages.
-function deutsch(): boolean {
-  return i18n.language?.startsWith("de") ?? true;
+// mishmash that is right in neither of the two languages. Both come out of one
+// Intl.NumberFormat of the UI locale — the de/else switch that stood here gave
+// every language but German the English `1,234.5`, and French `1 234,5`
+// (a narrow no-break space) was not reachable.
+function trenner(): { tausend: string; komma: string } {
+  const parts = new Intl.NumberFormat(uiLocale()).formatToParts(1234567.8);
+  return {
+    tausend: parts.find((p) => p.type === "group")?.value ?? ",",
+    komma: parts.find((p) => p.type === "decimal")?.value ?? ".",
+  };
 }
 
 function tausender(): string {
-  return deutsch() ? "." : ",";
+  return trenner().tausend;
 }
 
 function komma(): string {
-  return deutsch() ? "," : ".";
+  return trenner().komma;
+}
+
+// deutsch is what milliarde() asks, and nothing else: the unit stays a unit
+// and does not follow Intl.
+function deutsch(): boolean {
+  return i18n.language?.startsWith("de") ?? true;
 }
 
 // fmtDelta brings a span of time in milliseconds to the coarsest unit that

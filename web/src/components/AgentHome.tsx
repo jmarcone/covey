@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, post, type Agent } from "../api";
 import { fmtBytes } from "../format";
+import { uiLocale } from "../i18n";
 
 // The home in the home store (spec/16, "Interface"). The interesting number is
 // not the size but the difference: a 7 GB home of which this agent alone may
@@ -35,7 +36,7 @@ type Snapshot = {
 };
 
 export function AgentHome({ agent, canWrite }: { agent: Agent; canWrite: boolean }) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const qc = useQueryClient();
 
   const home = useQuery({
@@ -56,7 +57,7 @@ export function AgentHome({ agent, canWrite }: { agent: Agent; canWrite: boolean
     );
   }
 
-  const fmtDate = (iso: string) => new Date(iso).toLocaleString(i18n.language);
+  const fmtDate = (iso: string) => new Date(iso).toLocaleString(uiLocale());
   const latest = home.data.latest;
 
   return (

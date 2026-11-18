@@ -13,6 +13,7 @@ import {
   type Principal,
   type RecordingEvent,
 } from "../api";
+import { uiLocale } from "../i18n";
 
 const canEdit = (role: string) => role === "org_admin" || role === "security";
 
@@ -43,8 +44,8 @@ const decisionClass: Record<string, string> = {
 };
 
 export default function Guardrails({ me }: { me: Principal }) {
-  const { t, i18n } = useTranslation();
-  const locale = i18n.language === "de" ? "de-DE" : "en-US";
+  const { t } = useTranslation();
+  const locale = uiLocale();
   const qc = useQueryClient();
   const rails = useQuery({
     queryKey: ["guardrails"],

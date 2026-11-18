@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, del, patch, post, put, type PlatformPush } from "../../api";
 import PlatformHeader from "./Header";
+import { uiLocale } from "../../i18n";
 
 /** Push notifications of this installation (#431).
  *
@@ -204,9 +205,9 @@ export default function Push() {
           {cfg.last_test_at === ""
             ? t("platform.push.neverTested")
             : cfg.last_test_error === ""
-              ? t("platform.push.lastOk", { date: new Date(cfg.last_test_at).toLocaleString() })
+              ? t("platform.push.lastOk", { date: new Date(cfg.last_test_at).toLocaleString(uiLocale()) })
               : t("platform.push.lastFailed", {
-                  date: new Date(cfg.last_test_at).toLocaleString(),
+                  date: new Date(cfg.last_test_at).toLocaleString(uiLocale()),
                   error: cfg.last_test_error,
                 })}
         </p>

@@ -26,6 +26,7 @@ import { NavIcon } from "../components/navicons";
 import Kopf, { Stapel } from "./Kopf";
 import Vorschlag from "./Vorschlag";
 import Attachments, { attachmentLimit } from "./Attachments";
+import { uiLocale } from "../i18n";
 
 /* A conversation with members (#440): a group, or a direct conversation
  * between two people. The direct conversation with an agent keeps its own
@@ -48,7 +49,7 @@ export function gespraechName(c: Pick<Conversation, "kind" | "title" | "members"
 }
 
 export default function Gespraech({ id, me }: { id: string; me: Principal }) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [text, setText] = useState("");
@@ -275,7 +276,7 @@ export default function Gespraech({ id, me }: { id: string; me: Principal }) {
           const bezug = m.reply_to ? nachrichten.find((x) => x.id === m.reply_to) : undefined;
           return (
             <Fragment key={m.id}>
-              {neuerTag && <div className="tm-tag">{new Date(m.created_at).toLocaleDateString(i18n.language)}</div>}
+              {neuerTag && <div className="tm-tag">{new Date(m.created_at).toLocaleDateString(uiLocale())}</div>}
               <article className={`tm-blase ${vonMir(m) ? "ich" : "er"} k-${m.kind === "text" ? "message" : m.kind}${folgt ? " folgt" : ""}`}>
                 {!vonMir(m) && (
                   <span className="tm-blase-wer" aria-hidden="true">
@@ -290,7 +291,7 @@ export default function Gespraech({ id, me }: { id: string; me: Principal }) {
                         <span className={`tm-blase-art a-${m.kind}`}>{t(`chat.kind.${m.kind}`)}</span>
                       )}
                       {m.author_kind === "agent" && <StimmeHinweis meta={m.meta} />}
-                      <time dateTime={m.created_at}>{uhr(m.created_at, i18n.language)}</time>
+                      <time dateTime={m.created_at}>{uhr(m.created_at, uiLocale())}</time>
                     </div>
                   )}
                   {bezug && (

@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import i18n from "../i18n";
+import i18n, { uiLocale } from "../i18n";
 import { type RecordingEvent, recordingBlobURL } from "../api";
 import { fmtBytes, fmtCount, fmtDelta, fmtUSD } from "../format";
 import { Markdown } from "./Markdown";
@@ -171,10 +171,10 @@ function Icon({ name }: { name: IconName }) {
 // --- feed build from the chronological recording events ---
 
 const fmtTime = (iso: string) =>
-  new Date(iso).toLocaleTimeString(i18n.language === "de" ? "de-DE" : "en-US", { hour: "2-digit", minute: "2-digit" });
+  new Date(iso).toLocaleTimeString(uiLocale(), { hour: "2-digit", minute: "2-digit" });
 
 const fmtDay = (iso: string) =>
-  new Date(iso).toLocaleDateString(i18n.language === "de" ? "de-DE" : "en-US", { day: "numeric", month: "long", year: "numeric" });
+  new Date(iso).toLocaleDateString(uiLocale(), { day: "numeric", month: "long", year: "numeric" });
 
 const truncate = (s: string, n: number) => (s.length > n ? s.slice(0, n) + " …" : s);
 

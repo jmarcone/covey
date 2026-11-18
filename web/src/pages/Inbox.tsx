@@ -16,6 +16,7 @@ import {
 import { Markdown } from "../components/Markdown";
 import { FileDiff } from "../components/FileDiff";
 import { canManage } from "./agent/roles";
+import { uiLocale } from "../i18n";
 
 /* The inbox: everything that waits for the decision of a human.
 
@@ -182,9 +183,9 @@ function TypeGroup({
 // what you search for you find in the row; what you want to decide
 // needs the diff below it.
 function EntryRow({ entry, me }: { entry: InboxEntry; me: Principal }) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const locale = i18n.language === "de" ? "de-DE" : "en-US";
+  const locale = uiLocale();
 
   if (open) {
     return (
@@ -223,8 +224,8 @@ function CardHead({
   kindClass: string;
   onCollapse?: () => void;
 }) {
-  const { t, i18n } = useTranslation();
-  const locale = i18n.language === "de" ? "de-DE" : "en-US";
+  const { t } = useTranslation();
+  const locale = uiLocale();
   return (
     <div className="flex items-baseline gap-2 mb-1 flex-wrap">
       <span className={`badge ${kindClass}`}>{kindLabel}</span>

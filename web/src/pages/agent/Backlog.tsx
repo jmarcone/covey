@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import i18n from "../../i18n";
+import i18n, { uiLocale } from "../../i18n";
 import {
   api,
   post,
@@ -430,7 +430,7 @@ function relTime(iso: string): string {
   if (min < 60) return i18n.t("activity.timeMinutes", { n: min });
   const h = Math.round(min / 60);
   if (h < 24) return i18n.t("activity.timeHours", { n: h });
-  const locale = i18n.language === "de" ? "de-DE" : "en-US";
+  const locale = uiLocale();
   return new Date(iso).toLocaleDateString(locale);
 }
 

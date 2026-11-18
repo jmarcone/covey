@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { decideImprovement, type ProposalCard } from "../api";
 import { FileDiff } from "../components/FileDiff";
 import { Markdown } from "../components/Markdown";
+import { uiLocale } from "../i18n";
 
 /* A configuration change drafted from the chat (#491), as a card in the
  * conversation: what changes, file by file, and why; a line when it widens
@@ -15,7 +16,7 @@ import { Markdown } from "../components/Markdown";
  * may decide the server says (can_decide, can_accept) — the card keeps no
  * table of roles of its own. */
 export default function Vorschlag({ card }: { card: ProposalCard }) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const [offen, setOffen] = useState(false);
   const entscheiden = useMutation({
@@ -28,7 +29,7 @@ export default function Vorschlag({ card }: { card: ProposalCard }) {
     },
   });
   const wann = card.decided_at
-    ? new Date(card.decided_at).toLocaleString(i18n.language, { dateStyle: "medium", timeStyle: "short" })
+    ? new Date(card.decided_at).toLocaleString(uiLocale(), { dateStyle: "medium", timeStyle: "short" })
     : "";
   const wer = card.approvers.join(", ");
   const widens = card.widens ?? [];

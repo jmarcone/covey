@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, patch, post, put, type ConfigVersion } from "../../api";
 import { Modal } from "../../components/Modal";
+import { uiLocale } from "../../i18n";
 
 /* The setup assistant of a target system.
  *
@@ -215,7 +216,7 @@ export function TargetSetupWizard({ name, onClose }: { name: string; onClose: ()
                   <>
                     {" · "}
                     {t(probe.data.rotatable ? "targets.wizard.probeExpiresRenewed" : "targets.wizard.probeExpires", {
-                      date: new Date(probe.data.expires_at).toLocaleDateString(),
+                      date: new Date(probe.data.expires_at).toLocaleDateString(uiLocale()),
                     })}
                   </>
                 )}

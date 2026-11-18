@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { api, del, post, type AgentTemplate, type Agent, type Principal } from "../api";
 import { slugify } from "../names";
 import { Modal } from "../components/Modal";
+import { uiLocale } from "../i18n";
 
 export default function Templates({ me }: { me: Principal }) {
   const { t, i18n } = useTranslation();
@@ -22,7 +23,7 @@ export default function Templates({ me }: { me: Principal }) {
 
   const [instantiating, setInstantiating] = useState<AgentTemplate | null>(null);
   const [previewing, setPreviewing] = useState<AgentTemplate | null>(null);
-  const locale = i18n.language === "de" ? "de-DE" : "en-US";
+  const locale = uiLocale();
   const list = templates.data ?? [];
 
   return (

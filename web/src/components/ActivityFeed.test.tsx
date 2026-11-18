@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import i18n from "../i18n";
 import { ActivityFeed, buildFeed, phasenAnteil } from "./ActivityFeed";
 import type { RecordingEvent } from "../api";
 import { renderWithProviders } from "../test/render";
@@ -262,5 +263,29 @@ describe("Markdown in der Stimme des Agenten", () => {
     );
     expect(container.querySelector(".turn .voice .md-h")?.textContent).toBe("Reichweite");
     expect(container.querySelector(".turn .voice table")).not.toBeNull();
+  });
+});
+
+/* The day header followed two languages: German got `18. November 2026`, every
+   other language the English `November 18, 2026`. It follows the UI language
+   now, and the expected strings are what Intl writes for it, spelled out. */
+describe("Tageskopf", () => {
+  afterEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+
+  const tag = () => {
+    const days = buildFeed([{ ...ev({ type: "system", subtype: "init" }), created_at: "2026-11-18T12:00:00Z" }]);
+    return days.find((i) => i.kind === "day") as { text: string };
+  };
+
+  it.each([
+    ["fr", "18 novembre 2026"],
+    ["ja", "2026年11月18日"],
+    ["de", "18. November 2026"],
+    ["en", "November 18, 2026"],
+  ])("steht in %s als %s", async (lang, expected) => {
+    await i18n.changeLanguage(lang);
+    expect(tag().text).toBe(expected);
   });
 });

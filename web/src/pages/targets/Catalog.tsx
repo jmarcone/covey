@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { api, del, post, type MarketplaceEntry, type MarketplaceView } from "../../api";
 import { TargetIcon } from "../../components/TargetIcon";
 import { ConfirmDialog } from "../../components/Modal";
+import { uiLocale } from "../../i18n";
 
 // The same labels as in the store — one kind is not called differently in two
 // places.
@@ -105,7 +106,7 @@ export function CatalogTab({ canEdit, query }: { canEdit: boolean; query: string
           {t("catalog.source")}{" "}
           <span className="mono">{hostOf(view?.source)}</span>
           {view?.fetched_at && (
-            <> · {t("catalog.fetched", { time: new Date(view.fetched_at).toLocaleTimeString() })}</>
+            <> · {t("catalog.fetched", { time: new Date(view.fetched_at).toLocaleTimeString(uiLocale()) })}</>
           )}
         </span>
       </div>

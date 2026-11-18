@@ -118,3 +118,30 @@ describe("englische Schreibweise", () => {
     expect(fmtUSD(1_234_567)).toBe("1,234,567 $");
   });
 });
+
+/* The separators come out of Intl for the language of the UI. Until then every
+   language but German got the English ones: `1,234.5` in French, where the
+   reader expects `1 234,5`. French is asserted against Intl itself — its group
+   separator is a narrow no-break space, and a space typed by hand into a test
+   is the one that gets lost in an editor. */
+describe("andere Sprachen", () => {
+  it("französisch: Leerzeichen als Tausender, Komma als Dezimaltrenner", async () => {
+    await i18n.changeLanguage("fr");
+    expect(exact(1_234_567)).toBe(new Intl.NumberFormat("fr").format(1_234_567));
+    expect(exact(1_234_567)).not.toContain(",");
+    expect(fmtCount(12_345)).toBe("12,3 k");
+    expect(fmtUSD(12.3)).toBe("12,30 $");
+    expect(fmtUSD(2746)).toBe(`${new Intl.NumberFormat("fr").format(2746)} $`);
+  });
+
+  it("japanisch: wie englisch", async () => {
+    await i18n.changeLanguage("ja");
+    expect(exact(1_234_567)).toBe("1,234,567");
+    expect(fmtCount(12_345)).toBe("12.3 k");
+  });
+
+  it("die Milliarden-Einheit bleibt, wie sie war", async () => {
+    await i18n.changeLanguage("fr");
+    expect(fmtCount(2_499_833_356)).toBe("2,5 B");
+  });
+});

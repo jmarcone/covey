@@ -13,6 +13,7 @@ import {
   type SecretLifetime as Lifetime,
   type SecretPreview,
 } from "../api";
+import { uiLocale } from "../i18n";
 
 const canEdit = (role: string) => role === "org_admin" || role === "security";
 
@@ -184,7 +185,7 @@ export function SecretLifetimeLine({
     },
   });
 
-  const day = (iso: string) => new Date(iso).toLocaleDateString();
+  const day = (iso: string) => new Date(iso).toLocaleDateString(uiLocale());
   const now = Date.now();
   const expiresAt = life.expires_at ? new Date(life.expires_at).getTime() : null;
   const rejected = !!life.rejected_at;

@@ -27,7 +27,7 @@ import {
   type Principal,
   type SetupState,
 } from "./api";
-import i18n, { initialLang, ladeSprache } from "./i18n";
+import i18n, { initialLang, ladeSprache, uiLocale } from "./i18n";
 import HelpDrawer from "./components/HelpDrawer";
 import { NavIcon } from "./components/navicons";
 import Rail from "./components/Rail";
@@ -98,7 +98,7 @@ function NavItem({
 // (internal/buildinfo). Deliberately not in the sidebar: that stays
 // reserved for the navigation. The full details stand in the tooltip.
 function BuildLine() {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const q = useQuery({
     queryKey: ["version"],
     queryFn: buildInfo,
@@ -115,7 +115,7 @@ function BuildLine() {
   const short = [version, b.commit.slice(0, 7)].filter(Boolean).join(" · ");
   const title = [
     short,
-    valid ? t("version.builtAt", { when: built.toLocaleString(i18n.language, fmt) }) : null,
+    valid ? t("version.builtAt", { when: built.toLocaleString(uiLocale(), fmt) }) : null,
     b.go,
   ]
     .filter(Boolean)
@@ -124,7 +124,7 @@ function BuildLine() {
   return (
     <div className="main-build" title={title}>
       {short}
-      {valid && <span className="bt"> · {built.toLocaleString(i18n.language, fmt)}</span>}
+      {valid && <span className="bt"> · {built.toLocaleString(uiLocale(), fmt)}</span>}
       {/* covey runs as a network service under AGPL-3.0. The source link
           stands here because that is exactly the duty an operator otherwise
           overlooks — and because it should be reachable from every page. */}

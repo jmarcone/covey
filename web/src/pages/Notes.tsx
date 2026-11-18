@@ -13,6 +13,7 @@ import {
 } from "../api";
 import { Markdown } from "../components/Markdown";
 import BlockEditor from "../notes/BlockEditor";
+import { uiLocale } from "../i18n";
 
 /* The notetaker in the web (#342): the same notes as in the app (#336) —
  * the signed-in seat's own, private — edited the way the app edits them
@@ -85,7 +86,7 @@ export function useNotesView(): [View, (v: View) => void] {
 }
 
 export default function Notes() {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const [query, setQuery] = useState("");
   const [q, setQ] = useState("");
@@ -103,7 +104,7 @@ export default function Notes() {
   const list = notes.data?.notes ?? [];
   const current = open && open !== "new" ? (list.find((n) => n.id === open) ?? null) : null;
 
-  const locale = i18n.language;
+  const locale = uiLocale();
   const days = useMemo(() => groupByDay(list, locale, t), [list, locale, t]);
 
   const page =
@@ -232,7 +233,7 @@ export function groupByDay(list: Note[], locale: string, t: (k: string) => strin
 /* The board (#373): a column per status, a card per note; a card dragged
    into another column takes its status. */
 export function Board({ notes, open, onOpen }: { notes: Note[]; open: string | null; onOpen: (id: string) => void }) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const [over, setOver] = useState<Status | null>(null);
   const move = useMutation({
@@ -280,7 +281,7 @@ export function Board({ notes, open, onOpen }: { notes: Note[]; open: string | n
                 </span>
                 {(n.due || (n.tags ?? []).length > 0) && (
                   <span className="notes-card-m">
-                    {n.due && <span>{new Date(n.due + "T00:00:00").toLocaleDateString(i18n.language, { day: "numeric", month: "short" })}</span>}
+                    {n.due && <span>{new Date(n.due + "T00:00:00").toLocaleDateString(uiLocale(), { day: "numeric", month: "short" })}</span>}
                     {(n.tags ?? []).map((tag) => (
                       <span key={tag} className="notes-tag">
                         {tag}
@@ -337,7 +338,7 @@ export function NotePage({
   onCreated: (n: Note) => void;
   onDeleted: () => void;
 }) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const [n, setN] = useState<Note | null>(note);
   const [title, setTitle] = useState(note?.title ?? "");
@@ -549,7 +550,7 @@ export function NotePage({
             later(() => ({ title: v }));
           }}
         />
-        {cur && <p className="np-meta">{meta(cur, i18n.language, t, true)}</p>}
+        {cur && <p className="np-meta">{meta(cur, uiLocale(), t, true)}</p>}
         {exists && <Properties note={cur!} onChange={save} />}
 
         {confirming && (
