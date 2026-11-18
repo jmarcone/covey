@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import i18n from "./i18n";
-import { exact, fmtBucket, fmtBytes, fmtCount, fmtDelta, fmtNumber, fmtUSD, fmtUSDAxis } from "./format";
+import { exact, fmtBucket, fmtBytes, fmtCount, fmtDelta, fmtNumber, fmtUSD, fmtUSDAxis, fmtUSDBelow, fmtUSDFixed, fmtUSDUnit } from "./format";
 
 /* The reason stood on the cost side: 147952885 read cache tokens. Nobody reads
    that as a hundred forty-eight million — you count it through digit by digit.
@@ -82,6 +82,50 @@ describe("fmtUSD", () => {
     expect(fmtUSD(2746)).toBe("2.746 $");
     expect(fmtUSD(463.14)).toBe("463,14 $");
     expect(fmtUSD(1_234_567)).toBe("1.234.567 $");
+  });
+});
+
+/* #83: a bound under a cent said "< <$0.01", a small negative ">-$0.01", a
+   price under a cent "<$0.01" whatever it was, and a point price of 0.4615
+   "$0.46" beside a total it does not multiply to. */
+describe("fmtUSD edges", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+
+  it("says a small negative amount is below a cent, not greater than minus one", () => {
+    expect(fmtUSD(-0.004)).toBe("-<$0.01");
+    expect(fmtUSD(-0.5)).toBe("-$0.50");
+  });
+
+  it("writes an upper bound without saying 'below' twice", () => {
+    expect(fmtUSDBelow(1.846)).toBe("< $1.85");
+    expect(fmtUSDBelow(0.004)).toBe("< $0.01");
+    expect(fmtUSDBelow(0.004)).not.toContain("<$");
+    expect(fmtUSDBelow(0)).toBe("< $0.00");
+  });
+
+  it("keeps the digits of a price that is multiplied on the same screen", () => {
+    expect(fmtUSDFixed(1.846 / 4, 4)).toBe("$0.4615");
+    expect(fmtUSDFixed(12.5, 4)).toBe("$12.5000");
+    expect(fmtUSDFixed(0.00001, 4)).toBe("<$0.0001");
+    expect(fmtUSDFixed(0, 4)).toBe("$0.0000");
+  });
+
+  it("shows a unit price under a cent with the precision it needs", () => {
+    expect(fmtUSDUnit(0.46)).toBe("$0.46");
+    expect(fmtUSDUnit(0.0042)).toBe("$0.0042");
+    expect(fmtUSDUnit(0.00004)).toBe("$0.000040");
+    expect(fmtUSDUnit(0.0042)).not.toBe(fmtUSDUnit(0.0007));
+    expect(fmtUSDUnit(1e-12)).toBe("<$0.00000001");
+    expect(fmtUSDUnit(0)).toBe("$0.00");
+  });
+
+  it("follows the UI's separators and symbol", async () => {
+    await i18n.changeLanguage("de");
+    expect(fmtUSDFixed(0.4615, 4)).toBe("0,4615 $");
+    expect(fmtUSDUnit(0.0042)).toBe("0,0042 $");
+    expect(fmtUSDBelow(0.004)).toBe("< 0,01 $");
   });
 });
 

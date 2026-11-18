@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import { api, type ModelUsageReport, type UsageReading } from "../api";
-import { fmtBucket, fmtCount, fmtNumber, fmtUSD } from "../format";
+import { fmtBucket, fmtCount, fmtNumber, fmtUSD, fmtUSDBelow, fmtUSDFixed } from "../format";
 import { usableReadings, type CredentialFigures } from "./costFigures";
 import { OrgWide, SOURCE_COLOR, Swatch, useUsageReadings } from "./StackedCostChart";
 
@@ -120,8 +120,8 @@ function MeterFigures({ f, readings }: { f: CredentialFigures; readings: UsageRe
   let real: string;
   if (!r) real = t("costs.fig.noMeter");
   else if (!r.priced) real = r.unpricedPoints > 0 ? t("costs.fig.noPlanPricePoints", { n: r.unpricedPoints, m: r.points }) : t("costs.fig.noPlan");
-  else if (r.below) real = `< ${fmtUSD(r.high)} · ${t("costs.fig.realBelow")}`;
-  else real = `≈ ${fmtUSD(r.value)} · ${t("costs.fig.realRange", { low: fmtUSD(r.low), high: fmtUSD(r.high), pts: r.points, pp: fmtUSD(r.value / r.points) })}`;
+  else if (r.below) real = `${fmtUSDBelow(r.high)} · ${t("costs.fig.realBelow")}`;
+  else real = `≈ ${fmtUSD(r.value)} · ${t("costs.fig.realRange", { low: fmtUSD(r.low), high: fmtUSD(r.high), pts: r.points, pp: fmtUSDFixed(r.value / r.points, 4) })}`;
 
   let mult: string;
   if (f.multiple?.kind === "estimate") {

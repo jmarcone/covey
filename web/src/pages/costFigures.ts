@@ -262,7 +262,7 @@ export type BilledFigure = {
   recomputed: number;
   /** The window the bill covers: whole billed buckets (1h or 1d) from the
    *  first one at or after the page's start. */
-  window: { start: Date; end: Date; width: string } | null;
+  window: { start: Date; end: Date; comparedUntil: Date; width: string } | null;
   status: BilledStatus;
   /** The last sync's error when it failed (it carries no secret). */
   error: string;
@@ -274,7 +274,9 @@ export type BilledFigure = {
 export function billedFigure(report: BilledReport | null | undefined, key: string, slot: number, windowEnd: Date): BilledFigure {
   const sync = report?.sync;
   const w = report?.window;
-  const window = w ? { start: new Date(w.start), end: new Date(w.end), width: w.width } : null;
+  const window = w
+    ? { start: new Date(w.start), end: new Date(w.end), comparedUntil: new Date(w.compared_until), width: w.width }
+    : null;
   const base: BilledFigure = {
     state: "measured", usd: 0, listUsd: 0, ratio: null, reported: 0, recomputed: 0, window,
     status: billedStatus(window?.end ?? windowEnd, sync?.data_refreshed_at),

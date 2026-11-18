@@ -102,7 +102,7 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     mockFetch({
       "/api/v1/cost/cells": data,
       "/api/v1/cost/billed": { bucket: "hour", points: [],
-        window: { start: "2026-11-17T18:00:00Z", end: "2026-11-17T23:00:00Z", width: "1h", totals: [] },
+        window: { start: "2026-11-17T18:00:00Z", end: "2026-11-17T23:00:00Z", compared_until: "2026-11-17T23:00:00Z", width: "1h", totals: [] },
         sync: { configured: false, last_attempt_at: null, last_success_at: null, last_daily_at: null, data_refreshed_at: null,
           last_status: "", last_error: "" } },
       "/api/v1/cost/runs": [],
@@ -136,7 +136,7 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     const { container } = serve(data, {
       "/api/v1/cost/billed": { bucket: "hour",
         points: [point("2026-11-17T00:00:00Z", "500.00"), point("2026-11-17T18:00:00Z", "3.50"), point("2026-11-17T19:00:00Z", "0.50")],
-        window: { start: "2026-11-17T18:00:00Z", end: "2026-11-17T23:00:00Z", width: "1h",
+        window: { start: "2026-11-17T18:00:00Z", end: "2026-11-17T23:00:00Z", compared_until: "2026-11-17T20:00:00Z", width: "1h",
           totals: [{ secret_key: KEY, secret_slot: 0, has_billed: true, billed_usd: "4.00", billed_list_usd: "4.00", reported_usd: 4, list_usd: 4 }] },
         sync: { configured: true, last_attempt_at: null, last_success_at: null, last_daily_at: null,
           data_refreshed_at: "2026-11-18T00:00:00Z", last_status: "ok", last_error: "" } },
@@ -148,6 +148,8 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     });
     const tile = within(block).getByRole("group", { name: "Von Anthropic berechnet" });
     expect(within(tile).getByText("4,00 $")).toBeInTheDocument();
+    // #83: the lines stop where the bill is complete, not at "now"
+    expect(within(tile).getByText(/gemeldet 4,00 \$ und nachgerechnet 4,00 \$, verglichen bis 20:00 UTC$/)).toBeInTheDocument();
     await act(async () => {
       await userEvent.click(screen.getByRole("button", { name: "Als Tabelle zeigen" }));
     });
@@ -233,6 +235,8 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     // 16 $ over 4 points × 0,4615 $
     expect(within(tile).getByText("≈ 8,7×")).toBeInTheDocument();
     expect(within(tile).getByText("Spanne 6,9× – 11,6×")).toBeInTheDocument();
+    // #83: the point price carries four decimals, so points × price gives the total
+    expect(screen.getByRole("group", { name: "Echte Kosten (Schätzung)" }).textContent).toMatch(/4 Punkte × 0,4615 \$/);
     expect(screen.getAllByText("Preistabellen-Prüfung +0,00 %").length).toBeGreaterThan(0);
     const share = [...container.querySelectorAll("caption")].find((c) => /Je Agent/.test(c.textContent!))!.closest("table")!;
     expect(within(share).getByText("100,0 %")).toBeInTheDocument();

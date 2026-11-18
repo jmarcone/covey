@@ -24,7 +24,7 @@ export function fmtBytes(n: number): string {
 // amount below a cent to `<0,01 $`. Four digits below a dollar read as
 // precision the figures do not have (`0,4615 $` next to `33,70 $`), and
 // printed `0,0000 $` for a run that cost a fraction of a cent: `<0,01 $` says
-// it was not nothing. Zero is `0,00 $`. Used by the cost page and by the
+// it was not nothing; a negative one is `-<0,01 $`. Zero is `0,00 $`. Used by the cost page and by the
 // backlog (cost on the task card).
 //
 // From a thousand with thousands separators, because that is exactly where they
@@ -34,9 +34,39 @@ export function fmtBytes(n: number): string {
 // `12,30 $` in German), taken from Intl like the separators.
 export function fmtUSD(v: number): string {
   const a = Math.abs(v);
-  if (a > 0 && a < 0.01) return v > 0 ? `<${dollar(dezimal(0.01, 2))}` : `>-${dollar(dezimal(0.01, 2))}`;
+  if (a > 0 && a < 0.01) return v > 0 ? `<${dollar(dezimal(0.01, 2))}` : `-<${dollar(dezimal(0.01, 2))}`;
   const num = a >= 1000 ? group(Math.round(a)) : dezimal(a, 2);
   return v < 0 ? `-${dollar(num)}` : dollar(num);
+}
+
+// fmtUSDBelow is an upper bound, `< 1,85 $`. fmtUSD already says "below" for
+// an amount under a cent, and `< <0,01 $` says it twice: a bound under a cent
+// reads `< 0,01 $`, which is what it is.
+export function fmtUSDBelow(v: number): string {
+  return `< ${v > 0 && v < 0.01 ? dollar(dezimal(0.01, 2)) : fmtUSD(v)}`;
+}
+
+// fmtUSDFixed is an amount with a fixed number of decimal digits, `0,4615 $`
+// — for a price that gets multiplied on the same screen: `4 Punkte × 0,46 $`
+// does not give the `1,85 $` beside it, `4 Punkte × 0,4615 $` does. Below
+// the last digit it says `<0,0001 $`, as fmtUSD does below a cent.
+export function fmtUSDFixed(v: number, digits: number): string {
+  const a = Math.abs(v);
+  const least = 10 ** -digits;
+  if (a > 0 && a < least / 2) return `${v < 0 ? "-" : ""}<${dollar(dezimal(least, digits))}`;
+  const num = a >= 1000 ? group(Math.round(a)) : dezimal(a, digits);
+  return v < 0 ? `-${dollar(num)}` : dollar(num);
+}
+
+// fmtUSDUnit is the price of one unit. From a cent up it is fmtUSD; below it
+// two significant digits, `0,0042 $`, `0,000040 $`, because `<0,01 $ / Stück`
+// for two different prices says nothing and a price is read to compare
+// (Delta stands beside it). Down to a hundred-millionth of a dollar, then
+// `<`.
+export function fmtUSDUnit(v: number): string {
+  const a = Math.abs(v);
+  if (!(a > 0 && a < 0.01)) return fmtUSD(v);
+  return fmtUSDFixed(v, Math.min(8, Math.floor(-Math.log10(a)) + 2));
 }
 
 // dollar puts the symbol on the side the UI's language expects, with the
