@@ -55,6 +55,7 @@ describe("HelpDrawer", () => {
     await ladeSprache("de");
     renderWithProviders(<HelpDrawer open onClose={() => {}} />);
     expect(screen.getByText("Erste Schritte")).toBeTruthy();
-    expect(screen.queryByText("Die Hilfethemen sind auf Deutsch geschrieben.")).toBeNull();
+    expect(screen.getByRole("dialog").querySelector("[lang]")).toBeNull();
+    expect(screen.queryByText("Die Hilfethemen sind auf Englisch geschrieben.")).toBeNull();
   });
 });

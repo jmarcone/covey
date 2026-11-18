@@ -537,7 +537,7 @@
       "reschedule": "Zaplanuj ponownie",
       "rescheduleHint": "Przywraca zadanie do stanu otwartego — agent podejmie je znowu.",
       "archive": "Archiwizuj",
-      "archiveTitle": "Ukrywa zadanie w aktywnym backlogu — historia i nagranie zostają zachowane.",
+      "archiveTitle": "Usuwa zadanie z aktywnego backlogu — historia i nagranie zostają zachowane.",
       "discard": "Odrzuć",
       "discardConfirm": "Odrzucić zadanie \"{{title}}\"?",
       "searchPlaceholder": "Szukaj w backlogu…",
