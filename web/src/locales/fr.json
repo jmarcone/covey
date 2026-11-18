@@ -676,9 +676,12 @@
     },
     "backlog": {
       "newTask": "Nouvelle tâche",
+      "newTaskShortcut": "{{label}} (N)",
       "titlePlaceholder": "Titre",
       "descPlaceholder": "Description / contexte",
       "addToBacklog": "Ajouter au backlog",
+      "cancelNewTask": "Annuler",
+      "addFailed": "Impossible d'ajouter la tâche : {{error}}",
       "noStages": "Pas encore d'étapes — l'agent les crée en travaillant, ou vous pouvez en ajouter ici.",
       "stagesInfo": "Le badge d'état vient de l'agent ; les colonnes sont votre organisation — déplacez les tâches librement.",
       "stagesReadonly": "Les étapes sont tenues par l'agent et les responsables.",

@@ -1238,6 +1238,19 @@
    gibt. */
 .bl-bar { flex-wrap: wrap; }
 .bl-search { width: 220px; max-width: 100%; padding: 5px 10px; font-size: 12.5px; }
+/* "+ New task" opens the right-hand group as its strongest control. It stays
+   beside the search on a narrow screen; only the quieter buttons wrap. */
+.bl-bar .bl-new { margin-left: auto; white-space: nowrap; }
+@media (max-width: 560px) { .bl-bar .bl-search { flex: 1 1 140px; width: auto; min-width: 0; } }
+.btn.create { background: var(--action-create); color: var(--on-accent); border-color: transparent; }
+.btn.create:hover:not(:disabled) { opacity: 0.92; background: var(--action-create); }
+/* A card just added: the outline says which one, the tint fades out with it.
+   Without motion the outline alone carries it. The outline sits inside the
+   card: the board scrolls and clips at its edge, and the first column, where
+   new tasks land, would lose the outline's left side. */
+.kc.kc-new { outline: 2px solid var(--action-create); outline-offset: -2px; }
+@media (prefers-reduced-motion: no-preference) { .kc.kc-new { animation: kc-new 2s ease-out; } }
+@keyframes kc-new { from { background: color-mix(in srgb, var(--action-create) 18%, var(--surface-2)); } }
 .bl-results { max-width: 720px; }
 .bl-results .kc-empty { color: var(--text-muted); font-size: 12px; padding: 2px 0; }
 .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }

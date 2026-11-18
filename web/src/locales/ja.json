@@ -676,9 +676,12 @@
     },
     "backlog": {
       "newTask": "新しいタスク",
+      "newTaskShortcut": "{{label}} (N)",
       "titlePlaceholder": "タイトル",
       "descPlaceholder": "説明 / 背景",
       "addToBacklog": "バックログに追加",
+      "cancelNewTask": "キャンセル",
+      "addFailed": "タスクを追加できませんでした: {{error}}",
       "noStages": "まだ工程がありません。エージェントが作業しながら作りますし、ここで追加することもできます。",
       "stagesInfo": "ステータスのバッジはエージェントが付けます。列はあなたの整理です。タスクは自由に動かしてください。",
       "stagesReadonly": "工程はエージェントと管理者が保守します。",

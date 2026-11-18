@@ -676,9 +676,12 @@
     },
     "backlog": {
       "newTask": "Neue Aufgabe",
+      "newTaskShortcut": "{{label}} (N)",
       "titlePlaceholder": "Titel",
       "descPlaceholder": "Beschreibung / Kontext",
       "addToBacklog": "Ins Backlog",
+      "cancelNewTask": "Abbrechen",
+      "addFailed": "Die Aufgabe konnte nicht angelegt werden: {{error}}",
       "noStages": "Noch keine Stages — der Agent legt sie beim Arbeiten selbst an, oder du hier.",
       "stagesInfo": "Der Zustands-Badge kommt vom Agenten; die Spalten sind deine Organisation — ziehe Aufgaben frei.",
       "stagesReadonly": "Stages werden vom Agenten und von Verwaltern gepflegt.",

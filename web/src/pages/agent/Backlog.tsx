@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import i18n, { uiLocale } from "../../i18n";
@@ -28,12 +28,7 @@ export function parkedOn(task: Pick<Task, "state" | "correlation_key">): string 
   return task.correlation_key.slice(PARKED_PREFIX.length);
 }
 
-export function Backlog({
-  agentId,
-  phase,
-  canManage,
-  onShowRecording,
-}: {
+type BacklogProps = {
   agentId: string;
   // What the platform is currently working on for this agent. It hangs on the
   // agent, shown at the task that runs: whoever looks at the task is waiting
@@ -41,7 +36,17 @@ export function Backlog({
   phase?: AgentPhase;
   canManage: boolean;
   onShowRecording: (taskId: string, title: string) => void;
-}) {
+};
+
+// One board per agent. The router keeps this component mounted when the page
+// moves to another agent (Back, a search hit), and with it the draft, the
+// search and the open form of the one before: a draft started on A would be
+// filed on B. The key throws all of that away with the agent.
+export function Backlog(props: BacklogProps) {
+  return <AgentBacklog key={props.agentId} {...props} />;
+}
+
+function AgentBacklog({ agentId, phase, canManage, onShowRecording }: BacklogProps) {
   const { t } = useTranslation();
   const [showArchive, setShowArchive] = useState(false);
   const tasks = useQuery({
@@ -72,16 +77,103 @@ export function Backlog({
   const cleanupCount = (tasks.data ?? []).filter(
     (t) => terminalStates.includes(t.state) && !t.archived_at,
   ).length;
+  // The New task form sits behind a button: the board is what the tab is for.
+  // Closing the form keeps the draft — Escape is a way of looking at the board
+  // again, not of throwing the text away; adding the task or leaving the tab
+  // does that.
+  const [composing, setComposing] = useState(false);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
+  const titleRef = useRef<HTMLInputElement>(null);
+  const newTaskRef = useRef<HTMLButtonElement>(null);
+  const formId = useId();
+  const titleId = useId();
+  // The card the last add created. It is marked for a moment so that the eye
+  // finds it on a full board; the id comes from the POST, not from guessing.
+  const [added, setAdded] = useState<string | null>(null);
   const create = useMutation({
-    mutationFn: () => post(`/agents/${agentId}/tasks`, { title, body }),
-    onSuccess: () => {
+    mutationFn: () => post<Task>(`/agents/${agentId}/tasks`, { title, body }),
+    onSuccess: (task) => {
       setTitle("");
       setBody("");
+      setComposing(false);
+      setAdded(task.id);
       invalBacklog();
     },
   });
+  // Not while the POST is out: resetting the mutation then detaches it from the
+  // form, Add comes back enabled on the same draft (a second task), and the
+  // answer that is still on its way would close or clear a form opened since,
+  // or lose its error. The form stays as it is until the answer is there.
+  const closeComposer = () => {
+    if (create.isPending) return;
+    setComposing(false);
+    create.reset();
+  };
+  // Opening puts the cursor into Title; closing hands the focus back to the
+  // button the form came from, so the keyboard does not fall to the top of
+  // the page.
+  const wasComposing = useRef(false);
+  useEffect(() => {
+    if (composing) titleRef.current?.focus();
+    else if (wasComposing.current) newTaskRef.current?.focus({ preventScroll: true });
+    wasComposing.current = composing;
+  }, [composing]);
+  // "n" opens the form from the board, as "/" reaches the search on the
+  // dashboard. The listener lives as long as the Backlog does, so it is there
+  // only while the tab is shown. It stays out of the way of anyone typing (the
+  // guard of the "?" in AppShell) and leaves Ctrl/Cmd/Alt+N to the browser;
+  // preventDefault keeps the n itself out of Title, which has the focus by the
+  // time the key's input would land.
+  useEffect(() => {
+    if (!canManage) return;
+    // True from the press that opened the form until that key is let go: a held
+    // key repeats into whatever has the focus, and by then that is Title.
+    let openedByKey = false;
+    const onKey = (e: KeyboardEvent) => {
+      if (!isNewTaskKey(e)) return;
+      if (e.repeat) {
+        if (openedByKey) e.preventDefault();
+        return;
+      }
+      openedByKey = false;
+      if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented || e.isComposing) return;
+      const el = e.target as HTMLElement;
+      if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable) return;
+      // Not behind an open dialog: the key belongs to what is in front.
+      if (document.querySelector(DIALOG_OPEN)) return;
+      e.preventDefault();
+      openedByKey = true;
+      setComposing(true);
+      titleRef.current?.focus();
+    };
+    const onUp = (e: KeyboardEvent) => {
+      if (isNewTaskKey(e)) openedByKey = false;
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("keyup", onUp);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onUp);
+    };
+  }, [canManage]);
+  // The mark lasts about two seconds from the moment the card is on the board:
+  // the refetch after the add may take longer than the flash would. It does not
+  // run while a search hides the board (its hits carry no mark), and a mark that
+  // has not found its card after ADDED_GIVE_UP_MS — the refetch failed, or the
+  // search stayed open — is dropped, so that it does not flash on some later
+  // refetch.
+  const addedShown = !!added && !searching && (tasks.data ?? []).some((tk) => tk.id === added);
+  useEffect(() => {
+    if (!addedShown) return;
+    const h = setTimeout(() => setAdded(null), ADDED_MARK_MS);
+    return () => clearTimeout(h);
+  }, [addedShown]);
+  useEffect(() => {
+    if (!added) return;
+    const h = setTimeout(() => setAdded(null), ADDED_GIVE_UP_MS);
+    return () => clearTimeout(h);
+  }, [added]);
 
   const stages = useQuery({
     queryKey: ["stages", agentId],
@@ -135,16 +227,78 @@ export function Backlog({
 
   return (
     <div>
-      {canManage && (
+      {/* The toolbar does not wait for the board: whoever came to add a task
+          should not have to wait for the backlog to load first. */}
+      <div className="flex items-center gap-2 mb-3 bl-bar">
+        <input
+          type="search"
+          className="bl-search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={t("agent.backlog.searchPlaceholder")}
+          title={t("agent.backlog.searchHint")}
+        />
+        {canManage && (
+          <button
+            ref={newTaskRef}
+            className="btn create sm bl-new"
+            disabled={composing}
+            aria-expanded={composing}
+            aria-controls={formId}
+            aria-keyshortcuts="N"
+            title={t("agent.backlog.newTaskShortcut", { label: t("agent.backlog.newTask") })}
+            onClick={() => setComposing(true)}
+          >
+            <span aria-hidden="true">+</span> {t("agent.backlog.newTask")}
+          </button>
+        )}
+        <button
+          className="btn sm"
+          style={canManage ? undefined : { marginLeft: "auto" }}
+          disabled={searching}
+          title={searching ? t("agent.backlog.searchHint") : undefined}
+          onClick={() => setShowArchive((v) => !v)}
+        >
+          {showArchive ? t("agent.backlog.hideArchive") : t("agent.backlog.showArchive")}
+        </button>
+        {canManage && (
+          <>
+            <button
+              className="btn sm"
+              disabled={cleanupCount === 0 || cleanup.isPending}
+              title={t("agent.backlog.cleanupTitle")}
+              onClick={() => cleanup.mutate()}
+            >
+              {t("agent.backlog.cleanup")}{cleanupCount > 0 ? ` (${cleanupCount})` : ""}
+            </button>
+            <button className="btn sm" onClick={() => setEditing((v) => !v)}>
+              {editing ? t("agent.backlog.doneEditing") : t("agent.backlog.editColumns")}
+            </button>
+          </>
+        )}
+      </div>
+
+      {canManage && composing && (
         <form
+          id={formId}
           className="card mb-4"
           onSubmit={(e) => {
             e.preventDefault();
             create.mutate();
           }}
+          onKeyDown={(e) => {
+            // Escape while an input method is composing (ja, zh) cancels the
+            // composition, not the form.
+            if (e.key === "Escape" && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              closeComposer();
+            }
+          }}
         >
-          <label>{t("agent.backlog.newTask")}</label>
+          <label htmlFor={titleId}>{t("agent.backlog.newTask")}</label>
           <input
+            id={titleId}
+            ref={titleRef}
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder={t("agent.backlog.titlePlaceholder")}
@@ -155,51 +309,27 @@ export function Backlog({
             value={body}
             onChange={(e) => setBody(e.target.value)}
             placeholder={t("agent.backlog.descPlaceholder")}
+            aria-label={t("agent.backlog.descPlaceholder")}
             rows={2}
             className="mb-2"
           />
-          <button className="btn primary sm" disabled={create.isPending}>
-            {t("agent.backlog.addToBacklog")}
-          </button>
+          {create.isError && (
+            <p className="danger-text text-xs mb-2" role="alert">
+              {t("agent.backlog.addFailed", { error: (create.error as Error).message })}
+            </p>
+          )}
+          <div className="flex gap-2">
+            <button className="btn primary sm" disabled={create.isPending}>
+              {t("agent.backlog.addToBacklog")}
+            </button>
+            <button type="button" className="btn sm" disabled={create.isPending} onClick={closeComposer}>
+              {t("agent.backlog.cancelNewTask")}
+            </button>
+          </div>
         </form>
       )}
       {tasks.data && stages.data && (
         <>
-          <div className="flex items-center gap-2 mb-3 bl-bar">
-            <input
-              type="search"
-              className="bl-search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={t("agent.backlog.searchPlaceholder")}
-              title={t("agent.backlog.searchHint")}
-            />
-            <button
-              className="btn sm"
-              style={{ marginLeft: "auto" }}
-              disabled={searching}
-              title={searching ? t("agent.backlog.searchHint") : undefined}
-              onClick={() => setShowArchive((v) => !v)}
-            >
-              {showArchive ? t("agent.backlog.hideArchive") : t("agent.backlog.showArchive")}
-            </button>
-            {canManage && (
-              <>
-                <button
-                  className="btn sm"
-                  disabled={cleanupCount === 0 || cleanup.isPending}
-                  title={t("agent.backlog.cleanupTitle")}
-                  onClick={() => cleanup.mutate()}
-                >
-                  {t("agent.backlog.cleanup")}{cleanupCount > 0 ? ` (${cleanupCount})` : ""}
-                </button>
-                <button className="btn sm" onClick={() => setEditing((v) => !v)}>
-                  {editing ? t("agent.backlog.doneEditing") : t("agent.backlog.editColumns")}
-                </button>
-              </>
-            )}
-          </div>
-
           {!searching && (
             <p className="muted text-xs mb-3">
               {stageList.length === 0
@@ -277,6 +407,7 @@ export function Backlog({
                           phase={phase}
                           canManage={canManage}
                           onShowRecording={onShowRecording}
+                          justAdded={tk.id === added}
                           onDragStart={() => setDragTask(tk.id)}
                           onDragEnd={() => setDragTask(null)}
                         />
@@ -497,6 +628,24 @@ const COLUMN_LIMIT = 7;
 // Below this width the board stacks, one folding heading per stage.
 const STACK_BELOW = "(max-width: 768px)";
 
+// ADDED_MARK_MS is how long a card just added stays marked (.kc-new);
+// ADDED_GIVE_UP_MS how long the mark waits for its card to show up at all.
+const ADDED_MARK_MS = 2000;
+const ADDED_GIVE_UP_MS = 10000;
+
+// What counts as an open dialog for the "n" key. HelpDrawer and the notes drawer
+// are role=dialog without aria-modal: they keep the focus outside, so the
+// modal attribute alone would let the key open the form behind them.
+const DIALOG_OPEN = '[aria-modal="true"], [role="dialog"], [role="alertdialog"]';
+
+// isNewTaskKey is the "n" of the shortcut. Where the layout produces no Latin
+// letter (Cyrillic, Greek) the key at the N position of a QWERTY board counts
+// instead; a Latin layout that puts another letter there (Dvorak's b) does not.
+function isNewTaskKey(e: KeyboardEvent): boolean {
+  if (e.key === "n" || e.key === "N") return true;
+  return e.code === "KeyN" && !/^[a-z]$/i.test(e.key);
+}
+
 // SEARCH_LIMIT mirrors backlog.SearchMaxResults — only so that the list can say
 // when it is showing the cap rather than the whole truth.
 const SEARCH_LIMIT = 50;
@@ -508,6 +657,7 @@ function TaskCard({
   canManage,
   stageName,
   onShowRecording,
+  justAdded,
   onDragStart,
   onDragEnd,
 }: {
@@ -517,11 +667,21 @@ function TaskCard({
   canManage: boolean;
   stageName?: string;
   onShowRecording: (taskId: string, title: string) => void;
+  justAdded?: boolean;
   onDragStart?: () => void;
   onDragEnd?: () => void;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
+  // A card just added may land below the fold of a long column or off to the
+  // side of a wide board; it is brought into view, without sliding there when
+  // the reader asked for less motion.
+  useEffect(() => {
+    if (!justAdded) return;
+    const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    cardRef.current?.scrollIntoView?.({ block: "nearest", inline: "nearest", behavior: still ? "auto" : "smooth" });
+  }, [justAdded]);
   const invalBacklog = useInvalidateBacklog(agentId);
   const notes = useQuery({
     queryKey: ["task-notes", task.id],
@@ -573,7 +733,8 @@ function TaskCard({
       : relTime(task.updated_at);
   return (
     <div
-      className={`kc${open ? " expanded" : ""}${draggable ? " draggable" : ""}`}
+      ref={cardRef}
+      className={`kc${open ? " expanded" : ""}${draggable ? " draggable" : ""}${justAdded ? " kc-new" : ""}`}
       draggable={draggable}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
