@@ -289,7 +289,8 @@
       "output": "Output (incl. thinking)",
       "unit": "tokens"
     },
-    "weekOf": "week of {{date}}"
+    "weekOf": "week of {{date}}",
+    "hourTooLong": "Hourly only for up to {{days}} days"
   },
   "lang": {
     "label": "Language"

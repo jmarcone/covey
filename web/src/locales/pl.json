@@ -289,7 +289,8 @@
       "output": "Wyjście (z myśleniem)",
       "unit": "tokenów"
     },
-    "weekOf": "tydzień od {{date}}"
+    "weekOf": "tydzień od {{date}}",
+    "hourTooLong": "Godzinowo tylko do {{days}} dni"
   },
   "lang": {
     "label": "Język"

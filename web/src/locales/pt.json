@@ -289,7 +289,8 @@
       "output": "Saída (incl. raciocínio)",
       "unit": "tokens"
     },
-    "weekOf": "semana de {{date}}"
+    "weekOf": "semana de {{date}}",
+    "hourTooLong": "Por hora só até {{days}} dias"
   },
   "lang": {
     "label": "Idioma"

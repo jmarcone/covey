@@ -52,7 +52,7 @@ function Seg<T extends string | number>({
   onChange,
 }: {
   value: T;
-  options: { v: T; label: string }[];
+  options: { v: T; label: string; disabled?: boolean; title?: string }[];
   onChange: (v: T) => void;
 }) {
   return (
@@ -66,6 +66,8 @@ function Seg<T extends string | number>({
             key={String(o.v)}
             onClick={() => onChange(o.v)}
             aria-pressed={active}
+            disabled={o.disabled}
+            title={o.title}
             style={{
               border: "none",
               flexShrink: 0,
@@ -73,7 +75,8 @@ function Seg<T extends string | number>({
               borderRadius: 6,
               padding: "5px 12px",
               fontSize: 13,
-              cursor: "pointer",
+              cursor: o.disabled ? "not-allowed" : "pointer",
+              opacity: o.disabled ? 0.45 : 1,
               background: active ? "var(--surface-2)" : "transparent",
               color: active ? "var(--text-primary)" : "var(--text-secondary)",
               fontWeight: active ? 600 : 400,
@@ -89,6 +92,10 @@ function Seg<T extends string | number>({
 }
 
 // --- Page --------------------------------------------------------------------
+
+/** Hourly buckets only up to this many days: 90 days by the hour are 2,160
+ *  periods, more than a chart (or a table) can show. */
+const HOUR_MAX_DAYS = 7;
 
 const RANGES: { v: number; bucket: string }[] = [
   { v: 1, bucket: "hour" },
@@ -284,7 +291,8 @@ export default function Costs() {
           value={bucket}
           onChange={setBucket}
           options={[
-            { v: "hour", label: t("costs.bHour") },
+            // 90 days by the hour are 2,160 periods: hours only up to a week.
+            { v: "hour", label: t("costs.bHour"), disabled: days > HOUR_MAX_DAYS, title: days > HOUR_MAX_DAYS ? t("costs.hourTooLong", { days: HOUR_MAX_DAYS }) : undefined },
             { v: "day", label: t("costs.bDay") },
             { v: "week", label: t("costs.bWeek") },
             { v: "month", label: t("costs.bMonth") },

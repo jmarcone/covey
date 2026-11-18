@@ -289,7 +289,8 @@
       "output": "出力（思考を含む）",
       "unit": "トークン"
     },
-    "weekOf": "{{date}} からの週"
+    "weekOf": "{{date}} からの週",
+    "hourTooLong": "時間単位は {{days}} 日までのみ"
   },
   "lang": {
     "label": "言語"

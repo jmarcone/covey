@@ -289,7 +289,8 @@
       "output": "Output (incl. ragionamento)",
       "unit": "token"
     },
-    "weekOf": "settimana dal {{date}}"
+    "weekOf": "settimana dal {{date}}",
+    "hourTooLong": "Orario solo fino a {{days}} giorni"
   },
   "lang": {
     "label": "Lingua"

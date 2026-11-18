@@ -289,7 +289,8 @@
       "output": "Ausgabe (inkl. Denken)",
       "unit": "Tokens"
     },
-    "weekOf": "Woche ab {{date}}"
+    "weekOf": "Woche ab {{date}}",
+    "hourTooLong": "Stündlich nur bis {{days}} Tage"
   },
   "lang": {
     "label": "Sprache"

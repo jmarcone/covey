@@ -289,7 +289,8 @@
       "output": "输出（含思考）",
       "unit": "token"
     },
-    "weekOf": "{{date}} 起的一周"
+    "weekOf": "{{date}} 起的一周",
+    "hourTooLong": "按小时仅限 {{days}} 天以内"
   },
   "lang": {
     "label": "语言"

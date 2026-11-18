@@ -238,6 +238,19 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     expect(within(share).getByText("100,0 %")).toBeInTheDocument();
   });
 
+  // Review C13: 90 days by the hour were 2,160 periods.
+  it("bietet Stunden nur bis zu einer Woche an", async () => {
+    render([2, 2]);
+    await screen.findByRole("group", { name: MULTIPLE });
+    expect(screen.getByRole("button", { name: "Stunde" })).toBeEnabled();
+    await act(async () => { await userEvent.click(screen.getByRole("button", { name: "7 Tage" })); });
+    expect(screen.getByRole("button", { name: "Stunde" })).toBeEnabled();
+    await act(async () => { await userEvent.click(screen.getByRole("button", { name: "30 Tage" })); });
+    expect(screen.getByRole("button", { name: "Stunde" })).toBeDisabled();
+    await act(async () => { await userEvent.click(screen.getByRole("button", { name: "90 Tage" })); });
+    expect(screen.getByRole("button", { name: "Stunde" })).toBeDisabled();
+  });
+
   // Review C4: a cost type switched off under "split by cost type" stayed
   // off, invisibly, after the split was switched off again.
   it("lässt einen ausgeblendeten Kostentyp nicht weiterwirken, wenn die Aufteilung aus ist", async () => {
