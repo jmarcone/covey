@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Navigate, useLocation } from "react-router";
-import { api, setUnauthorizedHandler, type Principal } from "./api";
+import { api, isUnauthorized, setUnauthorizedHandler, type Principal } from "./api";
 import { initialLang } from "./i18n";
 import { APP_LINK_PATHS, LANGS, MAIL_LINK_PATHS, PUBLIC_ROUTES, pathOf } from "./public/routes";
 import SignedOut from "./public/SignedOut";
@@ -72,8 +72,10 @@ function useLiveEvents(enabled: boolean) {
        the endpoint answers with 401. An EventSource does not say which of
        the two. So the UI asks: /auth/me answers it, and an expired session
        lands in its 401 without anyone having
-       to click first. */
-    es.onerror = () => void qc.refetchQueries({ queryKey: ["me"] });
+       to click first. Only that 401 ends the session (#115): while the server
+       restarts, /auth/me fails with a network error or a 502 and the query
+       keeps retrying behind the UI that stands. */
+    es.onerror = () => void qc.refetchQueries({ queryKey: ["me"] }, { cancelRefetch: false });
     return () => es.close();
   }, [enabled, qc]);
 }
@@ -156,11 +158,17 @@ export default function App() {
   const me = useQuery({
     queryKey: ["me"],
     queryFn: () => api<Principal>("/auth/me"),
-    retry: false,
+    /* Only a 401 says "not signed in". Anything else — a network error, a 502
+       while covey restarts — leaves the session as it was: the query retries
+       with a growing pause and the UI that stands stays (#115). */
+    retry: (_n, err) => !isUnauthorized(err),
+    retryDelay: (n) => Math.min(1000 * 2 ** n, 30_000),
     /* The common case is the tab that stays open overnight: on return the UI
        should check the session instead of walking into a 401 on
-       the first click. */
-    refetchOnWindowFocus: true,
+       the first click. Not while signed out: a query without data goes back
+       to pending when it fetches, the empty state then unmounts the login
+       form, and whatever was typed into it is gone (#115). */
+    refetchOnWindowFocus: (q) => q.state.data !== undefined,
   });
 
   useEffect(() => {
@@ -194,7 +202,9 @@ export default function App() {
      website stood here, and that was already in the HTML, so there was nothing
      to show from here. */
   if (me.isLoading) return null;
-  if (me.isError) return <Abgemeldet onLogin={anmelden} />;
+  if (me.isError && isUnauthorized(me.error)) return <Abgemeldet onLogin={anmelden} />;
+  // No data and no 401: the server is not answering yet, the query is retrying.
+  if (!me.data) return null;
   /* Signed in but without a seat: since the login hangs on the account
      (FR-002), an account can exist before an organisation knows it. The shell
      would run into nothing but 409s there, so it does not get that far. */

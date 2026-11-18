@@ -1,6 +1,6 @@
 import type { ReactElement } from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { screen, render, waitFor, within } from "@testing-library/react";
+import { screen, render, waitFor, within, act, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 import App from "./App";
@@ -165,6 +165,91 @@ describe("App bei ablaufender Sitzung", () => {
 
     await waitFor(() => expect(screen.getByLabelText("Passwort")).toBeInTheDocument());
     expect(screen.getByText(/Sitzung ist abgelaufen/)).toBeInTheDocument();
+  });
+});
+
+/* The tab comes back to the foreground: what react-query listens to for
+   refetchOnWindowFocus. */
+const fokus = () => act(() => void document.dispatchEvent(new Event("visibilitychange", { bubbles: true })));
+
+/* What /auth/me answers is the one thing that changes in these tests; the rest
+   of the server stays as serverMitSitzung has it. */
+function serverMitMe(antwort: () => "ok" | "401" | "502" | "netz", verzoegerung = 0) {
+  serverMitSitzung(() => true);
+  const server = globalThis.fetch;
+  const aufrufe = { ok: 0, gesamt: 0 };
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (!String(input).includes("/auth/me")) return server(input, init);
+    aufrufe.gesamt++;
+    if (verzoegerung) await new Promise((r) => setTimeout(r, verzoegerung));
+    const a = antwort();
+    if (a === "netz") throw new TypeError("Failed to fetch");
+    if (a === "ok") aufrufe.ok++;
+    if (a !== "ok") return new Response(JSON.stringify({ error: a }), { status: a === "401" ? 401 : 502 });
+    return server(input, init);
+  });
+  return aufrufe;
+}
+
+/* #115: the login form was reset on every tab focus, and a signed-in tab
+   showed the login form while covey restarted. Both because anything that
+   went wrong with /auth/me looked like "not signed in". */
+describe("App und /auth/me im Hintergrund", () => {
+  it("behält, was in die Anmeldung getippt wurde, wenn der Tab den Fokus zurückbekommt", async () => {
+    serverMitMe(() => "401", 20);
+    renderApp(<App />, "/");
+
+    const passwort = await screen.findByLabelText("Passwort");
+    fireEvent.change(passwort, { target: { value: "geheim" } });
+
+    await fokus();
+    await new Promise((r) => setTimeout(r, 150));
+
+    // The same field, not a new one that happens to look alike.
+    expect(screen.getByLabelText("Passwort")).toBe(passwort);
+    expect(passwort.isConnected).toBe(true);
+    expect(passwort).toHaveValue("geheim");
+  });
+
+  for (const fehler of ["502", "netz"] as const) {
+    it(`lässt die Oberfläche stehen, wenn /auth/me im Hintergrund fehlschlägt (${fehler}), und erholt sich`, async () => {
+      let antwort: "ok" | "401" | "502" | "netz" = "ok";
+      const aufrufe = serverMitMe(() => antwort);
+      renderApp(<App />, "/agents");
+      expect((await screen.findAllByText("Agenten")).length).toBeGreaterThan(0);
+
+      // covey restarts: the stream breaks, the focus check runs into the gap.
+      antwort = fehler;
+      const vorher = aufrufe.gesamt;
+      await fokus();
+      await waitFor(() => expect(aufrufe.gesamt).toBeGreaterThan(vorher));
+      await new Promise((r) => setTimeout(r, 100));
+      expect(screen.queryByLabelText("Passwort")).not.toBeInTheDocument();
+      expect(screen.getAllByText("Agenten").length).toBeGreaterThan(0);
+
+      // It is back: the query finds out on its own retry, nobody reloads.
+      antwort = "ok";
+      const ok = aufrufe.ok;
+      await waitFor(() => expect(aufrufe.ok).toBeGreaterThan(ok), { timeout: 5000 });
+      expect(screen.queryByLabelText("Passwort")).not.toBeInTheDocument();
+      expect(screen.getAllByText("Agenten").length).toBeGreaterThan(0);
+    });
+  }
+
+  it("zeigt die Anmeldung, wenn /auth/me im Hintergrund mit 401 antwortet", async () => {
+    let antwort: "ok" | "401" = "ok";
+    const aufrufe = serverMitMe(() => antwort);
+    renderApp(<App />, "/agents");
+    expect((await screen.findAllByText("Agenten")).length).toBeGreaterThan(0);
+
+    antwort = "401";
+    const vorher = aufrufe.gesamt;
+    await fokus();
+
+    // Expiry still ends the UI: only a 401 does.
+    expect(await screen.findByLabelText("Passwort")).toBeInTheDocument();
+    expect(aufrufe.gesamt).toBeGreaterThan(vorher);
+    expect(screen.queryByText("Agenten")).not.toBeInTheDocument();
   });
 });
 

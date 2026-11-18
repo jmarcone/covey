@@ -1881,6 +1881,10 @@ export class ApiError extends Error {
  *  session works in — which a retry does not change (#263). */
 export const isNotFound = (err: unknown) => err instanceof ApiError && err.status === 404;
 
+/** A 401 from the API: the session is gone. Nothing else says that — a network
+ *  error or a 502 while covey restarts leaves a valid session untouched (#115). */
+export const isUnauthorized = (err: unknown) => err instanceof ApiError && err.status === 401;
+
 /* What is to happen when the server rejects a request with 401: the
    session expired (or was ended elsewhere). That is not an error of ONE
    page, but the end of the whole UI — which is why the reaction
