@@ -581,7 +581,7 @@ function TaskCard({
               <span className="mono">{task.correlation_key}</span>
             </p>
           )}
-          {task.state === "blocked" && task.blocked_reason && (
+          {task.state === "blocked" && !task.redacted && task.blocked_reason && (
             <p>
               <span className="muted">{t("agent.backlog.reason")}:</span> {task.blocked_reason}
             </p>

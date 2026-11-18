@@ -163,4 +163,17 @@ describe("Geparkte Aufgaben auf dem Board", () => {
     await zeige(blocked({ correlation_key: "zammad:4711", blocked_reason: "" }));
     expect(screen.queryByText("Grund:")).not.toBeInTheDocument();
   });
+
+  // A redacted task keeps its text with the members of the conversation it
+  // came from; the reason is the question it was blocked with, so it stays
+  // there too.
+  it("zeigt bei einer geschwärzten Aufgabe keinen Grund", async () => {
+    const task = blocked({ correlation_key: "zammad:4711", blocked_reason: "Kunde muss antworten", redacted: true });
+    mockFetch({ ...routen(), "/api/v1/agents/a1/backlog": [task], "/api/v1/tasks/t1/notes": [] });
+    renderWithProviders(<Backlog agentId="a1" canManage onShowRecording={() => {}} />);
+    await userEvent.click(await screen.findByText("Aufgabe aus einem Gespräch"));
+    expect(await screen.findByText(/in dem du nicht bist/)).toBeInTheDocument();
+    expect(screen.queryByText("Grund:")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Kunde muss antworten/)).not.toBeInTheDocument();
+  });
 });
