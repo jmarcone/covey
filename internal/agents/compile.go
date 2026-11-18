@@ -25,6 +25,7 @@ const CoveyActionsDoc = `The platform's own actions — your board, your memory,
    set_stage {"stage":"<state>"} — move the current task into a column of your board.
    report {"<field>":"<value>", …} — report named results of your task (e.g. {"result":"accepted"}); a task that asks for fields expects them before you finish.
    add_note {"content":"<note>"} — a note on the task (interim states, findings, what you tried).
+   With "task_id":"<id>" the note goes onto a colleague's task in your organisation, and "answer":true resumes it if it is blocked.
    remember {"page":"<slug>","content":"<insight>"} — an insight into the named wiki page.
    wiki_search {"query":"<keywords>"} · wiki_read {"slug":"..."} · wiki_append {"slug":"...","text":"..."} ·
    wiki_write {"slug":"...","title":"...","type":"...","body":"<markdown>"} · wiki_delete {"slug":"..."} —
@@ -115,6 +116,8 @@ You are an agent on the covey platform. The following rules apply:
    What relates to the task (interim states, findings, what you have already tried)
    belongs on the task as a note:
    ` + "`curl -s -X POST http://localhost:$COVEY_ACTION_PORT/actions/covey/add_note -d '{\"content\":\"<note>\"}'`" + `
+   A word for a colleague's open task goes onto that task, not into a new one: add
+   ` + "`\"task_id\":\"<id>\"`" + ` (your organisation only); ` + "`\"answer\":true`" + ` resumes it if it is blocked.
    What is generally applicable (insights about customers, systems, recurring
    solutions) belongs in your **wiki** — your durable memory of linked pages:
    ` + "`curl -s -X POST http://localhost:$COVEY_ACTION_PORT/actions/covey/wiki_search -d '{\"query\":\"<keywords>\"}'`" + ` — find matching pages

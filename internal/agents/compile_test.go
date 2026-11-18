@@ -30,6 +30,20 @@ func TestCompilePromptOrderAndProtocol(t *testing.T) {
 	}
 }
 
+// An agent learns from its prompt that a note can go onto a colleague's task
+// and answer it there — otherwise every word about an open task becomes a new
+// task with a session of its own. Both places say it: the instructions in the
+// prompt and the covey tool's description on the MCP route.
+func TestPromptNamesNotesOnAnotherTask(t *testing.T) {
+	for name, doc := range map[string]string{"ProtocolInstructions": ProtocolInstructions, "CoveyActionsDoc": CoveyActionsDoc} {
+		for _, want := range []string{`"task_id"`, `"answer":true`} {
+			if !strings.Contains(doc, want) {
+				t.Errorf("%s does not name %s for add_note", name, want)
+			}
+		}
+	}
+}
+
 func TestCompilePromptEmptyFiles(t *testing.T) {
 	p := CompilePrompt(map[string]string{"SOUL.md": "  \n"})
 	if !strings.HasPrefix(p, "## covey platform protocol") {

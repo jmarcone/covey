@@ -239,6 +239,7 @@ func (p *actionProxy) controlPlane(ctx context.Context, action string, params js
 			Content string `json:"content"`
 			TaskID  string `json:"task_id"`
 			Page    string `json:"page"`
+			Answer  bool   `json:"answer"`
 		}
 		if err := json.Unmarshal(params, &in); err != nil || strings.TrimSpace(in.Content) == "" {
 			return map[string]string{"status": "error", "error": "content missing"}
@@ -258,6 +259,9 @@ func (p *actionProxy) controlPlane(ctx context.Context, action string, params js
 			audit, _ := json.Marshal(map[string]any{"action": "covey:remember", "page": in.Page, "content": in.Content})
 			_ = p.client.send(TypeEvent, Event{TaskID: p.taskID, Kind: "action", Payload: audit})
 			return map[string]any{"status": "ok", "data": resp.Data}
+		}
+		if action == "add_note" && in.TaskID != "" && in.TaskID != p.taskID {
+			return p.noteOnTask(ctx, in.TaskID, in.Content, in.Answer, params)
 		}
 		taskID := in.TaskID
 		if taskID == "" {
@@ -479,6 +483,44 @@ func (p *actionProxy) createTask(ctx context.Context, params json.RawMessage) an
 		data["notice"] = resp.Notice
 	}
 	return map[string]any{"status": "ok", "data": data}
+}
+
+// noteOnTask is covey/add_note with the task_id of another task: a note on a
+// colleague's open task, or with answer the answer to a parked one, instead
+// of a new task beside it. Unlike a note on the running task it is a request
+// with an answer: whose task the id names is known only to the control plane,
+// and a refusal has to reach the agent the way a guard rail's does.
+func (p *actionProxy) noteOnTask(ctx context.Context, target, content string, answer bool, params json.RawMessage) any {
+	const subject = "covey:add_note"
+	dec, err := p.client.checkAction(ctx, p.taskID, subject, params)
+	if err != nil {
+		return map[string]string{"status": "error", "error": err.Error()}
+	}
+	switch dec.Status {
+	case "denied":
+		return map[string]string{"status": "denied", "reason": dec.Reason}
+	case "pending":
+		return map[string]string{
+			"status":          "pending_approval",
+			"approval_id":     dec.ApprovalID,
+			"correlation_key": dec.CorrelationKey,
+		}
+	}
+	resp, err := p.client.note(ctx, RequestNote{TaskID: p.taskID, Target: target, Content: content,
+		Answer: answer, ApprovalID: dec.ApprovalID})
+	if err != nil {
+		return map[string]string{"status": "error", "error": err.Error()}
+	}
+	audit, _ := json.Marshal(map[string]any{"action": subject, "task_id": target, "answer": answer,
+		"ok": resp.OK, "woken": resp.Woken, "content": content})
+	_ = p.client.send(TypeEvent, Event{TaskID: p.taskID, Kind: "action", Payload: audit})
+	switch {
+	case resp.Denied:
+		return map[string]string{"status": "denied", "reason": resp.Error}
+	case !resp.OK:
+		return map[string]string{"status": "error", "error": resp.Error}
+	}
+	return map[string]any{"status": "ok", "scope": "task", "task_id": target, "woken": resp.Woken}
 }
 
 // message is covey/message (#537): the agent tells a person of its
