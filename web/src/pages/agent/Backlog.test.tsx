@@ -258,3 +258,93 @@ describe("Neue Aufgabe hinter einem Knopf", () => {
     expect((screen.getByPlaceholderText("Beschreibung / Kontext") as HTMLTextAreaElement).value).toBe("auch der Kontext");
   });
 });
+
+// "n" opens the New task form on the Backlog tab, the way "/" reaches the
+// search elsewhere. It is a key for whoever is looking at the board, so it stays
+// out of the way of anyone typing and of the browser's own Ctrl/Cmd+N.
+describe("Taste n öffnet Neue Aufgabe", () => {
+  beforeEach(() => useGerman());
+
+  it("öffnet das Formular mit dem Fokus im Titel, ohne das n hineinzuschreiben", async () => {
+    mockFetch(routen());
+    renderWithProviders(<Backlog agentId="a1" canManage onShowRecording={() => {}} />);
+    const knopf = await screen.findByRole("button", { name: "+ Neue Aufgabe" });
+    expect(knopf.title).toBe("Neue Aufgabe (N)");
+    await userEvent.keyboard("n");
+
+    const titel = screen.getByPlaceholderText("Titel") as HTMLInputElement;
+    expect(document.activeElement).toBe(titel);
+    expect(titel.value).toBe("");
+  });
+
+  it("öffnet nichts, solange in ein Feld geschrieben wird", async () => {
+    mockFetch(routen());
+    renderWithProviders(<Backlog agentId="a1" canManage onShowRecording={() => {}} />);
+    const suche = await screen.findByPlaceholderText("Backlog durchsuchen …");
+    await userEvent.type(suche, "n");
+
+    expect((suche as HTMLInputElement).value).toBe("n");
+    expect(screen.queryByPlaceholderText("Titel")).toBeNull();
+
+    // Neither in a field of the form itself: an n in the description is text.
+    await userEvent.click(screen.getByRole("button", { name: "+ Neue Aufgabe" }));
+    const beschreibung = screen.getByPlaceholderText("Beschreibung / Kontext") as HTMLTextAreaElement;
+    await userEvent.type(beschreibung, "n");
+    expect(beschreibung.value).toBe("n");
+    expect(document.activeElement).toBe(beschreibung);
+
+    // Nor in an editable element outside a form field (the chat's composer).
+    const editierbar = document.createElement("div");
+    editierbar.contentEditable = "true";
+    document.body.appendChild(editierbar);
+    await userEvent.keyboard("{Escape}");
+    const ev = new KeyboardEvent("keydown", { key: "n", bubbles: true, cancelable: true });
+    Object.defineProperty(editierbar, "isContentEditable", { value: true });
+    editierbar.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(false);
+    expect(screen.queryByPlaceholderText("Titel")).toBeNull();
+    editierbar.remove();
+  });
+
+  it("lässt Strg+N, Cmd+N und Alt+N dem Browser", async () => {
+    mockFetch(routen());
+    renderWithProviders(<Backlog agentId="a1" canManage onShowRecording={() => {}} />);
+    await screen.findByRole("button", { name: "+ Neue Aufgabe" });
+    for (const mod of [{ ctrlKey: true }, { metaKey: true }, { altKey: true }]) {
+      const ev = new KeyboardEvent("keydown", { key: "n", bubbles: true, cancelable: true, ...mod });
+      document.body.dispatchEvent(ev);
+      expect(ev.defaultPrevented).toBe(false);
+    }
+    expect(screen.queryByPlaceholderText("Titel")).toBeNull();
+  });
+
+  it("tut ohne Verwaltungsrecht nichts", async () => {
+    mockFetch(routen());
+    renderWithProviders(<Backlog agentId="a1" canManage={false} onShowRecording={() => {}} />);
+    await screen.findByText(TASK.title);
+    const ev = new KeyboardEvent("keydown", { key: "n", bubbles: true, cancelable: true });
+    document.body.dispatchEvent(ev);
+
+    expect(ev.defaultPrevented).toBe(false);
+    expect(screen.queryByPlaceholderText("Titel")).toBeNull();
+  });
+
+  // The tab unmounts the Backlog when it is left; the key goes with it. A
+  // listener left behind would open a form nobody sees and, once the tab is
+  // back, would answer twice.
+  it("nimmt die Taste mit, wenn der Reiter verlassen wird", async () => {
+    mockFetch(routen());
+    const an = vi.spyOn(window, "addEventListener");
+    const ab = vi.spyOn(window, "removeEventListener");
+    const { unmount } = renderWithProviders(<Backlog agentId="a1" canManage onShowRecording={() => {}} />);
+    await screen.findByRole("button", { name: "+ Neue Aufgabe" });
+    const angemeldet = an.mock.calls.filter(([typ]) => typ === "keydown").map(([, fn]) => fn);
+    expect(angemeldet.length).toBeGreaterThan(0);
+    unmount();
+
+    const abgemeldet = ab.mock.calls.filter(([typ]) => typ === "keydown").map(([, fn]) => fn);
+    for (const fn of angemeldet) expect(abgemeldet).toContain(fn);
+    an.mockRestore();
+    ab.mockRestore();
+  });
+});

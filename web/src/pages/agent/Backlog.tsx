@@ -96,6 +96,28 @@ export function Backlog({
     else if (wasComposing.current) newTaskRef.current?.focus({ preventScroll: true });
     wasComposing.current = composing;
   }, [composing]);
+  // "n" opens the form from the board, as "/" reaches the search elsewhere.
+  // The listener lives as long as the Backlog does, so it is there only while
+  // the tab is shown. It stays out of the way of anyone typing (the guard of the
+  // "?" in AppShell) and leaves Ctrl/Cmd/Alt+N to the browser; preventDefault
+  // keeps the n itself out of Title, which has the focus by the time the key's
+  // input would land.
+  useEffect(() => {
+    if (!canManage) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "n" && e.key !== "N") return;
+      if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
+      const el = e.target as HTMLElement;
+      if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable) return;
+      // Not behind an open dialog: the key belongs to what is in front.
+      if (document.querySelector('[aria-modal="true"]')) return;
+      e.preventDefault();
+      setComposing(true);
+      titleRef.current?.focus();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [canManage]);
   // The mark lasts about two seconds from the moment the card is on the board:
   // the refetch after the add may take longer than the flash would.
   const addedShown = !!added && (tasks.data ?? []).some((tk) => tk.id === added);
@@ -161,6 +183,8 @@ export function Backlog({
             className="btn primary sm bl-new"
             disabled={composing}
             aria-expanded={composing}
+            aria-keyshortcuts="N"
+            title={t("agent.backlog.newTaskShortcut")}
             onClick={() => setComposing(true)}
           >
             + {t("agent.backlog.newTask")}

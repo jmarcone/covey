@@ -514,6 +514,7 @@
     },
     "backlog": {
       "newTask": "Nouvelle tâche",
+      "newTaskShortcut": "Nouvelle tâche (N)",
       "titlePlaceholder": "Titre",
       "descPlaceholder": "Description / contexte",
       "addToBacklog": "Ajouter au backlog",

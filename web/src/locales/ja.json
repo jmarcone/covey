@@ -514,6 +514,7 @@
     },
     "backlog": {
       "newTask": "新しいタスク",
+      "newTaskShortcut": "新しいタスク (N)",
       "titlePlaceholder": "タイトル",
       "descPlaceholder": "説明 / 背景",
       "addToBacklog": "バックログに追加",

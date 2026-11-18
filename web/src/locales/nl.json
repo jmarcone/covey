@@ -514,6 +514,7 @@
     },
     "backlog": {
       "newTask": "Nieuwe taak",
+      "newTaskShortcut": "Nieuwe taak (N)",
       "titlePlaceholder": "Titel",
       "descPlaceholder": "Beschrijving / context",
       "addToBacklog": "Aan de backlog toevoegen",
