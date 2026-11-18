@@ -24,8 +24,8 @@ export function fmtBytes(n: number): string {
 // amount below a cent to `<0,01 $`. Four digits below a dollar read as
 // precision the figures do not have (`0,4615 $` next to `33,70 $`), and
 // printed `0,0000 $` for a run that cost a fraction of a cent: `<0,01 $` says
-// it was not nothing; a negative one is `-<0,01 $`. Zero is `0,00 $`. Used by the cost page and by the
-// backlog (cost on the task card).
+// it was not nothing; a negative one is `-<0,01 $`. Zero is `0,00 $`. Used by
+// the cost page and by the backlog (cost on the task card).
 //
 // From a thousand with thousands separators, because that is exactly where they
 // start to help: `2746 $` you read digit by digit, `2.746 $` at one glance.
@@ -48,8 +48,10 @@ export function fmtUSDBelow(v: number): string {
 
 // fmtUSDFixed is an amount with a fixed number of decimal digits, `0,4615 $`
 // — for a price that gets multiplied on the same screen: `4 Punkte × 0,46 $`
-// does not give the `1,85 $` beside it, `4 Punkte × 0,4615 $` does. Below
-// the last digit it says `<0,0001 $`, as fmtUSD does below a cent.
+// does not give the `1,85 $` beside it, `4 Punkte × 0,4615 $` does. Four
+// digits bring the product within a cent for a few dozen points, not for
+// hundreds; the `≈` beside it says so. Below half the last digit it says
+// `<0,0001 $`.
 export function fmtUSDFixed(v: number, digits: number): string {
   const a = Math.abs(v);
   const least = 10 ** -digits;
@@ -62,11 +64,13 @@ export function fmtUSDFixed(v: number, digits: number): string {
 // two significant digits, `0,0042 $`, `0,000040 $`, because `<0,01 $ / Stück`
 // for two different prices says nothing and a price is read to compare
 // (Delta stands beside it). Down to a hundred-millionth of a dollar, then
-// `<`.
+// `<`. A price that rounds up to a cent is a cent (`0,01 $`, not `0,0100 $`).
 export function fmtUSDUnit(v: number): string {
   const a = Math.abs(v);
   if (!(a > 0 && a < 0.01)) return fmtUSD(v);
-  return fmtUSDFixed(v, Math.min(8, Math.floor(-Math.log10(a)) + 2));
+  const digits = Math.min(8, 1 - Math.floor(Math.log10(a)));
+  if (Number(a.toFixed(digits)) >= 0.01) return fmtUSDFixed(v, 2);
+  return fmtUSDFixed(v, digits);
 }
 
 // dollar puts the symbol on the side the UI's language expects, with the

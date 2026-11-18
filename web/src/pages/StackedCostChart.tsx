@@ -498,11 +498,16 @@ function CredentialTiles({ f, filtered }: { f: CredentialFigures; filtered: bool
     } else {
       // The bill covers whole billed buckets; the reported and recomputed
       // figures of the same window stand beside it, not the page's — up to
-      // compared_until, where the bill is complete, not up to now.
-      const win = b.window ? t("costs.fig.billedWindow", {
-        from: fmtBucket(b.window.start.toISOString(), "hour"),
-        unit: t(b.window.width === "1h" ? "costs.fig.billedUnitHours" : "costs.fig.billedUnitDays"),
-        reported: fmtUSD(b.reported), list: fmtUSD(b.recomputed), until: fmtClockUTC(b.window.comparedUntil),
+      // compared_until, where the bill is complete, not up to now. Without a
+      // date it would read as today, so a day other than the window's end
+      // gets one.
+      const w = b.window;
+      const until = w && (w.comparedUntil.toISOString().slice(0, 10) === w.end.toISOString().slice(0, 10)
+        ? fmtClockUTC(w.comparedUntil) : fmtBucket(w.comparedUntil.toISOString(), "hour"));
+      const win = w ? t("costs.fig.billedWindow", {
+        from: fmtBucket(w.start.toISOString(), "hour"),
+        unit: t(w.width === "1h" ? "costs.fig.billedUnitHours" : "costs.fig.billedUnitDays"),
+        reported: fmtUSD(b.reported), list: fmtUSD(b.recomputed), until,
       }) : undefined;
       const failed = b.error ? t("costs.fig.billedLastSyncFailed", { error: b.error }) : undefined;
       tiles.push(<Tile key="billed" label={t("costs.fig.billed")} value={fmtUSD(b.usd)} sub={status}

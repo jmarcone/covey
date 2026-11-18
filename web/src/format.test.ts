@@ -110,6 +110,8 @@ describe("fmtUSD edges", () => {
     expect(fmtUSDFixed(12.5, 4)).toBe("$12.5000");
     expect(fmtUSDFixed(0.00001, 4)).toBe("<$0.0001");
     expect(fmtUSDFixed(0, 4)).toBe("$0.0000");
+    expect(fmtUSDFixed(0.00006, 4)).toBe("$0.0001");
+    expect(fmtUSDFixed(0.00004, 4)).toBe("<$0.0001");
   });
 
   it("shows a unit price under a cent with the precision it needs", () => {
@@ -117,6 +119,12 @@ describe("fmtUSD edges", () => {
     expect(fmtUSDUnit(0.0042)).toBe("$0.0042");
     expect(fmtUSDUnit(0.00004)).toBe("$0.000040");
     expect(fmtUSDUnit(0.0042)).not.toBe(fmtUSDUnit(0.0007));
+    // an exact power of ten keeps two digits, a price that rounds up to a cent is a cent
+    expect(fmtUSDUnit(0.001)).toBe("$0.0010");
+    expect(fmtUSDUnit(0.0005)).toBe("$0.00050");
+    expect(fmtUSDUnit(0.00995)).toBe("$0.01");
+    expect(fmtUSDUnit(0.00999)).toBe("$0.01");
+    expect(fmtUSDUnit(-0.00999)).toBe("-$0.01");
     expect(fmtUSDUnit(1e-12)).toBe("<$0.00000001");
     expect(fmtUSDUnit(0)).toBe("$0.00");
   });
