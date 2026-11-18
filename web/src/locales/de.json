@@ -273,7 +273,7 @@
       "crossingReset": "neue Woche → {{to}} %",
       "hourRealNote": "In Stundenauflösung ist ein Punkt {{usd}} wert; ein Balken zeigt die Punkte, die in dieser Stunde seit der vorigen Ablesung abgelesen wurden — Arbeit aus früheren Stunden kann später erscheinen; Stunden ohne Ablesung zeigen 0. Die Beschriftungen am oberen Rand des Diagramms sind die je Stunde abgelesene Bewegung des Zählers.",
       "hourRealNoteMixed": "In Stundenauflösung ist ein Punkt den Preis je Punkt des Tarifs wert, der bei der jeweiligen Ablesung galt; ein Balken zeigt die Punkte, die in dieser Stunde seit der vorigen Ablesung abgelesen wurden — Arbeit aus früheren Stunden kann später erscheinen; Stunden ohne Ablesung zeigen 0. Die Beschriftungen am oberen Rand des Diagramms sind die je Stunde abgelesene Bewegung des Zählers.",
-      "vsAbsent": "„Echt gegen Liste“ wird hier nicht gezeichnet: Dafür müssen die echten Kosten unter Quelle eingeschaltet sein, kein Agentenfilter gesetzt sein und jeder Punkt einen Tarifpreis haben. Das Diagramm zeigt Beträge.",
+      "vsAbsent": "„Echt gegen Liste“ wird hier nicht gezeichnet: Dafür braucht es Abonnement-Zugangsdaten mit Zählerablesungen, eingeschaltete echte Kosten unter Quelle, keinen Agentenfilter und einen Tarifpreis für jeden Punkt. Das Diagramm zeigt Beträge.",
       "filteredRealNote": "Echte Kosten und Rechnung gehören zu den ganzen Zugangsdaten: Mit Agentenfilter stehen sie nur als geschätzter Anteil in der Tabelle.",
       "showAsTable": "Als Tabelle zeigen",
       "period": "Zeitraum",

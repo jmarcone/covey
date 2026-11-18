@@ -568,6 +568,30 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
       expect(container.querySelector("[data-vs-absent]")!.textContent).toMatch(/„Echt gegen Liste“ wird hier nicht gezeichnet/);
     });
 
+    // PR #80 review: an API key or a run without a known credential met the
+    // three listed conditions and still got no comparison; the first
+    // condition is a subscription credential.
+    it("nennt bei einem API-Schlüssel und ohne bekannte Zugangsdaten die Abo-Zugangsdaten als Bedingung", async () => {
+      const KEY = "anthropic_api_key";
+      const data = cells([2, 2]);
+      data.cells.push(
+        { period: "2026-11-17T18:00:00Z", agent_id: "a1", secret_key: KEY, secret_slot: 0, credential_kind: "api_key",
+          reported_usd: BOOKED, measured: { output: 4 }, engine_usd: 4, tokens: { output: 200_000 } },
+        { period: "2026-11-17T18:00:00Z", agent_id: "a1", secret_key: null, secret_slot: null, credential_kind: "",
+          reported_usd: BOOKED, measured: { output: 1 }, engine_usd: 1, tokens: { output: 50_000 } },
+      );
+      const { container } = serve(data);
+      const block = (id: string) => container.querySelector<HTMLElement>(`[data-credential="${id}"]`)!;
+      await waitFor(() => { if (!block(`${KEY}#0`) || !block("")) throw new Error("blocks not there yet"); });
+      await click("Echt gegen Liste");
+      for (const id of [`${KEY}#0`, ""]) {
+        const why = block(id).querySelector("[data-vs-absent]")!.textContent!;
+        expect(why).toMatch(/„Echt gegen Liste“ wird hier nicht gezeichnet: Dafür braucht es Abonnement-Zugangsdaten mit Zählerablesungen,/);
+      }
+      // the subscription draws it
+      expect(block(`${SEAT}#0`).querySelector("[data-vs-absent]")).toBeNull();
+    });
+
     it("sagt es auch bei Punkten ohne Tarifpreis", async () => {
       const data = cells([2, 2]);
       data.subscription![1] = { ...data.subscription![1], usd: null, unpriced_points: 2 };

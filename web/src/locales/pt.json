@@ -273,7 +273,7 @@
       "crossingReset": "nova semana → {{to}} %",
       "hourRealNote": "Na resolução horária, um ponto vale {{usd}}; uma barra mostra os pontos lidos nessa hora desde a leitura anterior — trabalho de horas anteriores pode aparecer mais tarde; as horas sem leitura mostram 0. As etiquetas ao longo do topo do gráfico são o movimento do medidor lido em cada hora.",
       "hourRealNoteMixed": "Na resolução horária, um ponto vale o preço por ponto do plano em vigor em cada leitura; uma barra mostra os pontos lidos nessa hora desde a leitura anterior — trabalho de horas anteriores pode aparecer mais tarde; as horas sem leitura mostram 0. As etiquetas ao longo do topo do gráfico são o movimento do medidor lido em cada hora.",
-      "vsAbsent": "«Real e lista» não é desenhado aqui: precisa do custo real ligado em Fonte, sem filtro de agentes e com preço de plano para cada ponto. O gráfico mostra valores.",
+      "vsAbsent": "«Real e lista» não é desenhado aqui: precisa de uma credencial de assinatura com leituras do medidor, do custo real ligado em Fonte, sem filtro de agentes e com preço de plano para cada ponto. O gráfico mostra valores.",
       "filteredRealNote": "O custo real e a fatura pertencem a toda a credencial: com filtro de agentes só aparecem como parte estimada na tabela.",
       "showAsTable": "Mostrar como tabela",
       "period": "Período",

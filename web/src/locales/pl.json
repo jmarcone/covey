@@ -273,7 +273,7 @@
       "crossingReset": "nowy tydzień → {{to}} %",
       "hourRealNote": "W rozdzielczości godzinowej punkt jest wart {{usd}}; słupek pokazuje punkty odczytane w danej godzinie od poprzedniego odczytu — praca z wcześniejszych godzin może pojawić się później; godziny bez odczytu pokazują 0. Etykiety wzdłuż górnej krawędzi wykresu to ruch licznika odczytany w każdej godzinie.",
       "hourRealNoteMixed": "W rozdzielczości godzinowej punkt kosztuje tyle, ile cena za punkt planu obowiązującego przy każdym odczycie; słupek pokazuje punkty odczytane w danej godzinie od poprzedniego odczytu — praca z wcześniejszych godzin może pojawić się później; godziny bez odczytu pokazują 0. Etykiety wzdłuż górnej krawędzi wykresu to ruch licznika odczytany w każdej godzinie.",
-      "vsAbsent": "„Rzeczywisty a cennikowy” nie jest tu rysowany: wymaga włączonego kosztu rzeczywistego w Źródle, braku filtra agentów i ceny planu dla każdego punktu. Wykres pokazuje kwoty.",
+      "vsAbsent": "„Rzeczywisty a cennikowy” nie jest tu rysowany: wymaga poświadczenia subskrypcji z odczytami licznika, włączonego kosztu rzeczywistego w Źródle, braku filtra agentów i ceny planu dla każdego punktu. Wykres pokazuje kwoty.",
       "filteredRealNote": "Rzeczywisty koszt i faktura dotyczą całego poświadczenia: przy filtrze agentów pokazujemy je tylko jako szacowany udział w tabeli.",
       "showAsTable": "Pokaż jako tabelę",
       "period": "Okres",
