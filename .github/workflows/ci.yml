@@ -221,3 +221,42 @@ jobs:
       # same thing, so with the same flags too.
       - name: gosec
         run: go run github.com/securego/gosec/v2/cmd/gosec@v2.22.9 -quiet -exclude-dir=.go -include=G101,G102,G106,G107,G112,G114,G201,G202,G203,G303,G305,G401,G402,G403,G404,G501,G502,G503,G504,G601 ./...
+
+  # A migration number that two branches took against the same main. Review
+  # sees one diff, and `loadMigrations` notices only once both files sit in one
+  # tree — after the merge. Here a pull request is compared with main and with
+  # every other open pull request before that (cmd/covey-migcheck, which reads
+  # the others through the API, read-only).
+  #
+  # A job of its own and no `needs`: it builds nothing but the one command, so
+  # it has no reason to wait for the frontend, and a collision should show up
+  # in the first minute. `pull-requests: read` stands here and not at the top
+  # because no other job lists pull requests.
+  migration-numbers:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      # Full history: the added files are those since the merge base with main.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # cache: false. A job this short would otherwise be the first to finish
+      # and save the module cache under the key the go and security jobs share,
+      # without the compiled packages the go job wants to keep. The command has
+      # no dependencies; compiling it costs seconds.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          check-latest: true
+          cache: false
+      # The head commit of the pull request, not the merge commit the checkout
+      # leaves HEAD on: the merge base then does not move with main.
+      - name: migration numbers against main and the open pull requests
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: go run ./cmd/covey-migcheck -pr "$PR" -base origin/main -head "$HEAD_SHA"
