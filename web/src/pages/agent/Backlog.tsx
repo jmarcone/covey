@@ -98,6 +98,9 @@ function AgentBacklog({ agentId, phase, canManage, onShowRecording }: BacklogPro
       setBody("");
       setComposing(false);
       setAdded(task.id);
+      // In the stacked board a folded stage hides the card, and the mark would
+      // run out behind the fold: the stage the task lands in is opened.
+      setFolded((prev) => new Map(prev).set(stageKey(task.stage_id && known.has(task.stage_id) ? task.stage_id : null), true));
       invalBacklog();
     },
   });
@@ -112,11 +115,15 @@ function AgentBacklog({ agentId, phase, canManage, onShowRecording }: BacklogPro
   };
   // Opening puts the cursor into Title; closing hands the focus back to the
   // button the form came from, so the keyboard does not fall to the top of
-  // the page.
+  // the page. Only if it has nowhere else to be: when the form unmounts with
+  // the focus inside it, the focus falls to the body; a reader who has gone to
+  // the search or a card's note while a slow POST was out keeps it there.
   const wasComposing = useRef(false);
   useEffect(() => {
     if (composing) titleRef.current?.focus();
-    else if (wasComposing.current) newTaskRef.current?.focus({ preventScroll: true });
+    else if (wasComposing.current && (!document.activeElement || document.activeElement === document.body)) {
+      newTaskRef.current?.focus({ preventScroll: true });
+    }
     wasComposing.current = composing;
   }, [composing]);
   // "n" opens the form from the board, as "/" reaches the search on the
@@ -635,8 +642,11 @@ const ADDED_GIVE_UP_MS = 10000;
 
 // What counts as an open dialog for the "n" key. HelpDrawer and the notes drawer
 // are role=dialog without aria-modal: they keep the focus outside, so the
-// modal attribute alone would let the key open the form behind them.
-const DIALOG_OPEN = '[aria-modal="true"], [role="dialog"], [role="alertdialog"]';
+// modal attribute alone would let the key open the form behind them. A dialog
+// that is closed stays in the DOM inert (the console navigation at phone width
+// in AppShell), and does not count.
+const DIALOG_OPEN =
+  '[aria-modal="true"], [role="dialog"]:not([inert]), [role="alertdialog"]:not([inert])';
 
 // isNewTaskKey is the "n" of the shortcut. Where the layout produces no Latin
 // letter (Cyrillic, Greek) the key at the N position of a QWERTY board counts

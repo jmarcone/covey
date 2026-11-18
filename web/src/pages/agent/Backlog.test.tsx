@@ -179,6 +179,39 @@ describe("Backlog auf dem Telefon", () => {
     expect(laeuft).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("Aufgabe x2")).not.toBeVisible();
   });
+
+  // The card is rendered inside the stage; shut, it is hidden and the mark
+  // would run out behind the fold.
+  it("öffnet die Stufe, in der eine neue Aufgabe landet, auch wenn sie zugeklappt war", async () => {
+    const neu = aufgabe("x3", "s2", "open");
+    const routes: Record<string, unknown> = {
+      ...routen(),
+      "/api/v1/agents/a1/stages": stufen,
+      "/api/v1/agents/a1/backlog": [aufgabe("x1", "s1", "open")],
+    };
+    mockFetch(routes);
+    const weiter = globalThis.fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === "POST" && String(input).endsWith("/api/v1/agents/a1/tasks")) {
+          routes["/api/v1/agents/a1/backlog"] = [aufgabe("x1", "s1", "open"), neu];
+          return new Response(JSON.stringify(neu), { status: 201, headers: { "Content-Type": "application/json" } });
+        }
+        return weiter(input, init);
+      }),
+    );
+    renderWithProviders(<Backlog agentId="a1" canManage onShowRecording={() => {}} />);
+
+    // "Neu" holds the first task and is open; "Wartet", where the new one lands, is shut.
+    const wartet = await screen.findByRole("button", { name: /Wartet/ });
+    expect(wartet).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(await screen.findByRole("button", { name: "Neue Aufgabe" }));
+    await userEvent.type(screen.getByPlaceholderText("Titel"), "Aufgabe x3{Enter}");
+
+    expect(await screen.findByText("Aufgabe x3")).toBeVisible();
+    expect(wartet).toHaveAttribute("aria-expanded", "true");
+  });
 });
 
 // A task parked on "parked:<what>" is blocked on purpose; the board must tell
@@ -466,6 +499,21 @@ describe("Neue Aufgabe hinter einem Knopf", () => {
     expect(beschreibung().value).toBe("auch der Kontext");
   });
 
+  // Without the reset on closing, the old error stood in the form opened again.
+  it("zeigt nach Escape und erneutem Öffnen den alten Fehler nicht mehr", async () => {
+    server(antwortet(500, { error: "backlog store unavailable" }));
+    renderWithProviders(<Backlog agentId="a1" canManage onShowRecording={() => {}} />);
+    await userEvent.click(await screen.findByRole("button", KNOPF));
+    await userEvent.type(titel(), "Bleibt stehen");
+    await userEvent.click(screen.getByRole("button", { name: "Ins Backlog" }));
+    expect(await screen.findByRole("alert")).toBeTruthy();
+
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(screen.getByRole("button", KNOPF));
+    expect(titel().value).toBe("Bleibt stehen");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   describe("während die Aufgabe unterwegs ist", () => {
     async function absenden(post: () => Promise<Antwort>) {
       const s = server(post);
@@ -504,6 +552,20 @@ describe("Neue Aufgabe hinter einem Knopf", () => {
       expect(await screen.findByText(/backlog store unavailable/)).toBeTruthy();
       expect(titel().value).toBe(NEU.title);
       expect((screen.getByRole("button", { name: "Abbrechen" }) as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    // The POST is slow and the reader has gone to the search: the answer must
+    // not pull the focus back to the button under their typing.
+    it("nimmt dem Leser den Fokus nicht, wenn die Antwort spät kommt", async () => {
+      const h = held();
+      await absenden(h.post);
+      const suche = screen.getByPlaceholderText("Backlog durchsuchen …");
+      await userEvent.click(suche);
+      expect(document.activeElement).toBe(suche);
+
+      h.release({ status: 201, body: NEU });
+      await waitFor(() => expect(screen.queryByPlaceholderText("Titel")).toBeNull());
+      expect(document.activeElement).toBe(suche);
     });
   });
 
@@ -706,6 +768,24 @@ describe("Taste n öffnet Neue Aufgabe", () => {
         dialog.remove();
       }
       expect(taste({ key: "n" }).defaultPrevented).toBe(true);
+    });
+
+    // A drawer that is shut stays in the DOM as role=dialog, inert (the console
+    // navigation at phone width): it is not in front of anything.
+    it("zählt einen geschlossenen, inerten Dialog nicht", async () => {
+      mockFetch(routen());
+      renderWithProviders(<Backlog agentId="a1" canManage onShowRecording={() => {}} />);
+      await screen.findByRole("button", KNOPF);
+      const dialog = document.createElement("nav");
+      dialog.setAttribute("role", "dialog");
+      dialog.setAttribute("inert", "");
+      document.body.appendChild(dialog);
+      try {
+        expect(taste({ key: "n" }).defaultPrevented).toBe(true);
+        expect(await screen.findByPlaceholderText("Titel")).toBeTruthy();
+      } finally {
+        dialog.remove();
+      }
     });
 
     // The help drawer is role=dialog without aria-modal and leaves the focus
