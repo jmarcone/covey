@@ -269,6 +269,64 @@ export function periodMultiple(list: number, steps: readonly Pick<MeterStep, "po
   return m;
 }
 
+/** What a period's details say about the multiple, below the tile's 3-point
+ *  cutoff too: an estimate or a range of `multipleOf`, or why there is none.
+ *  "still": the list price is there but the meter's readings did not move;
+ *  "unread": the list price is there but there is no reading in the period. */
+export type PeriodMultipleRange = Multiple | { kind: "still" } | { kind: "unread" };
+
+/** The multiple of one period by `periodMultiple`'s rule (each step's points
+ *  as the server priced them, every run of readings ±1 point at the dearest
+ *  rate in the period) without its 3-point cutoff: from 3 points an estimate,
+ *  below that a range (at one point without an upper bound). No figure where the list price is
+ *  under a cent, where a point has no plan price, or where the figure would
+ *  read 0×: an estimate under 0.05× or a lower bound under 0.1×. A period
+ *  with spend and no movement says so instead of showing ∞. */
+export function periodMultipleRange(list: number, steps: readonly Pick<MeterStep, "points" | "usd" | "unpriced_points" | "resets" | "readings">[]): PeriodMultipleRange | null {
+  if (!(list >= 0.01)) return null;
+  let points = 0, value = 0, rate = 0, runs = 0, readings = 0;
+  for (const st of steps) {
+    if (st.points > 0 && (st.usd == null || stepUnpriced(st) > 0)) return null;
+    points += st.points;
+    value += st.usd ?? 0;
+    runs += 1 + Math.max(st.resets ?? 0, 0);
+    readings += st.readings;
+    if (st.points > 0) rate = Math.max(rate, (st.usd ?? 0) / st.points);
+  }
+  if (points < 1) return { kind: readings > 0 ? "still" : "unread" };
+  const m = multipleOf(list, { value, low: Math.max(value - runs * rate, 0), high: value + runs * rate, points });
+  if (!m) return null;
+  if (m.kind === "estimate" ? m.value < 0.05 : m.low < 0.1) return null;
+  return m;
+}
+
+/** A multiple the way a sentence says it: from 10× whole numbers, below that
+ *  one decimal. An estimate rounds to the nearest, a lower bound down and an
+ *  upper bound up, so a bound is never overstated. */
+export function roundMultiple(v: number, mode: "nearest" | "down" | "up"): number {
+  const r = (x: number, digits: number) => {
+    const k = 10 ** digits;
+    // Trimmed to 6 places first, so a float's error (1.1 × 10 = 11.000000000000002)
+    // does not tip a floor or a ceiling into the next step.
+    const y = Math.round(x * k * 1e6) / 1e6;
+    return (mode === "down" ? Math.floor(y) : mode === "up" ? Math.ceil(y) : Math.round(y)) / k;
+  };
+  const one = r(v, 1);
+  return one >= 10 ? r(v, 0) : one;
+}
+
+/** Covey's price table against what Claude Code reported, for a sentence:
+ *  null unless the difference is noticeable. It is when Claude Code reported
+ *  something, the two differ by more than 1 % of it, and by at least a cent —
+ *  cent-level noise in a small period and rounding in a large total stay
+ *  silent. `pct` is (recomputed − reported) ÷ reported × 100. */
+export function priceTableDifference(reported: number, recomputed: number): { usd: number; pct: number } | null {
+  if (!(reported > 0)) return null;
+  const d = Math.abs(recomputed - reported);
+  if (!(d > 0.01 * reported) || d < 0.01) return null;
+  return { usd: recomputed, pct: ((recomputed - reported) / reported) * 100 };
+}
+
 // --- The bill --------------------------------------------------------------------
 
 export type BilledStatus = { state: "complete" | "pending"; completeTo: Date | null };

@@ -210,6 +210,7 @@
       "layout_agents": "Według agenta",
       "billedHint": "Zafakturowane przez Anthropic: to, co API użycia i kosztów podaje dla klucza API za poświadczeniem, po rabatach i przed kredytami. Dane spływają z opóźnieniem 4–24 h; znacznik mówi, do kiedy są kompletne.",
       "sourceHints": "Co znaczą cztery liczby",
+      "comparePriceTable": "Porównaj z cennikiem covey",
       "compare": "Porównanie",
       "view_amounts": "Kwoty",
       "view_vs": "Rzeczywisty a cennikowy"
@@ -254,6 +255,13 @@
       "multiple": "$ katalogowe na realny $",
       "multipleRange": "zakres {{low}} – {{high}}",
       "multipleHint": "szacunek, nie granica: niższy, jeśli tygodniowy limit nie zostanie wykorzystany, wyższy, bo inne użycie konta też przesuwa licznik",
+      "multipleAbout": "Cena cennikowa to około {{n}}× tego, co faktycznie zapłacono",
+      "multipleBetween": "Cena cennikowa to od {{low}}× do {{high}}× tego, co faktycznie zapłacono",
+      "multipleAtLeast": "Cena cennikowa to co najmniej {{n}}× tego, co faktycznie zapłacono",
+      "meterStill": "Licznik się nie ruszył",
+      "meterUnread": "Brak odczytu licznika",
+      "priceTableLess": "Cennik covey daje {{usd}}, czyli o {{pct}} % mniej, niż zgłosił Claude Code",
+      "priceTableMore": "Cennik covey daje {{usd}}, czyli o {{pct}} % więcej, niż zgłosił Claude Code",
       "notEnoughMovement": "Brak krotności: licznik przesunął się o {{pts}} pkt; liczba wymaga co najmniej 3 (tylko zakres: {{low}} – {{high}}).",
       "notEnoughMovementNone": "Brak krotności: licznik nie przesunął się o cały punkt.",
       "noMultipleAgents": "Brak krotności przy filtrze agentów lub widoku na agenta: licznik obejmuje całe poświadczenie.",
@@ -297,7 +305,7 @@
       "noMultipleNoPlan": "Brak rzeczywistego kosztu i krotności: dla tych danych uwierzytelniających nie zapisano ceny planu.",
       "realSince": "rzeczywisty od {{from}} (odczyt bazowy licznika), ostatni odczyt {{to}}",
       "shareOfRealSpan": "rzeczywisty udział dotyczy rzeczywistego kosztu od {{from}} (odczyt bazowy licznika) do {{to}}, nie tylko okresu",
-      "vsNote": "× to cena cennikowa okresu ÷ jego rzeczywisty koszt. Licznik rusza się o pełne punkty, więc rzeczywisty koszt okresu ma dokładność ±1 punktu: okres dostaje × dopiero od 3 punktów ruchu, jak kafelek, a jego zakres jest w szczegółach okresu."
+      "vsNote": "× to cena cennikowa okresu ÷ jego rzeczywisty koszt. Licznik rusza się o pełne punkty, więc rzeczywisty koszt okresu ma dokładność ±1 punktu: słupek pokazuje × dopiero od 3 punktów ruchu, jak kafelek; poniżej zakres jest w szczegółach okresu."
     },
     "kpiAllCredentials": "wszystkie poświadczenia, z linii",
     "tok": {

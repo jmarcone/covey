@@ -210,6 +210,7 @@
       "layout_agents": "按代理",
       "billedHint": "Anthropic 账单金额：Usage and Cost API 对凭据所用 API 密钥报告的金额（折扣后、抵扣前）。数据延迟 4–24 小时到达；标记表明完整到何时。",
       "sourceHints": "四个数字的含义",
+      "comparePriceTable": "与 covey 的价目表对比",
       "compare": "对比",
       "view_amounts": "金额",
       "view_vs": "实际与标价"
@@ -254,6 +255,13 @@
       "multiple": "每实际美元对应的标价",
       "multipleRange": "区间 {{low}} – {{high}}",
       "multipleHint": "这是估算，不是上限或下限：若每周额度未用完则更低；账户的其他使用也会推动计量，因此又会更高",
+      "multipleAbout": "标价约为实际支付金额的 {{n}}×",
+      "multipleBetween": "标价为实际支付金额的 {{low}}× 至 {{high}}×",
+      "multipleAtLeast": "标价至少为实际支付金额的 {{n}}×",
+      "meterStill": "计量没有变动",
+      "meterUnread": "无计量读数",
+      "priceTableLess": "covey 的价目表算得 {{usd}}，比 Claude Code 报告的少 {{pct}} %",
+      "priceTableMore": "covey 的价目表算得 {{usd}}，比 Claude Code 报告的多 {{pct}} %",
       "notEnoughMovement": "无倍数：计量仅移动 {{pts}} 个点；给出数值至少需要 3 个点（仅区间：{{low}} – {{high}}）。",
       "notEnoughMovementNone": "无倍数：计量未移动一个整点。",
       "noMultipleAgents": "按代理筛选或按代理显示时不给出倍数：计量覆盖整个凭据。",
@@ -297,7 +305,7 @@
       "noMultipleNoPlan": "无实际成本，也无倍数：此凭据未保存套餐价格。",
       "realSince": "实际成本自 {{from}}（计量基准读数）起，最后读数 {{to}}",
       "shareOfRealSpan": "实际份额针对的是自 {{from}}（计量基准读数）至 {{to}} 的实际成本，而不仅是所选时段",
-      "vsNote": "× 是某个时段的标价 ÷ 该时段的实际成本。计量按整数点移动，因此时段的实际成本有 ±1 点的误差：与卡片一样，时段至少移动 3 点才显示 ×，其范围见该时段的详情。"
+      "vsNote": "× 是某个时段的标价 ÷ 该时段的实际成本。计量按整数点移动，因此时段的实际成本有 ±1 点的误差：与卡片一样，柱形上的 × 要求时段至少移动 3 点；不足时，该时段的详情给出范围。"
     },
     "kpiAllCredentials": "所有凭据，按各行汇总",
     "tok": {

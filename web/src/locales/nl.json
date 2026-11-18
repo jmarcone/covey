@@ -210,6 +210,7 @@
       "layout_agents": "Per agent",
       "billedHint": "Gefactureerd door Anthropic: wat de Usage-and-Cost-API meldt voor de API-sleutel achter de referentie, na kortingen en vóór tegoeden. Het komt 4–24 uur later binnen; de markering zegt tot wanneer het volledig is.",
       "sourceHints": "Wat de vier cijfers betekenen",
+      "comparePriceTable": "Vergelijken met de prijstabel van covey",
       "compare": "Vergelijken",
       "view_amounts": "Bedragen",
       "view_vs": "Echt en lijst"
@@ -254,6 +255,13 @@
       "multiple": "Lijst-$ per echte $",
       "multipleRange": "bereik {{low}} – {{high}}",
       "multipleHint": "een schatting, geen grens: lager als het weektegoed niet wordt opgebruikt, hoger omdat ander gebruik van het account de meter ook beweegt",
+      "multipleAbout": "De lijstprijs is ongeveer {{n}}× wat er echt is betaald",
+      "multipleBetween": "De lijstprijs is tussen {{low}}× en {{high}}× wat er echt is betaald",
+      "multipleAtLeast": "De lijstprijs is minstens {{n}}× wat er echt is betaald",
+      "meterStill": "De meter is niet bewogen",
+      "meterUnread": "Geen meterstand",
+      "priceTableLess": "De prijstabel van covey komt uit op {{usd}}, {{pct}} % minder dan Claude Code meldde",
+      "priceTableMore": "De prijstabel van covey komt uit op {{usd}}, {{pct}} % meer dan Claude Code meldde",
       "notEnoughMovement": "Geen veelvoud: de meter bewoog {{pts}} punt(en); een getal vraagt er minstens 3 (alleen bereik: {{low}} – {{high}}).",
       "notEnoughMovementNone": "Geen veelvoud: de meter bewoog geen heel punt.",
       "noMultipleAgents": "Geen veelvoud met een agentfilter of per agent: de meter geldt voor de hele referentie.",
@@ -297,7 +305,7 @@
       "noMultipleNoPlan": "Geen werkelijke kosten en geen veelvoud: voor deze inloggegevens is geen abonnementsprijs opgeslagen.",
       "realSince": "werkelijk sinds {{from}} (basisaflezing van de meter), laatste aflezing {{to}}",
       "shareOfRealSpan": "het werkelijke aandeel is van de werkelijke kosten sinds {{from}} (basisaflezing van de meter) tot {{to}}, niet van alleen de periode",
-      "vsNote": "× is de lijstprijs van een periode ÷ de echte kosten ervan. De meter beweegt in hele punten, dus de echte kosten van een periode zijn ±1 punt: een periode krijgt pas een × vanaf 3 punten beweging, net als de tegel, en het bereik staat in de details van de periode."
+      "vsNote": "× is de lijstprijs van een periode ÷ de echte kosten ervan. De meter beweegt in hele punten, dus de echte kosten van een periode zijn ±1 punt: de balk toont een × pas vanaf 3 punten beweging, net als de tegel; daaronder geven de details van de periode een bereik."
     },
     "kpiAllCredentials": "alle referenties, uit de regels",
     "tok": {

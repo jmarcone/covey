@@ -15,9 +15,12 @@ import {
   multipleOf,
   perCredentialTotals,
   periodMultiple,
+  periodMultipleRange,
+  priceTableDifference,
   pricePerPoint,
   realCost,
   realFromWeeks,
+  roundMultiple,
   type CredentialFigures,
 } from "./costFigures";
 
@@ -174,6 +177,75 @@ describe("the meter and the multiple", () => {
     expect(reset).toEqual(multipleOf(8, { value: 4 * PP, low: 2 * PP, high: 6 * PP, points: 4 }));
     // points without a plan price: no figure
     expect(periodMultiple(8, [step(P, 4, { usd: 2 * PP, unpriced_points: 2 })])).toBeNull();
+  });
+});
+
+describe("a period's multiple below the tile's cutoff (#118)", () => {
+  const P = "2026-11-17T18:00:00Z";
+
+  it("is multipleOf's estimate from 3 points and its range below, by periodMultiple's rule", () => {
+    expect(periodMultipleRange(8, [step(P, 4)])).toEqual(periodMultiple(8, [step(P, 4)]));
+    expect(periodMultipleRange(8, [step(P, 4, { resets: 1 })])).toEqual(periodMultiple(8, [step(P, 4, { resets: 1 })]));
+    // 1 point: no upper bound; 2 points: both
+    expect(periodMultipleRange(14.29, [step(P, 1)])).toEqual(multipleOf(14.29, { value: PP, low: 0, high: 2 * PP, points: 1 }));
+    expect(periodMultipleRange(14.29, [step(P, 2)])).toEqual(multipleOf(14.29, { value: 2 * PP, low: PP, high: 3 * PP, points: 2 }));
+    expect(periodMultipleRange(14.29, [step(P, 1)])).toMatchObject({ kind: "range", high: Infinity });
+    // two steps of the hour add up
+    const sum = periodMultipleRange(14.29, [step(P, 1), step(P, 2)]);
+    const want = multipleOf(14.29, { value: 3 * PP, low: PP, high: 5 * PP, points: 3 });
+    if (sum?.kind !== "estimate" || want?.kind !== "estimate") throw new Error("no estimate");
+    expect(sum.value).toBeCloseTo(want.value, 9);
+    expect(sum.low).toBeCloseTo(want.low, 9);
+    expect(sum.high).toBeCloseTo(want.high, 9);
+  });
+
+  it("says why there is none: no movement, no reading, no spend, no plan price", () => {
+    expect(periodMultipleRange(14.29, [step(P, 0)])).toEqual({ kind: "still" });
+    expect(periodMultipleRange(14.29, [])).toEqual({ kind: "unread" });
+    expect(periodMultipleRange(14.29, [step(P, 0, { readings: 0 })])).toEqual({ kind: "unread" });
+    expect(periodMultipleRange(0.009, [step(P, 0)])).toBeNull();
+    expect(periodMultipleRange(0.009, [])).toBeNull();
+    expect(periodMultipleRange(8, [step(P, 4, { usd: 2 * PP, unpriced_points: 2 })])).toBeNull();
+    // a range or an estimate that would read 0× says nothing
+    expect(periodMultipleRange(0.02, [step(P, 4)])).toBeNull();
+    expect(periodMultipleRange(0.05, [step(P, 2)])).toBeNull();
+  });
+
+  it("leaves periodMultiple's cutoff as it was", () => {
+    expect(periodMultiple(14.29, [step(P, 2)])).toBeNull();
+    expect(periodMultiple(14.29, [step(P, 1)])).toBeNull();
+  });
+});
+
+describe("rounding a multiple for a sentence", () => {
+  it("rounds an estimate to nearest, a lower bound down and an upper bound up: whole from 10×, one decimal below", () => {
+    expect(roundMultiple(10.36, "nearest")).toBe(10);
+    expect(roundMultiple(15.53, "down")).toBe(15);
+    expect(roundMultiple(31.07, "up")).toBe(32);
+    expect(roundMultiple(4.35, "nearest")).toBe(4.4);
+    expect(roundMultiple(4.35, "down")).toBe(4.3);
+    expect(roundMultiple(4.31, "up")).toBe(4.4);
+    // a bound never crosses 10× with a decimal, and a float's error does not tip it
+    expect(roundMultiple(9.96, "nearest")).toBe(10);
+    expect(roundMultiple(9.91, "up")).toBe(10);
+    expect(roundMultiple(1.1, "up")).toBe(1.1);
+    expect(roundMultiple(1.1, "down")).toBe(1.1);
+    expect(roundMultiple(22, "down")).toBe(22);
+  });
+});
+
+describe("the price table against what Claude Code reported", () => {
+  it("is named only where it differs by more than 1 % and at least a cent, and Claude Code reported something", () => {
+    expect(priceTableDifference(14.29, 13.8)).toMatchObject({ usd: 13.8 });
+    expect(priceTableDifference(14.29, 13.8)!.pct).toBeCloseTo(((13.8 - 14.29) / 14.29) * 100, 10);
+    expect(priceTableDifference(12, 15)!.pct).toBeCloseTo(25, 10);
+    expect(priceTableDifference(14.29, 14.2)).toBeNull(); // 0.6 %
+    expect(priceTableDifference(0.5, 0.505)).toBeNull(); // 1 %, half a cent
+    expect(priceTableDifference(0.5, 0.52)).not.toBeNull(); // 4 %, 2 cents
+    expect(priceTableDifference(100, 101)).toBeNull(); // exactly 1 %: not more than
+    expect(priceTableDifference(100, 101.5)).not.toBeNull();
+    expect(priceTableDifference(0, 3)).toBeNull();
+    expect(priceTableDifference(14.29, 14.29)).toBeNull();
   });
 });
 

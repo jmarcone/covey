@@ -210,6 +210,7 @@
       "layout_agents": "Per agente",
       "billedHint": "Fatturato da Anthropic: quanto la API di utilizzo e costi riporta per la chiave API della credenziale, dopo gli sconti e prima dei crediti. Arriva con 4–24 h di ritardo; il segno indica fin dove è completo.",
       "sourceHints": "Cosa significano i quattro valori",
+      "comparePriceTable": "Confronta con il listino di covey",
       "compare": "Confronto",
       "view_amounts": "Importi",
       "view_vs": "Reale e listino"
@@ -254,6 +255,13 @@
       "multiple": "$ di listino per $ reale",
       "multipleRange": "intervallo {{low}} – {{high}}",
       "multipleHint": "una stima, non un limite: più basso se la quota settimanale non viene esaurita, più alto perché anche altri usi dell'account muovono il contatore",
+      "multipleAbout": "Il prezzo di listino è circa {{n}}× quanto è stato realmente pagato",
+      "multipleBetween": "Il prezzo di listino è tra {{low}}× e {{high}}× quanto è stato realmente pagato",
+      "multipleAtLeast": "Il prezzo di listino è almeno {{n}}× quanto è stato realmente pagato",
+      "meterStill": "Il contatore non si è mosso",
+      "meterUnread": "Nessuna lettura del contatore",
+      "priceTableLess": "Il listino di covey dà {{usd}}, il {{pct}} % in meno di quanto riportato da Claude Code",
+      "priceTableMore": "Il listino di covey dà {{usd}}, il {{pct}} % in più di quanto riportato da Claude Code",
       "notEnoughMovement": "Nessun multiplo: il contatore si è mosso di {{pts}} punto/i; un valore ne richiede almeno 3 (solo intervallo: {{low}} – {{high}}).",
       "notEnoughMovementNone": "Nessun multiplo: il contatore non si è mosso di un punto intero.",
       "noMultipleAgents": "Nessun multiplo con un filtro agenti o per agente: il contatore copre l'intera credenziale.",
@@ -297,7 +305,7 @@
       "noMultipleNoPlan": "Nessun costo reale e nessun multiplo: per questa credenziale non è salvato alcun prezzo del piano.",
       "realSince": "reale dal {{from}} (lettura di base del contatore), ultima lettura {{to}}",
       "shareOfRealSpan": "la quota reale si riferisce al costo reale dal {{from}} (lettura di base del contatore) al {{to}}, non al solo periodo",
-      "vsNote": "× è il prezzo di listino di un periodo ÷ il suo costo reale. Il contatore avanza per punti interi, quindi il costo reale di un periodo è ±1 punto: un periodo mostra × solo da 3 punti di movimento, come la scheda, e il suo intervallo è nei dettagli del periodo."
+      "vsNote": "× è il prezzo di listino di un periodo ÷ il suo costo reale. Il contatore avanza per punti interi, quindi il costo reale di un periodo è ±1 punto: la barra mostra × solo da 3 punti di movimento, come la scheda; sotto questa soglia i dettagli del periodo danno un intervallo."
     },
     "kpiAllCredentials": "tutte le credenziali, dalle righe",
     "tok": {

@@ -18,9 +18,13 @@ import {
   meterPoints,
   meterY,
   type MeterPoint,
+  type PeriodMultipleRange,
   periodMultiple,
+  periodMultipleRange,
   pricePerPoint,
+  priceTableDifference,
   recomputedOf,
+  roundMultiple,
   stepRate,
   type CredentialFigures,
 } from "./costFigures";
@@ -328,8 +332,8 @@ export function AgentFilter({ agents, selected, onChange }: {
   );
 }
 
-function Tile({ label, value, sub, span, note, color, hatched }: {
-  label: string; value: string; sub?: string; span?: string; note?: string; color?: string; hatched?: boolean;
+function Tile({ label, value, sub, sentence, span, note, color, hatched }: {
+  label: string; value: string; sub?: string; sentence?: string; span?: string; note?: string; color?: string; hatched?: boolean;
 }) {
   return (
     <div role="group" aria-label={label} data-tile
@@ -339,6 +343,7 @@ function Tile({ label, value, sub, span, note, color, hatched }: {
         {label}
       </div>
       <div style={{ fontSize: 20, fontWeight: 600, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>{value}</div>
+      {sentence && <div className="text-xs" data-tile-sentence style={{ marginTop: 2 }}>{sentence}</div>}
       {sub && <div className="muted text-xs" style={{ marginTop: 2 }}>{sub}</div>}
       {span && <div className="muted text-xs" data-span style={{ marginTop: 2 }}>{span}</div>}
       {note && <div className="muted text-xs" style={{ marginTop: 2, fontStyle: "italic" }}>{note}</div>}
@@ -367,6 +372,8 @@ export type Bar = {
   tag?: string;
   /** What the tag leaves out, in the period's details, e.g. the multiple's range. */
   tagDetail?: string;
+  /** A line under the bar's row in the period's details, e.g. what covey's price table makes of it. */
+  note?: string;
 };
 
 const sum = (s: Seg[]) => s.reduce((a, x) => a + x.value, 0);
@@ -429,7 +436,7 @@ export function MeterSwatch() {
 /** Groups of bars over the periods. Every period is focusable: focus or hover
  *  opens its details, Enter/Space (or a tap) pins them, Escape closes them.
  *  "Show as table" renders the same numbers as a table. */
-export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis, height = 280, max, notes, meter, showX = true, asTable, wide }: {
+export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis, height = 280, max, notes, lines, meter, showX = true, asTable, wide }: {
   title: string;
   periods: string[];
   groups: Bar[][];
@@ -442,6 +449,8 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
   max?: number;
   /** A line per period, e.g. the meter's crossings. */
   notes?: Map<number, string>;
+  /** A line per period under its bars in the details, e.g. the list-vs-real multiple. */
+  lines?: ReadonlyMap<number, string>;
   /** The weekly meter as a line over the periods, on a right-hand axis from 0
    *  to 100 %: the readings, the axis's title and how a reading's time reads. */
   meter?: { points: readonly MeterPoint[]; label: string; fmtAt: (iso: string) => string };
@@ -642,6 +651,7 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
                 <span>{fmtValue(sum(b.segs))}</span>
               </div>
               {b.tag && <div className="muted" data-tag-detail style={{ paddingLeft: 16 }}>{b.tag}{b.tagDetail ? ` · ${b.tagDetail}` : ""}</div>}
+              {b.note && <div className="muted" data-diff-note style={{ paddingLeft: 16 }}>{b.note}</div>}
               {b.segs.filter((x) => x.value > 0).length > 1 && b.segs.filter((x) => x.value > 0).map((x) => (
                 <div key={x.key} className="muted" style={{ display: "flex", justifyContent: "space-between", gap: 12, paddingLeft: 16 }}>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Swatch color={x.color} /> {x.label}</span>
@@ -650,6 +660,7 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
               ))}
             </div>
           ))}
+          {lines?.get(open) && <div data-multiple-line style={{ marginBottom: 6 }}>{lines.get(open)}</div>}
           {notes?.get(open) && <div className="muted" style={{ fontSize: 11 }}>{t("costs.fig.meterCol")}: {notes.get(open)}</div>}
           {meter && readingsAt.get(open) && (
             <div className="muted" data-meter-readings style={{ fontSize: 11, marginTop: notes?.get(open) ? 2 : 0 }}>
@@ -658,7 +669,7 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
                 : <Fragment key={k}>{k > 0 ? " · " : ""}<span style={{ whiteSpace: "nowrap" }}>{meter.fmtAt(p.at)} {fmtNumber(p.pct, 0)} %</span></Fragment>)}
             </div>
           )}
-          {groups.at(open)!.every((b) => sum(b.segs) <= 0) && !notes?.get(open) && !readingsAt.get(open) && <div className="muted">{t("costs.fig.nothing")}</div>}
+          {groups.at(open)!.every((b) => sum(b.segs) <= 0) && !notes?.get(open) && !lines?.get(open) && !readingsAt.get(open) && <div className="muted">{t("costs.fig.nothing")}</div>}
         </div>
       )}
     </div>
@@ -669,6 +680,27 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
 // amounts next to them.
 const pct = (v: number) => `${v >= 0 ? "+" : ""}${fmtNumber(v, 2)} %`;
 const times = (v: number) => (Number.isFinite(v) ? `${fmtNumber(v, 1)}×` : "∞");
+/** A multiple for a sentence, without its ×: whole from 10×, one decimal below, rounded as `roundMultiple`. */
+const timesIn = (v: number, mode: "nearest" | "down" | "up") => {
+  const r = roundMultiple(v, mode);
+  return fmtNumber(r, r >= 10 ? 0 : 1);
+};
+
+/** The one line a period's details say about list price against real cost. */
+function multipleLine(t: TFunction, m: PeriodMultipleRange): string {
+  if (m.kind === "still") return t("costs.fig.meterStill");
+  if (m.kind === "unread") return t("costs.fig.meterUnread");
+  if (m.kind === "estimate") return t("costs.fig.multipleAbout", { n: timesIn(m.value, "nearest") });
+  if (!Number.isFinite(m.high)) return t("costs.fig.multipleAtLeast", { n: timesIn(m.low, "down") });
+  return t("costs.fig.multipleBetween", { low: timesIn(m.low, "down"), high: timesIn(m.high, "up") });
+}
+
+/** What covey's price table makes of Claude Code's figure, in words; null where they agree. */
+function priceTableLine(t: TFunction, reported: number, recomputed: number): string | undefined {
+  const d = priceTableDifference(reported, recomputed);
+  if (!d) return undefined;
+  return t(d.pct < 0 ? "costs.fig.priceTableLess" : "costs.fig.priceTableMore", { usd: fmtUSD(d.usd), pct: fmtNumber(Math.abs(d.pct), 0) });
+}
 
 /** "$200/mo plan" — the plan as the server stores it. */
 function usePlanLabel() {
@@ -689,13 +721,18 @@ function realSpan(t: TFunction, f: CredentialFigures, key = "costs.fig.realSince
 }
 
 /** The tiles of one credential. */
-function CredentialTiles({ f, filtered }: { f: CredentialFigures; filtered: boolean }) {
+function CredentialTiles({ f, filtered, showRecomputed }: { f: CredentialFigures; filtered: boolean; showRecomputed: boolean }) {
   const { t } = useTranslation();
   const tiles: React.ReactNode[] = [
-    <Tile key="rep" label={t("costs.fig.reported")} value={fmtUSD(f.reported)} sub={t("costs.fig.reportedSub")} color={SOURCE_COLOR.reported} />,
-    <Tile key="rec" label={t("costs.fig.recomputed")} value={fmtUSD(f.recomputed)}
-      sub={f.check != null ? t("costs.fig.priceTableCheck", { pct: pct(f.check) }) : undefined} color={SOURCE_COLOR.recomputed} />,
+    <Tile key="rep" label={t("costs.fig.reported")} value={fmtUSD(f.reported)} sub={t("costs.fig.reportedSub")}
+      note={priceTableLine(t, f.reported, f.recomputed)} color={SOURCE_COLOR.reported} />,
   ];
+  // The comparison with covey's price table is asked for; by default the
+  // Reported tile says so only where the two differ.
+  if (showRecomputed) {
+    tiles.push(<Tile key="rec" label={t("costs.fig.recomputed")} value={fmtUSD(f.recomputed)}
+      sub={f.check != null ? t("costs.fig.priceTableCheck", { pct: pct(f.check) }) : undefined} color={SOURCE_COLOR.recomputed} />);
+  }
   if (isSeat(f)) {
     const r = f.real;
     // The price per point the server priced the movement at, on average.
@@ -725,6 +762,7 @@ function CredentialTiles({ f, filtered }: { f: CredentialFigures; filtered: bool
     if (f.multiple?.kind === "estimate") {
       tiles.push(<Tile key="mult" label={t("costs.fig.multiple")} value={`≈ ${times(f.multiple.value)}`}
         sub={t("costs.fig.multipleRange", { low: times(f.multiple.low), high: times(f.multiple.high) })}
+        sentence={t("costs.fig.multipleAbout", { n: timesIn(f.multiple.value, "nearest") })}
         span={span} note={t("costs.fig.multipleHint")} />);
     }
   }
@@ -893,8 +931,11 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
       return out;
     }
     if (src.reported) {
+      const reported = cs.reduce((a, c) => a + (c.engine_usd ?? 0), 0);
+      // Where covey's price table disagrees noticeably (all cost types, as the tile's check): said under the row, not drawn.
       out.push({ key: "reported", label: t("costs.fig.reported"), color: SOURCE_COLOR.reported,
-        segs: [{ key: "r", label: t("costs.fig.reported"), color: SOURCE_COLOR.reported, value: cs.reduce((a, c) => a + (c.engine_usd ?? 0), 0) }] });
+        note: priceTableLine(t, reported, cs.reduce((a, c) => a + recomputedOf(c), 0)),
+        segs: [{ key: "r", label: t("costs.fig.reported"), color: SOURCE_COLOR.reported, value: reported }] });
     }
     if (src.recomputed) {
       const segs = byType
@@ -915,6 +956,16 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
   const cellsAt = (i: number, agent?: string) => own.filter((c) => Date.parse(c.period) === Date.parse(periods[i])
     && (agent ? c.agent_id === agent : inScope(c.agent_id)));
   const combined = periods.map((_, i) => barsFor(cellsAt(i), i, true));
+  // The list-vs-real multiple of each period, in its details: of a seat's
+  // chart where the list bar (Reported, Recomputed or the comparison's) and
+  // the real figure are both on, and no agent filter has cut the cells.
+  const lines = new Map<number, string>();
+  if (showReal && layout === "combined" && (vs || src.reported || src.recomputed)) {
+    periods.forEach((_, i) => {
+      const m = periodMultipleRange(cellsAt(i).reduce((a, c) => a + recomputedOf(c), 0), stepsPer[i]);
+      if (m) lines.set(i, multipleLine(t, m));
+    });
+  }
   const perAgent = f.agents.filter((a) => a.recomputed > 0 || a.reported > 0).map((a) => ({
     a, groups: periods.map((_, i) => barsFor(cellsAt(i, a.id), i, false)),
   }));
@@ -936,7 +987,7 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
         <span className="muted text-xs">{kind}{plan && !subscription ? ` · ${plan}` : ""}</span>
       </div>
       {subscription && <PlanPrice f={f} name={name} readings={readings} editable={canSetPlan} />}
-      <CredentialTiles f={f} filtered={filtered || layout === "agents"} />
+      <CredentialTiles f={f} filtered={filtered || layout === "agents"} showRecomputed={src.recomputed} />
       <NoMultiple f={f} />
       {f.bookingCheck.length > 0 && (
         <p className="text-xs mb-2 mt-0" role="note" style={{ color: "var(--text-warning)" }}>
@@ -959,7 +1010,7 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
             </div>
           )}
           <BarChart title={`${t("costs.chartCost")} · ${name}`} periods={periods} groups={combined} fmtPeriod={fmtPeriod}
-            fmtValue={fmtUSD} fmtAxis={fmtUSDAxis} notes={notes} asTable={asTable} wide={vs}
+            fmtValue={fmtUSD} fmtAxis={fmtUSDAxis} notes={notes} lines={lines} asTable={asTable} wide={vs}
             meter={meterLine && { points: meterLine, label: t("costs.fig.meterLine"), fmtAt: fmtReadingAt }} />
         </>
       ) : (
@@ -1034,8 +1085,9 @@ function AgentTable({ f, agents, subscription }: { f: CredentialFigures; agents:
   );
 }
 
-/** The colour code of the page, explained once. */
-function ColourKey() {
+/** The colour code of the page, explained once: the sources that are drawn.
+ *  The comparison of list and real draws the list bar, so it lists Recomputed. */
+function ColourKey({ drawn }: { drawn: Record<Source, boolean> }) {
   const { t } = useTranslation();
   const items: [Source, string, boolean?][] = [
     ["reported", t("costs.fig.keyReported")],
@@ -1045,7 +1097,7 @@ function ColourKey() {
   ];
   return (
     <div className="flex flex-wrap items-center gap-3 text-xs muted mb-3" role="note" aria-label={t("costs.fig.key")}>
-      {items.map(([s, label, h]) => (
+      {items.filter(([s]) => drawn[s]).map(([s, label, h]) => (
         <span key={s} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Swatch color={SOURCE_COLOR[s]} hatched={h} /> {label}</span>
       ))}
     </div>
@@ -1062,7 +1114,8 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
   const [split, setSplit] = useState<Split>("none");
   const [sharedScale, setSharedScale] = useState(true);
   const [asTable, setAsTable] = useState(false);
-  const [src, setSrc] = useState<Record<Source, boolean>>({ reported: true, recomputed: true, real: true, billed: true });
+  // Recomputed is a check of the price table, not a second series: off until asked for.
+  const [src, setSrc] = useState<Record<Source, boolean>>({ reported: true, recomputed: false, real: true, billed: true });
   const [types, setTypes] = useState<Set<string>>(new Set(COST_TYPES));
 
   const figures = useMemo(() => (data ? credentialFigures({
@@ -1075,15 +1128,23 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
     return n.reported || n.recomputed || n.real || n.billed ? n : v; // keep at least one
   });
 
+  // The list bar is stacked by type: with Recomputed on, or in the list-vs-real comparison.
+  const listBar = layout === "combined" && (src.recomputed || view === "vs");
+
   return (
     <div>
-      <ColourKey />
+      <ColourKey drawn={{ ...src, recomputed: src.recomputed || (layout === "combined" && view === "vs") }} />
       <Row label={t("costs.filter.source")}>
-        {SOURCES.map((s) => (
+        {SOURCES.filter((s) => s !== "recomputed").map((s) => (
           <Chip key={s} on={src[s]} color={SOURCE_COLOR[s]} hatched={s === "real"} onClick={() => toggleSrc(s)}>
             {sourceLabel(t, s)}
           </Chip>
         ))}
+        <label className="text-xs muted" data-compare-price-table
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, marginLeft: 8, cursor: "pointer" }}>
+          <input type="checkbox" checked={src.recomputed} onChange={() => toggleSrc("recomputed")} />
+          {t("costs.filter.comparePriceTable")}
+        </label>
       </Row>
       <details className="text-xs muted mb-2" style={{ marginLeft: 92 }}>
         <summary style={{ cursor: "pointer" }}>{t("costs.filter.sourceHints")}</summary>
@@ -1108,14 +1169,14 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
         <span style={{ flex: 1 }} />
         <Chip on={asTable} onClick={() => setAsTable((v) => !v)}>{t("costs.fig.showAsTable")}</Chip>
       </Row>
-      {layout === "combined" && (
+      {listBar && (
         <Row label={t("costs.filter.split")}>
           {(["none", "type"] as Split[]).map((s) => (
             <Chip key={s} on={split === s} onClick={() => setSplit(s)}>{t(`costs.filter.split_${s}`)}</Chip>
           ))}
         </Row>
       )}
-      {src.recomputed && layout === "combined" && split === "type" && (
+      {listBar && split === "type" && (
         <Row label={t("costs.filter.types")}>
           {COST_TYPES.map((k) => (
             <Chip key={k} on={types.has(k)} color={TYPE_COLOR[k]} onClick={() => toggleType(k)}>{t(`costs.stack.${k}`)}</Chip>

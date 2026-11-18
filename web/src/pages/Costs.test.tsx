@@ -80,6 +80,12 @@ const MULTIPLE = "Listen-$ je echtem $";
 const chartSources = () =>
   screen.getAllByText("Quelle").map((e) => e.parentElement!).find((p) => p.getAttribute("role") !== "group")!;
 
+// Recomputed is off until asked for (#118): a test about its bar, tile or
+// column turns the comparison on first.
+const compareOn = async () => act(async () => {
+  await userEvent.click(screen.getByRole("checkbox", { name: "Mit der Preistabelle von covey vergleichen" }));
+});
+
 describe("Kosten — Zahlen je Zugangsdaten", () => {
   beforeEach(() => useGerman());
 
@@ -182,6 +188,7 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
       if (!b) throw new Error("no block for the API key yet");
       return b;
     });
+    await compareOn();
     const tile = within(block).getByRole("group", { name: "Von Anthropic berechnet" });
     expect(within(tile).getByText("4,00 $")).toBeInTheDocument();
     // #83: the lines stop where the bill is complete, not at "now"
@@ -199,6 +206,7 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
   it("zeigt die gebuchte Zahl in keiner Kachel", async () => {
     const { container } = render([2, 2]);
     await screen.findByRole("group", { name: MULTIPLE });
+    await compareOn();
     const tiles = [...container.querySelectorAll("[data-tile]")];
     expect(tiles.length).toBeGreaterThan(3);
     for (const tile of tiles) {
@@ -280,6 +288,7 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
   it("schreibt Vielfache, Prozente und Anteile mit dem Dezimaltrenner der Sprache", async () => {
     const { container } = render([2, 2]);
     const tile = await screen.findByRole("group", { name: MULTIPLE });
+    await compareOn();
     // 16 $ over 4 points × 0,4615 $
     expect(within(tile).getByText("≈ 8,7×")).toBeInTheDocument();
     expect(within(tile).getByText("Spanne 6,9× – 11,6×")).toBeInTheDocument();
@@ -404,6 +413,7 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
   it("lässt einen ausgeblendeten Kostentyp nicht weiterwirken, wenn die Aufteilung aus ist", async () => {
     const { container } = render([2, 2]);
     await screen.findByRole("group", { name: MULTIPLE });
+    await compareOn();
     const click = async (name: string) => act(async () => { await userEvent.click(screen.getByRole("button", { name })); });
     await click("Kostenart");
     await click("Ausgabe");
@@ -426,6 +436,7 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
   it("zeigt als Tabelle dieselben Summen wie das Diagramm", async () => {
     const { container } = render([2, 2]);
     await screen.findByRole("group", { name: MULTIPLE });
+    await compareOn();
     const desc = container.querySelector("desc[data-desc]")!.textContent!;
     await act(async () => {
       await userEvent.click(screen.getByRole("button", { name: "Als Tabelle zeigen" }));

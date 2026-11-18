@@ -210,6 +210,7 @@
       "layout_agents": "Je Agent",
       "billedHint": "Von Anthropic berechnet: was die Usage-and-Cost-API für den API-Schlüssel hinter den Zugangsdaten meldet, nach Rabatten und vor Gutschriften. Sie kommt 4–24 h verspätet; die Markierung sagt, bis wann sie vollständig ist.",
       "sourceHints": "Was die vier Zahlen bedeuten",
+      "comparePriceTable": "Mit der Preistabelle von covey vergleichen",
       "compare": "Vergleich",
       "view_amounts": "Beträge",
       "view_vs": "Echt gegen Liste"
@@ -254,6 +255,13 @@
       "multiple": "Listen-$ je echtem $",
       "multipleRange": "Spanne {{low}} – {{high}}",
       "multipleHint": "eine Schätzung, keine Schranke: niedriger, wenn das Wochenkontingent nicht ausgeschöpft wird, höher, weil andere Nutzung des Kontos den Zähler mitbewegt",
+      "multipleAbout": "Der Listenpreis ist etwa {{n}}× so hoch wie das, was wirklich bezahlt wurde",
+      "multipleBetween": "Der Listenpreis ist {{low}}× bis {{high}}× so hoch wie das, was wirklich bezahlt wurde",
+      "multipleAtLeast": "Der Listenpreis ist mindestens {{n}}× so hoch wie das, was wirklich bezahlt wurde",
+      "meterStill": "Der Zähler hat sich nicht bewegt",
+      "meterUnread": "Keine Zählerablesung",
+      "priceTableLess": "Die Preistabelle von covey ergibt {{usd}}, {{pct}} % weniger als Claude Code gemeldet hat",
+      "priceTableMore": "Die Preistabelle von covey ergibt {{usd}}, {{pct}} % mehr als Claude Code gemeldet hat",
       "notEnoughMovement": "Kein Vielfaches: Der Zähler bewegte sich um {{pts}} Punkt(e); eine Zahl braucht mindestens 3 (nur Spanne: {{low}} – {{high}}).",
       "notEnoughMovementNone": "Kein Vielfaches: Der Zähler hat sich um keinen ganzen Punkt bewegt.",
       "noMultipleAgents": "Kein Vielfaches mit Agentenfilter oder je Agent: Der Zähler gilt für die ganzen Zugangsdaten.",
@@ -297,7 +305,7 @@
       "noMultipleNoPlan": "Keine echten Kosten und kein Vielfaches: Für diese Zugangsdaten ist kein Tarifpreis hinterlegt.",
       "realSince": "echt seit {{from}} (Ausgangsablesung des Zählers), letzte Ablesung {{to}}",
       "shareOfRealSpan": "der echte Anteil bezieht sich auf die echten Kosten seit {{from}} (Ausgangsablesung des Zählers) bis {{to}}, nicht nur auf den Zeitraum",
-      "vsNote": "× ist der Listenpreis eines Zeitraums ÷ seine echten Kosten. Der Zähler bewegt sich in ganzen Punkten, die echten Kosten eines Zeitraums sind also ±1 Punkt: Ein Zeitraum bekommt ein × erst ab 3 Punkten Bewegung, wie die Kachel, und seine Spanne steht in den Details des Zeitraums."
+      "vsNote": "× ist der Listenpreis eines Zeitraums ÷ seine echten Kosten. Der Zähler bewegt sich in ganzen Punkten, die echten Kosten eines Zeitraums sind also ±1 Punkt: Der Balken zeigt ein × erst ab 3 Punkten Bewegung, wie die Kachel; darunter nennen die Details des Zeitraums eine Spanne."
     },
     "kpiAllCredentials": "alle Zugangsdaten, aus den Zeilen",
     "tok": {

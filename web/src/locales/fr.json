@@ -210,6 +210,7 @@
       "layout_agents": "Par agent",
       "billedHint": "Facturé par Anthropic : ce que l'API d'usage et de coût indique pour la clé API derrière l'identifiant, après remises et avant crédits. Les données arrivent avec 4 à 24 h de retard ; la marque indique jusqu'où elles sont complètes.",
       "sourceHints": "Ce que signifient les quatre chiffres",
+      "comparePriceTable": "Comparer avec la grille tarifaire de covey",
       "compare": "Comparer",
       "view_amounts": "Montants",
       "view_vs": "Réel et liste"
@@ -254,6 +255,13 @@
       "multiple": "$ catalogue par $ réel",
       "multipleRange": "fourchette {{low}} – {{high}}",
       "multipleHint": "une estimation, pas une borne : plus bas si le quota hebdomadaire n'est pas épuisé, plus haut parce que les autres usages du compte font aussi bouger le compteur",
+      "multipleAbout": "Le prix catalogue vaut environ {{n}}× ce qui a réellement été payé",
+      "multipleBetween": "Le prix catalogue vaut entre {{low}}× et {{high}}× ce qui a réellement été payé",
+      "multipleAtLeast": "Le prix catalogue vaut au moins {{n}}× ce qui a réellement été payé",
+      "meterStill": "Le compteur n’a pas bougé",
+      "meterUnread": "Aucun relevé du compteur",
+      "priceTableLess": "La grille tarifaire de covey donne {{usd}}, soit {{pct}} % de moins que ce que Claude Code a déclaré",
+      "priceTableMore": "La grille tarifaire de covey donne {{usd}}, soit {{pct}} % de plus que ce que Claude Code a déclaré",
       "notEnoughMovement": "Pas de multiple : le compteur a bougé de {{pts}} point(s) ; un chiffre en demande au moins 3 (fourchette seulement : {{low}} – {{high}}).",
       "notEnoughMovementNone": "Pas de multiple : le compteur n'a pas bougé d'un point entier.",
       "noMultipleAgents": "Pas de multiple avec un filtre d'agents ou par agent : le compteur couvre tout l'identifiant.",
@@ -297,7 +305,7 @@
       "noMultipleNoPlan": "Ni coût réel ni multiple : aucun prix de forfait n'est enregistré pour cet identifiant.",
       "realSince": "réel depuis {{from}} (relevé de référence du compteur), dernier relevé {{to}}",
       "shareOfRealSpan": "la part réelle porte sur le coût réel depuis {{from}} (relevé de référence du compteur) jusqu'à {{to}}, pas sur la seule période",
-      "vsNote": "× est le prix catalogue d’une période ÷ son coût réel. Le compteur avance par points entiers, le coût réel d’une période est donc à ±1 point : une période n’affiche un × qu’à partir de 3 points de mouvement, comme la tuile, et sa fourchette figure dans les détails de la période."
+      "vsNote": "× est le prix catalogue d’une période ÷ son coût réel. Le compteur avance par points entiers, le coût réel d’une période est donc à ±1 point : la barre n’affiche un × qu’à partir de 3 points de mouvement, comme la tuile ; en dessous, les détails de la période donnent une fourchette."
     },
     "kpiAllCredentials": "tous les identifiants, d'après les lignes",
     "tok": {

@@ -210,6 +210,7 @@
       "layout_agents": "Por agente",
       "billedHint": "Facturado por Anthropic: lo que la API de uso y coste informa para la clave de API de la credencial, tras descuentos y antes de créditos. Llega con 4–24 h de retraso; la marca indica hasta dónde está completo.",
       "sourceHints": "Qué significan las cuatro cifras",
+      "comparePriceTable": "Comparar con la tabla de precios de covey",
       "compare": "Comparar",
       "view_amounts": "Importes",
       "view_vs": "Real frente a lista"
@@ -254,6 +255,13 @@
       "multiple": "$ de lista por $ real",
       "multipleRange": "rango {{low}} – {{high}}",
       "multipleHint": "una estimación, no un límite: menor si no se agota la cuota semanal, mayor porque otros usos de la cuenta también mueven el medidor",
+      "multipleAbout": "El precio de lista es aproximadamente {{n}}× lo que realmente se pagó",
+      "multipleBetween": "El precio de lista es entre {{low}}× y {{high}}× lo que realmente se pagó",
+      "multipleAtLeast": "El precio de lista es al menos {{n}}× lo que realmente se pagó",
+      "meterStill": "El medidor no se movió",
+      "meterUnread": "Sin lectura del medidor",
+      "priceTableLess": "La tabla de precios de covey da {{usd}}, un {{pct}} % menos de lo que informó Claude Code",
+      "priceTableMore": "La tabla de precios de covey da {{usd}}, un {{pct}} % más de lo que informó Claude Code",
       "notEnoughMovement": "Sin múltiplo: el medidor avanzó {{pts}} punto(s); una cifra requiere al menos 3 (solo rango: {{low}} – {{high}}).",
       "notEnoughMovementNone": "Sin múltiplo: el medidor no avanzó un punto entero.",
       "noMultipleAgents": "Sin múltiplo con filtro de agentes o por agente: el medidor cubre toda la credencial.",
@@ -297,7 +305,7 @@
       "noMultipleNoPlan": "Sin coste real ni múltiplo: no hay precio de plan guardado para esta credencial.",
       "realSince": "real desde {{from}} (lectura base del medidor), última lectura {{to}}",
       "shareOfRealSpan": "la parte real se refiere al coste real desde {{from}} (lectura base del medidor) hasta {{to}}, no solo al periodo",
-      "vsNote": "× es el precio de lista de un periodo ÷ su coste real. El medidor se mueve en puntos enteros, así que el coste real de un periodo es ±1 punto: un periodo solo muestra × a partir de 3 puntos de movimiento, como la ficha, y su rango aparece en los detalles del periodo."
+      "vsNote": "× es el precio de lista de un periodo ÷ su coste real. El medidor se mueve en puntos enteros, así que el coste real de un periodo es ±1 punto: la barra muestra × solo a partir de 3 puntos de movimiento, como la ficha; por debajo, los detalles del periodo dan un rango."
     },
     "kpiAllCredentials": "todas las credenciales, de las líneas",
     "tok": {
