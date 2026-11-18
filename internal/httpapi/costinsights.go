@@ -85,17 +85,21 @@ const billingKeysDays = 30
 // the account) — the chart's bars. And `window`: per mapped credential the
 // bill over whole billed buckets with the reported and recomputed figures of
 // the same window — the tiles, which must never set a bill over one span
-// against lines over another. ?days= and ?bucket= as on the other cost
-// endpoints.
+// against lines over another, and which read the same rows per day as the
+// bars (so ask for bucket=hour whenever the window is hourly). ?days= and
+// ?bucket= as on the other cost endpoints.
 func (s *Server) handleBilled(w http.ResponseWriter, r *http.Request) {
 	p := principalFrom(r)
-	bucket, since := costWindow(r)
+	// One instant for since and the window's end: ?days=2 is a window of
+	// exactly two days, inside the hourly reach.
+	now := time.Now().UTC()
+	bucket, since := costWindowAt(r, now)
 	series, err := s.Obs.BilledSeries(r.Context(), p.OrgID, bucket, since)
 	if err != nil {
 		mapErr(w, err)
 		return
 	}
-	window, err := s.Obs.BilledWindowFor(r.Context(), p.OrgID, since, time.Now())
+	window, err := s.Obs.BilledWindowFor(r.Context(), p.OrgID, bucket, since, now)
 	if err != nil {
 		mapErr(w, err)
 		return

@@ -438,7 +438,7 @@ func TestBillingWindowSameAsTheLines(t *testing.T) {
 		t.Fatalf("no total for slot %d in %+v", slot, w.Totals)
 		return observability.BilledTotal{}
 	}
-	day, err := s.obs.BilledWindowFor(ctx, s.orgID, since, now)
+	day, err := s.obs.BilledWindowFor(ctx, s.orgID, "day", since, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -453,7 +453,7 @@ func TestBillingWindowSameAsTheLines(t *testing.T) {
 		t.Errorf("a mapped credential without a bill: %+v", q)
 	}
 
-	week, err := s.obs.BilledWindowFor(ctx, s.orgID, weekAgo, now)
+	week, err := s.obs.BilledWindowFor(ctx, s.orgID, "day", weekAgo, now)
 	if err != nil {
 		t.Fatal(err)
 	}

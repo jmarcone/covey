@@ -1354,6 +1354,12 @@ func (s *Server) handleCost(w http.ResponseWriter, r *http.Request) {
 // costWindow reads bucket + days from the query and forms (bucket, since) out
 // of them. Defaults: daily buckets over the last 30 days; days is capped at 365.
 func costWindow(r *http.Request) (string, time.Time) {
+	return costWindowAt(r, time.Now())
+}
+
+// costWindowAt is costWindow for a given now — for a handler that cuts
+// another window at the same instant.
+func costWindowAt(r *http.Request, now time.Time) (string, time.Time) {
 	bucket := r.URL.Query().Get("bucket")
 	days := 30
 	if d, err := strconv.Atoi(r.URL.Query().Get("days")); err == nil && d > 0 {
@@ -1362,7 +1368,7 @@ func costWindow(r *http.Request) (string, time.Time) {
 	if days > 365 {
 		days = 365
 	}
-	return bucket, time.Now().AddDate(0, 0, -days)
+	return bucket, now.AddDate(0, 0, -days)
 }
 
 // handleCostSeries returns an agent's cost time series for the chart.

@@ -333,19 +333,30 @@ func (s *Store) BillingKeyMappings(ctx context.Context, orgID uuid.UUID) ([]Bill
 	return out, rows.Err()
 }
 
-// chosenRows picks, per UTC day, ONE bucket width of a billed table: the one
-// read most recently (the 1h read of the last 48 h is fresher than the daily
-// re-read, the daily re-read is fresher than an old 1h read), 1d on a tie.
-// Both widths hold the same money; summing both would count it twice. $1 is
-// the organisation, $2 the start (a UTC midnight).
-func chosenRows(table, pick, alias string) string {
+// chosenRows picks, per UTC day, ONE bucket width of a billed table. Both
+// widths hold the same money; summing both would count it twice. By default
+// it is the width read most recently (the 1h read of the last 48 h is fresher
+// than the daily re-read, the daily re-read is fresher than an old 1h read),
+// 1d on a tie. hourly takes the 1h rows wherever the day has them and its 1d
+// rows only where it has none: an hourly view, and the tile beside it. The
+// width matters beyond the shape of the chart: a credential mapping is chosen
+// per row (billedMapping), so a 1d row goes whole to the latest holder of its
+// day while 1h rows split at a hand-over — two readers that are to agree on
+// whose a bucket is must take their rows by the same rule. $1 is the
+// organisation, $2 the start (a UTC midnight; an hourly tile's first whole
+// hour, see BilledWindowFor).
+func chosenRows(table, pick, alias string, hourly bool) string {
+	order := `fetched DESC, bucket_width = '1d' DESC`
+	if hourly {
+		order = `bucket_width = '1h' DESC`
+	}
 	return pick + ` AS (
 	SELECT DISTINCT ON (day) day, bucket_width FROM (
 		SELECT date_trunc('day', bucket_start AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS day, bucket_width,
 			max(fetched_at) AS fetched
 		FROM ` + table + ` WHERE org_id = $1 AND bucket_start >= $2
 		GROUP BY 1, 2) x
-	ORDER BY day, fetched DESC, bucket_width = '1d' DESC),
+	ORDER BY day, ` + order + `),
 ` + alias + ` AS (
 	SELECT t.*, p.day FROM ` + table + ` t
 	JOIN ` + pick + ` p ON p.bucket_width = t.bucket_width
@@ -448,10 +459,13 @@ type Reconciliation struct {
 // matchBelowUSD: a residual under a cent is a match.
 const matchBelowUSD = 0.01
 
-// Reconcile compares, per UTC day × mapped credential × model, what Claude
-// Code reported, what covey's list makes of the same tokens, and what
-// Anthropic billed the API key the credential's value is — inside the
-// mapping's interval on both sides. since is moved back to its UTC midnight.
+// Reconcile compares, per UTC day × mapped credential × API key × model, what
+// Claude Code reported, what covey's list makes of the same tokens, and what
+// Anthropic billed the API key the credential's value is. The lines count
+// inside the mapping's interval; a bill row counts for the one mapping of its
+// time (billedMapping), as in the chart and the tile — a value re-saved inside
+// a day is one row for that day, with the bill once. since is moved back to
+// its UTC midnight.
 func (s *Store) Reconcile(ctx context.Context, orgID uuid.UUID, since time.Time) (Reconciliation, error) {
 	since = since.UTC().Truncate(24 * time.Hour)
 	rec := Reconciliation{Since: since, Days: []ReconcileDay{}}
@@ -470,10 +484,10 @@ maps AS (
 		COALESCE(valid_to, 'infinity'::timestamptz) AS valid_to
 	FROM credential_billing_keys
 	WHERE org_id = $1 AND COALESCE(valid_to, 'infinity'::timestamptz) > $2),
-` + chosenRows("billed_cost", "cpick", "bcost") + `,
-` + chosenRows("billed_usage", "upick", "buse") + `,
+` + chosenRows("billed_cost", "cpick", "bcost", false) + `,
+` + chosenRows("billed_usage", "upick", "buse", false) + `,
 ours AS (
-	SELECT m.secret_key, m.secret_slot, m.valid_from, ` + day("mu.created_at") + ` AS day, nm.model,
+	SELECT m.secret_key, m.secret_slot, m.api_key_id, m.workspace_id, ` + day("mu.created_at") + ` AS day, nm.model,
 		SUM(mu.engine_usd) AS reported,
 		SUM((mu.input_tokens * p.input + mu.output_tokens * p.output + mu.cache_read_tokens * p.cache_read
 			+ mu.cache_write_5m_tokens * p.w5m + mu.cache_write_1h_tokens * p.w1h) / 1000000
@@ -489,40 +503,43 @@ ours AS (
 		AND mu.created_at >= m.valid_from AND mu.created_at < m.valid_to AND mu.created_at >= $2
 	CROSS JOIN LATERAL (SELECT ` + normModel("mu.model") + ` AS model) nm
 	LEFT JOIN prices p ON p.id = nm.model
-	GROUP BY 1, 2, 3, 4, 5),
+	GROUP BY 1, 2, 3, 4, 5, 6),
 billed AS (
-	SELECT m.secret_key, m.secret_slot, m.valid_from, c.day, nm.model,
+	SELECT mk.secret_key, mk.secret_slot, mk.api_key_id, mk.workspace_id, c.day, nm.model,
 		SUM(c.amount_cents) / 100 AS billed, SUM(c.list_amount_cents) / 100 AS billed_list,
 		string_agg(DISTINCT CASE WHEN c.service_tier NOT IN ('', 'standard') THEN 'billed service_tier ' || c.service_tier END, ', ') AS odd,
 		max(c.data_refreshed_at) AS refreshed
-	FROM maps m
-	JOIN bcost c ON c.api_key_id = m.api_key_id AND (m.workspace_id = '' OR c.workspace_id = m.workspace_id)
-		AND c.bucket_end > m.valid_from AND c.bucket_start < m.valid_to
+	FROM bcost c
+	` + billedMapping + `
 	CROSS JOIN LATERAL (SELECT ` + normModel("c.model") + ` AS model) nm
-	GROUP BY 1, 2, 3, 4, 5),
+	WHERE mk.secret_key IS NOT NULL
+	GROUP BY 1, 2, 3, 4, 5, 6),
 btok AS (
-	SELECT m.secret_key, m.secret_slot, m.valid_from, u.day, nm.model,
-		SUM(u.uncached_input) AS t_in, SUM(u.cache_write_5m) AS t_5m, SUM(u.cache_write_1h) AS t_1h,
-		SUM(u.cache_read) AS t_read, SUM(u.output) AS t_out, SUM(u.web_search_requests) AS t_web,
-		max(u.data_refreshed_at) AS refreshed
-	FROM maps m
-	JOIN buse u ON u.api_key_id = m.api_key_id AND (m.workspace_id = '' OR u.workspace_id = m.workspace_id)
-		AND u.bucket_end > m.valid_from AND u.bucket_start < m.valid_to
-	CROSS JOIN LATERAL (SELECT ` + normModel("u.model") + ` AS model) nm
-	GROUP BY 1, 2, 3, 4, 5),
+	SELECT mk.secret_key, mk.secret_slot, mk.api_key_id, mk.workspace_id, c.day, nm.model,
+		SUM(c.uncached_input) AS t_in, SUM(c.cache_write_5m) AS t_5m, SUM(c.cache_write_1h) AS t_1h,
+		SUM(c.cache_read) AS t_read, SUM(c.output) AS t_out, SUM(c.web_search_requests) AS t_web,
+		max(c.data_refreshed_at) AS refreshed
+	FROM buse c
+	` + billedMapping + `
+	CROSS JOIN LATERAL (SELECT ` + normModel("c.model") + ` AS model) nm
+	WHERE mk.secret_key IS NOT NULL
+	GROUP BY 1, 2, 3, 4, 5, 6),
 keys AS (
-	SELECT secret_key, secret_slot, valid_from, day, model FROM ours
-	UNION SELECT secret_key, secret_slot, valid_from, day, model FROM billed
-	UNION SELECT secret_key, secret_slot, valid_from, day, model FROM btok),
+	SELECT secret_key, secret_slot, api_key_id, workspace_id, day, model FROM ours
+	UNION SELECT secret_key, secret_slot, api_key_id, workspace_id, day, model FROM billed
+	UNION SELECT secret_key, secret_slot, api_key_id, workspace_id, day, model FROM btok),
+firstmap AS (
+	SELECT secret_key, secret_slot, api_key_id, workspace_id, min(valid_from) AS valid_from
+	FROM maps GROUP BY 1, 2, 3, 4),
 noresult AS (
-	SELECT m.secret_key, m.secret_slot, m.valid_from, ` + day("ce.created_at") + ` AS day, COUNT(*) AS n
+	SELECT m.secret_key, m.secret_slot, m.api_key_id, m.workspace_id, ` + day("ce.created_at") + ` AS day, COUNT(*) AS n
 	FROM maps m
 	JOIN cost_entries ce ON ce.secret_key = m.secret_key AND ce.secret_slot = m.secret_slot
 		AND ce.created_at >= m.valid_from AND ce.created_at < m.valid_to AND ce.created_at >= $2
 	JOIN agents a ON a.id = ce.agent_id AND a.org_id = $1
 	WHERE NOT EXISTS (SELECT 1 FROM model_usage l WHERE l.cost_entry_id = ce.id)
-	GROUP BY 1, 2, 3, 4)
-SELECT k.secret_key, k.secret_slot, m.api_key_id, m.workspace_id, k.day, k.model,
+	GROUP BY 1, 2, 3, 4, 5)
+SELECT k.secret_key, k.secret_slot, k.api_key_id, k.workspace_id, k.day, k.model,
 	o.secret_key IS NOT NULL, b.secret_key IS NOT NULL OR t.secret_key IS NOT NULL,
 	round(COALESCE(o.reported, 0), 8)::text, round(COALESCE(o.list, 0), 8)::text, COALESCE(o.unpriced, false),
 	round(COALESCE(b.billed_list, 0), 8)::text, round(COALESCE(b.billed, 0), 8)::text,
@@ -535,16 +552,12 @@ SELECT k.secret_key, k.secret_slot, m.api_key_id, m.workspace_id, k.day, k.model
 	GREATEST(b.refreshed, t.refreshed),
 	COALESCE(n.n, 0)
 FROM keys k
-JOIN maps m ON m.secret_key = k.secret_key AND m.secret_slot = k.secret_slot AND m.valid_from = k.valid_from
-LEFT JOIN ours o ON o.secret_key = k.secret_key AND o.secret_slot = k.secret_slot AND o.valid_from = k.valid_from
-	AND o.day = k.day AND o.model = k.model
-LEFT JOIN billed b ON b.secret_key = k.secret_key AND b.secret_slot = k.secret_slot AND b.valid_from = k.valid_from
-	AND b.day = k.day AND b.model = k.model
-LEFT JOIN btok t ON t.secret_key = k.secret_key AND t.secret_slot = k.secret_slot AND t.valid_from = k.valid_from
-	AND t.day = k.day AND t.model = k.model
-LEFT JOIN noresult n ON n.secret_key = k.secret_key AND n.secret_slot = k.secret_slot AND n.valid_from = k.valid_from
-	AND n.day = k.day
-ORDER BY k.day, k.secret_key, k.secret_slot, k.valid_from, k.model`
+LEFT JOIN firstmap f USING (secret_key, secret_slot, api_key_id, workspace_id)
+LEFT JOIN ours o USING (secret_key, secret_slot, api_key_id, workspace_id, day, model)
+LEFT JOIN billed b USING (secret_key, secret_slot, api_key_id, workspace_id, day, model)
+LEFT JOIN btok t USING (secret_key, secret_slot, api_key_id, workspace_id, day, model)
+LEFT JOIN noresult n USING (secret_key, secret_slot, api_key_id, workspace_id, day)
+ORDER BY k.day, k.secret_key, k.secret_slot, f.valid_from, k.api_key_id, k.workspace_id, k.model`
 	rows, err := s.pool.Query(ctx, q, orgID, since)
 	if err != nil {
 		return rec, err
@@ -650,31 +663,33 @@ type BilledSeries struct {
 // columns when none): the API key's mapping valid during the row's bucket, the
 // latest when one ended inside it. A bucket overlaps two mappings when a value
 // is re-saved or a key changes hands inside it; joining every overlapping
-// mapping would count it once per mapping. The chart (BilledSeries) and the
-// tile (BilledWindowFor) both take it from here, so they cannot disagree on
-// whose a bucket is.
-const billedMapping = `LEFT JOIN LATERAL (SELECT k.secret_key, k.secret_slot::int AS secret_slot FROM credential_billing_keys k
+// mapping would count it once per mapping. A mapping that ended where it began
+// (closed by a write in the same instant) was never valid and holds nothing.
+// The chart (BilledSeries), the tile (BilledWindowFor) and the reconciliation
+// all take it from here; the chart and the tile agree on whose a bucket is as
+// long as they read the same rows (chosenRows with the same hourly).
+const billedMapping = `LEFT JOIN LATERAL (SELECT k.secret_key, k.secret_slot::int AS secret_slot,
+				k.api_key_id, k.workspace_id
+			FROM credential_billing_keys k
 			WHERE k.org_id = $1 AND k.api_key_id = c.api_key_id AND (k.workspace_id = '' OR k.workspace_id = c.workspace_id)
 			  AND k.valid_from < c.bucket_end AND COALESCE(k.valid_to, 'infinity'::timestamptz) > c.bucket_start
+			  AND COALESCE(k.valid_to, 'infinity'::timestamptz) > k.valid_from
 			ORDER BY k.valid_from DESC LIMIT 1) mk ON true`
 
 // BilledSeries sums the billed rows per bucket (hour | day | week, UTC; day
-// by default), API key and model. Hours come from the 1h reads only; days and
-// weeks from one width per day (chosenRows).
+// by default), API key and model, one width per day (chosenRows): hours from
+// the 1h rows wherever a day has them — a day known only as a whole is one
+// point at its midnight — days and weeks from the width read most recently.
+// BilledWindowFor with the same bucket reads the same rows.
 func (s *Store) BilledSeries(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time) (BilledSeries, error) {
 	out := BilledSeries{Bucket: bucket, Points: []BilledPoint{}}
 	since = since.UTC().Truncate(24 * time.Hour)
-	var src string
 	switch bucket {
-	case "hour":
-		src = `bcost AS (SELECT t.*, NULL::timestamptz AS day FROM billed_cost t
-			WHERE t.org_id = $1 AND t.bucket_width = '1h' AND t.bucket_start >= $2)`
-	case "week":
-		src = chosenRows("billed_cost", "cpick", "bcost")
+	case "hour", "week":
 	default:
 		out.Bucket, bucket = "day", "day"
-		src = chosenRows("billed_cost", "cpick", "bcost")
 	}
+	src := chosenRows("billed_cost", "cpick", "bcost", bucket == "hour")
 	rows, err := s.pool.Query(ctx, `WITH `+src+`
 		SELECT date_trunc('`+bucket+`', c.bucket_start AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS b,
 			c.api_key_id, c.workspace_id, c.model, mk.secret_key, mk.secret_slot,
@@ -700,8 +715,8 @@ func (s *Store) BilledSeries(ctx context.Context, orgID uuid.UUID, bucket string
 }
 
 // billedHourlyReach is how far back the poller re-reads the bill per hour on
-// every sync (billingHourlyBack in the orchestrator): inside it the bill is
-// known per hour, before it only per UTC day.
+// every sync (billingHourlyBack in the orchestrator), from the UTC midnight
+// before it: inside it the bill is known per hour, before it only per UTC day.
 const billedHourlyReach = 48 * time.Hour
 
 // BilledWindow is the bill of every mapped credential over ONE window made of
@@ -749,11 +764,13 @@ type BilledTotal struct {
 }
 
 // billedWindowStart is the first whole billed bucket at or after since, and
-// its width.
+// its width: hours from the UTC midnight the hourly read starts at, as the
+// poller cuts it. A window of exactly two days is hourly then, also when its
+// since was taken a moment before now.
 func billedWindowStart(since, now time.Time) (time.Time, string) {
 	since = since.UTC()
 	width, step := billing.Day, 24*time.Hour
-	if !since.Before(now.Add(-billedHourlyReach)) {
+	if !since.Before(now.UTC().Add(-billedHourlyReach).Truncate(24 * time.Hour)) {
 		width, step = billing.Hour, time.Hour
 	}
 	start := since.Truncate(step)
@@ -765,15 +782,19 @@ func billedWindowStart(since, now time.Time) (time.Time, string) {
 
 // BilledWindowFor sums the bill and the credential's own lines per mapped
 // credential over the whole billed buckets in [since, now] — the lines only
-// up to where the bill is complete (ComparedUntil).
-func (s *Store) BilledWindowFor(ctx context.Context, orgID uuid.UUID, since, now time.Time) (BilledWindow, error) {
+// up to where the bill is complete (ComparedUntil). bucket is the chart's
+// (BilledSeries): the window reads the same rows per day as the chart, so the
+// chart's points from Start on add up to the tile per credential. An hourly
+// window reads hourly rows whatever the bucket — a 1d row cannot be cut at
+// its start.
+func (s *Store) BilledWindowFor(ctx context.Context, orgID uuid.UUID, bucket string, since, now time.Time) (BilledWindow, error) {
 	start, width := billedWindowStart(since, now)
 	out := BilledWindow{Start: start, End: now.UTC(), Width: width, Totals: []BilledTotal{}}
-	src := chosenRows("billed_cost", "cpick", "bcost")
-	if width == billing.Hour {
-		src = `bcost AS (SELECT t.* FROM billed_cost t
-			WHERE t.org_id = $1 AND t.bucket_width = '1h' AND t.bucket_start >= $2)`
-	}
+	// $2 is the window's start, a midnight only for a daily window. A day's
+	// width is still the chart's: for the first, partial day of an hourly
+	// window either both read its 1h rows from Start on, or the chart reads
+	// only 1h rows before Start (left out of the window) and the tile none.
+	src := chosenRows("billed_cost", "cpick", "bcost", bucket == "hour" || width == billing.Hour)
 	maps := `maps AS (
 	SELECT secret_key, secret_slot::int AS secret_slot, api_key_id, workspace_id, valid_from,
 		COALESCE(valid_to, 'infinity'::timestamptz) AS valid_to
@@ -896,7 +917,7 @@ type BillingKey struct {
 // key (the Console, a federated token).
 func (s *Store) BillingKeys(ctx context.Context, orgID uuid.UUID, since time.Time) ([]BillingKey, error) {
 	since = since.UTC().Truncate(24 * time.Hour)
-	rows, err := s.pool.Query(ctx, `WITH `+chosenRows("billed_cost", "cpick", "bcost")+`
+	rows, err := s.pool.Query(ctx, `WITH `+chosenRows("billed_cost", "cpick", "bcost", false)+`
 		SELECT c.api_key_id, c.workspace_id, round(SUM(c.amount_cents) / 100, 8)::text,
 			round(SUM(c.list_amount_cents) / 100, 8)::text, max(c.bucket_end),
 			mk.secret_key, mk.secret_slot, mk.valid_from
