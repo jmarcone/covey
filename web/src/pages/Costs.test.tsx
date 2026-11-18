@@ -251,6 +251,22 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     expect(screen.getByRole("button", { name: "Stunde" })).toBeDisabled();
   });
 
+  // Review C10: an agent selected in one range stayed selected in a range
+  // without it, invisible, and narrowed every figure to nothing.
+  it("verwirft gewählte Agenten, die es im neuen Zeitraum nicht gibt", async () => {
+    const week = cells([2, 2]);
+    week.agents = [{ id: "a2", label: "QA", reported_usd: 0, measured_usd: 16 }];
+    for (const c of week.cells) c.agent_id = "a2";
+    serve(cells([2, 2]), { "/api/v1/cost/cells?days=7": week });
+    await screen.findByRole("group", { name: MULTIPLE });
+    await act(async () => { await userEvent.click(screen.getByRole("button", { name: /^Coordinator/ })); });
+    expect(screen.getByRole("button", { name: "Alle" })).toHaveAttribute("aria-pressed", "false");
+    await act(async () => { await userEvent.click(screen.getByRole("button", { name: "7 Tage" })); });
+    await screen.findByRole("button", { name: /^QA/ });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Alle" })).toHaveAttribute("aria-pressed", "true"));
+    expect(screen.getByText("Gesamte Organisation")).toBeInTheDocument();
+  });
+
   // Review C4: a cost type switched off under "split by cost type" stayed
   // off, invisibly, after the split was switched off again.
   it("lässt einen ausgeblendeten Kostentyp nicht weiterwirken, wenn die Aufteilung aus ist", async () => {

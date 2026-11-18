@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
@@ -215,6 +215,17 @@ export default function Costs() {
   const scope = selected.size === 1 ? [...selected][0] : "org";
   const cells = useCostCells(days, bucket);
   const billed = useBilled(days, bucket);
+
+  // A new range can lose agents the selection still names: they would narrow
+  // every figure to nothing while no chip shows them. Drop them.
+  useEffect(() => {
+    if (!cells.data) return;
+    const ids = new Set(cells.data.agents.map((a) => a.id));
+    setSelected((s) => {
+      const kept = [...s].filter((id) => ids.has(id));
+      return kept.length === s.size ? s : new Set(kept);
+    });
+  }, [cells.data]);
 
   // The most expensive runs of the period — org-wide or for the chosen agent.
   const runs = useQuery({
