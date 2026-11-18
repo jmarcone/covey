@@ -2706,9 +2706,10 @@ a.tm-file:hover { background: var(--tint); }
 /* ── Der Überblick ────────────────────────────────────────────────────
    Die Seite, auf der jeder landet. Drei Blöcke, jeder darf fehlen — siehe
    team/Ueberblick.tsx, warum sie nicht mehr nur zeigt, was wartet. */
-.tm-ueberblick { padding: 30px 28px 48px; overflow-y: auto; }
+/* No padding of its own: the office sits in the console's frame
+   (.konsole-inhalt), like the list it is a view beside. */
 .tm-ueberblick-kopf { margin-bottom: 26px; }
-.tm-ueberblick-kopf h1 { font-size: 23px; font-weight: 600; letter-spacing: -0.02em; }
+.tm-ueberblick-kopf h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
 .tm-ueberblick-kopf .tm-leise { padding: 5px 0 0; font-size: 14px; }
 .tm-block { margin-bottom: 34px; max-width: 92ch; }
 .tm-block h2 {
@@ -2755,6 +2756,13 @@ a.tm-file:hover { background: var(--tint); }
 .tm-wartet-titel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
 .tm-wartet-wer { font-size: 13px; color: var(--text-secondary); white-space: nowrap; }
 .tm-wartet-zeile time { font-size: 12px; white-space: nowrap; }
+/* At phone width the time goes under the title. The office used to sit in a
+   box of its own that clipped it; in the console's frame it widened the
+   page. */
+@media (max-width: 560px) {
+  .tm-wartet-zeile { grid-template-columns: auto minmax(0, 1fr) auto; row-gap: 2px; }
+  .tm-wartet-zeile time { grid-column: 2 / -1; }
+}
 .tm-wartet-alle { display: inline-block; margin-top: 18px; font-size: 13px; color: var(--text-accent); }
 
 /* Schmale Fenster: Die Spalte bleibt stehen, wie sie in der Konsole stehen
@@ -3555,6 +3563,11 @@ a.tm-file:hover { background: var(--tint); }
   cursor: pointer;
 }
 .bu-karte-hin:hover { border-color: var(--border-strong); background: var(--tint-weak); }
+/* Conversation and profile side by side: the card's two ways out. */
+.bu-karte-fuss { display: flex; gap: 8px; margin-top: 10px; }
+.bu-karte-fuss .bu-karte-hin { flex: 1 1 0; min-width: 0; width: auto; margin-top: 0; text-align: center; text-decoration: none; }
+.bu-karte-name { color: inherit; text-decoration: none; }
+.bu-karte-name:hover { text-decoration: underline; }
 
 @media (prefers-reduced-motion: reduce) {
   .bu-karte, .bu-denkt { animation: none; }
@@ -4126,6 +4139,35 @@ a.tm-file:hover { background: var(--tint); }
 .konsole-inhalt { padding: 22px 26px 60px; }
 .konsole-bar { display: none; }
 
+/* The agents area's bar (pages/agents/AgentsFrame.tsx): the switch between
+   its views, and on an agent's page the crumb. 52 px at every width, so the
+   title under it starts on the same line in every view. */
+.av-bar {
+  position: sticky; top: 0; z-index: 30;
+  display: flex; align-items: center; gap: 10px; height: 52px; padding: 0 26px;
+  background: var(--surface-0); border-bottom: 0.5px solid var(--border);
+}
+.av-switch {
+  display: inline-flex; flex-shrink: 0; padding: 0;
+  border: 0.5px solid var(--border); border-radius: 8px; background: var(--surface-1);
+}
+.av-switch a {
+  display: inline-flex; align-items: center; height: 31px; padding: 0 14px;
+  border-radius: 7.5px; font-size: 13px; color: var(--text-secondary); text-decoration: none; white-space: nowrap;
+}
+.av-switch a:hover { color: var(--text-primary); }
+/* One meaning: the view you are in, or under (an agent's page marks the view
+   it came from). Weight belongs to the current one. */
+.av-switch a.on { background: var(--surface-2); color: var(--text-primary); box-shadow: 0 0 0 0.5px var(--border); }
+.av-switch a[aria-current="page"] { font-weight: 550; }
+.av-switch a:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: -2px; }
+.av-crumb { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--text-secondary); }
+/* The settings column of an agent's page (Settings, Tooling) sticks below
+   the bar, not under it. Elsewhere — a runner's page — there is no bar, and
+   it keeps its 12 px. */
+.av-bar ~ .konsole-inhalt .settings-nav { top: 64px; }
+@media (max-width: 768px) { .av-crumb { display: none; } }
+
 /* Phone width (#463): the console's navigation leaves the row and becomes a
    drawer behind a button in a bar above the page, so the page gets the whole
    width beside the rail. The rail stays, as it stays in the team shell at the
@@ -4142,6 +4184,7 @@ a.tm-file:hover { background: var(--tint); }
   .konsole-bar-knopf[aria-expanded="true"] { background: var(--surface-1); color: var(--text-primary); }
   .konsole-bar-titel { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
   .konsole-inhalt { padding: 16px 16px 48px; }
+  .av-bar { padding: 0 16px; }
   /* A page's heading row (title, subtitle, its buttons) wraps rather than
      squeezing the title to a word a line. */
   .konsole-inhalt .flex:has(> h1) { flex-wrap: wrap; row-gap: 8px; }

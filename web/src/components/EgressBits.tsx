@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, type Agent, type EgressHost, type EgressLogEntry } from "../api";
+import { uiLocale } from "../i18n";
 
 export function HostChips({
   hosts,
@@ -176,6 +177,6 @@ function formatLogTime(iso: string) {
   const d = new Date(iso);
   const today = new Date();
   const sameDay = d.toDateString() === today.toDateString();
-  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  return sameDay ? time : `${d.toLocaleDateString([], { day: "2-digit", month: "2-digit" })} ${time}`;
+  const time = d.toLocaleTimeString(uiLocale(), { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return sameDay ? time : `${d.toLocaleDateString(uiLocale(), { day: "2-digit", month: "2-digit" })} ${time}`;
 }

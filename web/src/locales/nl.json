@@ -432,11 +432,11 @@
   },
   "agent": {
     "notFound": "Agent niet gevonden.",
-    "breadcrumb": "Agenten",
     "sandbox": "Sandbox actief",
     "wake": "Wekken",
     "resume": "Hervatten",
     "stop": "Stoppen",
+    "stopTitle": "Noodstop: stopt de agent direct",
     "tabs": {
       "backlog": "Backlog",
       "heartbeat": "Hartslag",
@@ -523,6 +523,7 @@
       "showArchive": "Archief tonen",
       "hideArchive": "Archief verbergen",
       "cleanup": "Opruimen",
+      "cleanupTitle": "Archiveert alle afgeronde, mislukte en verworpen taken — er wordt niets verwijderd.",
       "editColumns": "Kolommen bewerken",
       "doneEditing": "Klaar",
       "noStageColumn": "Geen fase",
@@ -530,11 +531,15 @@
       "archived": "gearchiveerd",
       "waitingOn": "wacht op {{key}}",
       "blocked": "geblokkeerd",
+      "parked": "geparkeerd",
+      "parkedUntil": "geparkeerd tot {{key}}",
+      "reason": "reden",
       "agentNotes": "Aantekeningen van de agent",
       "showRecording": "Opname van deze taak",
       "reschedule": "Opnieuw inplannen",
       "rescheduleHint": "Zet de taak terug op open — de agent pakt hem weer op.",
       "archive": "Archiveren",
+      "archiveTitle": "Haalt de taak uit de actieve backlog — geschiedenis en opname blijven bewaard.",
       "discard": "Verwerpen",
       "discardConfirm": "Taak \"{{title}}\" verwerpen?",
       "searchPlaceholder": "Backlog doorzoeken…",
@@ -576,6 +581,7 @@
       "rawView": "Ruwe gegevens",
       "readableTitle": "Verhalende weergave: gedachten, tool-aanroepen en poorten",
       "rawTitle": "Alle gebeurtenissen afzonderlijk, met ruwe JSON — volledig",
+      "viewLabel": "Weergave",
       "emptyFiltered": "Geen opname voor deze taak.",
       "emptyAll": "Nog geen opname."
     },
@@ -613,15 +619,19 @@
       "copied": "Gekopieerd ✓",
       "example": "Voorbeeld",
       "rotate": "Token roteren",
+      "rotateTitle": "Nieuw token — de oude URL werkt niet meer",
       "deactivate": "Deactiveren"
     },
     "config": {
       "saveTemplate": "Als sjabloon opslaan",
+      "saveTemplateTitle": "Huidige configuratie opslaan als herbruikbaar sjabloon",
       "templateName": "Naam van het sjabloon",
       "templateDesc": "Beschrijving (optioneel)",
       "saveBtn": "Opslaan",
       "exportBundle": "Als bundel exporteren",
+      "exportBundleTitle": "De volledige configuratie (fasen, regels, egress, namen van secrets) als JSON-bundel downloaden — importeren gaat via het agentoverzicht",
       "importBundle": "Bundel importeren (alleen config)",
+      "importBundleTitle": "Een JSON-bundel inlezen en ALLEEN de config-bestanden ervan op deze agent toepassen (overschrijft SOUL/HEARTBEAT/ACCESS/EGRESS/… als nieuwe versie). Stamgegevens, secrets en regels blijven ongemoeid.",
       "importConfirm": "De config van deze agent overschrijven met die uit de bundel? Alleen de configuratiebestanden worden toegepast (als nieuwe versie) — profielgegevens, geheimen en vangrails blijven ongewijzigd.",
       "importInvalidJson": "Ongeldige JSON — geen geldige bundel.",
       "newVersion": "Nieuwe versie opslaan",
@@ -723,6 +733,7 @@
       "effectiveAllowlist": "Werkelijke toegestane lijst",
       "allBlocked": "leeg — elke uitgaande verbinding wordt geblokkeerd",
       "templates": "Sjablonen",
+      "openTemplate": "Detailpagina van het sjabloon openen",
       "noTemplates": "Nog geen sjablonen — maak er eerst een onder Uitgaand verkeer → Sjablonen.",
       "ownHosts": "Eigen hosts",
       "none": "geen",
@@ -818,6 +829,7 @@
       "readOnly": "Uw rol mag de instellingen inzien maar niet wijzigen.",
       "dangerZone": "Gevarenzone — deze actie kan niet ongedaan worden gemaakt.",
       "deleteAgent": "Agent verwijderen",
+      "deleteFailed": "De agent kon niet worden verwijderd.",
       "deleteConfirm": "{{name}} definitief verwijderen?",
       "deleteYes": "Ja, definitief verwijderen",
       "cancel": "Annuleren",
@@ -970,6 +982,13 @@
       "syncFailed": "De werkplek is sinds {{when}} niet meer veiliggesteld: {{error}} — de cijfers hieronder beschrijven een oudere stand."
     },
     "wakeFailedWhy": "{{n}} mislukte wekpogingen: {{err}}"
+  },
+  "agents": {
+    "views": "Weergaven van agenten",
+    "view": {
+      "list": "Lijst"
+    },
+    "backTo": "Terug naar {{view}}"
   },
   "approvals": {
     "approve": "Goedkeuren",
@@ -1311,6 +1330,7 @@
     "subtitle": "plug-ins die zich bij de daemon hebben aangemeld",
     "desc": "Engines zijn de verwisselbare naad tussen het controlevlak en de sandbox — zichzelf beschrijvende plug-ins in code. De ⓘ per engine toont de inrichting stap voor stap. Welke engine (en welk model) een agent gebruikt, wijzigt u op de agentpagina onder het tabblad Instellingen.",
     "showInfo": "Inrichting tonen",
+    "info": "Info",
     "needsCredential": "● heeft een inloggegeven nodig (Geheimen)",
     "noCredential": "● heeft geen inloggegevens nodig",
     "setup": "Inrichting — {{label}}",
@@ -1806,6 +1826,7 @@
     "updateTools": "Gereedschap bijwerken",
     "mcpNameSlug": "Naam (slug)",
     "mcpLabel": "Label",
+    "mcpLabelPlaceholder": "Weerdienst",
     "mcpUrl": "Endpoint-URL",
     "mcpDesc": "Beschrijving",
     "mcpAuthHeader": "Auth-header (optioneel)",
@@ -1905,6 +1926,7 @@
     "adopted": "overgenomen",
     "createTemplateName": "Naam",
     "createTemplateOptDesc": "Beschrijving (optioneel)",
+    "createTemplateDescPlaceholder": "Helpdesk-productie + kennisbank",
     "createTemplateDesc": "Een sjabloon bundelt bij elkaar horende doelhosts — de hosts beheert u op de detailpagina.",
     "createTemplateCreate": "Aanmaken",
     "cancel": "Annuleren",
@@ -2009,6 +2031,7 @@
     "delete": "Verwijderen",
     "deleteConfirm": "Sjabloon “{{name}}” verwijderen?",
     "savedDate": "opgeslagen op {{date}}",
+    "engineLabel": "Engine:",
     "modelLabel": "Model:",
     "useTemplate": "Sjabloon gebruiken: {{name}}",
     "displayName": "Weergavenaam",
@@ -2157,6 +2180,7 @@
     "title": "Hulp",
     "openHint": "openen met",
     "close": "Hulp sluiten",
+    "englishOnly": "De helponderwerpen zijn in het Engels geschreven.",
     "spec": "Verdieping: de specificatie in de repository onder spec/.",
     "openProfile": "Profiel en instellingen",
     "topics": {
@@ -3183,8 +3207,8 @@
       "text": "Uw collega's hier zijn AI-agenten. U geeft hun werk zoals u dat aan een mens zou geven: door ze te schrijven. In een minuut laten we zien waar alles staat."
     },
     "buero": {
-      "titel": "Het kantoor",
-      "text": "Het personeel als gebouw: een kamer per afdeling, een bureau per collega. Een verlicht bureau betekent dat daar een taak loopt. Het getal toont hoeveel beslissingen op u wachten."
+      "titel": "Agenten",
+      "text": "Hier wonen uw collega's. Het kantoor toont het personeel als gebouw, de lijst toont elke agent en wat die doet, en een klik op een naam opent de pagina ervan. Het getal toont hoeveel beslissingen op u wachten."
     },
     "team": {
       "titel": "Het team",

@@ -432,11 +432,11 @@
   },
   "agent": {
     "notFound": "Agente no encontrado.",
-    "breadcrumb": "Agentes",
     "sandbox": "Entorno aislado activo",
     "wake": "Despertar",
     "resume": "Reanudar",
     "stop": "Detener",
+    "stopTitle": "Parada de emergencia: detiene el agente de inmediato",
     "tabs": {
       "backlog": "Backlog",
       "heartbeat": "Latido",
@@ -523,6 +523,7 @@
       "showArchive": "Mostrar el archivo",
       "hideArchive": "Ocultar el archivo",
       "cleanup": "Limpiar",
+      "cleanupTitle": "Archiva todas las tareas terminadas, fallidas y descartadas — no se elimina nada.",
       "editColumns": "Editar columnas",
       "doneEditing": "Listo",
       "noStageColumn": "Sin fase",
@@ -530,11 +531,15 @@
       "archived": "archivada",
       "waitingOn": "esperando a {{key}}",
       "blocked": "bloqueada",
+      "parked": "aparcada",
+      "parkedUntil": "aparcada hasta {{key}}",
+      "reason": "motivo",
       "agentNotes": "Notas del agente",
       "showRecording": "Grabación de esta tarea",
       "reschedule": "Reprogramar",
       "rescheduleHint": "Devuelve la tarea a abierta: el agente volverá a tomarla.",
       "archive": "Archivar",
+      "archiveTitle": "Oculta la tarea del backlog activo — su historial y su grabación se conservan.",
       "discard": "Descartar",
       "discardConfirm": "¿Descartar la tarea \"{{title}}\"?",
       "searchPlaceholder": "Buscar en el backlog…",
@@ -576,6 +581,7 @@
       "rawView": "Datos en bruto",
       "readableTitle": "Vista narrada: pensamientos, llamadas a herramientas y puertas",
       "rawTitle": "Todos los eventos uno a uno, con el JSON en bruto — completo",
+      "viewLabel": "Vista",
       "emptyFiltered": "No hay grabación para esta tarea.",
       "emptyAll": "Todavía no hay grabación."
     },
@@ -613,15 +619,19 @@
       "copied": "Copiado ✓",
       "example": "Ejemplo",
       "rotate": "Rotar el token",
+      "rotateTitle": "Token nuevo — la URL anterior deja de funcionar",
       "deactivate": "Desactivar"
     },
     "config": {
       "saveTemplate": "Guardar como plantilla",
+      "saveTemplateTitle": "Guardar la configuración actual como plantilla reutilizable",
       "templateName": "Nombre de la plantilla",
       "templateDesc": "Descripción (opcional)",
       "saveBtn": "Guardar",
       "exportBundle": "Exportar como paquete",
+      "exportBundleTitle": "Descargar la configuración completa (etapas, reglas, egress, nombres de secretos) como paquete JSON — se importa en la vista general de agentes",
       "importBundle": "Importar paquete (solo config)",
+      "importBundleTitle": "Leer un paquete JSON y aplicar SOLO sus archivos de config a este agente (sobrescribe SOUL/HEARTBEAT/ACCESS/EGRESS/… como nueva versión). Los datos básicos, los secretos y las reglas no se tocan.",
       "importConfirm": "¿Sobrescribir la config de este agente con la del paquete? Solo se aplican los archivos de configuración (como versión nueva); los datos del perfil, los secretos y las barreras quedan intactos.",
       "importInvalidJson": "JSON inválido: no es un paquete válido.",
       "newVersion": "Guardar una versión nueva",
@@ -723,6 +733,7 @@
       "effectiveAllowlist": "Lista permitida efectiva",
       "allBlocked": "vacía — se bloquea toda conexión saliente",
       "templates": "Plantillas",
+      "openTemplate": "Abrir la página de detalle de la plantilla",
       "noTemplates": "Aún no hay plantillas: crea una primero en Salida de red → Plantillas.",
       "ownHosts": "Hosts propios",
       "none": "ninguno",
@@ -818,6 +829,7 @@
       "readOnly": "Tu rol puede ver los ajustes, pero no cambiarlos.",
       "dangerZone": "Zona peligrosa: esta acción no se puede deshacer.",
       "deleteAgent": "Eliminar el agente",
+      "deleteFailed": "No se pudo eliminar el agente.",
       "deleteConfirm": "¿Eliminar {{name}} de forma permanente?",
       "deleteYes": "Sí, eliminar para siempre",
       "cancel": "Cancelar",
@@ -970,6 +982,13 @@
       "syncFailed": "El puesto de trabajo no se ha asegurado desde {{when}}: {{error}} — las cifras de abajo describen un estado anterior."
     },
     "wakeFailedWhy": "{{n}} intentos de despertar fallidos: {{err}}"
+  },
+  "agents": {
+    "views": "Vistas de agentes",
+    "view": {
+      "list": "Lista"
+    },
+    "backTo": "Volver a {{view}}"
   },
   "approvals": {
     "approve": "Aprobar",
@@ -1311,6 +1330,7 @@
     "subtitle": "plugins registrados en el demonio",
     "desc": "Los motores son la juntura intercambiable entre el plano de control y el entorno aislado: plugins que se describen a sí mismos, en código. La ⓘ de cada motor muestra las instrucciones de configuración paso a paso. Qué motor (y modelo) usa un agente se puede cambiar en la página del agente, en la pestaña Ajustes.",
     "showInfo": "Ver la configuración",
+    "info": "Info",
     "needsCredential": "● necesita credencial (Secretos)",
     "noCredential": "● no necesita credenciales",
     "setup": "Configuración — {{label}}",
@@ -1806,6 +1826,7 @@
     "updateTools": "Actualizar herramientas",
     "mcpNameSlug": "Nombre (slug)",
     "mcpLabel": "Etiqueta",
+    "mcpLabelPlaceholder": "Servicio meteorológico",
     "mcpUrl": "URL del extremo",
     "mcpDesc": "Descripción",
     "mcpAuthHeader": "Cabecera de autenticación (opcional)",
@@ -1905,6 +1926,7 @@
     "adopted": "adoptado",
     "createTemplateName": "Nombre",
     "createTemplateOptDesc": "Descripción (opcional)",
+    "createTemplateDescPlaceholder": "Helpdesk de producción + base de conocimiento",
     "createTemplateDesc": "Una plantilla agrupa hosts de destino afines; los hosts se gestionan en la página de detalle.",
     "createTemplateCreate": "Crear",
     "cancel": "Cancelar",
@@ -2009,6 +2031,7 @@
     "delete": "Eliminar",
     "deleteConfirm": "¿Eliminar la plantilla \"{{name}}\"?",
     "savedDate": "guardada el {{date}}",
+    "engineLabel": "Motor:",
     "modelLabel": "Modelo:",
     "useTemplate": "Usar la plantilla: {{name}}",
     "displayName": "Nombre visible",
@@ -2157,6 +2180,7 @@
     "title": "Ayuda",
     "openHint": "se abre con",
     "close": "Cerrar la ayuda",
+    "englishOnly": "Los temas de ayuda están escritos en inglés.",
     "spec": "A fondo: la especificación en el repositorio, bajo spec/.",
     "openProfile": "Perfil y ajustes",
     "topics": {
@@ -3183,8 +3207,8 @@
       "text": "Sus colegas aquí son agentes de IA. Les da trabajo como se lo daría a una persona: escribiéndoles. En un minuto le mostramos dónde está cada cosa."
     },
     "buero": {
-      "titel": "La oficina",
-      "text": "La plantilla como un edificio: una sala por departamento, una mesa por colega. Una mesa iluminada significa que allí se está ejecutando una tarea. El número indica cuántas decisiones le esperan."
+      "titel": "Agentes",
+      "text": "Aquí viven sus colegas. La oficina muestra la plantilla como un edificio, la lista muestra cada agente y lo que está haciendo, y un clic en un nombre abre su página. El número indica cuántas decisiones le esperan."
     },
     "team": {
       "titel": "El equipo",

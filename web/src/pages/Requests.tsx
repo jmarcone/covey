@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, del, type Agent, type Principal, type RequestLogEntry, type RequestLogPage } from "../api";
 import { ConfirmDialog } from "../components/Modal";
+import { uiLocale } from "../i18n";
 
 // Platform → Requests: the request log (spec/06). It shows what went over
 // the wire — the bot-connector call to Teams, the target system's response,
@@ -217,7 +218,7 @@ function Detail({ id, onClose }: { id: number; onClose: () => void }) {
       {e && (
         <>
           <div className="mt-2 text-xs" style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "4px 14px" }}>
-            <Field label={t("requests.colTime")} value={new Date(e.created_at).toLocaleString()} />
+            <Field label={t("requests.colTime")} value={new Date(e.created_at).toLocaleString(uiLocale())} />
             <Field label={t("requests.colRequest")} value={`${e.method} ${e.url}`} />
             <Field
               label={t("requests.colStatus")}
@@ -287,5 +288,5 @@ function formatTime(iso: string) {
   const d = new Date(iso);
   const today = new Date();
   const sameDay = d.toDateString() === today.toDateString();
-  return sameDay ? d.toLocaleTimeString() : d.toLocaleString();
+  return sameDay ? d.toLocaleTimeString(uiLocale()) : d.toLocaleString(uiLocale());
 }

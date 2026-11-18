@@ -193,7 +193,8 @@ func (p *actionProxy) httpSink(system string) reqlog.Sink {
 // control plane instead of a target system: set_stage (move the task into a
 // possibly new stage on the board), add_note (note on the task), remember
 // (insight straight into the memory), org_chart (query the org chart),
-// create_task (subtask/delegation), message (a word to a person, #537) and
+// list_tasks/get_task (read its own and its created tasks), create_task
+// (subtask/delegation), message (a word to a person, #537) and
 // the wiki tools wiki_search/wiki_read/wiki_write/wiki_delete (spec/05).
 func (p *actionProxy) controlPlane(ctx context.Context, action string, params json.RawMessage) any {
 	switch action {
@@ -234,6 +235,8 @@ func (p *actionProxy) controlPlane(ctx context.Context, action string, params js
 		audit, _ := json.Marshal(map[string]any{"action": "covey:org_chart"})
 		_ = p.client.send(TypeEvent, Event{TaskID: p.taskID, Kind: "action", Payload: audit})
 		return map[string]any{"status": "ok", "data": chart}
+	case "list_tasks", "get_task":
+		return p.tasks(ctx, action, params)
 	case "add_note", "remember":
 		var in struct {
 			Content string `json:"content"`
@@ -425,6 +428,63 @@ func (p *actionProxy) controlPlane(ctx context.Context, action string, params js
 	default:
 		return map[string]string{"status": "error", "error": fmt.Sprintf("unknown covey action %q", action)}
 	}
+}
+
+// tasks serves covey/list_tasks and covey/get_task: the agent reads its own
+// backlog and the tasks it handed out. Read-only like org_chart, so no
+// guard-rail check; which tasks it may read the control plane decides, from
+// the agent the connection belongs to. The proxy only shapes the parameters —
+// "state" may be one state or a list.
+//
+// Recorded either way, a refusal included: an agent reading at tasks that are
+// not its own is worth seeing in the timeline.
+func (p *actionProxy) tasks(ctx context.Context, action string, params json.RawMessage) any {
+	var in struct {
+		Scope    string          `json:"scope"`
+		State    json.RawMessage `json:"state"`
+		Archived bool            `json:"archived"`
+		Limit    int             `json:"limit"`
+		ID       string          `json:"id"`
+	}
+	if err := json.Unmarshal(params, &in); err != nil {
+		return map[string]string{"status": "error", "error": "parameters unreadable: " + err.Error()}
+	}
+	req := RequestTasks{Op: "list", Scope: in.Scope, Archived: in.Archived, Limit: in.Limit}
+	if action == "get_task" {
+		in.ID = strings.TrimSpace(in.ID)
+		if in.ID == "" {
+			return map[string]string{"status": "error", "error": "id missing"}
+		}
+		req = RequestTasks{Op: "get", ID: in.ID}
+	} else if len(in.State) > 0 && string(in.State) != "null" {
+		var one string
+		if json.Unmarshal(in.State, &one) == nil {
+			req.States = []string{one}
+		} else if json.Unmarshal(in.State, &req.States) != nil {
+			return map[string]string{"status": "error", "error": "state must be a state or a list of states"}
+		}
+	}
+	resp, err := p.client.tasks(ctx, req)
+	if err != nil {
+		return map[string]string{"status": "error", "error": err.Error()}
+	}
+	auditMap := map[string]any{"action": "covey:" + action, "ok": resp.OK}
+	if action == "get_task" {
+		auditMap["id"] = in.ID
+	} else {
+		auditMap["scope"] = in.Scope
+		if resp.OK {
+			var listed []json.RawMessage
+			_ = json.Unmarshal(resp.Data, &listed)
+			auditMap["count"] = len(listed)
+		}
+	}
+	audit, _ := json.Marshal(auditMap)
+	_ = p.client.send(TypeEvent, Event{TaskID: p.taskID, Kind: "action", Payload: audit})
+	if !resp.OK {
+		return map[string]string{"status": "error", "error": resp.Error}
+	}
+	return map[string]any{"status": "ok", "data": resp.Data}
 }
 
 // handleCreateTask creates a task: without "agent" a subtask of the running

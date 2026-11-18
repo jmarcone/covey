@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, del, istSystemAdmin, post, put, ROLES, type Principal } from "../api";
+import { uiLocale } from "../i18n";
 
 // Single sign-on for the organisation (#723): the provider, the e-mail
 // domains it speaks for (proven by a DNS record), and whether it is required.
@@ -127,7 +128,7 @@ export default function SSOSettings({ me }: { me: Principal }) {
           {cfg.last_error && (
             <p className="err text-xs mt-2" style={{ maxWidth: 640 }}>
               {t("sso.lastError", {
-                when: cfg.last_error_at ? new Date(cfg.last_error_at).toLocaleString() : "",
+                when: cfg.last_error_at ? new Date(cfg.last_error_at).toLocaleString(uiLocale()) : "",
               })}{" "}
               <code>{cfg.last_error}</code>
             </p>

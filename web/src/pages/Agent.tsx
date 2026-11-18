@@ -1,8 +1,11 @@
 import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, Navigate, useParams, useSearchParams } from "react-router";
+import { Link, Navigate, useLocation, useParams, useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
-import { api, post, isDraft, isNotFound, type Agent, type Principal } from "../api";
+import { post, isDraft, isNotFound, type Principal } from "../api";
+import { agentQuery } from "./agents/agentQuery";
+import { originOf, viewUrl } from "./agents/views";
+import { NavIcon } from "../components/navicons";
 import { AgentFiles } from "../components/AgentFiles";
 import { PhaseBadge } from "../components/PhaseBadge";
 import { useEdgeFade } from "../components/useEdgeFade";
@@ -49,13 +52,10 @@ const MOVED: Partial<Record<TabKey, [TabKey, string, string]>> = {
 export default function AgentPage({ me }: { me: Principal }) {
   const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
+  const { state } = useLocation();
   const qc = useQueryClient();
-  const agent = useQuery({
-    queryKey: ["agent", id],
-    queryFn: () => api<Agent>(`/agents/${id}`),
-    // A 404 does not change on a second try; everything else keeps the default one retry.
-    retry: (failures, err) => !isNotFound(err) && failures < 1,
-  });
+  const agent = useQuery(agentQuery(id));
+
   // Tab state lives in the URL (?tab=…) — real navigation: shareable links,
   // browser forward/back. The memory tab additionally carries ?page=<slug>.
   const [sp, setSp] = useSearchParams();
@@ -125,20 +125,13 @@ export default function AgentPage({ me }: { me: Principal }) {
      after signing in again — ?weiter= brings back the old address, and the new
      session starts in the account's oldest seat — or after following a link
      into another organisation. A sentence with nothing to click is a dead end;
-     the start page is not. */
-  if (isNotFound(agent.error)) return <Navigate to="/agents" replace />;
+     the start page is not — the view the person came from, or the list. */
+  if (isNotFound(agent.error)) return <Navigate to={viewUrl(originOf(id, state, !!me.TeamSurface))} replace />;
   if (agent.isError || !agent.data) return <p className="danger-text">{t("agent.notFound")}</p>;
   const a = agent.data;
 
   return (
     <div>
-      <div className="text-sm secondary mb-3">
-        <Link to="/agents" style={{ color: "inherit" }}>
-          {t("agent.breadcrumb")}
-        </Link>{" "}
-        / <b style={{ color: "var(--text-primary)", fontWeight: 500 }}>{a.display_name}</b>
-      </div>
-
       <div className="flex items-center gap-3 mb-5 flex-wrap">
         <h1 className="text-[22px]">{a.display_name}</h1>
         {isDraft(a) ? (
@@ -170,6 +163,15 @@ export default function AgentPage({ me }: { me: Principal }) {
           {a.model && ` · ${a.model}`}
         </span>
         <span className="ml-auto" />
+        {/* The conversation is where this colleague is talked to; it exists
+            with the team surface only, and not for a draft, which has not
+            started yet. */}
+        {me.TeamSurface && !isDraft(a) && (
+          <Link to={`/team/${a.id}`} className="btn sm no-underline">
+            <NavIcon name="chat" />
+            {t("team.gespraech")}
+          </Link>
+        )}
         {/* A draft has no first day — `wecken` would be the wrong button
             where `einstellen` stands. */}
         {canManage(me.Role) && !isDraft(a) && (
@@ -190,7 +192,7 @@ export default function AgentPage({ me }: { me: Principal }) {
               {t("agent.resume")}
             </button>
           ) : (
-            <button className="btn sm danger" onClick={() => act.mutate("kill")} title="Kill-Switch">
+            <button className="btn sm danger" onClick={() => act.mutate("kill")} title={t("agent.stopTitle")}>
               {t("agent.stop")}
             </button>
           ))}

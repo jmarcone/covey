@@ -24,6 +24,15 @@ on:
 permissions:
   contents: read
 
+# One run per pull request: a push to a PR branch cancels the run it
+# supersedes. Every other run (push to main, the weekly cron) gets a group of
+# its own, so it neither waits for another run nor is cancelled by one: a
+# group holds one running and ONE pending run, and a third arrival would
+# cancel the pending one, which is a merge commit left without a result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   frontend:
     runs-on: ubuntu-latest
@@ -85,6 +94,13 @@ jobs:
           go-version: "1.26"
           check-latest: true
           cache: true
+          # The cache key is the hash of these files. The security job below
+          # keys on go.sum alone and finishes first, so with the same key it
+          # would save the cache and this job's compiled test packages would
+          # never be stored: the first job to finish owns a key.
+          cache-dependency-path: |
+            go.sum
+            go.mod
       - uses: actions/download-artifact@v4
         with:
           name: web-dist
@@ -112,6 +128,7 @@ jobs:
       # instruments pgx, chromedp and the rest of the module graph, which
       # would make half the number somebody else's code.
       - name: go test
+        id: gotest
       # -timeout is a FUSE, not a budget. go test cuts a package off after ten
       # minutes when nothing says otherwise, and that default knows nothing
       # about the machine it runs on: the integration package took 592 s here
@@ -129,7 +146,28 @@ jobs:
           # and costs nothing while the tests pass: a wait returns when its
           # condition holds, not when the timer runs out.
           COVEY_TEST_WAIT_FACTOR: "3"
-        run: go test -timeout 45m -coverprofile=coverage.out -coverpkg="$(go list ./... | paste -sd, -)" ./...
+          # -count=1 below: setup-go restores the Go build cache, and that
+          # cache holds test results too. A rerun of an unchanged tree could
+          # replay "ok (cached)" instead of running the suite against the
+          # fresh Postgres, and a flaky test would look stable.
+        run: |
+          set -o pipefail
+          go test -timeout 45m -count=1 -coverprofile=coverage.out -coverpkg="$(go list ./... | paste -sd, -)" ./... 2>&1 | tee "$RUNNER_TEMP/go-test.log"
+      # A job log needs a sign-in, an annotation does not: this is what puts the
+      # failing test and its message where a run page, the checks API and an
+      # agent without a login can read them. The awk keeps each `--- FAIL` line
+      # with the indented lines go prints under it, plus package FAIL and panic
+      # lines; %0A is how a workflow command spells a newline.
+      - name: Failed tests as an annotation
+        if: failure() && steps.gotest.outcome == 'failure'
+        run: |
+          msg=$(awk '
+            /^[[:space:]]*--- FAIL/ { n = 8; print; next }
+            n > 0 && /^[[:space:]]+[^[:space:]]/ { print; n--; next }
+            /^(FAIL|panic:)/ { print }
+            { n = 0 }
+          ' "$RUNNER_TEMP/go-test.log" | head -c 3500 | sed 's/%/%25/g' | awk 'BEGIN { ORS = "%0A" } { print }')
+          echo "::error title=go test failed::${msg:-no FAIL line in the output, see the job log}"
       # The total is the number the README shows. `go tool cover` prints it as
       # the last line of its table; the awk cuts the percent sign off so the
       # badge job gets something it can compare.
@@ -153,7 +191,9 @@ jobs:
   badge:
     runs-on: ubuntu-latest
     needs: go
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Upstream only: the README's badge URL points at upstream's `badges`
+    # branch, so on a fork this would force-push a branch nobody reads.
+    if: github.repository == 'benjaminLedel/covey' && github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
     steps:
@@ -221,3 +261,42 @@ jobs:
       # same thing, so with the same flags too.
       - name: gosec
         run: go run github.com/securego/gosec/v2/cmd/gosec@v2.22.9 -quiet -exclude-dir=.go -include=G101,G102,G106,G107,G112,G114,G201,G202,G203,G303,G305,G401,G402,G403,G404,G501,G502,G503,G504,G601 ./...
+
+  # A migration number that two branches took against the same main. Review
+  # sees one diff, and `loadMigrations` notices only once both files sit in one
+  # tree — after the merge. Here a pull request is compared with main and with
+  # every other open pull request before that (cmd/covey-migcheck, which reads
+  # the others through the API, read-only).
+  #
+  # A job of its own and no `needs`: it builds nothing but the one command, so
+  # it has no reason to wait for the frontend, and a collision should show up
+  # in the first minute. `pull-requests: read` stands here and not at the top
+  # because no other job lists pull requests.
+  migration-numbers:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      # Full history: the added files are those since the merge base with main.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # cache: false. A job this short would otherwise be the first to finish
+      # and save the module cache under the key the go and security jobs share,
+      # without the compiled packages the go job wants to keep. The command has
+      # no dependencies; compiling it costs seconds.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          check-latest: true
+          cache: false
+      # The head commit of the pull request, not the merge commit the checkout
+      # leaves HEAD on: the merge base then does not move with main.
+      - name: migration numbers against main and the open pull requests
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: go run ./cmd/covey-migcheck -pr "$PR" -base origin/main -head "$HEAD_SHA"

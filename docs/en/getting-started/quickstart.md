@@ -135,7 +135,9 @@ There is a **first steps** checklist on the agent overview: deposit a runtime
 credential → create an agent → write `SOUL.md` → create a task → watch it work.
 It reads the organisation's actual state, so it ticks itself off and disappears
 once everything is done. The same steps are described in more detail in the help
-(key `?`).
+(key `?`). The help topics are written in German and English only: with the
+interface in German you read them in German, in every other language in English,
+with one line above them saying so.
 
 *New agent* offers four ways in. The **brief** is the shortest: describe in a few
 sentences what the new colleague should do, and the People department drafts the

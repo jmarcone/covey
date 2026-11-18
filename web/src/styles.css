@@ -172,6 +172,10 @@ picture { display: contents; }
 :root[data-theme="dark"] { color-scheme: dark; }
 
 * { box-sizing: border-box; }
+/* The scrollbar's room is kept whether or not a page needs it: the office
+   fits the window and the list does not, and without this everything that is
+   centred or right-aligned moved by the scrollbar's width between the two. */
+html { scrollbar-gutter: stable; }
 body {
   margin: 0;
   background: var(--surface-0);

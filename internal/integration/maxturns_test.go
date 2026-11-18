@@ -79,6 +79,45 @@ func TestMaxTurnsContinuation(t *testing.T) {
 	})
 }
 
+// TestMaxTurnsContinuationWithoutHandover covers the handover turn that
+// produced nothing (it timed out, failed, or spent its turn cap on tool calls):
+// the run is still incomplete with its session, so the follow-up task is still
+// created — without an interim note, but it resumes the session and finishes.
+func TestMaxTurnsContinuationWithoutHandover(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	agent := s.newSupportAgent("limit-silent-agent")
+
+	task, err := s.backlog.Create(ctx, s.orgID, agent.ID, "Silent handover",
+		"[mock:maxturns]", "manual", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "task terminal", 20*time.Second, func() bool {
+		st := s.taskState(task.ID)
+		return st == backlog.StateFailed || st == backlog.StateDone
+	})
+	if st := s.taskState(task.ID); st != backlog.StateFailed {
+		t.Fatalf("an aborted run has to be failed, is %s", st)
+	}
+	notes, err := s.backlog.ListNotes(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range notes {
+		if strings.Contains(n.Content, "Interim state") {
+			t.Fatalf("without a handover there is no interim note: %q", n.Content)
+		}
+	}
+	child := childOf(t, s, agent.ID, task.ID)
+	if child.RuntimeSessionID == nil || *child.RuntimeSessionID == "" {
+		t.Fatalf("the follow-up task has to carry the runtime session to resume from")
+	}
+	waitFor(t, "follow-up task done", 20*time.Second, func() bool {
+		return s.taskState(child.ID) == backlog.StateDone
+	})
+}
+
 // TestMaxTurnsEscalatesAfterCap checks the loop protection: if every
 // continuation runs into the turn limit again, the chain is not extended
 // endlessly but escalates. Without that bound the continuation only replaces

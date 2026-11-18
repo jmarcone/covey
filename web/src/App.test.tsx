@@ -1,6 +1,6 @@
 import type { ReactElement } from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { screen, render, waitFor } from "@testing-library/react";
+import { screen, render, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 import App from "./App";
@@ -182,7 +182,7 @@ describe("App und die Team-Oberfläche", () => {
     expect(screen.queryByRole("link", { name: "Team" })).not.toBeInTheDocument();
   });
 
-  it("gibt die Wurzel dem Team, wenn die Organisation es eingeschaltet hat", async () => {
+  it("gibt die Wurzel dem Büro, im selben Rahmen wie die Agentenliste", async () => {
     // The office measures its floor; jsdom does not.
     vi.stubGlobal(
       "ResizeObserver",
@@ -193,11 +193,41 @@ describe("App und die Team-Oberfläche", () => {
       },
     );
     serverMitSitzung(() => true, true);
-    renderApp(<App />, "/");
+    const { container } = renderApp(<App />, "/");
 
-    expect(await screen.findByText("Büro")).toBeInTheDocument();
-    // Administration is a row among the places (#387).
-    expect(screen.getByRole("link", { name: "Verwaltung" }).getAttribute("href")).toBe("/agents");
+    expect(await screen.findByRole("heading", { name: "Guten Tag, Test" })).toBeInTheDocument();
+    /* The office is a view of Agents, a main view: the rail marks Agents,
+       and no Admin column stands beside it, as none stands beside the
+       list. */
+    expect(screen.getByRole("link", { name: "Agenten" })).toHaveAttribute("aria-current", "page");
+    expect(within(screen.getByRole("navigation", { name: "Bereiche" })).queryByRole("link", { name: /^Büro/ })).not.toBeInTheDocument();
+    // Its place is the switch in the area's bar, and it is the view one is in.
+    expect(
+      within(screen.getByRole("navigation", { name: "Ansichten der Agenten" })).getByRole("link", { name: "Büro" }),
+    ).toHaveAttribute("aria-current", "page");
+    expect(container.querySelector("#konsole-nav")).toBeNull();
+    // Admin lands on the org chart, the first item of its column.
+    expect(screen.getByRole("link", { name: "Verwaltung" }).getAttribute("href")).toBe("/org");
+  });
+
+  it("lässt die Unterhaltung im Team und zeigt die Agentenseite ohne Spalte der Verwaltung", async () => {
+    serverMitSitzung(() => true, true);
+    const { container, unmount } = renderApp(<App />, "/team/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+    await waitFor(() => expect(screen.getByRole("link", { name: "Team" })).toHaveAttribute("aria-current", "page"));
+    expect(container.querySelector("#konsole-nav")).toBeNull();
+    unmount();
+
+    const agent = renderApp(<App />, "/agents/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+    await waitFor(() => expect(screen.getByRole("link", { name: "Agenten" })).toHaveAttribute("aria-current", "page"));
+    expect(agent.container.querySelector("#konsole-nav")).toBeNull();
+  });
+
+  it("führt ohne Team-Oberfläche von einer Unterhaltung zum Agenten, ohne Spalte der Verwaltung", async () => {
+    serverMitSitzung(() => true, false);
+    const { container } = renderApp(<App />, "/team/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+    await waitFor(() => expect(screen.getByRole("link", { name: "Agenten" })).toHaveAttribute("aria-current", "page"));
+    expect(screen.queryByRole("link", { name: "Team" })).not.toBeInTheDocument();
+    expect(container.querySelector("#konsole-nav")).toBeNull();
   });
 });
 
@@ -239,7 +269,7 @@ describe("App bei Telefonbreite", () => {
         ? Promise.resolve(new Response(JSON.stringify({ items: [], pending: 0 }), { status: 200, headers: { "Content-Type": "application/json" } }))
         : server(input, init),
     );
-    const { container } = renderApp(<App />, "/inbox");
+    const { container } = renderApp(<App />, "/org");
 
     const knopf = await screen.findByRole("button", { name: "Menü" });
     const leiste = container.querySelector("#konsole-nav")!;
@@ -247,7 +277,7 @@ describe("App bei Telefonbreite", () => {
     expect(knopf).toHaveAttribute("aria-controls", "konsole-nav");
     expect(leiste).toHaveAttribute("inert");
     // The bar names the page the hidden navigation would otherwise mark.
-    expect(container.querySelector(".konsole-bar-titel")).toHaveTextContent("Posteingang");
+    expect(container.querySelector(".konsole-bar-titel")).toHaveTextContent("Organigramm");
 
     // Open: a dialog, focus inside it, on the page one is on.
     knopf.click();
@@ -256,7 +286,7 @@ describe("App bei Telefonbreite", () => {
     expect(leiste).toHaveAttribute("role", "dialog");
     expect(leiste).toHaveAttribute("aria-modal", "true");
     expect(leiste.contains(document.activeElement)).toBe(true);
-    expect(document.activeElement).toHaveTextContent("Posteingang");
+    expect(document.activeElement).toHaveTextContent("Organigramm");
 
     // Escape closes it and gives focus back to the button.
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
@@ -272,9 +302,9 @@ describe("App bei Telefonbreite", () => {
     // A link navigates and closes it.
     knopf.click();
     await waitFor(() => expect(knopf).toHaveAttribute("aria-expanded", "true"));
-    const agenten = [...leiste.querySelectorAll("a")].find((a) => a.textContent === "Agenten")!;
-    agenten.click();
+    const kosten = [...leiste.querySelectorAll("a")].find((a) => a.textContent === "Kosten")!;
+    kosten.click();
     await waitFor(() => expect(knopf).toHaveAttribute("aria-expanded", "false"));
-    await waitFor(() => expect(container.querySelector(".konsole-bar-titel")).toHaveTextContent("Agenten"));
+    await waitFor(() => expect(container.querySelector(".konsole-bar-titel")).toHaveTextContent("Kosten"));
   });
 });

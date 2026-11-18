@@ -432,11 +432,11 @@
   },
   "agent": {
     "notFound": "エージェントが見つかりません。",
-    "breadcrumb": "エージェント",
     "sandbox": "サンドボックス稼働中",
     "wake": "起こす",
     "resume": "再開",
     "stop": "停止",
+    "stopTitle": "非常停止: エージェントをすぐに停止します",
     "tabs": {
       "backlog": "バックログ",
       "heartbeat": "ハートビート",
@@ -523,6 +523,7 @@
       "showArchive": "アーカイブを表示",
       "hideArchive": "アーカイブを隠す",
       "cleanup": "整理する",
+      "cleanupTitle": "完了・失敗・破棄したタスクをすべてアーカイブします — 削除はされません。",
       "editColumns": "列を編集",
       "doneEditing": "完了",
       "noStageColumn": "工程なし",
@@ -530,11 +531,15 @@
       "archived": "アーカイブ済み",
       "waitingOn": "{{key}} を待っています",
       "blocked": "ブロック中",
+      "parked": "保留中",
+      "parkedUntil": "{{key}} まで保留",
+      "reason": "理由",
       "agentNotes": "エージェントのメモ",
       "showRecording": "このタスクの記録",
       "reschedule": "予定を組み直す",
       "rescheduleHint": "タスクを未着手に戻します。エージェントがもう一度取り上げます。",
       "archive": "アーカイブ",
+      "archiveTitle": "タスクをアクティブなバックログから外します — 履歴と記録は残ります。",
       "discard": "破棄",
       "discardConfirm": "タスク「{{title}}」を破棄しますか？",
       "searchPlaceholder": "バックログを検索…",
@@ -576,6 +581,7 @@
       "rawView": "生データ",
       "readableTitle": "物語形式の表示: 思考、ツール呼び出し、ゲート",
       "rawTitle": "すべてのイベントを個別に、生の JSON 付きで — 完全版",
+      "viewLabel": "表示",
       "emptyFiltered": "このタスクの記録はありません。",
       "emptyAll": "まだ記録はありません。"
     },
@@ -613,15 +619,19 @@
       "copied": "コピーしました ✓",
       "example": "例",
       "rotate": "トークンを更新",
+      "rotateTitle": "新しいトークン — 古い URL は使えなくなります",
       "deactivate": "無効にする"
     },
     "config": {
       "saveTemplate": "テンプレートとして保存",
+      "saveTemplateTitle": "現在の設定を再利用できるテンプレートとして保存",
       "templateName": "テンプレート名",
       "templateDesc": "説明（任意）",
       "saveBtn": "保存",
       "exportBundle": "バンドルとして書き出す",
+      "exportBundleTitle": "設定一式（ステージ、ルール、egress、シークレット名）を JSON バンドルとしてダウンロード — 取り込みはエージェント一覧から",
       "importBundle": "バンドルを取り込む（config のみ）",
+      "importBundleTitle": "JSON バンドルを読み込み、その config ファイル「だけ」をこのエージェントに反映します（SOUL/HEARTBEAT/ACCESS/EGRESS/… を新しいバージョンとして上書き）。基本情報、シークレット、ルールは変わりません。",
       "importConfirm": "このエージェントの config をバンドルの内容で上書きしますか？ 適用されるのは設定ファイルだけです（新しいバージョンとして）。プロフィール、シークレット、ガードレールは変わりません。",
       "importInvalidJson": "JSON が不正です。正しいバンドルではありません。",
       "newVersion": "新しいバージョンとして保存",
@@ -723,6 +733,7 @@
       "effectiveAllowlist": "実効の許可リスト",
       "allBlocked": "空 — 外向きの接続はすべて遮断されます",
       "templates": "テンプレート",
+      "openTemplate": "テンプレートの詳細ページを開く",
       "noTemplates": "テンプレートがまだありません。まず「外向き通信 → テンプレート」で作成してください。",
       "ownHosts": "個別のホスト",
       "none": "なし",
@@ -818,6 +829,7 @@
       "readOnly": "あなたの役割では設定を閲覧できますが、変更はできません。",
       "dangerZone": "危険な操作です。取り消せません。",
       "deleteAgent": "エージェントを削除",
+      "deleteFailed": "エージェントを削除できませんでした。",
       "deleteConfirm": "{{name}} を完全に削除しますか？",
       "deleteYes": "はい、完全に削除します",
       "cancel": "キャンセル",
@@ -970,6 +982,13 @@
       "syncFailed": "{{when}} 以降、作業場は保存されていません: {{error}} — 以下の数値は古い状態を示しています。"
     },
     "wakeFailedWhy": "起動の失敗 {{n}} 回: {{err}}"
+  },
+  "agents": {
+    "views": "エージェントのビュー",
+    "view": {
+      "list": "リスト"
+    },
+    "backTo": "{{view}}に戻る"
   },
   "approvals": {
     "approve": "承認",
@@ -1311,6 +1330,7 @@
     "subtitle": "デーモンに登録されたプラグイン",
     "desc": "エンジンはコントロールプレーンとサンドボックスをつなぐ、差し替え可能な継ぎ目です。コードの中で自らを説明するプラグインです。各エンジンの ⓘ に、設定手順が順を追って示されます。エージェントがどのエンジン（とモデル）を使うかは、エージェントのページの「設定」タブで変更できます。",
     "showInfo": "設定を表示",
+    "info": "情報",
     "needsCredential": "● 資格情報が必要（シークレット）",
     "noCredential": "● 資格情報は不要",
     "setup": "設定 — {{label}}",
@@ -1806,6 +1826,7 @@
     "updateTools": "ツールを更新",
     "mcpNameSlug": "名前（スラッグ）",
     "mcpLabel": "ラベル",
+    "mcpLabelPlaceholder": "天気サービス",
     "mcpUrl": "エンドポイント URL",
     "mcpDesc": "説明",
     "mcpAuthHeader": "認証ヘッダー（任意）",
@@ -1905,6 +1926,7 @@
     "adopted": "取り込み済み",
     "createTemplateName": "名前",
     "createTemplateOptDesc": "説明（任意）",
+    "createTemplateDescPlaceholder": "本番ヘルプデスク + ナレッジベース",
     "createTemplateDesc": "テンプレートは関連する宛先ホストをまとめたものです。ホスト自体は詳細ページで管理します。",
     "createTemplateCreate": "作成",
     "cancel": "キャンセル",
@@ -2009,6 +2031,7 @@
     "delete": "削除",
     "deleteConfirm": "テンプレート「{{name}}」を削除しますか？",
     "savedDate": "{{date}} に保存",
+    "engineLabel": "エンジン:",
     "modelLabel": "モデル:",
     "useTemplate": "テンプレートを使う: {{name}}",
     "displayName": "表示名",
@@ -2157,6 +2180,7 @@
     "title": "ヘルプ",
     "openHint": "開くキー",
     "close": "ヘルプを閉じる",
+    "englishOnly": "ヘルプのトピックは英語で書かれています。",
     "spec": "さらに詳しく: リポジトリの spec/ にある仕様書。",
     "openProfile": "プロフィールと設定",
     "topics": {
@@ -3183,8 +3207,8 @@
       "text": "ここにいる同僚は AI エージェントです。人に頼むのと同じように、メッセージを書いて仕事を任せます。1 分ほどで、どこに何があるかをご案内します。"
     },
     "buero": {
-      "titel": "オフィス",
-      "text": "チームを建物として表示します。部署ごとに部屋が、同僚ごとに机があります。机が光っていれば、そこでタスクが進行中です。数字は、あなたの判断を待っている件数です。"
+      "titel": "エージェント",
+      "text": "ここに同僚がいます。オフィスはチームを建物として、リストは各エージェントとその作業内容を表示し、名前をクリックするとそのページが開きます。数字は、あなたの判断を待っている件数です。"
     },
     "team": {
       "titel": "チーム",

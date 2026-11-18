@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "react-router";
 import { useTranslation } from "react-i18next";
-import { getHelpTopics, topicForPath } from "../help";
+import { getHelpTopics, helpLanguage, topicForPath } from "../help";
 
 export default function HelpDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const location = useLocation();
@@ -24,6 +24,11 @@ export default function HelpDrawer({ open, onClose }: { open: boolean; onClose: 
   if (!open) return null;
 
   const topics = getHelpTopics(i18n.language);
+  // The topics exist in German and English only. Where they are not in the
+  // reader's language, a line says so, and `lang` lets a screen reader
+  // pronounce them as what they are.
+  const topicLang = helpLanguage(i18n.language);
+  const foreign = !i18n.language.startsWith(topicLang);
 
   return (
     <>
@@ -38,22 +43,25 @@ export default function HelpDrawer({ open, onClose }: { open: boolean; onClose: 
             ✕
           </button>
         </div>
-        {topics.map((topic) => {
-          const isOpen = active === topic.id;
-          return (
-            <section key={topic.id} className="help-topic">
-              <button
-                className={`help-topic-head ${isOpen ? "open" : ""}`}
-                onClick={() => setActive(isOpen ? "" : topic.id)}
-                aria-expanded={isOpen}
-              >
-                <span>{topic.title}</span>
-                <span className="muted">{isOpen ? "−" : "+"}</span>
-              </button>
-              {isOpen && <div className="help-body fade">{topic.body}</div>}
-            </section>
-          );
-        })}
+        {foreign && <p className="muted text-xs mb-3">{t("help.englishOnly")}</p>}
+        <div lang={foreign ? topicLang : undefined}>
+          {topics.map((topic) => {
+            const isOpen = active === topic.id;
+            return (
+              <section key={topic.id} className="help-topic">
+                <button
+                  className={`help-topic-head ${isOpen ? "open" : ""}`}
+                  onClick={() => setActive(isOpen ? "" : topic.id)}
+                  aria-expanded={isOpen}
+                >
+                  <span>{topic.title}</span>
+                  <span className="muted">{isOpen ? "−" : "+"}</span>
+                </button>
+                {isOpen && <div className="help-body fade">{topic.body}</div>}
+              </section>
+            );
+          })}
+        </div>
         <p className="muted text-xs mt-4">{t("help.spec")}</p>
       </aside>
     </>

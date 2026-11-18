@@ -12,6 +12,7 @@ import { NavIcon } from "../components/navicons";
 import Kopf, { Zustand } from "./Kopf";
 import Vorschlag from "./Vorschlag";
 import Attachments, { attachmentLimit } from "./Attachments";
+import { uiLocale } from "../i18n";
 
 const EntryCard = lazy(() => import("../pages/Inbox").then((m) => ({ default: m.EntryCard })));
 
@@ -69,7 +70,7 @@ const tagName = (iso: string, lang: string) => {
 };
 
 export default function Thread({ agentId, me }: { agentId: string; me: Principal }) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const [text, setText] = useState("");
   const [antwortAuf, setAntwortAuf] = useState<string | null>(null);
@@ -425,7 +426,7 @@ export default function Thread({ agentId, me }: { agentId: string; me: Principal
                         <Dauer seit={l.since} className="tm-hg-dauer" />
                       ) : (
                         <time className="tm-hg-dauer" dateTime={v.updated_at}>
-                          {new Date(v.updated_at).toLocaleDateString()}
+                          {new Date(v.updated_at).toLocaleDateString(uiLocale())}
                         </time>
                       )}
                     </button>
@@ -492,7 +493,7 @@ export default function Thread({ agentId, me }: { agentId: string; me: Principal
              zammad" ist eine Auskunft, „Nachricht" wäre eine Behauptung. */
           const herkunftName = herkunft(e.author) || t("chat.kind.message", "");
           const neuerTag = i === 0 || tag(entries[i - 1].at) !== tag(e.at);
-          const datum = neuerTag ? tagName(e.at, i18n.language) : null;
+          const datum = neuerTag ? tagName(e.at, uiLocale()) : null;
           const quelle = e.kind === "message" ? herkunft(e.author) : "";
           const davor = protokoll.filter(
             (d) => (i === 0 || Date.parse(d.decided_at!) > Date.parse(entries[i - 1].at)) && Date.parse(d.decided_at!) <= Date.parse(e.at),
@@ -535,7 +536,7 @@ export default function Thread({ agentId, me }: { agentId: string; me: Principal
                   <summary>
                     <span className="tm-auftrag-quelle">{quelle || t("team.auftrag")}</span>
                     <span className="tm-auftrag-titel">{e.task_title}</span>
-                    <time dateTime={e.at}>{uhr(e.at, i18n.language)}</time>
+                    <time dateTime={e.at}>{uhr(e.at, uiLocale())}</time>
                   </summary>
                   <div className="tm-auftrag-text">
                     <Markdown text={e.text} />
@@ -544,7 +545,7 @@ export default function Thread({ agentId, me }: { agentId: string; me: Principal
               ) : (
               <article
                 className={`tm-blase ${vonMir(e) ? "ich" : "er"} k-${e.kind}${e.unterwegs ? " unterwegs" : ""}${folgt ? " folgt" : ""}${nurEmoji(e.text) ? " emoji" : ""}`}
-                title={folgt ? uhr(e.at, i18n.language) : undefined}
+                title={folgt ? uhr(e.at, uiLocale()) : undefined}
               >
                 {/* Auf der Seite des Agenten steht sein Gesicht, und zwar nur
                     beim ersten Eintrag einer Folge: Fünf Gesichter
@@ -572,7 +573,7 @@ export default function Thread({ agentId, me }: { agentId: string; me: Principal
                         )}
                       </>
                     )}
-                    <time dateTime={e.at}>{uhr(e.at, i18n.language)}</time>
+                    <time dateTime={e.at}>{uhr(e.at, uiLocale())}</time>
                   </div>
                 )}
                 {e.kind === "config_proposal" && e.proposal ? (
@@ -883,13 +884,13 @@ function Marken({
 /* A decided entry as one line of the conversation (#391): what it was,
    how it ended, when. The conversation is the record. */
 function Entschieden({ entry }: { entry: InboxEntry }) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   return (
     <div className={`tm-entschieden st-${entry.status}`}>
       <span className="tm-entschieden-art">{t(`inbox.type.${entry.type}`)}</span>
       <span className="tm-entschieden-titel">{entry.title}</span>
       <span className="tm-entschieden-wie">{t(`inbox.status.${entry.status}`, entry.status)}</span>
-      <time dateTime={entry.decided_at}>{uhr(entry.decided_at!, i18n.language)}</time>
+      <time dateTime={entry.decided_at}>{uhr(entry.decided_at!, uiLocale())}</time>
     </div>
   );
 }

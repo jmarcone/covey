@@ -247,6 +247,7 @@ var routedInjectTypes = map[string]bool{
 	TypeInjectTool:           true,
 	TypeInjectPlatformAction: true,
 	TypeInjectSecret:         true,
+	TypeInjectTasks:          true,
 }
 
 // deliverIfResponse hands an answer to one of our own requests to its waiting
@@ -470,6 +471,19 @@ func (c *Client) wiki(ctx context.Context, req RequestWiki) (InjectWiki, error) 
 		return InjectWiki{}, err
 	}
 	return DecodePayload[InjectWiki](msg)
+}
+
+// tasks asks the control plane for the agent's tasks (covey/list_tasks,
+// covey/get_task). Uncached — the backlog moves while the run works.
+func (c *Client) tasks(ctx context.Context, req RequestTasks) (InjectTasks, error) {
+	req.RequestID = uuid.NewString()
+	reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	msg, err := c.request(reqCtx, TypeRequestTasks, req.RequestID, req)
+	if err != nil {
+		return InjectTasks{}, err
+	}
+	return DecodePayload[InjectTasks](msg)
 }
 
 // createTask has the control plane create a task (covey/create_task): a subtask

@@ -215,6 +215,19 @@ Duplicate protection is the most important of the four: without it, a recurring 
 
 Delegation stays inside the organisation: the target agent is resolved by its slug **within the sender's org**, and a paused agent accepts nothing. Inter-agent tasks are therefore subject to the same recording and policy rules as everything else (cf. the "agent-to-agent abuse" risk in [`04-identity-secrets.md`](04-identity-secrets.md)).
 
+### Reading its own tasks (`covey/list_tasks`, `covey/get_task`)
+
+An agent reads its backlog through two read-only meta actions at the action proxy (see [`01-architecture.md`](01-architecture.md)) instead of rebuilding the state of its work from wiki pages and target systems on every wake:
+
+| Action | Parameters | Answer |
+|---|---|---|
+| `covey/list_tasks` | all optional: `scope` = `own` \| `created` \| `all` (default `all`); `state` = one state or a list (default: any); `archived` = `true` adds the archive; `limit` (default 50, at most 200) | per task: `id`, `title`, `state`, `priority`, `stage`, `agent` (the assignee's slug), `origin`, `parent_task_id`, `created_at`, `updated_at`, `result_head` (the first 200 characters of the result or the error, on one line). Work still going first, then by priority, then what moved last. No body, no notes — the list stays small. |
+| `covey/get_task` | `id`: the full id, or a prefix of at least 8 hex characters | the list entry plus `body`, `result`, `error`, `resume_input`, the newest 50 `notes` (chronological) with `notes_total`, the state `transitions`, and the `children` it created (`id`, `title`, `agent`, `state`). A prefix that matches several tasks is an error naming them. |
+
+**What an agent may read is two sets, decided in the control plane** from the agent the connection belongs to: its **own** tasks (`agent_id` is the agent), and the tasks it **created** — those whose `parent_task_id` is one of its tasks and whose origin starts with `agent:`, i.e. its subtasks and delegations, one level down. Continuations are not "created" (they are its own tasks anyway). A colleague's backlog, a delegated task's own subtasks and anything in another organisation are outside, and `get_task` answers for them exactly as for an id that does not exist, so the error says nothing about title or state. A get_task's `children` follow the same rule.
+
+The access rule is the only filter. The redaction of [`28-team-surface.md`](28-team-surface.md) (section 3: a task's text goes only to readers of the conversation it came from) does not apply here: a task from a conversation reaches its own assignee in full, because the message was handed to that agent and it ran the task, and a delegation does not inherit its parent's conversation, so no other task of the two sets carries one. Both actions are recorded as `action` events (`covey:list_tasks`, `covey:get_task` with the id asked for, a refusal included) and, being read-only like `covey/org_chart`, do not go through the guard rails. Neither changes a task: closing, cancelling or re-prioritising stays with the board and its owner.
+
 ### Irony/opportunity: the backlog = a ticket system for agents
 
 The backlog basically *is* a ticket system — for the agents themselves. Two options:

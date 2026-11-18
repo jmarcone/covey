@@ -30,6 +30,7 @@ var responseTypes = []string{
 	TypeInjectTool,
 	TypeInjectPlatformAction,
 	TypeInjectMessage,
+	TypeInjectTasks,
 }
 
 // TestResponsesReachTheirCaller checks delivery by behavior instead of by

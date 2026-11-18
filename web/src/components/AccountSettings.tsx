@@ -7,7 +7,7 @@ import { NavIcon } from "./navicons";
 import Section from "./Section";
 import MobilePairing from "./MobilePairing";
 import ThemeSwitch from "./ThemeSwitch";
-import { LANG_LIST, istLang, ladeSprache, merkeSprache } from "../i18n";
+import { LANG_LIST, istLang, ladeSprache, merkeSprache, uiLocale } from "../i18n";
 
 type Session = { created_at: string; expires_at: string; current: boolean };
 
@@ -24,7 +24,7 @@ type NotifyPrefs = { prefs: Record<string, boolean>; disabled: string[] };
 export default function AccountSettings({ me }: { me: Principal }) {
   const { t, i18n } = useTranslation();
   const qc = useQueryClient();
-  const locale = i18n.language === "de" ? "de-DE" : "en-US";
+  const locale = uiLocale();
   const [name, setName] = useState(me.DisplayName);
   const [currentPw, setCurrentPw] = useState("");
   const [newPw, setNewPw] = useState("");

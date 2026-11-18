@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, post, put, type Setting } from "../../api";
 import PlatformHeader from "./Header";
+import { uiLocale } from "../../i18n";
 
 /** Mail delivery of this installation (#167).
  *
@@ -147,8 +148,8 @@ export default function Mail() {
         {lastAt === ""
           ? t("platform.mailNeverTested")
           : lastError === ""
-            ? t("platform.mailLastOk", { date: new Date(lastAt).toLocaleString() })
-            : t("platform.mailLastFailed", { date: new Date(lastAt).toLocaleString(), error: lastError })}
+            ? t("platform.mailLastOk", { date: new Date(lastAt).toLocaleString(uiLocale()) })
+            : t("platform.mailLastFailed", { date: new Date(lastAt).toLocaleString(uiLocale()), error: lastError })}
       </p>
     </div>
   );

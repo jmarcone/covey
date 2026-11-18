@@ -432,11 +432,11 @@
   },
   "agent": {
     "notFound": "Agent not found.",
-    "breadcrumb": "Agents",
     "sandbox": "Sandbox active",
     "wake": "Wake",
     "resume": "Resume",
     "stop": "Stop",
+    "stopTitle": "Kill switch: stops the agent at once",
     "tabs": {
       "backlog": "Backlog",
       "heartbeat": "Heartbeat",
@@ -523,6 +523,7 @@
       "showArchive": "Show archive",
       "hideArchive": "Hide archive",
       "cleanup": "Clean up",
+      "cleanupTitle": "Archives every done, failed and discarded task — nothing is deleted.",
       "editColumns": "Edit columns",
       "doneEditing": "Done",
       "noStageColumn": "No stage",
@@ -530,11 +531,15 @@
       "archived": "archived",
       "waitingOn": "waiting on {{key}}",
       "blocked": "blocked",
+      "parked": "parked",
+      "parkedUntil": "parked until {{key}}",
+      "reason": "reason",
       "agentNotes": "Agent notes",
       "showRecording": "Recording for this task",
       "reschedule": "Reschedule",
       "rescheduleHint": "Resets the task back to open — the agent will pick it up again.",
       "archive": "Archive",
+      "archiveTitle": "Hides the task from the active backlog — its history and recording are kept.",
       "discard": "Discard",
       "discardConfirm": "Discard task \"{{title}}\"?",
       "searchPlaceholder": "Search backlog…",
@@ -576,6 +581,7 @@
       "rawView": "Raw data",
       "readableTitle": "Narrative view: thoughts, tool calls and gates",
       "rawTitle": "All events individually, with raw JSON — complete",
+      "viewLabel": "View",
       "emptyFiltered": "No recording for this task.",
       "emptyAll": "No recording yet."
     },
@@ -613,15 +619,19 @@
       "copied": "Copied ✓",
       "example": "Example",
       "rotate": "Rotate token",
+      "rotateTitle": "New token — the old URL stops working",
       "deactivate": "Deactivate"
     },
     "config": {
       "saveTemplate": "Save as template",
+      "saveTemplateTitle": "Save the current configuration as a reusable template",
       "templateName": "Template name",
       "templateDesc": "Description (optional)",
       "saveBtn": "Save",
       "exportBundle": "Export as bundle",
+      "exportBundleTitle": "Download the complete configuration (stages, guard rails, egress, secret names) as a JSON bundle — import it on the agent overview",
       "importBundle": "Import bundle (config only)",
+      "importBundleTitle": "Read a JSON bundle and apply ONLY its config files to this agent (overwrites SOUL/HEARTBEAT/ACCESS/EGRESS/… as a new version). Master data, secrets and guard rails stay untouched.",
       "importConfirm": "Overwrite this agent's config from the bundle? Only the config files are applied (as a new version) — profile data, secrets and guard-rails stay unchanged.",
       "importInvalidJson": "Invalid JSON — not a valid bundle.",
       "newVersion": "Save new version",
@@ -723,6 +733,7 @@
       "effectiveAllowlist": "Effective allowlist",
       "allBlocked": "empty — every outbound connection is blocked",
       "templates": "Templates",
+      "openTemplate": "Open the template's detail page",
       "noTemplates": "No templates yet — create one under Egress → Templates first.",
       "ownHosts": "Own hosts",
       "none": "none",
@@ -818,6 +829,7 @@
       "readOnly": "Your role can view settings but not change them.",
       "dangerZone": "Danger zone — this action cannot be undone.",
       "deleteAgent": "Delete agent",
+      "deleteFailed": "The agent could not be deleted.",
       "deleteConfirm": "Permanently delete {{name}}?",
       "deleteYes": "Yes, delete permanently",
       "cancel": "Cancel",
@@ -970,6 +982,13 @@
       "syncFailed": "The workplace has not been secured since {{when}}: {{error}} — the figures below describe an older state."
     },
     "wakeFailedWhy": "{{n}} failed wakes: {{err}}"
+  },
+  "agents": {
+    "views": "Agent views",
+    "view": {
+      "list": "List"
+    },
+    "backTo": "Back to {{view}}"
   },
   "approvals": {
     "approve": "Approve",
@@ -1311,6 +1330,7 @@
     "subtitle": "plugins registered in the daemon",
     "desc": "Engines are the swappable seam between the control plane and the sandbox — self-describing plugins in code. The ⓘ per engine shows setup instructions step by step. Which engine (and model) an agent uses can be changed on the agent page under the Settings tab.",
     "showInfo": "Show setup",
+    "info": "Info",
     "needsCredential": "● needs credential (Secrets)",
     "noCredential": "● no credentials needed",
     "setup": "Setup — {{label}}",
@@ -1806,6 +1826,7 @@
     "updateTools": "Update tools",
     "mcpNameSlug": "Name (slug)",
     "mcpLabel": "Label",
+    "mcpLabelPlaceholder": "Weather service",
     "mcpUrl": "Endpoint URL",
     "mcpDesc": "Description",
     "mcpAuthHeader": "Auth header (optional)",
@@ -1905,6 +1926,7 @@
     "adopted": "adopted",
     "createTemplateName": "Name",
     "createTemplateOptDesc": "Description (optional)",
+    "createTemplateDescPlaceholder": "Helpdesk production + knowledge base",
     "createTemplateDesc": "A template bundles related target hosts — you manage the hosts on the detail page.",
     "createTemplateCreate": "Create",
     "cancel": "Cancel",
@@ -2009,6 +2031,7 @@
     "delete": "Delete",
     "deleteConfirm": "Delete template \"{{name}}\"?",
     "savedDate": "saved {{date}}",
+    "engineLabel": "Engine:",
     "modelLabel": "Model:",
     "useTemplate": "Use template: {{name}}",
     "displayName": "Display name",
@@ -2157,6 +2180,7 @@
     "title": "Help",
     "openHint": "open with",
     "close": "Close help",
+    "englishOnly": "The help topics are written in English.",
     "spec": "Deep dive: the specification in the repository under spec/.",
     "openProfile": "Profile & Settings",
     "topics": {
@@ -3183,8 +3207,8 @@
       "text": "Your colleagues here are AI agents. You give them work the way you would give it to a person: by writing to them. This takes a minute and shows you where everything is."
     },
     "buero": {
-      "titel": "The office",
-      "text": "The workforce as a building: a room per department, a desk per colleague. A lit desk means a task is running there. The number shows how many decisions are waiting for you."
+      "titel": "Agents",
+      "text": "Your colleagues live here. The office shows the workforce as a building, the list shows every agent and what it is doing, and a click on a name opens its page. The number shows how many decisions are waiting for you."
     },
     "team": {
       "titel": "The team",

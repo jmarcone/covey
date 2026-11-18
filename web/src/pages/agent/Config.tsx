@@ -96,7 +96,7 @@ export function Config({
             <button
               className="btn sm"
               onClick={() => { setTemplateName(displayName); setSavingTemplate(true); }}
-              title="Aktuelle Konfiguration als wiederverwendbare Vorlage speichern"
+              title={t("agent.config.saveTemplateTitle")}
             >
               {t("agent.config.saveTemplate")}
             </button>
@@ -135,7 +135,7 @@ export function Config({
             className="btn sm no-underline"
             href={`/api/v1/agents/${agentId}/export`}
             download={`${slug}-config.json`}
-            title="Komplette Konfiguration (inkl. Stages, Guard-Rails, Egress, Secret-Namen) als JSON-Bundle herunterladen — Import auf der Agenten-Übersicht"
+            title={t("agent.config.exportBundleTitle")}
           >
             {t("agent.config.exportBundle")}
           </a>
@@ -146,7 +146,7 @@ export function Config({
                 type="button"
                 disabled={importCfg.isPending}
                 onClick={() => importRef.current?.click()}
-                title="Ein JSON-Bundle einlesen und NUR dessen Config-Dateien in diesen Agenten übernehmen (überschreibt SOUL/HEARTBEAT/ACCESS/EGRESS/… als neue Version). Stammdaten, Secrets und Guard-Rails bleiben unangetastet."
+                title={t("agent.config.importBundleTitle")}
               >
                 {importCfg.isPending ? "…" : t("agent.config.importBundle")}
               </button>

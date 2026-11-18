@@ -14,6 +14,7 @@ import {
   type SecretLimit,
   type SecretPreview,
 } from "../api";
+import { uiLocale } from "../i18n";
 
 // The workstations: engine plus capacity, named and assignable (spec/18).
 //
@@ -318,12 +319,12 @@ function CredentialRow({
         <span className="flex-1">{c.label || t("runtimes.instances.unnamed", { ord: c.ord })}</span>
         {paused && (
           <span className="badge st-blocked" title={t("runtimes.instances.pausedHint")}>
-            {t("runtimes.instances.paused", { since: new Date(c.paused_at!).toLocaleString() })}
+            {t("runtimes.instances.paused", { since: new Date(c.paused_at!).toLocaleString(uiLocale()) })}
           </span>
         )}
         {parked && (
           <span className="badge st-blocked" title={c.cooldown_reason}>
-            {t("runtimes.instances.parked", { until: new Date(c.cooldown_until!).toLocaleString() })}
+            {t("runtimes.instances.parked", { until: new Date(c.cooldown_until!).toLocaleString(uiLocale()) })}
           </span>
         )}
         {seats.map((s) => (

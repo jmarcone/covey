@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
 import { listNotes } from "../api";
 import { Board, NotePage, groupByDay, heading, kindGlyph, meta, useNotesView } from "../pages/Notes";
+import { uiLocale } from "../i18n";
 
 /* The notes in the team shell's three columns (#388): the list in the
  * middle column, the note or the board on the right. The open note is in
@@ -24,7 +25,7 @@ export function NotesSidebar({ selected }: { selected: string | null }) {
   }, [query]);
   const notes = useNotesQuery(q);
   const list = notes.data?.notes ?? [];
-  const days = useMemo(() => groupByDay(list, i18n.language, t), [list, i18n.language, t]);
+  const days = useMemo(() => groupByDay(list, uiLocale(), t), [list, i18n.language, t]);
 
   return (
     <div className="tm-spalte">
@@ -76,7 +77,7 @@ export function NotesSidebar({ selected }: { selected: string | null }) {
                 <span className="notes-row-text">
                   <span className="notes-row-h">{heading(n) || t("mobile.ohneTitel")}</span>
                   <span className="notes-row-m">
-                    {meta(n, i18n.language, t, false)}
+                    {meta(n, uiLocale(), t, false)}
                     {n.status ? ` · ${t(`mobile.nstatus_${n.status}`)}` : ""}
                   </span>
                 </span>

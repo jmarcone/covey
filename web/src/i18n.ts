@@ -9,6 +9,17 @@ export { LANG_BY_CODE, LANG_LIST, LANGS, istLang } from "./langs";
 
 export const LANG_KEY = "covey.lang";
 
+/* The locale tag every Intl call and every toLocale*String takes: the language
+   of the UI, nothing else. Not the browser's — a German browser with the UI in
+   English would put German dates next to English text, which is the mix #21
+   complains about — and not a de/else switch either, which hands every
+   language but German the en-US spelling. The `bcp47` of the list, because
+   that is the tag the catalogue is written for (`zh` is `zh-Hans`). */
+export function uiLocale(): string {
+  const lang = istLang(i18n.language) ? i18n.language : BASE_LANG;
+  return LANG_BY_CODE[lang].bcp47;
+}
+
 /* Start language. Two cases:
 
    - Before sign-in the address decides: /fr/connexion is an address that

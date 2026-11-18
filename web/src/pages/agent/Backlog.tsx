@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import i18n from "../../i18n";
+import i18n, { uiLocale } from "../../i18n";
 import {
   api,
   post,
@@ -18,6 +18,15 @@ import { upstreamIssueURL } from "../../upstream";
 import { PhaseBadge } from "../../components/PhaseBadge";
 import { useNarrow } from "../../components/ConsoleDrawer";
 import { useEdgeFade } from "../../components/useEdgeFade";
+
+const PARKED_PREFIX = "parked:";
+
+/** What a parked task waits for — its correlation key without "parked:" — or
+ *  undefined when the task is not a blocked, parked one. */
+export function parkedOn(task: Pick<Task, "state" | "correlation_key">): string | undefined {
+  if (task.state !== "blocked" || !task.correlation_key?.startsWith(PARKED_PREFIX)) return undefined;
+  return task.correlation_key.slice(PARKED_PREFIX.length);
+}
 
 export function Backlog({
   agentId,
@@ -179,7 +188,7 @@ export function Backlog({
                 <button
                   className="btn sm"
                   disabled={cleanupCount === 0 || cleanup.isPending}
-                  title="Archiviert alle erledigten, fehlgeschlagenen und verworfenen Aufgaben — nichts wird gelöscht."
+                  title={t("agent.backlog.cleanupTitle")}
                   onClick={() => cleanup.mutate()}
                 >
                   {t("agent.backlog.cleanup")}{cleanupCount > 0 ? ` (${cleanupCount})` : ""}
@@ -467,7 +476,7 @@ function relTime(iso: string): string {
   if (min < 60) return i18n.t("activity.timeMinutes", { n: min });
   const h = Math.round(min / 60);
   if (h < 24) return i18n.t("activity.timeHours", { n: h });
-  const locale = i18n.language === "de" ? "de-DE" : "en-US";
+  const locale = uiLocale();
   return new Date(iso).toLocaleDateString(locale);
 }
 
@@ -551,11 +560,16 @@ function TaskCard({
   // Draggable only where there is somewhere to drop it: the search list has no
   // columns, and a grab cursor that leads nowhere is a lie.
   const draggable = canManage && !archived && !!onDragStart;
+  // A task blocked on "parked:<what>" waits on purpose until <what> is ready
+  // (a branch, a PR); the board says so instead of "waiting on parked:…".
+  const parkedUntil = parkedOn(task);
   const subtitle =
     task.state === "blocked"
-      ? task.correlation_key
-        ? t("agent.backlog.waitingOn", { key: task.correlation_key })
-        : t("agent.backlog.blocked")
+      ? parkedUntil !== undefined
+        ? t("agent.backlog.parkedUntil", { key: parkedUntil })
+        : task.correlation_key
+          ? t("agent.backlog.waitingOn", { key: task.correlation_key })
+          : t("agent.backlog.blocked")
       : relTime(task.updated_at);
   return (
     <div
@@ -567,7 +581,9 @@ function TaskCard({
       style={archived ? { opacity: 0.55 } : undefined}
     >
       <div className="kc-title">
-        <span className={`badge state st-${task.state} kc-state`}>{t(`status.${task.state}`, task.state)}</span>
+        <span className={`badge state st-${task.state} kc-state`}>
+          {parkedUntil !== undefined ? t("agent.backlog.parked") : t(`status.${task.state}`, task.state)}
+        </span>
         <span className={`font-medium min-w-0 truncate${task.redacted ? " muted" : ""}`}>{title}</span>
         {archived && <span className="muted text-[11px] shrink-0">{t("agent.backlog.archived")}</span>}
         <span className="kc-prio">P{task.priority}</span>
@@ -602,6 +618,11 @@ function TaskCard({
             <p>
               <span className="muted">{t("agent.backlog.waitingOn", { key: "" }).replace(" ", "")}:</span>{" "}
               <span className="mono">{task.correlation_key}</span>
+            </p>
+          )}
+          {task.state === "blocked" && !task.redacted && task.blocked_reason && (
+            <p>
+              <span className="muted">{t("agent.backlog.reason")}:</span> {task.blocked_reason}
             </p>
           )}
           {task.cost_usd !== undefined && (
@@ -694,7 +715,7 @@ function TaskCard({
               <button
                 className="btn sm"
                 disabled={archive.isPending}
-                title="Blendet die Aufgabe aus dem aktiven Backlog aus — Historie und Recording bleiben erhalten."
+                title={t("agent.backlog.archiveTitle")}
                 onClick={(e) => {
                   e.stopPropagation();
                   archive.mutate();

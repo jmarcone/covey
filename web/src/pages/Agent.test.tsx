@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router";
@@ -220,6 +220,33 @@ describe("Agent in einer anderen Organisation", () => {
 
     expect(await screen.findByText("Startseite")).toBeInTheDocument();
     expect(calls.filter((c) => c === `GET /api/v1/agents/${AGENT_ID}`)).toHaveLength(1);
+  });
+});
+
+describe("Kopf der Agenten-Seite", () => {
+  function zeigeKopf(me: ReturnType<typeof testPrincipal> & { TeamSurface?: boolean }, extra = {}) {
+    mockFetch({ ...basisRouten, [`/api/v1/agents/${AGENT_ID}`]: { ...agent, ...extra } });
+    renderWithProviders(<AgentPage me={me} />, { route: `/agents/${AGENT_ID}`, path: "/agents/:id" });
+    return screen.findByRole("heading", { name: "Test-Agent" });
+  }
+
+  it("führt mit der Team-Oberfläche in die Unterhaltung", async () => {
+    await zeigeKopf({ ...testPrincipal(), TeamSurface: true }, { hired_at: "2026-01-02T00:00:00Z" });
+    expect(screen.getByRole("link", { name: "Gespräch öffnen" }).getAttribute("href")).toBe(`/team/${AGENT_ID}`);
+  });
+
+  it("kennt die Unterhaltung nicht ohne Team-Oberfläche und nicht für einen Entwurf", async () => {
+    await zeigeKopf(testPrincipal(), { hired_at: "2026-01-02T00:00:00Z" });
+    expect(screen.queryByRole("link", { name: "Gespräch öffnen" })).not.toBeInTheDocument();
+    cleanup();
+    // A draft has not started; there is nobody to talk to yet.
+    await zeigeKopf({ ...testPrincipal(), TeamSurface: true });
+    expect(screen.queryByRole("link", { name: "Gespräch öffnen" })).not.toBeInTheDocument();
+  });
+
+  it("trägt keine eigene Brotkrume mehr; sie steht in der Leiste des Bereichs", async () => {
+    await zeigeKopf({ ...testPrincipal(), TeamSurface: true });
+    expect(screen.queryByText("/")).not.toBeInTheDocument();
   });
 });
 

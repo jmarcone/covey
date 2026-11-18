@@ -432,11 +432,11 @@
   },
   "agent": {
     "notFound": "Agente não encontrado.",
-    "breadcrumb": "Agentes",
     "sandbox": "Sandbox ativa",
     "wake": "Acordar",
     "resume": "Retomar",
     "stop": "Parar",
+    "stopTitle": "Paragem de emergência: para o agente de imediato",
     "tabs": {
       "backlog": "Backlog",
       "heartbeat": "Batimento",
@@ -523,6 +523,7 @@
       "showArchive": "Mostrar o arquivo",
       "hideArchive": "Ocultar o arquivo",
       "cleanup": "Limpar",
+      "cleanupTitle": "Arquiva todas as tarefas concluídas, falhadas e descartadas — nada é eliminado.",
       "editColumns": "Editar as colunas",
       "doneEditing": "Concluído",
       "noStageColumn": "Sem fase",
@@ -530,11 +531,15 @@
       "archived": "arquivada",
       "waitingOn": "à espera de {{key}}",
       "blocked": "bloqueada",
+      "parked": "estacionada",
+      "parkedUntil": "estacionada até {{key}}",
+      "reason": "motivo",
       "agentNotes": "Notas do agente",
       "showRecording": "Gravação desta tarefa",
       "reschedule": "Reagendar",
       "rescheduleHint": "Repõe a tarefa como aberta — o agente volta a pegar nela.",
       "archive": "Arquivar",
+      "archiveTitle": "Retira a tarefa do backlog ativo — o histórico e a gravação são mantidos.",
       "discard": "Descartar",
       "discardConfirm": "Descartar a tarefa \"{{title}}\"?",
       "searchPlaceholder": "Procurar no backlog…",
@@ -576,6 +581,7 @@
       "rawView": "Dados em bruto",
       "readableTitle": "Vista narrada: pensamentos, chamadas a ferramentas e portas",
       "rawTitle": "Todos os eventos um a um, com o JSON em bruto — completo",
+      "viewLabel": "Vista",
       "emptyFiltered": "Não há gravação para esta tarefa.",
       "emptyAll": "Ainda não há gravação."
     },
@@ -613,15 +619,19 @@
       "copied": "Copiado ✓",
       "example": "Exemplo",
       "rotate": "Rodar o token",
+      "rotateTitle": "Novo token — o URL antigo deixa de funcionar",
       "deactivate": "Desativar"
     },
     "config": {
       "saveTemplate": "Guardar como modelo",
+      "saveTemplateTitle": "Guardar a configuração atual como modelo reutilizável",
       "templateName": "Nome do modelo",
       "templateDesc": "Descrição (opcional)",
       "saveBtn": "Guardar",
       "exportBundle": "Exportar como pacote",
+      "exportBundleTitle": "Descarregar a configuração completa (etapas, regras, egress, nomes dos segredos) como pacote JSON — importa-se na vista geral dos agentes",
       "importBundle": "Importar pacote (só config)",
+      "importBundleTitle": "Ler um pacote JSON e aplicar a este agente APENAS os seus ficheiros de config (substitui SOUL/HEARTBEAT/ACCESS/EGRESS/… como nova versão). Os dados base, os segredos e as regras ficam intactos.",
       "importConfirm": "Substituir a config deste agente a partir do pacote? Só os ficheiros de configuração são aplicados (como versão nova) — dados de perfil, segredos e barreiras ficam inalterados.",
       "importInvalidJson": "JSON inválido — não é um pacote válido.",
       "newVersion": "Guardar versão nova",
@@ -723,6 +733,7 @@
       "effectiveAllowlist": "Lista de permissões efetiva",
       "allBlocked": "vazia — todas as ligações de saída são bloqueadas",
       "templates": "Modelos",
+      "openTemplate": "Abrir a página de detalhe do modelo",
       "noTemplates": "Ainda sem modelos — crie primeiro um em Saída de rede → Modelos.",
       "ownHosts": "Anfitriões próprios",
       "none": "nenhum",
@@ -818,6 +829,7 @@
       "readOnly": "O seu papel pode ver as definições mas não alterá-las.",
       "dangerZone": "Zona perigosa — esta ação não pode ser desfeita.",
       "deleteAgent": "Eliminar o agente",
+      "deleteFailed": "Não foi possível eliminar o agente.",
       "deleteConfirm": "Eliminar {{name}} definitivamente?",
       "deleteYes": "Sim, eliminar definitivamente",
       "cancel": "Cancelar",
@@ -970,6 +982,13 @@
       "syncFailed": "O posto de trabalho não é salvaguardado desde {{when}}: {{error}} — os números abaixo descrevem um estado mais antigo."
     },
     "wakeFailedWhy": "{{n}} despertares falhados: {{err}}"
+  },
+  "agents": {
+    "views": "Vistas dos agentes",
+    "view": {
+      "list": "Lista"
+    },
+    "backTo": "Voltar a {{view}}"
   },
   "approvals": {
     "approve": "Aprovar",
@@ -1311,6 +1330,7 @@
     "subtitle": "plugins registados no daemon",
     "desc": "Os motores são a junta substituível entre o plano de controlo e a sandbox — plugins que se descrevem a si mesmos, em código. O ⓘ de cada motor mostra a configuração passo a passo. Que motor (e modelo) um agente usa muda-se na página do agente, no separador Definições.",
     "showInfo": "Ver a configuração",
+    "info": "Info",
     "needsCredential": "● precisa de credencial (Segredos)",
     "noCredential": "● não precisa de credenciais",
     "setup": "Configuração — {{label}}",
@@ -1806,6 +1826,7 @@
     "updateTools": "Atualizar ferramentas",
     "mcpNameSlug": "Nome (slug)",
     "mcpLabel": "Etiqueta",
+    "mcpLabelPlaceholder": "Serviço meteorológico",
     "mcpUrl": "URL do ponto de acesso",
     "mcpDesc": "Descrição",
     "mcpAuthHeader": "Cabeçalho de autenticação (opcional)",
@@ -1905,6 +1926,7 @@
     "adopted": "adotado",
     "createTemplateName": "Nome",
     "createTemplateOptDesc": "Descrição (opcional)",
+    "createTemplateDescPlaceholder": "Helpdesk de produção + base de conhecimento",
     "createTemplateDesc": "Um modelo junta anfitriões de destino afins — os anfitriões geram-se na página de detalhe.",
     "createTemplateCreate": "Criar",
     "cancel": "Cancelar",
@@ -2009,6 +2031,7 @@
     "delete": "Eliminar",
     "deleteConfirm": "Eliminar o modelo «{{name}}»?",
     "savedDate": "guardado em {{date}}",
+    "engineLabel": "Motor:",
     "modelLabel": "Modelo:",
     "useTemplate": "Usar o modelo: {{name}}",
     "displayName": "Nome apresentado",
@@ -2157,6 +2180,7 @@
     "title": "Ajuda",
     "openHint": "abre com",
     "close": "Fechar a ajuda",
+    "englishOnly": "Os tópicos de ajuda estão escritos em inglês.",
     "spec": "A fundo: a especificação no repositório, em spec/.",
     "openProfile": "Perfil e definições",
     "topics": {
@@ -3183,8 +3207,8 @@
       "text": "Os seus colegas aqui são agentes de IA. Dá-lhes trabalho como o daria a uma pessoa: escrevendo-lhes. Num minuto mostramos-lhe onde está cada coisa."
     },
     "buero": {
-      "titel": "O escritório",
-      "text": "A equipa como um edifício: uma sala por departamento, uma secretária por colega. Uma secretária iluminada significa que ali decorre uma tarefa. O número indica quantas decisões estão à sua espera."
+      "titel": "Agentes",
+      "text": "Aqui vivem os seus colegas. O escritório mostra a equipa como um edifício, a lista mostra cada agente e o que está a fazer, e um clique num nome abre a sua página. O número indica quantas decisões estão à sua espera."
     },
     "team": {
       "titel": "A equipa",
