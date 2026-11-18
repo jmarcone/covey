@@ -112,3 +112,55 @@ describe("Befund aus einer Aufgaben-Notiz melden", () => {
     expect(screen.queryByText("↗ nach oben melden")).toBeNull();
   });
 });
+
+// A task parked on "parked:<what>" is blocked on purpose; the board must tell
+// it apart from one that waits for a ticket reply or an approval, and show
+// the question the task was blocked with.
+describe("Geparkte Aufgaben auf dem Board", () => {
+  beforeEach(() => useGerman());
+
+  const blocked = (over: Record<string, unknown>) => ({
+    ...TASK,
+    state: "blocked",
+    title: "Kosten-Auswertung bauen",
+    ...over,
+  });
+
+  async function zeige(task: Record<string, unknown>) {
+    mockFetch({ ...routen(), "/api/v1/agents/a1/backlog": [task], "/api/v1/tasks/t1/notes": [] });
+    renderWithProviders(<Backlog agentId="a1" canManage onShowRecording={() => {}} />);
+    await userEvent.click(await screen.findByText(task.title as string));
+  }
+
+  it("zeigt Badge „geparkt“, „geparkt bis …“ und den Grund", async () => {
+    await zeige(
+      blocked({
+        correlation_key: "parked:feat/cost-insights",
+        blocked_reason: "waits for branch ready: feat/cost-insights",
+      }),
+    );
+    expect(screen.getByText("geparkt")).toBeInTheDocument();
+    expect(screen.getByText(/geparkt bis feat\/cost-insights/)).toBeInTheDocument();
+    expect(screen.queryByText(/wartet auf/)).not.toBeInTheDocument();
+    expect(screen.getByText("waits for branch ready: feat/cost-insights")).toBeInTheDocument();
+  });
+
+  it("lässt andere Schlüssel bei „wartet“ und „wartet auf …“ und zeigt den Grund", async () => {
+    await zeige(blocked({ correlation_key: "zammad:4711", blocked_reason: "Kunde muss antworten" }));
+    expect(screen.queryByText("geparkt")).not.toBeInTheDocument();
+    expect(screen.getByText("wartet")).toBeInTheDocument();
+    expect(screen.getByText(/wartet auf zammad:4711/)).toBeInTheDocument();
+    expect(screen.getByText("Kunde muss antworten")).toBeInTheDocument();
+  });
+
+  it("zeigt ohne Grund keine Grund-Zeile", async () => {
+    await zeige(blocked({ correlation_key: "parked:feat/cost-insights" }));
+    expect(screen.getByText("geparkt")).toBeInTheDocument();
+    expect(screen.queryByText("Grund:")).not.toBeInTheDocument();
+  });
+
+  it("zeigt bei einem leeren Grund keine Grund-Zeile (anderer Schlüssel)", async () => {
+    await zeige(blocked({ correlation_key: "zammad:4711", blocked_reason: "" }));
+    expect(screen.queryByText("Grund:")).not.toBeInTheDocument();
+  });
+});
