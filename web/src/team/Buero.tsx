@@ -13,6 +13,8 @@ import { aufSchirm, szeneBauen, type Bau } from "./buero/szene";
 import { erschaffeKamera, erschaffeMaler, groesse, type Steuerung } from "./buero/kamera";
 import { laufFeldBauen, type LaufFelder } from "./buero/laufweg";
 import { erschaffeLeben, type Leben } from "./buero/leben";
+import { erschaffeMasse } from "./buero/masse";
+import { erschaffeTakt, sichtWaechter, type Bedarf } from "./buero/takt";
 import Riss from "./buero/risse";
 import type { Gruppe, Haus, Punkt, Zustand } from "./buero/typen";
 
@@ -44,7 +46,12 @@ import type { Gruppe, Haus, Punkt, Zustand } from "./buero/typen";
  * built a second time, a click on a colleague would be arithmetic instead of
  * a button, and the keyboard would have nowhere to go. So the scene is a
  * canvas and the people, the signs and the card are an overlay positioned
- * from the camera every frame — with `transform`, one write per figure.
+ * from the camera in every frame that is drawn — with `transform`, one write
+ * per figure, and no read: sizes are measured when they change (buero/masse.ts).
+ *
+ * A FRAME IS DRAWN WHEN SOMETHING CHANGED, not by the clock (buero/takt.ts):
+ * the camera moved, the pointer moved, the house was rebuilt, the data
+ * changed, somebody walks. A quiet office queues nothing.
  */
 
 /** How far the eyes swing, in the face's own grid (24 wide). */
@@ -84,6 +91,23 @@ function useNacht(): boolean {
   return nacht;
 }
 
+/* "Reduced motion" is a setting that can change while the page is open — the
+   person switches it in the system, not on this page — so it is followed, not
+   read once. */
+function useRuhig(): boolean {
+  const lesen = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+  const [ruhig, setRuhig] = useState(lesen);
+  useEffect(() => {
+    const medium = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+    if (!medium) return;
+    const neu = () => setRuhig(medium.matches);
+    neu();
+    medium.addEventListener("change", neu);
+    return () => medium.removeEventListener("change", neu);
+  }, []);
+  return ruhig;
+}
+
 export default function Buero({
   agents,
   departments,
@@ -99,7 +123,7 @@ export default function Buero({
 }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const ruhig = useMemo(() => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false, []);
+  const ruhig = useRuhig();
   const nacht = useNacht();
   const org = useQuery({ queryKey: ["own-org"], queryFn: () => api<Organization>("/org"), staleTime: 60_000 });
   const dichte = DICHTE[org.data?.office_furnishing ?? "normal"] ?? 1;
@@ -184,9 +208,38 @@ export default function Buero({
   const blicke = useRef(new Map<string, SVGGElement>());
   const schilder = useRef(new Map<string, HTMLDivElement>());
   const masten = useRef<SVGSVGElement>(null);
-  const karteHuelle = useRef<HTMLDivElement>(null);
+  const karteHuelle = useRef<HTMLDivElement | null>(null);
   const zeiger = useRef<Punkt | null>(null);
   const gastRefs = useRef(new Map<number, HTMLElement>());
+  /* What the frame needs and must not read from the page: the stage's size
+     (measured with the camera) and the overlay's (a ResizeObserver). `wecken`
+     is the takt's "draw once more", reachable from the camera and the
+     observer, which are made before the takt is. */
+  const buehneMass = useRef({ b: 0, h: 0 });
+  const wecken = useRef<() => void>(() => {});
+  const masse = useMemo(() => erschaffeMasse(() => wecken.current()), []);
+  const schildRefs = useRef(new Map<string, (el: HTMLDivElement | null) => void>());
+  const schildRef = (k: string) => {
+    let f = schildRefs.current.get(k);
+    if (!f) {
+      f = (el) => {
+        if (el) schilder.current.set(k, el);
+        else schilder.current.delete(k);
+        masse.beobachten("schild:" + k, el);
+      };
+      schildRefs.current.set(k, f);
+    }
+    return f;
+  };
+  const karteRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      karteHuelle.current = el;
+      masse.beobachten("karte", el);
+    },
+    [masse],
+  );
+  const lebenRuhig = useRef(ruhig);
+  const mastPfad = useRef("");
   /* The stage exists only once there is somebody to show. The renderer is
      created when it appears — on the first render the lists are usually
      still loading, and an effect that ran once against an empty page would
@@ -208,12 +261,17 @@ export default function Buero({
     }
     maler.current = m;
     szene.current = new THREE.Scene();
-    const s = erschaffeKamera(el, ruhig);
+    const s = erschaffeKamera(el, ruhig, () => wecken.current());
     steuerung.current = s;
     const loesen = s.anbinden(() => setGewaehlt(null));
+    /* The only place the stage is read from the page: at the start, and when
+       the browser says it was resized. The canvas was cleared by the resize
+       and has to be drawn again. */
     const messen = () => {
-      groesse(m, s.kamera, el);
-      s.groesse();
+      const g = s.messen();
+      buehneMass.current = g;
+      groesse(m, g);
+      wecken.current();
     };
     messen();
     const beobachter = new ResizeObserver(messen);
@@ -228,6 +286,7 @@ export default function Buero({
       steuerung.current = null;
       szene.current = null;
       bau.current = null;
+      mastPfad.current = "";
     };
   }, [ruhig, sichtbar]);
 
@@ -251,8 +310,14 @@ export default function Buero({
       etage,
       etagen: haus.etagen.length,
     });
+    /* The scene changed: the shadow map is drawn once more, with the next
+       frame, and then not again until the next rebuild (see erschaffeMaler). */
+    if (maler.current) maler.current.shadowMap.needsUpdate = true;
     const f = laufFeldBauen(bau.current.welt, plan);
-    if (hausImLeben.current !== haus || !leben.current) {
+    /* A change of "reduced motion" starts the life over as well: it was made
+       for the one setting, and the figures then sit where they belong. */
+    if (hausImLeben.current !== haus || !leben.current || lebenRuhig.current !== ruhig) {
+      lebenRuhig.current = ruhig;
       /* A new HOUSE (other people, other rooms, another density) is the one
          case where the life starts over: the geometry beneath it is a
          different one. A new floor is not — the figures of every floor are
@@ -275,6 +340,7 @@ export default function Buero({
       leben.current.felderSetzen(etage, f);
     }
     setWechsel(false);
+    wecken.current();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plan, haus, etage, nacht, dichte, ruhig, kern, haken]);
   bauenRef.current = bauen;
@@ -294,91 +360,126 @@ export default function Buero({
     leben.current?.ansprechen(gewaehlt);
   }, [gewaehlt]);
 
-  /* The frame: the camera's ride, the life's step, then every overlay is set
-     from the camera. With "reduced motion" the life does not run at all —
-     everyone sits at their place, the light stays on; the information stays,
-     only the movement goes. */
-  useEffect(() => {
-    let laeuft = true;
-    let letzte = 0;
-    const bild = (t0: number) => {
-      if (!laeuft) return;
-      const roh = Math.min(64, t0 - letzte) / 1000;
-      letzte = t0;
-      const m = maler.current, sz = szene.current, st = steuerung.current, el = buehne.current, l = leben.current;
-      if (m && sz && st && el) {
-        if (st.tick(roh)) bauen();
-        if (l && !ruhig) l.tick(roh);
-        const w = el.clientWidth, h = el.clientHeight;
-        if (l) {
-          for (const f of l.figuren) {
-            const kn = knoepfe.current.get(f.id);
-            if (!kn) continue;
-            /* Whoever is on another floor is not here. The button stays in
-               the tree — it comes back when they do — but draws nothing. */
-            if (f.hier !== etage) {
-              if (kn.style.display !== "none") kn.style.display = "none";
-              continue;
-            }
-            if (kn.style.display) kn.style.display = "";
-            const bob = f.geht ? Math.sin(f.phase * 0.16) * 3 : 0;
-            const [x, y] = aufSchirm(st.kamera, plan, w, h, f.pos.x, f.pos.y, 44 + bob);
-            kn.style.transform = `translate3d(${x}px, ${y}px, 0)`;
-            kn.classList.toggle("geht", f.geht);
-            /* The gaze follows the pointer, in screen space — where the
-               person looks is a matter of the picture, not of the plan. */
-            const b = blicke.current.get(f.id);
-            if (b) {
-              const z = zeiger.current;
-              if (z && f.zustand !== "schlaeft" && f.zustand !== "gestoppt") {
-                const dx = z.x - x, dy = z.y - y, d = Math.max(1, Math.hypot(dx, dy));
-                const k = Math.min(1, d / 160);
-                b.style.transform = `translate(${(dx / d) * k * BLICK_WEITE}px, ${(dy / d) * k * BLICK_WEITE}px)`;
-              } else b.style.transform = "";
-            }
-            if (f.id === gewaehlt && karteHuelle.current) {
-              const hoch = karteHuelle.current.offsetHeight || 170;
-              karteHuelle.current.style.left = `${Math.min(Math.max(x, 140), w - 140)}px`;
-              karteHuelle.current.style.top = `${Math.min(Math.max(y - hoch - 34, 8), h - hoch - 8)}px`;
-            }
-          }
+  /* A frame: the camera's ride, the life's step, then every overlay is set
+     from the camera, then the scene is drawn. With "reduced motion" the life
+     does not run at all — everyone sits at their place, the light stays on;
+     the information stays, only the movement goes.
+
+     What it answers is what the takt (buero/takt.ts) asks: is anything still
+     moving? A turn of the camera wants the next frame at once; somebody
+     walking on the floor that is shown wants one in a thirtieth of a second;
+     otherwise none. */
+  const bild = (roh: number): Bedarf => {
+    const m = maler.current, sz = szene.current, st = steuerung.current, l = leben.current;
+    const { b: w, h } = buehneMass.current;
+    if (!m || !sz || !st || !w) return "ruht";
+    if (st.tick(roh)) bauen();
+    if (l && !ruhig) l.tick(roh);
+    if (l) {
+      for (const f of l.figuren) {
+        const kn = knoepfe.current.get(f.id);
+        if (!kn) continue;
+        /* Whoever is on another floor is not here. The button stays in
+           the tree — it comes back when they do — but draws nothing. */
+        if (f.hier !== etage) {
+          if (kn.style.display !== "none") kn.style.display = "none";
+          continue;
         }
-        if (l)
-          for (const g of l.gaeste) {
-            const el = gastRefs.current.get(g.id);
-            if (!el) continue;
-            if (g.etage !== etage) {
-              el.style.display = "none";
-              continue;
-            }
-            el.style.display = "";
-            const [x, y] = aufSchirm(st.kamera, plan, w, h, g.pos.x, g.pos.y, g.art === "vogel" ? 124 : g.art === "flieger" ? 90 : 8);
-            el.style.transform = `translate3d(${x}px, ${y}px, 0)`;
-          }
-        schilderStellen(st, w, h);
-        m.render(sz, st.kamera);
+        if (kn.style.display) kn.style.display = "";
+        const bob = f.geht ? Math.sin(f.phase * 0.16) * 3 : 0;
+        const [x, y] = aufSchirm(st.kamera, plan, w, h, f.pos.x, f.pos.y, 44 + bob);
+        kn.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+        kn.classList.toggle("geht", f.geht);
+        /* The gaze follows the pointer, in screen space — where the
+           person looks is a matter of the picture, not of the plan. */
+        const bl = blicke.current.get(f.id);
+        if (bl) {
+          const z = zeiger.current;
+          if (z && f.zustand !== "schlaeft" && f.zustand !== "gestoppt") {
+            const dx = z.x - x, dy = z.y - y, d = Math.max(1, Math.hypot(dx, dy));
+            const k = Math.min(1, d / 160);
+            bl.style.transform = `translate(${(dx / d) * k * BLICK_WEITE}px, ${(dy / d) * k * BLICK_WEITE}px)`;
+          } else bl.style.transform = "";
+        }
+        if (f.id === gewaehlt && karteHuelle.current) {
+          const hoch = masse.mass("karte", { b: 0, h: 170 }).h;
+          const kx = Math.min(Math.max(x, 140), w - 140), ky = Math.min(Math.max(y - hoch - 34, 8), h - hoch - 8);
+          karteHuelle.current.style.transform = `translate3d(${kx}px, ${ky}px, 0)`;
+        }
       }
-      requestAnimationFrame(bild);
-    };
-    const id = requestAnimationFrame((t0) => {
-      letzte = t0;
-      requestAnimationFrame(bild);
+      for (const g of l.gaeste) {
+        const el = gastRefs.current.get(g.id);
+        if (!el) continue;
+        if (g.etage !== etage) {
+          el.style.display = "none";
+          continue;
+        }
+        el.style.display = "";
+        const [x, y] = aufSchirm(st.kamera, plan, w, h, g.pos.x, g.pos.y, g.art === "vogel" ? 124 : g.art === "flieger" ? 90 : 8);
+        el.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+      }
+    }
+    schilderStellen(st, w, h);
+    m.render(sz, st.kamera);
+    return st.faehrt ? "weiter" : !ruhig && regt() ? "leben" : "ruht";
+  };
+  /* Does anything move on the floor that is shown? Figures walking, the cat
+     on her way, the paper plane. The bird and the cake only sit there; they
+     are drawn when they appear (the guest list tells React) and leave on the
+     life's own clock. */
+  const regt = () => {
+    const l = leben.current;
+    if (!l) return false;
+    return (
+      l.figuren.some((f) => f.hier === etage && (f.geht || f.route.length > 0)) ||
+      l.gaeste.some((g) => g.etage === etage && (g.art === "flieger" || (g.art === "katze" && g.route.length > 0)))
+    );
+  };
+  /* At rest the life is given its time without a frame (takt.ts `leise`). */
+  const leise = (dt: number) => {
+    const l = leben.current;
+    if (!l) return false;
+    l.tick(dt);
+    return regt();
+  };
+  const bildRef = useRef(bild), leiseRef = useRef(leise);
+  bildRef.current = bild;
+  leiseRef.current = leise;
+
+  useEffect(() => {
+    const el = buehne.current;
+    if (!el || !sichtbar) return;
+    const takt = erschaffeTakt({
+      bild: (roh) => bildRef.current(roh),
+      leise: ruhig ? undefined : (dt) => leiseRef.current(dt),
     });
+    wecken.current = takt.anstossen;
+    masse.starten();
+    const loslassen = sichtWaechter(el, takt);
     return () => {
-      laeuft = false;
-      cancelAnimationFrame(id);
+      loslassen();
+      masse.beenden();
+      takt.beenden();
+      wecken.current = () => {};
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plan, etage, ruhig, gewaehlt, bauen]);
+  }, [sichtbar, ruhig, masse]);
+
+  /* Whatever React changed that the frame has to put on the page: a figure
+     or a guest that is new, the card, another floor, the state's light. */
+  useEffect(() => {
+    wecken.current();
+  }, [plan, etage, gewaehlt, gaesteTakt, zustandKern, kern, nacht, dichte, ruhig, sichtbar, wechsel]);
 
   /* Signs are pushed apart in screen space, like on a map: a sign that sits
-     on another sign is two signs nobody can read. */
+     on another sign is two signs nobody can read. Their sizes come from the
+     cache (masse.ts); this writes only. */
   const schilderStellen = (st: Steuerung, w: number, h: number) => {
     const k = plan.raeume.map((r) => {
-      const d = schilder.current.get(r.id + r.nr);
+      const schluessel = r.id + r.nr;
+      const d = schilder.current.get(schluessel);
       const [x, y] = aufSchirm(st.kamera, plan, w, h, r.x + r.w / 2, r.y + 30, 60);
-      const b = d?.offsetWidth || 110, hh = d?.offsetHeight || 20;
-      return { d, ax: x, ay: y, w: b, h: hh, x, y: y - 26 };
+      const gemessen = masse.mass("schild:" + schluessel, { b: 110, h: 20 });
+      return { d, ax: x, ay: y, w: gemessen.b || 110, h: gemessen.h || 20, x, y: y - 26 };
     });
     k.sort((a, b) => a.ay - b.ay);
     for (let runde = 0; runde < 8; runde++) {
@@ -399,13 +500,17 @@ export default function Buero({
     const svg = masten.current;
     let pfad = "";
     for (const s of k) {
-      if (s.d) {
-        s.d.style.left = `${s.x}px`;
-        s.d.style.top = `${s.y}px`;
-      }
+      /* The CSS centres the sign on its anchor (translate(-50%, -100%)); the
+         frame moves the anchor. */
+      if (s.d) s.d.style.transform = `translate3d(${s.x}px, ${s.y}px, 0) translate(-50%, -100%)`;
       pfad += `M${s.x.toFixed(1)} ${(s.y + 2).toFixed(1)}L${s.ax.toFixed(1)} ${s.ay.toFixed(1)}M${(s.ax - 1.8).toFixed(1)} ${s.ay.toFixed(1)}a1.8 1.8 0 1 0 3.6 0a1.8 1.8 0 1 0 -3.6 0`;
     }
-    svg?.firstElementChild?.setAttribute("d", pfad);
+    /* Written only when it changed: an SVG path that is set again, even to
+       the same text, is laid out again. */
+    if (pfad !== mastPfad.current) {
+      mastPfad.current = pfad;
+      svg?.firstElementChild?.setAttribute("d", pfad);
+    }
   };
 
   /* The pointer, decoupled from the event: mouse moves come more often than
@@ -414,6 +519,7 @@ export default function Buero({
     if (ruhig) return;
     const r = e.currentTarget.getBoundingClientRect();
     zeiger.current = { x: e.clientX - r.left, y: e.clientY - r.top };
+    wecken.current();
   };
 
   /* A click on the floor closes the card — and a click on a plant waters it.
@@ -422,6 +528,7 @@ export default function Buero({
   const strahl = useRef(new THREE.Raycaster());
   const aufKlick = (e: React.MouseEvent<HTMLDivElement>) => {
     setGewaehlt(null);
+    wecken.current();
     const st = steuerung.current, b = bau.current, l = leben.current, el = buehne.current;
     if (!st || !b || !l || !el) return;
     const r = el.getBoundingClientRect();
@@ -517,6 +624,7 @@ export default function Buero({
         onPointerMove={aufZeiger}
         onPointerLeave={() => {
           zeiger.current = null;
+          wecken.current();
         }}
         onClick={aufKlick}
       >
@@ -529,10 +637,7 @@ export default function Buero({
               key={r.id + r.nr}
               className={`bu-schild-3d${meinZimmer && meinZimmer.etage === etage && meinZimmer.raum === r ? " meins" : ""}`}
               title={meinZimmer && meinZimmer.etage === etage && meinZimmer.raum === r ? t("team.meinZimmer") : undefined}
-              ref={(el) => {
-                if (el) schilder.current.set(r.id + r.nr, el);
-                else schilder.current.delete(r.id + r.nr);
-              }}
+              ref={schildRef(r.id + r.nr)}
             >
               {r.farbe && <span className="punkt" style={{ background: r.farbe }} />}
               {r.name}
@@ -605,7 +710,7 @@ export default function Buero({
           ))}
 
           {gewaehlterAgent && (
-            <div className="bu-karte-huelle" ref={karteHuelle}>
+            <div className="bu-karte-huelle" ref={karteRef}>
               <BuKarte
                 agent={gewaehlterAgent}
                 laeuft={laufendVon.get(gewaehlterAgent.id)}
