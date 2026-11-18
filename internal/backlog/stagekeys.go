@@ -122,3 +122,16 @@ func IsStageKey(key string) bool {
 func LegacyStageKey(name string) string {
 	return legacyStageNames[name]
 }
+
+// LegacyStageName is the old German name of a keyed column ("Backlog", "In
+// Arbeit", "Erledigt"), or "". An exported bundle names an unnamed default
+// column by it: a covey from before the key finds its default columns by
+// exactly these names, and the imported board keeps auto-follow there too.
+func LegacyStageName(key string) string {
+	for name, k := range legacyStageNames {
+		if k == key {
+			return name
+		}
+	}
+	return ""
+}

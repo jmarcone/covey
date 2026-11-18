@@ -107,3 +107,20 @@ func TestCustomStageName(t *testing.T) {
 		}
 	}
 }
+
+// The old German name and the key map onto each other, and the name a bundle
+// carries for an unnamed column resolves back to that column on import.
+func TestLegacyStageName(t *testing.T) {
+	for _, key := range []string{StageKeyOpen, StageKeyInProgress, StageKeyDone} {
+		name := LegacyStageName(key)
+		if name == "" || LegacyStageKey(name) != key {
+			t.Errorf("LegacyStageName(%q) = %q, which does not map back to the key", key, name)
+		}
+		if customStageName(key, name) != nil {
+			t.Errorf("customStageName(%q, %q) is a rename, want unnamed", key, name)
+		}
+	}
+	if got := LegacyStageName("research"); got != "" {
+		t.Errorf("LegacyStageName(research) = %q, want empty", got)
+	}
+}

@@ -71,7 +71,11 @@ type bundleAgent struct {
 
 // bundleStage is one board column. Key marks a default column (open,
 // in_progress, done) so the imported board keeps auto-follow; Name is always
-// filled, so a covey from before the key still reads the bundle.
+// filled, so a covey from before the key still reads the bundle. An unnamed
+// default column carries its old German name there ("Backlog", "In Arbeit",
+// "Erledigt"): an older covey recognises its default columns by exactly these
+// names, so the board keeps auto-follow on that side too. This side's import
+// reads the name as the column's own label and leaves it unnamed.
 type bundleStage struct {
 	Name  string `json:"name"`
 	Key   string `json:"key,omitempty"`
@@ -249,6 +253,9 @@ func (s *Server) buildBundle(ctx context.Context, orgID, agentID uuid.UUID, incl
 		bs := bundleStage{Name: st.Name, Color: st.Color}
 		if st.Key != nil {
 			bs.Key = *st.Key
+			if !st.Renamed {
+				bs.Name = backlog.LegacyStageName(*st.Key)
+			}
 		}
 		b.Stages = append(b.Stages, bs)
 	}

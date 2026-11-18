@@ -93,6 +93,20 @@ func TestExportImportRoundtrip(t *testing.T) {
 	if n := len(bundle["guardrails"].([]any)); n != 1 {
 		t.Fatalf("guardrails in the bundle: %d", n)
 	}
+	// An unnamed default column travels under its old German name beside the
+	// key: a covey from before the key finds its default columns by exactly
+	// that name, and its board keeps auto-follow.
+	legacy := map[string]string{}
+	for _, raw := range bundle["stages"].([]any) {
+		st := raw.(map[string]any)
+		if key, _ := st["key"].(string); key != "" {
+			legacy[key], _ = st["name"].(string)
+		}
+	}
+	if want := map[string]string{"open": "Backlog", "in_progress": "In Arbeit", "done": "Erledigt"}; len(legacy) != len(want) ||
+		legacy["open"] != want["open"] || legacy["in_progress"] != want["in_progress"] || legacy["done"] != want["done"] {
+		t.Errorf("default columns in the bundle: %v (expected %v)", legacy, want)
+	}
 
 	// --- Import: slug collision, then a copy under a new slug. ---
 	c.expect(http.MethodPost, "/api/v1/agents/import", bundle, http.StatusConflict)

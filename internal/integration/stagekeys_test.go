@@ -266,9 +266,11 @@ func TestStageKeyMigration(t *testing.T) {
 	a := s.newSupportAgent("vorher-a")
 	b := s.newSupportAgent("vorher-b")
 	c := s.newSupportAgent("vorher-c")
-	s.ohneLaeufe(a.ID)
-	s.ohneLaeufe(b.ID)
-	s.ohneLaeufe(c.ID)
+	d := s.newSupportAgent("vorher-d")
+	e := s.newSupportAgent("vorher-e")
+	for _, ag := range []uuid.UUID{a.ID, b.ID, c.ID, d.ID, e.ID} {
+		s.ohneLaeufe(ag)
+	}
 
 	if err := db.MigrateDown(ctx, s.pool, migrations.FS); err != nil {
 		t.Fatal(err)
@@ -321,22 +323,40 @@ func TestStageKeyMigration(t *testing.T) {
 	tLater := task(c.ID, cLater, "liegt im späteren Erledigt")
 	tDoneAgentC := task(c.ID, cDoneAgent, "liegt in Cs Done")
 
+	// D and E: boards 0004 backfilled long after their agents, all columns of
+	// an agent written by one statement and so at one instant. On E a human
+	// has renamed two of them since.
+	backfilled := func(agentID uuid.UUID) {
+		exec(`UPDATE agent_stages s SET created_at = a.created_at + interval '1 day'
+			FROM agents a WHERE a.id = s.agent_id AND s.agent_id = $1`, agentID)
+	}
+	dOpen := stage(d.ID, "Backlog", 0, "var(--text-muted)", "human")
+	dWork := stage(d.ID, "In Arbeit", 1, "var(--text-accent)", "human")
+	dDone := stage(d.ID, "Erledigt", 2, "var(--text-success)", "human")
+	backfilled(d.ID)
+	eOpen := stage(e.ID, "Backlog", 0, "var(--text-muted)", "human")
+	eSprint := stage(e.ID, "Sprint", 1, "var(--text-accent)", "human")
+	eShipped := stage(e.ID, "Shipped", 2, "var(--text-success)", "human")
+	backfilled(e.ID)
+
 	if n, err := db.MigrateUp(ctx, s.pool, migrations.FS); err != nil || n != 1 {
 		t.Fatalf("migrate up: %d applied, %v", n, err)
 	}
 
-	// Agent A: keys on the three defaults, unnamed; Research untouched; the
+	// The seeded columns of A, B and C and the backfilled ones of D and E:
+	// keyed, unnamed, 'seed'. Agent A besides: Research untouched; the
 	// look-alikes gone, their tasks in the keyed columns.
 	for id, key := range map[uuid.UUID]string{
 		aOpen: "open", aWork: "in_progress", aDone: "done", cOpen: "open", cWork: "in_progress",
+		dOpen: "open", dWork: "in_progress", dDone: "done", eOpen: "open",
 	} {
-		var gotKey, by string
-		var name *string
+		var gotKey, name *string
+		var by string
 		if err := s.pool.QueryRow(ctx, "SELECT key, name, created_by FROM agent_stages WHERE id=$1", id).Scan(&gotKey, &name, &by); err != nil {
 			t.Fatal(err)
 		}
-		if gotKey != key || name != nil || by != "seed" {
-			t.Errorf("default column %s: key %q, name %v, by %s — want key %s, unnamed, seed", id, gotKey, name, by, key)
+		if gotKey == nil || *gotKey != key || name != nil || by != "seed" {
+			t.Errorf("default column %s: key %v, name %v, by %s — want key %s, unnamed, seed", id, gotKey, name, by, key)
 		}
 	}
 	var rName, rColor, rBy string
@@ -394,6 +414,19 @@ func TestStageKeyMigration(t *testing.T) {
 		}
 	}
 
+	// Agent E: the renamed backfilled columns are custom columns, as they
+	// were before; the "Backlog" beside them is keyed (checked above).
+	for _, id := range []uuid.UUID{eSprint, eShipped} {
+		var key *string
+		var by string
+		if err := s.pool.QueryRow(ctx, "SELECT key, created_by FROM agent_stages WHERE id=$1", id).Scan(&key, &by); err != nil {
+			t.Fatal(err)
+		}
+		if key != nil || by != "human" {
+			t.Errorf("E's renamed column %s: key %v, by %s — want no key, human", id, key, by)
+		}
+	}
+
 	// Auto-follow on the keys: dispatch moves into in_progress, completing
 	// and failing into done.
 	follow, err := s.backlog.Create(ctx, s.orgID, a.ID, "folgt", "", "manual", 1)
@@ -441,6 +474,7 @@ func TestStageKeyMigration(t *testing.T) {
 	for id, want := range map[uuid.UUID]string{
 		aOpen: "Backlog", aWork: "In Arbeit", aDone: "Erledigt", aResearch: "Research", bDone: "Erledigt", bDoneHuman: "Done",
 		cOpen: "Backlog", cLater: "Erledigt", cDoneAgent: "Done",
+		dOpen: "Backlog", dWork: "In Arbeit", dDone: "Erledigt", eOpen: "Backlog", eSprint: "Sprint", eShipped: "Shipped",
 	} {
 		var name string
 		if err := s.pool.QueryRow(ctx, "SELECT name FROM agent_stages WHERE id=$1", id).Scan(&name); err != nil || name != want {

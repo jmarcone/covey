@@ -21,15 +21,25 @@ ALTER TABLE agent_stages
 CREATE UNIQUE INDEX agent_stages_agent_key ON agent_stages (agent_id, key) WHERE key IS NOT NULL;
 
 -- 1. The seeded columns: the names 0004 and SeedDefaultStages wrote, and only
---    on a column that came into being with its agent. created_by cannot tell
---    them apart from a human's column — seeding wrote 'human' too, the default
---    since 0021 — so the signal is the time: SeedDefaultStages runs right after
---    the agent is created, in every path that creates one. A column of that
---    name made later (after the seeded one was renamed or deleted) is a
---    human's and stays a custom column; so does a renamed default, which did
---    not take part in auto-follow before either. The two minutes are room for
---    what the hiring path does between the two inserts, not a guess at a
---    human's speed.
+--    on a column the platform laid out. created_by cannot tell them apart from
+--    a human's column — seeding wrote 'human' too, the default since 0021 — so
+--    the signal is the time, in one of two forms:
+--
+--    - SeedDefaultStages runs right after the agent is created, in every path
+--      that creates one. The two minutes are room for what the hiring path
+--      does between the two inserts, not a guess at a human's speed.
+--    - 0004 backfilled the agents older than itself, long after they were
+--      created, with one statement inside the migrator's transaction: all
+--      columns it wrote for an agent share one created_at (now(), the default
+--      from 0003). Nothing else writes two columns of one agent at the same
+--      instant — a human makes one per request, and SeedDefaultStages made
+--      three separate inserts — so a sibling with the same created_at marks
+--      the backfill. The sibling may have been renamed since; it still proves
+--      the statement.
+--
+--    A column of a default name made later (after the seeded one was renamed
+--    or deleted) is a human's and stays a custom column; so does a renamed
+--    default, which did not take part in auto-follow before either.
 --
 --    The keyed columns are marked created_by = 'seed', as SeedDefaultStages
 --    does from now on, so a later migration does not have to guess again.
@@ -41,8 +51,13 @@ UPDATE agent_stages s SET created_by = 'seed', key = CASE s.name
 FROM agents a
 WHERE a.id = s.agent_id
   AND s.name IN ('Backlog', 'In Arbeit', 'Erledigt')
-  AND s.created_at >= a.created_at
-  AND s.created_at < a.created_at + interval '2 minutes';
+  AND (
+      (s.created_at >= a.created_at AND s.created_at < a.created_at + interval '2 minutes')
+      -- 0004's backfill: the columns of one agent, written by one statement.
+      OR EXISTS (SELECT 1 FROM agent_stages o
+                 WHERE o.agent_id = s.agent_id AND o.id <> s.id
+                   AND o.created_at = s.created_at)
+  );
 
 -- 2. Look-alikes an agent created via set_stage ("Done", "in progress",
 --    "erledigt" …) merge into the keyed column of the same meaning: their
