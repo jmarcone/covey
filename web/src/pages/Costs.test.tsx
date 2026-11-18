@@ -448,6 +448,75 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
       expect(container.querySelector("[data-tag]")).toBeNull();
     });
 
+    // Review 1: the multiple is the whole list over the real cost, as the
+    // tile's; a cost type switched off only shortens the list bar.
+    it("lässt das Vielfache der Periode bei einem ausgeblendeten Kostentyp unverändert", async () => {
+      const { container } = render([2, 2]);
+      await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+      await click("Echt gegen Liste");
+      const tags = () => [...container.querySelectorAll("[data-tag]")].map((e) => e.textContent);
+      expect(tags()).toEqual(["8,7×", "8,7×"]);
+      await click("Kostenart");
+      await click("Ausgabe");
+      expect(tags()).toEqual(["8,7×", "8,7×"]);
+    });
+
+    // Review 3: meter moved, but no list costs in the period (other use of the account).
+    it("zeigt für eine Periode mit Zählerbewegung, aber ohne Listenkosten kein Vielfaches", async () => {
+      const data = cells([2, 2]);
+      data.cells = [data.cells[0]];
+      const { container } = serve(data);
+      await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+      await click("Echt gegen Liste");
+      expect([...container.querySelectorAll("g[data-period]")]).toHaveLength(2);
+      expect([...container.querySelectorAll("[data-value]")].map((e) => e.textContent)).toEqual(["0,92 $", "0,92 $"]);
+      expect([...container.querySelectorAll("[data-tag]")].map((e) => e.textContent)).toEqual(["8,7×"]);
+      expect(container.textContent).not.toContain("0,0×");
+    });
+
+    // Review 2: the span's average belongs to no bar when two plans priced it.
+    it("nennt in der Stundenauflösung den Preis je Punkt nicht, wenn zwei Tarife die Spanne bepreist haben", async () => {
+      const data = cells([2, 2]);
+      data.subscription![1] = { ...data.subscription![1], usd: 2 * 2 * PP };
+      const { container } = serve(data);
+      await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+      const note = container.querySelector("[data-hour-note]")!.textContent!;
+      expect(note).not.toMatch(/\d,\d\d \$/);
+      expect(note).toMatch(/Preis je Punkt des Tarifs, der bei der jeweiligen Messung galt/);
+      expect(note).toMatch(/Stunden ohne Überschreitung zeigen 0/);
+      await click("Als Tabelle zeigen");
+      expect(realCol(container).rows).toEqual(["0,92 $", "1,85 $"]);
+    });
+
+    it("nennt den Preis je Punkt, wenn alle bepreisten Schritte ihn teilen", async () => {
+      const { container } = render([2, 3]);
+      await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+      expect(container.querySelector("[data-hour-note]")!.textContent).toMatch(/0,46 \$ je Punkt/);
+    });
+
+    // Review 4: the chip stays pressed where the comparison does not apply; the page says why.
+    it("sagt, warum „Echt gegen Liste“ nicht gezeichnet wird, wenn die echten Kosten fehlen", async () => {
+      const { container } = render([2, 2]);
+      await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+      expect(container.querySelector("[data-vs-absent]")).toBeNull();
+      await click("Echt gegen Liste");
+      expect(container.querySelector("[data-vs-absent]")).toBeNull();
+      expect(container.querySelector("[data-vs-note]")).not.toBeNull();
+      await act(async () => { await userEvent.click(within(screen.getByText("Quelle").parentElement!).getByRole("button", { name: /Echte Kosten/ })); });
+      expect(screen.getByRole("button", { name: "Echt gegen Liste" })).toHaveAttribute("aria-pressed", "true");
+      expect(container.querySelector("[data-vs-note]")).toBeNull();
+      expect(container.querySelector("[data-vs-absent]")!.textContent).toMatch(/„Echt gegen Liste“ wird hier nicht gezeichnet/);
+    });
+
+    it("sagt es auch bei Punkten ohne Tarifpreis", async () => {
+      const data = cells([2, 2]);
+      data.subscription![1] = { ...data.subscription![1], usd: null, unpriced_points: 2 };
+      const { container } = serve(data);
+      await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+      await click("Echt gegen Liste");
+      expect(container.querySelector("[data-vs-absent]")).not.toBeNull();
+    });
+
     it("behält beim Wechsel der Ansicht Quellen- und Agentenfilter", async () => {
       const { container } = render([2, 2]);
       await screen.findByRole("group", { name: MULTIPLE });

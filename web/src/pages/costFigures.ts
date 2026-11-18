@@ -169,6 +169,22 @@ export function stepUnpriced(st: Pick<MeterStep, "points" | "usd" | "unpriced_po
   return st.usd == null ? st.points : st.unpriced_points;
 }
 
+/** What the priced points of these steps were priced at: the one rate when
+ *  they all agree (within rounding), `mixed` when two plans priced the span,
+ *  null without a priced point. The server prices each reading at the plan
+ *  valid when it was read, so the span's average belongs to no bar. */
+export function stepRate(steps: readonly Pick<MeterStep, "points" | "usd" | "unpriced_points">[]): { rate: number | null; mixed: boolean } {
+  let rate: number | null = null;
+  for (const st of steps) {
+    const priced = st.points - stepUnpriced(st);
+    if (st.usd == null || priced <= 0) continue;
+    const r = st.usd / priced;
+    if (rate == null) rate = r;
+    else if (Math.abs(r - rate) > rate * 1e-3) return { rate: null, mixed: true };
+  }
+  return { rate, mixed: false };
+}
+
 /** The weeks of a coverage with their steps' dollars as the server priced
  *  them — each reading at the plan valid when it was read, never at the
  *  bucket's start. A step belongs to the last week that began before the

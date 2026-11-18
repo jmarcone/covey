@@ -12,6 +12,7 @@ import {
   meterCrossings,
   pricePerPoint,
   recomputedOf,
+  stepRate,
   type CredentialFigures,
 } from "./costFigures";
 
@@ -609,15 +610,18 @@ function CredentialBlock({ f, data, billed, bucket, fmtPeriod, selected, src, sp
     if (vs && withMoney) {
       // The list bar and the real bar of the period, side by side; the real
       // value stands on its bar and the period's multiple above it. The
-      // reported figure is not part of this comparison.
+      // reported figure is not part of this comparison. The multiple is of
+      // every cost type, as the tile's is: the meter crossed its points for
+      // all of them, so a type switched off only shortens the list bar.
       const list = cs.reduce((a, c) => a + recomputedOf(c, typeList), 0);
+      const listAll = cs.reduce((a, c) => a + recomputedOf(c), 0);
       const real = realPer[i];
       const segs = byType
         ? typeList.map((k) => ({ key: k, label: t(`costs.stack.${k}`), color: TYPE_COLOR[k], value: cs.reduce((a, c) => a + (c.measured[k] ?? 0), 0) }))
         : [{ key: "m", label: t("costs.fig.recomputed"), color: SOURCE_COLOR.recomputed, value: list }];
       out.push({ key: "recomputed", label: t("costs.fig.recomputed"), color: SOURCE_COLOR.recomputed, segs });
       out.push({ key: "real", label: t("costs.fig.realEstimate"), color: SOURCE_COLOR.real, hatched: true, valueLabel: true,
-        tag: real > 0 && list > 0 ? times(list / real) : undefined,
+        tag: real > 0 && listAll > 0 ? times(listAll / real) : undefined,
         segs: [{ key: "real", label: t("costs.fig.realEstimate"), color: SOURCE_COLOR.real, value: real }] });
       return out;
     }
@@ -652,9 +656,11 @@ function CredentialBlock({ f, data, billed, bucket, fmtPeriod, selected, src, sp
   const kind = t(`costs.fig.kind_${f.kind || "unknown"}`);
   const plan = planLabel(f);
   const subscription = f.kind === "subscription" || (f.kind === "" && f.meter != null);
-  // What a point was priced at on average over the span (the tile's figure);
-  // without movement, the plan's own price per point.
-  const pointPrice = f.real && f.real.points > 0 ? f.real.value / f.real.points : f.plan ? pricePerPoint(f.plan) : null;
+  // What a point was priced at, for the hour note: named only when every
+  // priced step has the same rate, since an average over two plans fits no
+  // bar. Without movement, the plan's own price per point.
+  const rate = stepRate(steps);
+  const pointPrice = rate.mixed ? null : rate.rate ?? (f.plan ? pricePerPoint(f.plan) : null);
 
   return (
     <section className="mb-5" aria-label={name} data-credential={f.id}>
@@ -696,9 +702,13 @@ function CredentialBlock({ f, data, billed, bucket, fmtPeriod, selected, src, sp
         </div>
       )}
       {vs && layout === "combined" && !asTable && <p className="muted text-xs mt-1 mb-0" data-vs-note>{t("costs.fig.vsNote")}</p>}
-      {subscription && bucket === "hour" && showReal && pointPrice != null && <p className="muted text-xs mt-1 mb-0" data-hour-note>
-        {t("costs.fig.hourRealNote", { usd: fmtUSD(pointPrice) })}
+      {subscription && bucket === "hour" && showReal && (rate.mixed || pointPrice != null) && <p className="muted text-xs mt-1 mb-0" data-hour-note>
+        {rate.mixed ? t("costs.fig.hourRealNoteMixed") : t("costs.fig.hourRealNote", { usd: fmtUSD(pointPrice ?? 0) })}
       </p>}
+      {/* The comparison was asked for but is not drawn here: say why. An agent filter has its own note below. */}
+      {view === "vs" && layout === "combined" && !vs && !(filtered && (subscription || f.kind === "api_key")) && (
+        <p className="muted text-xs mt-1 mb-0" data-vs-absent>{t("costs.fig.vsAbsent")}</p>
+      )}
       {filtered && (subscription || f.kind === "api_key") && <p className="muted text-xs mt-1 mb-0">{t("costs.fig.filteredRealNote")}</p>}
 
       {f.agents.length > 0 && <AgentTable f={f} agents={agents} subscription={subscription} />}
