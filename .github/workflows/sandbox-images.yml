@@ -37,6 +37,12 @@ jobs:
   # only comes to be in the manifest stage — otherwise the second architecture
   # would overwrite the first instead of joining it.
   base:
+    # Upstream only. This is the root of the chain: every other job needs it,
+    # directly or through a manifest job, and none uses always(), so on a fork
+    # the whole workflow is skipped. Otherwise a push to the fork's main would
+    # build multi-gigabyte images and push them to ghcr.io/<fork>-sandbox
+    # and force-push the fork's `catalog` branch with digests of its own.
+    if: github.repository == 'benjaminLedel/covey'
     strategy:
       fail-fast: false
       matrix:

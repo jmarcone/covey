@@ -23,8 +23,13 @@ on:
 permissions:
   contents: write
 
+# Every job below carries the same guard. Upstream's releases, its Apple signing
+# secrets and its installer (`installer/install.sh` downloads from upstream's
+# release page) are not something a fork publishes: on a fork the workflow
+# starts and every job is skipped, so a tag or a hand trigger creates nothing.
 jobs:
   release:
+    if: github.repository == 'benjaminLedel/covey'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -188,6 +193,7 @@ jobs:
   #   APPLE_API_KEY_ID, APPLE_API_ISSUER_ID
   mac-app:
     needs: release
+    if: github.repository == 'benjaminLedel/covey'
     # macOS 26 for its SDK: the window uses NSGlassEffectView (Liquid Glass),
     # which an older Xcode does not know; on older systems the app falls
     # back at runtime.
@@ -343,6 +349,7 @@ jobs:
   # so a new version is a new download.
   windows-app:
     needs: release
+    if: github.repository == 'benjaminLedel/covey'
     # Pinned like the Mac job's image: a new Visual Studio is a change of its
     # own, not something a release picks up by the way.
     runs-on: windows-2025
@@ -454,6 +461,7 @@ jobs:
   #
   #   IOS_GOOGLE_SERVICE_INFO        GoogleService-Info.plist, base64
   ios-app:
+    if: github.repository == 'benjaminLedel/covey'
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
@@ -576,6 +584,7 @@ jobs:
   #   APPLE_TEAM_ID                             the team it is signed for
   #   APPLE_API_KEY_P8, APPLE_API_KEY_ID, APPLE_API_ISSUER_ID
   mac-store:
+    if: github.repository == 'benjaminLedel/covey'
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
