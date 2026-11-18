@@ -608,6 +608,7 @@
       "more_many": "Mostrar mais {{count}} níveis",
       "between": "Entre {{from}} e {{to}}",
       "allIn": "Todos os agentes de {{department}}",
+      "allWithout": "Todos os agentes sem departamento",
       "reportsTo": "reporta a <link>{{name}}</link> ({{department}})"
     },
     "sandbox": "Sandbox ativa",

@@ -608,6 +608,7 @@
       "more_many": "Pokaż jeszcze {{count}} poziomów",
       "between": "Między {{from}} a {{to}}",
       "allIn": "Wszyscy agenci w dziale {{department}}",
+      "allWithout": "Wszyscy agenci bez działu",
       "reportsTo": "podlega <link>{{name}}</link> ({{department}})"
     },
     "sandbox": "Piaskownica aktywna",

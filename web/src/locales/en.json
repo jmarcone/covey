@@ -608,6 +608,7 @@
       "more_many": "Show {{count}} more levels",
       "between": "Between {{from}} and {{to}}",
       "allIn": "All agents in {{department}}",
+      "allWithout": "All agents without a department",
       "reportsTo": "reports to <link>{{name}}</link> ({{department}})"
     },
     "sandbox": "Sandbox active",

@@ -608,6 +608,7 @@
       "more_many": "Afficher {{count}} niveaux de plus",
       "between": "Entre {{from}} et {{to}}",
       "allIn": "Tous les agents de {{department}}",
+      "allWithout": "Tous les agents sans département",
       "reportsTo": "rend compte à <link>{{name}}</link> ({{department}})"
     },
     "sandbox": "Bac à sable actif",

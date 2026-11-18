@@ -21,6 +21,7 @@ const KEYS = [
   "agent.crumb.more_other",
   "agent.crumb.between",
   "agent.crumb.allIn",
+  "agent.crumb.allWithout",
   "agent.crumb.reportsTo",
   "dashboard.deptFilter",
   "dashboard.deptFilterRemove",

@@ -25,6 +25,9 @@ const chart: OrgChart = {
     agent("dev1", { department_id: "dev", supervisor_id: "lead" }),
     agent("analyst", { department_id: "res", supervisor_id: "lead" }),
     agent("solo"),
+    // A supervisor whose department the chart no longer has.
+    agent("ghost", { department_id: "gone" }),
+    agent("ward", { department_id: "res", supervisor_id: "ghost" }),
   ],
 };
 
@@ -42,8 +45,9 @@ const Where = () => {
   return <p data-testid="where">{`${l.pathname}${l.search} ${JSON.stringify(l.state)}`}</p>;
 };
 
-function show(id: string, origin: AgentsView = "list") {
-  const netz = mockFetch({ "/api/v1/org/chart": chart });
+// `chart: "fail"` leaves the org chart unmocked, so it answers 404.
+function show(id: string, origin: AgentsView = "list", o: { chart?: "fail" } = {}) {
+  const netz = mockFetch(o.chart === "fail" ? {} : { "/api/v1/org/chart": chart });
   const a = chart.agents.find((x) => x.id === id)!;
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   render(
@@ -133,11 +137,24 @@ describe("AgentCrumb", () => {
     expect(screen.getAllByRole("menuitem")).toHaveLength(2);
   });
 
-  it("opens a human step on the profile", async () => {
+  // The person icon is the one thing that tells a human step from an agent's.
+  it("opens a human step on the profile, with the person icon and without the origin", async () => {
     const nutzer = userEvent.setup();
     show("coord");
-    await nutzer.click(await screen.findByRole("link", { name: "admin" }));
-    expect((await screen.findByTestId("where")).textContent).toMatch(/^\/people\/admin/);
+    const admin = await screen.findByRole("link", { name: "admin" });
+    expect(admin.querySelector(".ic")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Entwicklung" }).querySelector(".ic")).not.toBeInTheDocument();
+    await nutzer.click(admin);
+    expect((await screen.findByTestId("where")).textContent).toBe("/people/admin null");
+  });
+
+  it("marks the human in the ⋯ menu with the person icon, and only the human", async () => {
+    const nutzer = userEvent.setup();
+    show("dev1");
+    await nutzer.click(await screen.findByRole("button", { name: /weitere Ebenen/ }));
+    const [admin, coord] = screen.getAllByRole("menuitem");
+    expect(admin.querySelector(".ic")).toBeInTheDocument();
+    expect(coord.querySelector(".ic")).not.toBeInTheDocument();
   });
 
   it("keeps where the page was opened from on an agent step", async () => {
@@ -174,6 +191,13 @@ describe("AgentCrumb", () => {
     show("solo");
     const link = await screen.findByRole("link", { name: "Ohne Abteilung" });
     expect(link).toHaveAttribute("href", "/agents?dept=none");
+    // Not "Alle Agenten in Ohne Abteilung".
+    expect(link).toHaveAttribute("title", "Alle Agenten ohne Abteilung");
+  });
+
+  it("titles a department step with its name", async () => {
+    show("lead");
+    expect(await screen.findByRole("link", { name: "Entwicklung" })).toHaveAttribute("title", "Alle Agenten in Entwicklung");
   });
 
   // The org chart makes this one a root of Forschung; whom it reports to is
@@ -186,11 +210,38 @@ describe("AgentCrumb", () => {
     expect(screen.getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Forschung", "analyst"]);
   });
 
+  it("names an outside supervisor's department without a department when the chart has none for it", async () => {
+    show("ward");
+    await screen.findByRole("link", { name: "Forschung" });
+    expect(screen.getByText(/berichtet an/)).toHaveTextContent("berichtet an ghost (Ohne Abteilung)");
+  });
+
   it("is the agent alone while the chart is on its way", () => {
     show("lead");
     expect(screen.getAllByRole("listitem")).toHaveLength(1);
     expect(screen.getByText("lead")).toHaveAttribute("aria-current", "page");
     expect(screen.queryByRole("link", { name: "Entwicklung" })).not.toBeInTheDocument();
+  });
+
+  it("stays the agent alone when the chart fails", async () => {
+    const netz = show("lead", "list", { chart: "fail" });
+    await waitFor(() => expect(netz.unmatched).toContain("GET /api/v1/org/chart"));
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+    expect(screen.getByText("lead")).toHaveAttribute("aria-current", "page");
+  });
+
+  // Below 1024 px the full crumb has no agent step, so the stand-in has none
+  // either: the name must not show first and then go.
+  it.each([
+    ["while the chart is on its way", 390, undefined],
+    ["while the chart is on its way", 900, undefined],
+    ["when the chart fails", 390, "fail" as const],
+  ])("draws nothing %s at %i px", async (_wann, width, fails) => {
+    viewport(width);
+    const netz = show("lead", "list", { chart: fails });
+    if (fails) await waitFor(() => expect(netz.unmatched).toContain("GET /api/v1/org/chart"));
+    expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
+    expect(screen.queryByText("lead")).not.toBeInTheDocument();
   });
 
   it("folds into one ⋯ on a phone, and the menu holds the department and the chain", async () => {

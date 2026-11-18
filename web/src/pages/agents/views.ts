@@ -28,8 +28,17 @@ const key = (v: AgentsView) => `covey.agents.url.${v}`;
 
 /* The address with its filters, kept per view for the length of the tab: the
  * way back from an agent's page lands where the person left, not on the
- * unfiltered list. */
+ * unfiltered list. The office's `?dept=` is no filter but a pointer: it stays
+ * in the address, so a reload or a shared link shows the room again, but the
+ * switch does not keep it — otherwise the office would reopen on that room,
+ * outlined, for the rest of the tab, long after the person has moved on. */
 export function rememberViewUrl(view: AgentsView, path: string, search: string) {
+  if (view === "office") {
+    const params = new URLSearchParams(search);
+    params.delete("dept");
+    const rest = params.toString();
+    search = rest ? `?${rest}` : "";
+  }
   try {
     sessionStorage.setItem(key(view), path + search);
   } catch {

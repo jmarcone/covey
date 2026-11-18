@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useLocation, useNavigate } from "react-router";
 import Dashboard, { deptFilter, groupByDepartment, matches, stateOf } from "./Dashboard";
@@ -289,6 +289,32 @@ describe("the list with ?dept=", () => {
     zeige("");
     await nutzer.click(await screen.findByText("Wanda Wachsam"));
     expect(screen.getByTestId("where")).toHaveTextContent("/agents/a2");
+    expect(screen.getByTestId("state")).toHaveTextContent('{"from":"list"}');
+  });
+
+  // A new agent is created from the list, so its page leads back there: the
+  // switch marks the list and the crumb's department step filters it.
+  it("opens a newly created agent with the list as its origin", async () => {
+    const nutzer = userEvent.setup();
+    mockFetch({
+      "/api/v1/agents": staff,
+      "/api/v1/departments": [support, dev],
+      "/api/v1/fleet": { fleet_killed: false },
+      "/api/v1/templates": [{ id: "t1", name: "Support-Agent", description: "", bundle: {} }],
+      "POST /api/v1/templates/t1/instantiate": { agent: agent({ id: "a9", slug: "neu", display_name: "Support-Agent" }), warnings: [] },
+    });
+    renderWithProviders(
+      <>
+        <Dashboard me={testPrincipal()} />
+        <Where />
+      </>,
+      { route: "/agents" },
+    );
+    await nutzer.click(await screen.findByRole("button", { name: "+ Neuer Agent" }));
+    await nutzer.click(screen.getByText("Aus Vorlage"));
+    await nutzer.click(await screen.findByText("Support-Agent"));
+    await nutzer.click(screen.getByRole("button", { name: "Agent anlegen" }));
+    await waitFor(() => expect(screen.getByTestId("where")).toHaveTextContent("/agents/a9"));
     expect(screen.getByTestId("state")).toHaveTextContent('{"from":"list"}');
   });
 });

@@ -7,9 +7,10 @@ import { agentQuery } from "./agentQuery";
 import { originOf, rememberViewUrl, viewOf, viewsFor } from "./views";
 
 /* The bar of the agents area, above the view: the view switch, and on an
- * agent's page the organisation path after it (AgentCrumb). It stands outside the page that fades in on every
- * navigation (AppShell), so it neither remounts nor flickers when one moves
- * from the office to the list — the only thing that changes is the content.
+ * agent's page the organisation path after it (AgentCrumb). It stands outside
+ * the page that fades in on every navigation (AppShell), so it neither
+ * remounts nor flickers when one moves from the office to the list — the only
+ * thing that changes is the content.
  *
  * It renders before any data arrives; loading, empty and error states stay
  * with each view. */

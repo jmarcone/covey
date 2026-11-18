@@ -608,6 +608,7 @@
       "more_many": "さらに{{count}}階層を表示",
       "between": "{{from}}と{{to}}の間",
       "allIn": "{{department}}のすべてのエージェント",
+      "allWithout": "部門のないすべてのエージェント",
       "reportsTo": "<link>{{name}}</link>（{{department}}）に報告"
     },
     "sandbox": "サンドボックス稼働中",

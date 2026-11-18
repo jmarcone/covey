@@ -608,6 +608,7 @@
       "more_many": "再显示 {{count}} 级",
       "between": "{{from}} 与 {{to}} 之间",
       "allIn": "{{department}}的全部智能体",
+      "allWithout": "没有部门的全部智能体",
       "reportsTo": "汇报给 <link>{{name}}</link>（{{department}}）"
     },
     "sandbox": "沙箱运行中",

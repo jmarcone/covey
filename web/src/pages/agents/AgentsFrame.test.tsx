@@ -173,6 +173,16 @@ describe("views", () => {
     expect(viewUrl("list")).toBe("/agents?sort=name");
   });
 
+  // The office's ?dept= points at a room once; the list's is a filter.
+  it("remembers the list's department filter, not the office's room", () => {
+    bar("/?dept=dev&x=1").unmount();
+    expect(viewUrl("office")).toBe("/?x=1");
+    bar("/?dept=dev").unmount();
+    expect(viewUrl("office")).toBe("/");
+    bar("/agents?dept=dev");
+    expect(viewUrl("list")).toBe("/agents?dept=dev");
+  });
+
   it("reads the origin from the router state", () => {
     expect(originOf(undefined, fromView("office"), true)).toBe("office");
     expect(originOf(undefined, fromView("office"), false)).toBe("list");

@@ -19,18 +19,22 @@ import { CRUMB_QUERIES, deptTarget, foldChain, type CrumbMode } from "./crumb";
  * department. Whoever sits higher than the third level is folded behind one
  * `⋯`, and on a phone everything after the switch is. */
 
-// The widest viewport wins; without matchMedia (tests) there is room.
+// The widest viewport wins; without matchMedia (tests) there is room. Both
+// functions stay the same between renders, or useSyncExternalStore would
+// take the listeners off and put them back on every time.
+function subscribeMode(cb: () => void) {
+  const lists = CRUMB_QUERIES.map((q) => window.matchMedia?.(q.query));
+  lists.forEach((l) => l?.addEventListener("change", cb));
+  return () => lists.forEach((l) => l?.removeEventListener("change", cb));
+}
+function currentMode(): CrumbMode {
+  if (!window.matchMedia) return "wide";
+  return CRUMB_QUERIES.find((q) => window.matchMedia(q.query).matches)?.mode ?? "phone";
+}
+const serverMode = (): CrumbMode => "wide";
+
 function useCrumbMode(): CrumbMode {
-  const subscribe = (cb: () => void) => {
-    const lists = CRUMB_QUERIES.map((q) => window.matchMedia?.(q.query));
-    lists.forEach((l) => l?.addEventListener("change", cb));
-    return () => lists.forEach((l) => l?.removeEventListener("change", cb));
-  };
-  const mode = (): CrumbMode => {
-    if (!window.matchMedia) return "wide";
-    return CRUMB_QUERIES.find((q) => window.matchMedia(q.query).matches)?.mode ?? "phone";
-  };
-  return useSyncExternalStore(subscribe, mode, () => "wide");
+  return useSyncExternalStore(subscribeMode, currentMode, serverMode);
 }
 
 export function AgentCrumb({ agent, origin }: { agent: Pick<Agent, "id" | "display_name">; origin: AgentsView }) {
@@ -49,9 +53,13 @@ export function AgentCrumb({ agent, origin }: { agent: Pick<Agent, "id" | "displ
       </span>
     </li>
   );
-  // Until the chart is there — or when it does not know the agent — the
-  // crumb is the agent alone, and grows when the rest arrives.
+  // Until the chart is there — or when it fails or does not know the agent —
+  // the crumb is the agent alone, and grows when the rest arrives. Where the
+  // full crumb leaves the agent step out (below 1024 px, the heading names
+  // it), so does this one: the bar must not show the name first and then
+  // drop it.
   if (!path) {
+    if (!foldChain([], mode).agent) return null;
     return (
       <nav className="acrumb" aria-label={t("agent.crumb.label")}>
         <ol>{here}</ol>
@@ -60,6 +68,8 @@ export function AgentCrumb({ agent, origin }: { agent: Pick<Agent, "id" | "displ
   }
 
   const deptName = path.dept?.name ?? t("dashboard.withoutDepartment");
+  // "All agents in Without a department" reads wrong; `none` has its own title.
+  const deptTitle = path.dept ? t("agent.crumb.allIn", { department: deptName }) : t("agent.crumb.allWithout");
   const dept = deptTarget(origin, path.dept?.id ?? null);
   const fold = foldChain(path.chain, mode);
   const outside = path.outsideBoss;
@@ -80,7 +90,7 @@ export function AgentCrumb({ agent, origin }: { agent: Pick<Agent, "id" | "displ
               to={dept.to}
               state={dept.state}
               className="acrumb-step"
-              title={t("agent.crumb.allIn", { department: deptName })}
+              title={deptTitle}
             >
               {deptName}
             </Link>
@@ -92,7 +102,7 @@ export function AgentCrumb({ agent, origin }: { agent: Pick<Agent, "id" | "displ
               label={menuLabel}
               members={fold.folded}
               // The department is a step of its own, unless there is no room.
-              deptRow={fold.dept ? null : { name: deptName, to: dept.to, state: dept.state, title: t("agent.crumb.allIn", { department: deptName }) }}
+              deptRow={fold.dept ? null : { name: deptName, to: dept.to, state: dept.state, title: deptTitle }}
               state={state}
             />
           </li>
