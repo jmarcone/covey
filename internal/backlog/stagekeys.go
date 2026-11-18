@@ -42,6 +42,7 @@ var stageLabels struct {
 	// keyOf maps every key, every old German name and every label of every
 	// catalogue, lowercased, to its key.
 	keyOf map[string]string
+	err   error
 }
 
 // stageKeyTable reads the labels of the ten catalogues into one table of
@@ -114,16 +115,27 @@ func loadStageLabels() {
 		stageLabels.keyOf, err = stageKeyTable(dir)
 	}
 	if err != nil {
-		panic("backlog: the stage labels of web/src/locales: " + err.Error())
+		stageLabels.err = fmt.Errorf("backlog: the stage labels of web/src/locales: %w", err)
 	}
+}
+
+// LoadStageLabels reads the stage labels of the ten catalogues once. covey
+// serve calls it at start, so that a build with a broken catalogue fails at
+// boot rather than at the first set_stage or column request.
+func LoadStageLabels() error {
+	stageLabels.once.Do(loadStageLabels)
+	return stageLabels.err
 }
 
 // StageKeyFor says which default column a name means: a label of that column in
 // any of the ten languages, the key itself or the column's old German name,
 // case-insensitive. "Done", "erledigt", "In progress", "in_progress" all
-// answer; "Research" does not.
+// answer; "Research" does not. It panics on a broken catalogue, which serve
+// has refused at start (LoadStageLabels).
 func StageKeyFor(name string) (string, bool) {
-	stageLabels.once.Do(loadStageLabels)
+	if err := LoadStageLabels(); err != nil {
+		panic(err.Error())
+	}
 	k, ok := stageLabels.keyOf[strings.ToLower(strings.TrimSpace(name))]
 	return k, ok
 }

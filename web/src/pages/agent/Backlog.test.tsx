@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ladeSprache } from "../../i18n";
 import type { Stage } from "../../api";
@@ -292,7 +292,7 @@ describe("Spalten des Boards", () => {
   // under the label of the language, and the running task in it once.
   it("zeigt eine laufende Aufgabe in genau einer Spalte, der Standardspalte für erledigt", async () => {
     await act(() => ladeSprache("en"));
-    const done = { ...STAGES[2], name: "Done", renamed: false };
+    const done = { ...STAGES[2], name: "Erledigt", renamed: false };
     mockFetch({
       ...routen(),
       "/api/v1/agents/a1/backlog": [{ ...TASK, state: "in_progress", stage_id: "s3" }],
@@ -380,5 +380,37 @@ describe("Spalten des Boards", () => {
     const fields = await editor();
     await retype(fields[3], "Done");
     expect(await screen.findByText("This board already has a column with that name or meaning.")).toBeInTheDocument();
+  });
+
+  // After a refusal the field shows the stored name again, not the refused
+  // text; and the message speaks of the last change only — a refused "Add"
+  // is gone once a rename goes through.
+  it("setzt ein abgelehntes Feld zurück und sagt die Ablehnung nur bis zur nächsten Änderung", async () => {
+    await act(() => ladeSprache("en"));
+    mockFetch({ ...routen(), "/api/v1/agents/a1/stages": STAGES, "PATCH /api/v1/stages/s2": STAGES[1] });
+    const base = globalThis.fetch;
+    const refusal = () =>
+      new Response(JSON.stringify({ error: "the board already has a column of that name or meaning" }), { status: 409 });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+        (init?.method === "PATCH" && String(input).endsWith("/stages/s4")) || init?.method === "POST"
+          ? refusal()
+          : base(input, init),
+      ),
+    );
+    const message = "This board already has a column with that name or meaning.";
+    const fields = await editor();
+    await retype(fields[3], "Done");
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    const card = screen.getByText("Columns (Stages)").closest(".card") as HTMLElement;
+    await waitFor(() => expect(card.querySelectorAll("input")[3]).toHaveValue("Research"));
+
+    await userEvent.type(within(card).getByPlaceholderText("New column…"), "Done");
+    await userEvent.click(within(card).getByRole("button", { name: "Add" }));
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    await retype(card.querySelectorAll("input")[1] as HTMLInputElement, "En cours");
+    await waitFor(() => expect(patches().some((p) => p.url === "/api/v1/stages/s2")).toBe(true));
+    await waitFor(() => expect(screen.queryByText(message)).not.toBeInTheDocument());
   });
 });

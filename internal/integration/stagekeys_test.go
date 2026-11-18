@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"covey/internal/agents"
 	"covey/internal/backlog"
 	"covey/internal/db"
 	"covey/migrations"
@@ -754,4 +755,178 @@ func TestImportOfABundleWithoutKeys(t *testing.T) {
 	if !strings.Contains(warnings, "Done") || !strings.Contains(warnings, "Research") {
 		t.Errorf("the skipped columns must be named in a warning: %s", warnings)
 	}
+}
+
+// oldCodeBoard lays out an agent's board the way the code before 0148 seeds
+// it — CreateStage's INSERT verbatim, without a key, recorded as 'human'. An
+// instance of that code may share the database during a rolling start, after
+// 0148 ran, so such boards keep coming.
+func oldCodeBoard(t *testing.T, s *stack, agentID uuid.UUID) map[string]uuid.UUID {
+	t.Helper()
+	ids := map[string]uuid.UUID{}
+	for _, name := range []string{"Backlog", "In Arbeit", "Erledigt"} {
+		id := uuid.New()
+		if _, err := s.pool.Exec(context.Background(), `INSERT INTO agent_stages (id, agent_id, name, color, position, created_by)
+			VALUES ($1,$2,$3,'',(SELECT COALESCE(MAX(position),-1)+1 FROM agent_stages WHERE agent_id=$2),'human')`,
+			id, agentID, name); err != nil {
+			t.Fatal(err)
+		}
+		ids[name] = id
+	}
+	return ids
+}
+
+// A board the old code seeded after 0148 gets its keys where it is used: a
+// task that runs to done lands in "Erledigt", set_stage "Done" lands there
+// too, and a human cannot add a "Done" beside it. On 8f4fd1a the task stayed
+// in Backlog and set_stage "Done" opened a second done column.
+func TestOldCodeBoardGetsItsKeys(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+
+	t.Run("auto-follow", func(t *testing.T) {
+		agent := s.newSupportAgent("altbrett-lauf")
+		board := oldCodeBoard(t, s, agent.ID)
+		task, err := s.backlog.Create(ctx, s.orgID, agent.ID, "Läuft durch", "[mock:result ok]", "manual", 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "task done", 15*time.Second, func() bool {
+			return s.taskState(task.ID) == backlog.StateDone
+		})
+		if got := stageOf(t, s, task.ID); got != board["Erledigt"] {
+			t.Fatalf("a finished task belongs in Erledigt, it sits in %s", got)
+		}
+		if st := stageByKey(t, s, agent.ID, backlog.StageKeyDone); st.ID != board["Erledigt"] || st.Renamed {
+			t.Fatalf("Erledigt must be the done column, not renamed: %+v", st)
+		}
+		if st := stageByKey(t, s, agent.ID, backlog.StageKeyInProgress); st.ID != board["In Arbeit"] {
+			t.Fatalf("the run passed through In Arbeit, it must be keyed: %+v", st)
+		}
+	})
+
+	t.Run("set_stage", func(t *testing.T) {
+		agent := s.newSupportAgent("altbrett-stage")
+		s.ohneLaeufe(agent.ID)
+		board := oldCodeBoard(t, s, agent.ID)
+		task, err := s.backlog.Create(ctx, s.orgID, agent.ID, "Wohin", "", "manual", 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		st, err := s.backlog.SetTaskStageByName(ctx, agent.ID, task.ID, "Done")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.ID != board["Erledigt"] || st.Key == nil || *st.Key != backlog.StageKeyDone || stageOf(t, s, task.ID) != st.ID {
+			t.Fatalf("set_stage Done landed in %+v, want the keyed Erledigt", st)
+		}
+		// The exact old name finds it as the keyed column as well.
+		if st, err := s.backlog.EnsureStage(ctx, agent.ID, "In Arbeit"); err != nil || st.ID != board["In Arbeit"] ||
+			st.Key == nil || *st.Key != backlog.StageKeyInProgress {
+			t.Fatalf("set_stage In Arbeit: %+v, %v", st, err)
+		}
+		if stages, _ := s.backlog.ListStages(ctx, agent.ID); len(stages) != 3 {
+			t.Fatalf("set_stage must not add a column, board: %+v", stages)
+		}
+	})
+
+	t.Run("column editor", func(t *testing.T) {
+		agent := s.newSupportAgent("altbrett-editor")
+		s.ohneLaeufe(agent.ID)
+		board := oldCodeBoard(t, s, agent.ID)
+		admin := login(t, s, "admin@test.local", "admin-passwort")
+		admin.expect(http.MethodPost, "/api/v1/agents/"+agent.ID.String()+"/stages",
+			map[string]string{"name": "Done"}, http.StatusConflict)
+		if st := stageByKey(t, s, agent.ID, backlog.StageKeyDone); st.ID != board["Erledigt"] {
+			t.Fatalf("Erledigt must be the done column: %+v", st)
+		}
+	})
+}
+
+// A deleted default column comes back with its key. A human who deleted the
+// done column and creates "Erledigt" again gets the done column, and a task
+// that finishes lands there; the same for a column renamed to "Done". An
+// agent's set_stage "Done" on a board without one makes it keyed too, under
+// the old German name, and the cleanup leaves it. On 8f4fd1a each of them was
+// an ordinary column and auto-follow did not come back.
+func TestADeletedDefaultColumnComesBack(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	admin := login(t, s, "admin@test.local", "admin-passwort")
+	withoutDone := func(slug string) agents.Agent {
+		t.Helper()
+		agent := s.newSupportAgent(slug)
+		if err := s.backlog.SeedDefaultStages(ctx, agent.ID); err != nil {
+			t.Fatal(err)
+		}
+		done := stageByKey(t, s, agent.ID, backlog.StageKeyDone)
+		admin.expect(http.MethodDelete, "/api/v1/stages/"+done.ID.String(), nil, http.StatusNoContent)
+		return agent
+	}
+
+	t.Run("created by a human", func(t *testing.T) {
+		agent := withoutDone("zurueck-mensch")
+		got := admin.expect(http.MethodPost, "/api/v1/agents/"+agent.ID.String()+"/stages",
+			map[string]string{"name": "Erledigt"}, http.StatusCreated)
+		if got["key"] != backlog.StageKeyDone || got["renamed"] != false || got["created_by"] != "human" {
+			t.Fatalf("Erledigt made again: %v", got)
+		}
+		task, err := s.backlog.Create(ctx, s.orgID, agent.ID, "Läuft durch", "[mock:result ok]", "manual", 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "task done", 15*time.Second, func() bool {
+			return s.taskState(task.ID) == backlog.StateDone
+		})
+		if stageOf(t, s, task.ID).String() != got["id"] {
+			t.Fatalf("a finished task belongs in the done column made again")
+		}
+	})
+
+	t.Run("renamed by a human", func(t *testing.T) {
+		agent := withoutDone("zurueck-umbenannt")
+		s.ohneLaeufe(agent.ID)
+		research := admin.expect(http.MethodPost, "/api/v1/agents/"+agent.ID.String()+"/stages",
+			map[string]string{"name": "Research"}, http.StatusCreated)
+		if research["key"] != nil {
+			t.Fatalf("Research means no default column: %v", research)
+		}
+		got := admin.expect(http.MethodPatch, "/api/v1/stages/"+research["id"].(string),
+			map[string]any{"name": "Done", "position": 2}, http.StatusOK)
+		if got["key"] != backlog.StageKeyDone || got["name"] != "Done" || got["renamed"] != true {
+			t.Fatalf("Research renamed to Done: %v", got)
+		}
+	})
+
+	t.Run("set_stage", func(t *testing.T) {
+		agent := withoutDone("zurueck-agent")
+		s.ohneLaeufe(agent.ID)
+		task, err := s.backlog.Create(ctx, s.orgID, agent.ID, "Wohin", "", "manual", 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if claimed, err := s.backlog.ClaimNext(ctx, agent.ID); err != nil || claimed.ID != task.ID {
+			t.Fatalf("claim: %v %v", claimed.ID, err)
+		}
+		st, err := s.backlog.SetTaskStageByName(ctx, agent.ID, task.ID, "Done")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.Key == nil || *st.Key != backlog.StageKeyDone || st.Name != "Erledigt" || st.Renamed || st.CreatedBy != "agent" {
+			t.Fatalf("set_stage Done on a board without a done column: %+v", st)
+		}
+		// The task leaves it; a keyed column is no agent column to clean up.
+		if _, err := s.backlog.SetTaskStageByName(ctx, agent.ID, task.ID, "Research"); err != nil {
+			t.Fatal(err)
+		}
+		if got := stageByKey(t, s, agent.ID, backlog.StageKeyDone); got.ID != st.ID {
+			t.Fatalf("the done column must stay: %+v", got)
+		}
+		if _, err := s.backlog.Complete(ctx, task.ID, backlog.StateDone, "ok", ""); err != nil {
+			t.Fatal(err)
+		}
+		if stageOf(t, s, task.ID) != st.ID {
+			t.Fatalf("a finished task leaves Research for the done column")
+		}
+	})
 }

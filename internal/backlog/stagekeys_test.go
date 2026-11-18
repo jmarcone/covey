@@ -140,3 +140,15 @@ func TestStageRenamed(t *testing.T) {
 		}
 	}
 }
+
+// LoadStageLabels is what serve calls at start: the compiled-in catalogues
+// load without an error, so a broken one stops the boot instead of the first
+// set_stage.
+func TestLoadStageLabels(t *testing.T) {
+	if err := LoadStageLabels(); err != nil {
+		t.Fatal(err)
+	}
+	if k, ok := StageKeyFor("Done"); !ok || k != StageKeyDone {
+		t.Fatalf("after loading, Done = %q %v", k, ok)
+	}
+}

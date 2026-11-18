@@ -389,12 +389,20 @@ function StageEditor({ agentId, stages }: { agentId: string; stages: Stage[] }) 
     qc.invalidateQueries({ queryKey: ["backlog", agentId] });
   };
   const [name, setName] = useState("");
+  // Bumped when a change is refused: the column fields are uncontrolled, so a
+  // new key is what puts the stored name back into them. Otherwise the refused
+  // text stayed in the field and looked saved once the message was gone.
+  const [refills, setRefills] = useState(0);
+  // Each of the two mutations clears the other's error when it starts, so the
+  // message below speaks of the last change only: a refused "Add" is not still
+  // on screen after a rename that went through.
   const create = useMutation({
     mutationFn: () =>
       post(`/agents/${agentId}/stages`, {
         name,
         color: STAGE_PALETTE[stages.length % STAGE_PALETTE.length],
       }),
+    onMutate: (): void => update.reset(),
     onSuccess: () => {
       setName("");
       inval();
@@ -406,7 +414,9 @@ function StageEditor({ agentId, stages }: { agentId: string; stages: Stage[] }) 
   const update = useMutation({
     mutationFn: (s: Stage & { default_name?: boolean }) =>
       patch(`/stages/${s.id}`, { name: s.name, color: s.color, position: s.position, default_name: s.default_name }),
+    onMutate: (): void => create.reset(),
     onSuccess: inval,
+    onError: () => setRefills((n) => n + 1),
   });
   // 409: the board has that name already, or a default column of that meaning
   // ("Done" beside the done column). Said, rather than the field just
@@ -448,11 +458,12 @@ function StageEditor({ agentId, stages }: { agentId: string; stages: Stage[] }) 
               <span className="dot" style={{ background: s.color || "var(--text-secondary)" }} />
             </button>
             {/* Keyed by the label, so that a switch of language refills the
-                field. On a renamed default column, typing its label in the
-                chosen language undoes the rename; any other text is stored as
-                typed — a label of another language too. */}
+                field, and by the refusals, so that a refused name gives way
+                to the stored one. On a renamed default column, typing its
+                label in the chosen language undoes the rename; any other text
+                is stored as typed — a label of another language too. */}
             <input
-              key={label}
+              key={`${label}#${refills}`}
               className="flex-1"
               defaultValue={label}
               onBlur={(e) => {

@@ -563,19 +563,41 @@ func terminalState(state string) bool {
 // empty" — and over weeks the board would collect a dozen dead working states.
 // Columns created by humans stay untouched here as well: a deliberate placement
 // is never overwritten.
+//
+// If nothing moved, the board may still carry its default columns under their
+// old German names without a key — seeded by an instance of the code before the
+// key during a rolling start, after 0148 ran. They are keyed here
+// (keyLegacyStages) and the move is tried once more, so such a board follows
+// from its first transition on rather than never.
 func syncStage(ctx context.Context, tx pgx.Tx, taskID uuid.UUID, newState string) error {
 	target, ok := stateStage[newState]
 	if !ok {
 		return nil
 	}
-	_, err := tx.Exec(ctx, `UPDATE backlog_tasks t SET stage_id = s.id
-		FROM agent_stages s
-		WHERE t.id=$1 AND s.agent_id=t.agent_id AND s.key=$2
-		  AND (t.stage_id IS NULL OR t.stage_id IN (
-		      SELECT d.id FROM agent_stages d
-		      WHERE d.agent_id=t.agent_id
-		        AND (d.key IS NOT NULL OR ($3 AND d.created_by='agent'))))`,
-		taskID, target, terminalState(newState))
+	move := func() (int64, error) {
+		tag, err := tx.Exec(ctx, `UPDATE backlog_tasks t SET stage_id = s.id
+			FROM agent_stages s
+			WHERE t.id=$1 AND s.agent_id=t.agent_id AND s.key=$2
+			  AND (t.stage_id IS NULL OR t.stage_id IN (
+			      SELECT d.id FROM agent_stages d
+			      WHERE d.agent_id=t.agent_id
+			        AND (d.key IS NOT NULL OR ($3 AND d.created_by='agent'))))`,
+			taskID, target, terminalState(newState))
+		return tag.RowsAffected(), err
+	}
+	moved, err := move()
+	if err != nil || moved > 0 {
+		return err
+	}
+	var agentID uuid.UUID
+	if err := tx.QueryRow(ctx, "SELECT agent_id FROM backlog_tasks WHERE id=$1", taskID).Scan(&agentID); err != nil {
+		return err
+	}
+	keyed, err := keyLegacyStages(ctx, tx, agentID)
+	if err != nil || keyed == 0 {
+		return err
+	}
+	_, err = move()
 	return err
 }
 
@@ -1058,6 +1080,7 @@ func (s *Store) ListStages(ctx context.Context, agentID uuid.UUID) ([]Stage, err
 type querier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	Begin(ctx context.Context) (pgx.Tx, error)
 }
 
 // CreateStage appends a new column at the end (position = max+1) — the human
@@ -1067,9 +1090,19 @@ type querier interface {
 // (ErrStageNameTaken), like a name the board already has: a "Done" beside the
 // done column is a second column of the same meaning, and set_stage "Done"
 // would land in it rather than in the column auto-follow fills.
+//
+// A name that means a default column the board does not have makes that
+// column: it gets the key, so auto-follow fills it again. That is how a human
+// brings back a done column they deleted, as "Erledigt" did before the key
+// (0148 keys such a column for the same reason). The name is stored as it is
+// typed, like a rename.
 func (s *Store) CreateStage(ctx context.Context, agentID uuid.UUID, name, color string) (Stage, error) {
-	if err := s.checkStageName(ctx, agentID, uuid.Nil, name); err != nil {
+	key, err := s.checkStageName(ctx, agentID, uuid.Nil, name)
+	if err != nil {
 		return Stage{}, err
+	}
+	if key != "" {
+		return stageNameTaken(insertStage(ctx, s.pool, agentID, name, &key, color, "human"))
 	}
 	return stageNameTaken(createStage(ctx, s.pool, agentID, name, color, "human"))
 }
@@ -1087,21 +1120,86 @@ func insertStage(ctx context.Context, q querier, agentID uuid.UUID, name string,
 
 // checkStageName refuses a name that means one of the board's keyed columns
 // other than the column self (uuid.Nil for a new one): its label in any of
-// the ten languages, its key or its old German name.
-func (s *Store) checkStageName(ctx context.Context, agentID, self uuid.UUID, name string) error {
+// the ten languages, its key or its old German name. If the name means a
+// default column the board does not have, it answers that column's key, for
+// the caller to give the column it writes.
+func (s *Store) checkStageName(ctx context.Context, agentID, self uuid.UUID, name string) (string, error) {
 	key, ok := StageKeyFor(name)
 	if !ok {
-		return nil
+		return "", nil
 	}
-	var taken bool
-	if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM agent_stages
-		WHERE agent_id=$1 AND key=$2 AND id<>$3)`, agentID, key, self).Scan(&taken); err != nil {
-		return err
+	st, err := stageOfKey(ctx, s.pool, agentID, key)
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return key, nil
+	case err != nil:
+		return "", err
+	case st.ID != self:
+		return "", ErrStageNameTaken
 	}
-	if taken {
-		return ErrStageNameTaken
+	return "", nil
+}
+
+// stageOfKey returns the board's column of that key. Unkeyed columns under
+// the old German names are keyed first (keyLegacyStages), so they are found
+// as what they are.
+func stageOfKey(ctx context.Context, q querier, agentID uuid.UUID, key string) (Stage, error) {
+	byKey := func() (Stage, error) {
+		return scanStage(q.QueryRow(ctx, "SELECT "+stageCols+
+			" FROM agent_stages WHERE agent_id=$1 AND key=$2", agentID, key))
 	}
-	return nil
+	st, err := byKey()
+	if !errors.Is(err, ErrNotFound) {
+		return st, err
+	}
+	if _, err := keyLegacyStages(ctx, q, agentID); err != nil {
+		return Stage{}, err
+	}
+	return byKey()
+}
+
+// keyLegacyStages gives each unkeyed column of the board that carries a
+// default column's old German name exactly ("Backlog", "In Arbeit",
+// "Erledigt") that column's key, unless the board has a column of that key
+// already. It answers how many it keyed.
+//
+// 0148 keyed every such column that existed when it ran, because each took
+// part in the name-based auto-follow. The code before the key keeps making
+// them, though: an instance of it may share the database during a rolling
+// start and seeds boards by name. Without this, such a board would never get
+// its keys in this release — auto-follow would pass it by, and set_stage
+// "Done" would open a second done column on it. So the board is keyed where
+// it is used: by auto-follow, set_stage and the column editor. The whole
+// board at once, because auto-follow moves a task only out of a keyed column:
+// keying "Erledigt" alone leaves a task in "Backlog" behind.
+//
+// The update runs in a savepoint: a column of one of the keys that a
+// concurrent transaction committed meanwhile violates agent_stages_agent_key,
+// and that must not cost the caller its transaction (a state transition, say).
+// Nothing is keyed then; the next use tries again.
+func keyLegacyStages(ctx context.Context, q querier, agentID uuid.UUID) (int64, error) {
+	names, keys := make([]string, 0, len(legacyStageNames)), make([]string, 0, len(legacyStageNames))
+	for name, key := range legacyStageNames {
+		names, keys = append(names, name), append(keys, key)
+	}
+	sp, err := q.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer sp.Rollback(ctx)
+	tag, err := sp.Exec(ctx, `UPDATE agent_stages s SET key = l.key
+		FROM unnest($2::text[], $3::text[]) AS l(name, key)
+		WHERE s.agent_id=$1 AND s.key IS NULL AND s.name = l.name
+		  AND NOT EXISTS (SELECT 1 FROM agent_stages k WHERE k.agent_id=$1 AND k.key = l.key)`,
+		agentID, names, keys)
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), sp.Commit(ctx)
 }
 
 // stageNameTaken turns a violation of UNIQUE (agent_id, name) into
@@ -1164,7 +1262,9 @@ func (s *Store) SeedDefaultStages(ctx context.Context, agentID uuid.UUID) error 
 // as it is given. An empty name gives a keyed column its old German name back
 // (LegacyStageName): it is no longer renamed and shows the reader's language
 // again. A name that means another default column of the board, or that the
-// board already has, is ErrStageNameTaken.
+// board already has, is ErrStageNameTaken. An unkeyed column renamed to a name
+// that means a default column the board does not have becomes that column, as
+// on CreateStage.
 func (s *Store) UpdateStage(ctx context.Context, id uuid.UUID, name, color string, position int) (Stage, error) {
 	cur, err := scanStage(s.pool.QueryRow(ctx, "SELECT "+stageCols+" FROM agent_stages WHERE id=$1", id))
 	if err != nil {
@@ -1176,11 +1276,17 @@ func (s *Store) UpdateStage(ctx context.Context, id uuid.UUID, name, color strin
 		}
 		name = LegacyStageName(*cur.Key)
 	}
-	if err := s.checkStageName(ctx, cur.AgentID, id, name); err != nil {
+	key, err := s.checkStageName(ctx, cur.AgentID, id, name)
+	if err != nil {
 		return Stage{}, err
 	}
-	return stageNameTaken(scanStage(s.pool.QueryRow(ctx, `UPDATE agent_stages SET name=$2, color=$3, position=$4
-		WHERE id=$1 RETURNING `+stageCols, id, name, color, position)))
+	var gain *string
+	if key != "" {
+		gain = &key
+	}
+	return stageNameTaken(scanStage(s.pool.QueryRow(ctx, `UPDATE agent_stages
+		SET name=$2, color=$3, position=$4, key=COALESCE(key, $5)
+		WHERE id=$1 RETURNING `+stageCols, id, name, color, position, gain)))
 }
 
 // DeleteStage removes a column; tasks in it fall back to stage=NULL via the FK.
@@ -1221,8 +1327,13 @@ func (s *Store) ReorderStages(ctx context.Context, agentID uuid.UUID, ordered []
 // its old German name, case-insensitive — lands in the keyed column, whatever
 // that one is called now. Without it, an agent that says "Done" on a board
 // whose done column reads "Erledigt" got a second column of the same meaning.
-// Only if the agent has no such column any more (a human deleted it) does the
-// name go the ordinary way.
+// Unkeyed columns under the old German names are keyed on the way
+// (keyLegacyStages).
+//
+// If the board has no such column any more (a human deleted it), the agent's
+// column becomes it: keyed, so auto-follow fills it again, and never cleaned
+// up. It gets the old German name, so it shows the reader's language like a
+// seeded one — the agent named a meaning, not a wording.
 func (s *Store) EnsureStage(ctx context.Context, agentID uuid.UUID, name string) (Stage, error) {
 	return ensureStage(ctx, s.pool, agentID, name)
 }
@@ -1231,22 +1342,26 @@ func ensureStage(ctx context.Context, q querier, agentID uuid.UUID, name string)
 	st, err := scanStage(q.QueryRow(ctx, "SELECT "+stageCols+
 		" FROM agent_stages WHERE agent_id=$1 AND name=$2", agentID, name))
 	if err == nil {
-		return st, nil
+		if st.Key != nil || LegacyStageKey(st.Name) == "" {
+			return st, nil
+		}
+		if keyed, err := keyLegacyStages(ctx, q, agentID); err != nil || keyed == 0 {
+			return st, err
+		}
+		return scanStage(q.QueryRow(ctx, "SELECT "+stageCols+" FROM agent_stages WHERE id=$1", st.ID))
 	}
 	if !errors.Is(err, ErrNotFound) {
 		return Stage{}, err
 	}
-	if key, ok := StageKeyFor(name); ok {
-		st, err := scanStage(q.QueryRow(ctx, "SELECT "+stageCols+
-			" FROM agent_stages WHERE agent_id=$1 AND key=$2", agentID, key))
-		if err == nil {
-			return st, nil
-		}
-		if !errors.Is(err, ErrNotFound) {
-			return Stage{}, err
-		}
+	key, ok := StageKeyFor(name)
+	if !ok {
+		return createStage(ctx, q, agentID, name, "", "agent")
 	}
-	return createStage(ctx, q, agentID, name, "", "agent")
+	st, err = stageOfKey(ctx, q, agentID, key)
+	if errors.Is(err, ErrNotFound) {
+		return insertStage(ctx, q, agentID, LegacyStageName(key), &key, "", "agent")
+	}
+	return st, err
 }
 
 // SetTaskStage moves a task into a stage (nil = no stage). Purely a matter of

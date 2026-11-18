@@ -17,9 +17,10 @@
 -- creates "Erledigt" if it does not find it. With the names emptied it would
 -- answer the column list with an error, open a second "Erledigt" beside the
 -- keyed one and stop moving tasks. A later release can empty the names of
--- the unrenamed keyed columns once no such instance is left; it should key
--- exact default names again first (step 1), since the old code seeds boards
--- without a key until then.
+-- the unrenamed keyed columns once no such instance is left. The old code
+-- seeds boards without a key until then; the store keys such a board where
+-- it is used (backlog.keyLegacyStages). The later release should still key
+-- exact default names first (step 1), for a board nobody used since.
 ALTER TABLE agent_stages
     ADD COLUMN key TEXT CHECK (key IN ('open', 'in_progress', 'done'));
 
