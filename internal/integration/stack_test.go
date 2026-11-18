@@ -241,6 +241,14 @@ type stackOpts struct {
 	// staleAfter shortens the patience with a busy status nothing backs. Five
 	// minutes is right in production and is not a test.
 	staleAfter time.Duration
+	// tickInterval replaces the stack's 300 ms dispatch tick. A test that has
+	// to show a wake arriving by itself — not swept up by the periodic tick —
+	// sets it far beyond its own runtime.
+	tickInterval time.Duration
+	// logTap receives the stack's log records from debug level up, beside
+	// stderr (which stays at warn). For a test that waits for a line the
+	// orchestrator writes when something did NOT happen.
+	logTap slog.Handler
 	// platform builds the control-plane target systems (#710) once the
 	// stores exist, before the orchestrator does.
 	platform func(*stack) map[string]orchestrator.PlatformSystem
@@ -336,6 +344,9 @@ func newStackWith(t *testing.T, opts stackOpts) *stack {
 	t.Cleanup(pool.Close)
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	if opts.logTap != nil {
+		log = slog.New(teeHandler{log.Handler(), opts.logTap})
+	}
 	idp, err := identbuiltin.New(pool)
 	if err != nil {
 		t.Fatal(err)
@@ -385,6 +396,10 @@ func newStackWith(t *testing.T, opts stackOpts) *stack {
 	if opts.provider != nil {
 		provider = opts.provider(s.homeBase, log)
 	}
+	tickInterval := 300 * time.Millisecond
+	if opts.tickInterval > 0 {
+		tickInterval = opts.tickInterval
+	}
 	readyTimeout := 10 * time.Second
 	if opts.readyTimeout > 0 {
 		readyTimeout = opts.readyTimeout
@@ -408,7 +423,7 @@ func newStackWith(t *testing.T, opts stackOpts) *stack {
 		Notify:         notify.New(pool).WithSettings(s.settings),
 		Provider:       provider,
 		DaemonTokenTTL: 5 * time.Minute,
-		TickInterval:   300 * time.Millisecond,
+		TickInterval:   tickInterval,
 		ReadyTimeout:   readyTimeout,
 		StaleAfter:     opts.staleAfter,
 		Log:            log,
@@ -737,4 +752,29 @@ func (s *stack) alsSystemadmin(t *testing.T) {
 		"admin@test.local", accounts.RoleSystemAdmin); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// teeHandler hands every record to both handlers, each at its own level.
+type teeHandler struct{ a, b slog.Handler }
+
+func (h teeHandler) Enabled(ctx context.Context, l slog.Level) bool {
+	return h.a.Enabled(ctx, l) || h.b.Enabled(ctx, l)
+}
+
+func (h teeHandler) Handle(ctx context.Context, r slog.Record) error {
+	if h.a.Enabled(ctx, r.Level) {
+		_ = h.a.Handle(ctx, r.Clone())
+	}
+	if h.b.Enabled(ctx, r.Level) {
+		return h.b.Handle(ctx, r.Clone())
+	}
+	return nil
+}
+
+func (h teeHandler) WithAttrs(as []slog.Attr) slog.Handler {
+	return teeHandler{h.a.WithAttrs(as), h.b.WithAttrs(as)}
+}
+
+func (h teeHandler) WithGroup(name string) slog.Handler {
+	return teeHandler{h.a.WithGroup(name), h.b.WithGroup(name)}
 }
