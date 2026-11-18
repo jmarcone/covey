@@ -114,7 +114,7 @@ func (t *Task) Redact() {
 // CreatedBy distinguishes the origin: 'agent' columns ("invented" via
 // set_stage) are cleaned up automatically as soon as they are empty; 'seed'
 // marks the default columns the platform lays out (SeedDefaultStages, an
-// import); 'human' is everything a person made. Before 0142 seeding wrote
+// import); 'human' is everything a person made. Before 0148 seeding wrote
 // 'human' as well, which is why that migration had to go by name and time.
 //
 // Key marks the three default columns (open, in_progress, done) — the ones

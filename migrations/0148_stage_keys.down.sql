@@ -4,7 +4,7 @@
 -- human renamed keeps its name — as before this migration, a renamed default
 -- column is a custom column.
 --
--- Since 0142 a human could create a column of that very name next to the
+-- Since 0148 a human could create a column of that very name next to the
 -- unnamed keyed one. That column steps aside (its id is appended) so that the
 -- keyed column gets the name the old code looks for.
 UPDATE agent_stages o SET name = o.name || ' (' || left(o.id::text, 8) || ')'
@@ -23,7 +23,7 @@ UPDATE agent_stages SET name = CASE key
     END
 WHERE name IS NULL;
 
--- 'seed' is new with 0142; the code before it knows 'agent' and 'human'.
+-- 'seed' is new with 0148; the code before it knows 'agent' and 'human'.
 UPDATE agent_stages SET created_by = 'human' WHERE created_by = 'seed';
 
 DROP INDEX agent_stages_agent_key;

@@ -25,7 +25,7 @@ const (
 const stageLabelKey = "agent.backlog.defaultStage."
 
 // legacyStageNames are the names the default columns carried before they got a
-// key (migrations 0004 and 0142). They still resolve — an agent's playbook
+// key (migrations 0004 and 0148). They still resolve — an agent's playbook
 // written against the old board says "Erledigt" — and an imported bundle from
 // before the key recognises its default columns by them.
 var legacyStageNames = map[string]string{

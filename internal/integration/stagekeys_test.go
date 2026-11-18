@@ -236,7 +236,7 @@ func TestSetStageDoneWhileInProgress(t *testing.T) {
 	board("after the run")
 }
 
-// TestStageKeyMigration takes a board from before 0142 through the migration
+// TestStageKeyMigration takes a board from before 0148 through the migration
 // and back:
 //
 //   - agent A: Backlog / In Arbeit / Erledigt, a custom "Research", and the
@@ -275,9 +275,10 @@ func TestStageKeyMigration(t *testing.T) {
 	if err := db.MigrateDown(ctx, s.pool, migrations.FS); err != nil {
 		t.Fatal(err)
 	}
+	// The rollback took exactly stage keys: whatever main has below it stays.
 	var top int
-	if err := s.pool.QueryRow(ctx, "SELECT MAX(version) FROM schema_migrations").Scan(&top); err != nil || top != 141 {
-		t.Fatalf("expected to stand at 0141 after the rollback, at %d (%v)", top, err)
+	if err := s.pool.QueryRow(ctx, "SELECT MAX(version) FROM schema_migrations").Scan(&top); err != nil || top >= 148 {
+		t.Fatalf("expected to stand below 0148 after the rollback, at %d (%v)", top, err)
 	}
 
 	// The board as 0004/SeedDefaultStages and set_stage left it.
@@ -460,7 +461,7 @@ func TestStageKeyMigration(t *testing.T) {
 		t.Errorf("failing moves the task into done")
 	}
 
-	// Since 0142 a human may create "Erledigt" beside the unnamed done column;
+	// Since 0148 a human may create "Erledigt" beside the unnamed done column;
 	// on the rollback it steps aside for the keyed one.
 	bErledigt, err := s.backlog.CreateStage(ctx, b.ID, "Erledigt", "")
 	if err != nil {
@@ -484,14 +485,14 @@ func TestStageKeyMigration(t *testing.T) {
 	var seeded int
 	s.pool.QueryRow(ctx, "SELECT COUNT(*) FROM agent_stages WHERE created_by='seed'").Scan(&seeded)
 	if seeded != 0 {
-		t.Errorf("the code before 0142 knows no 'seed', %d columns still carry it", seeded)
+		t.Errorf("the code before 0148 knows no 'seed', %d columns still carry it", seeded)
 	}
 	var stepped string
 	s.pool.QueryRow(ctx, "SELECT name FROM agent_stages WHERE id=$1", bErledigt.ID).Scan(&stepped)
 	if stepped != "Erledigt ("+bErledigt.ID.String()[:8]+")" {
 		t.Errorf("the human Erledigt must step aside, it is called %q", stepped)
 	}
-	// The name-based auto-follow of the code before 0142, verbatim.
+	// The name-based auto-follow of the code before 0148, verbatim.
 	back, _ := s.backlog.Create(ctx, s.orgID, a.ID, "nach dem Rollback", "", "manual", 1)
 	exec("UPDATE backlog_tasks SET stage_id=$2 WHERE id=$1", back.ID, aWork)
 	exec(`UPDATE backlog_tasks t SET stage_id = s.id
