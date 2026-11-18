@@ -45,6 +45,31 @@ export function viewUrl(view: AgentsView): string {
   return BASE[view];
 }
 
+const choiceKey = (principal: string) => `covey.agents.view.${principal}`;
+
+/* The view a person opens the agents area on, chosen in the switch. Kept in
+ * the browser, per principal: two people on one browser keep their own, and
+ * the server learns nothing of it. With nothing stored, or nothing readable,
+ * it is the list: the one view every installation has and the lighter one. */
+export function chosenView(principal: string, teamSurface: boolean): AgentsView {
+  try {
+    const v = localStorage.getItem(choiceKey(principal));
+    // Only a view this installation still offers: the value may predate a
+    // change of the team surface.
+    return viewsFor(teamSurface).find((o) => o === v) ?? "list";
+  } catch {
+    return "list";
+  }
+}
+
+export function rememberView(principal: string, view: AgentsView) {
+  try {
+    localStorage.setItem(choiceKey(principal), view);
+  } catch {
+    // Without storage the next visit opens the list; nothing more is lost.
+  }
+}
+
 /* The router state a link to an agent's page carries. */
 export function fromView(view: AgentsView) {
   return { from: view };

@@ -7,6 +7,7 @@ import App from "./App";
 import { api } from "./api";
 import { merkeSprache } from "./i18n";
 import { useGerman, testPrincipal } from "./test/render";
+import { rememberView } from "./pages/agents/views";
 
 /* What happens when the session ends.
 
@@ -182,7 +183,21 @@ describe("App und die Team-Oberfläche", () => {
     expect(screen.queryByRole("link", { name: "Team" })).not.toBeInTheDocument();
   });
 
+  it("gibt die Wurzel der Liste, solange niemand das Büro gewählt hat", async () => {
+    serverMitSitzung(() => true, true);
+    renderApp(<App />, "/");
+
+    expect(await screen.findByRole("heading", { name: "Agenten" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Guten Tag, Test" })).not.toBeInTheDocument();
+    // The office is one click away, in the switch of the area's bar.
+    expect(
+      within(screen.getByRole("navigation", { name: "Ansichten der Agenten" })).getByRole("link", { name: "Büro" }),
+    ).not.toHaveAttribute("aria-current");
+  });
+
   it("gibt die Wurzel dem Büro, im selben Rahmen wie die Agentenliste", async () => {
+    // What the person chose in the switch, on an earlier visit.
+    rememberView(testPrincipal().ID, "office");
     // The office measures its floor; jsdom does not.
     vi.stubGlobal(
       "ResizeObserver",

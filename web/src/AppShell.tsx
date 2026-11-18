@@ -32,6 +32,7 @@ import Rail, { rememberAgentsView } from "./components/Rail";
 import { useDrawer, useNarrow } from "./components/ConsoleDrawer";
 import Suche, { useSucheKuerzel } from "./components/Suche";
 import AgentsFrame from "./pages/agents/AgentsFrame";
+import Landing from "./pages/agents/Landing";
 
 /* The look of the interface comes with it, not before it — see app.css. */
 import "./app.css";
@@ -387,7 +388,7 @@ export default function AppShell({ me, onLogout }: { me: Principal; onLogout: ()
             frame. */}
         {/* The agents area's bar stands outside the keyed page below: it
             neither remounts nor fades when one view gives way to another. */}
-        {inAgents && <AgentsFrame teamSurface={!!me.TeamSurface} />}
+        {inAgents && <AgentsFrame teamSurface={!!me.TeamSurface} principal={me.ID} />}
         <div key={location.pathname} className="fade flex-1 konsole-inhalt">
           {/* Every page is its own bundle and arrives only when it is
               called for. No placeholder: the frame already stands, and a
@@ -395,9 +396,10 @@ export default function AppShell({ me, onLogout }: { me: Principal; onLogout: ()
               signal. */}
           <Suspense fallback={null}>
           <Routes>
-            {/* The office needs the team surface: its card and rows open
-                conversations. Without it the root is the list. */}
-            <Route path="/" element={me.TeamSurface ? <Ueberblick me={me} /> : <Navigate to="/agents" replace />} />
+            {/* The root opens the view the person chose, the list until they
+                choose otherwise. The office needs the team surface: its card
+                and rows open conversations. */}
+            <Route path="/" element={<Landing me={me} office={<Ueberblick me={me} />} />} />
             <Route path="/agents" element={<Dashboard me={me} />} />
             <Route path="/agents/:id" element={<AgentPage me={me} />} />
             <Route path="/workflows" element={<Workflows me={me} />} />

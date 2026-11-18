@@ -13,7 +13,7 @@ function bar(route: string | { pathname: string; search?: string; state?: unknow
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={[route]}>
-        <AgentsFrame teamSurface={teamSurface} />
+        <AgentsFrame teamSurface={teamSurface} principal="p1" />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -89,7 +89,7 @@ describe("AgentsFrame", () => {
     render(
       <QueryClientProvider client={qc}>
         <MemoryRouter initialEntries={[{ pathname: `/agents/${ID}`, state: fromView("office") }]}>
-          <AgentsFrame teamSurface />
+          <AgentsFrame teamSurface principal="p1" />
           <TabSwitch />
         </MemoryRouter>
       </QueryClientProvider>,
