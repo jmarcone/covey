@@ -205,7 +205,10 @@
       "layout_combined": "Conjunta",
       "layout_agents": "Por agente",
       "billedHint": "Facturado por Anthropic: lo que la API de uso y coste informa para la clave de API de la credencial, tras descuentos y antes de créditos. Llega con 4–24 h de retraso; la marca indica hasta dónde está completo.",
-      "sourceHints": "Qué significan las cuatro cifras"
+      "sourceHints": "Qué significan las cuatro cifras",
+      "noDepartment": "Sin departamento",
+      "more": "+{{n}} más",
+      "fewer": "Mostrar menos"
     },
     "stack": {
       "cache_read": "Caché leída",

@@ -205,7 +205,10 @@
       "layout_combined": "Insieme",
       "layout_agents": "Per agente",
       "billedHint": "Fatturato da Anthropic: quanto la API di utilizzo e costi riporta per la chiave API della credenziale, dopo gli sconti e prima dei crediti. Arriva con 4–24 h di ritardo; il segno indica fin dove è completo.",
-      "sourceHints": "Cosa significano i quattro valori"
+      "sourceHints": "Cosa significano i quattro valori",
+      "noDepartment": "Nessun reparto",
+      "more": "+{{n}} altri",
+      "fewer": "Mostra meno"
     },
     "stack": {
       "cache_read": "Cache letta",
