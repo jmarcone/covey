@@ -1152,12 +1152,27 @@ func (s *Store) SetTaskStage(ctx context.Context, taskID uuid.UUID, stageID *uui
 // the stage, move the task, clear out empty agent columns. One transaction, so
 // that no concurrent cleanup removes the freshly created column between
 // creating it and assigning it.
+//
+// The task has to be the agent's own. A column belongs to its agent's board,
+// so a colleague's task, one the agent only delegated or one of another
+// organisation is not the agent's to place (#66). Such a task is ErrNotFound,
+// like an id that does not exist, so the caller learns nothing about it. The
+// check comes before the column is ensured, and the row lock keeps the task
+// from changing hands until the move is committed.
 func (s *Store) SetTaskStageByName(ctx context.Context, agentID, taskID uuid.UUID, name string) (Stage, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Stage{}, err
 	}
 	defer tx.Rollback(ctx)
+	var own uuid.UUID
+	if err := tx.QueryRow(ctx,
+		"SELECT id FROM backlog_tasks WHERE id=$1 AND agent_id=$2 FOR UPDATE", taskID, agentID).Scan(&own); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Stage{}, ErrNotFound
+		}
+		return Stage{}, err
+	}
 	st, err := ensureStage(ctx, tx, agentID, name)
 	if err != nil {
 		return Stage{}, err
