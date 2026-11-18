@@ -28,6 +28,8 @@ On the board the columns are freely configurable; underneath, these states remai
 
 An agent is woken by a new task, a webhook, a heartbeat or by hand. Then the same chain always follows: sandbox up → pick up the task (looking things up in memory) → work → record the result and file it into memory → sandbox down, agent asleep.
 
+A task that arrives while the sandbox is still going down — a colleague's handover, say — is not lost: when the sandbox is down, the agent looks at its backlog once more and picks the task up, without waiting for the next dispatch tick. If you press **Wake** in that moment, or while a wake is still under way, the press is answered once the current run has ended. A killed agent is not woken this way.
+
 The chain is deliberately short. Anything that takes longer than a run is not solved by waiting but by `blocked`.
 
 ## Why blocked is the interesting state
