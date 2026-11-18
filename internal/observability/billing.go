@@ -338,8 +338,8 @@ func (s *Store) BillingKeyMappings(ctx context.Context, orgID uuid.UUID) ([]Bill
 // it is the width read most recently (the 1h read of the last 48 h is fresher
 // than the daily re-read, the daily re-read is fresher than an old 1h read),
 // 1d on a tie. hourly takes a day's 1h rows wherever they are complete, and
-// falls back to the default elsewhere: an hourly view, and the tile beside
-// it. The width matters beyond the shape of the chart: a credential mapping
+// falls back to the default elsewhere: an hourly view, the tile beside it,
+// and the reconciliation, whose lines split at a hand-over too. The width matters beyond the shape of the chart: a credential mapping
 // is chosen per row (billedMapping), so a 1d row goes whole to the latest
 // holder of its day while 1h rows split at a hand-over — two readers that
 // are to agree on whose a bucket is must take their rows by the same rule.
@@ -479,8 +479,11 @@ const matchBelowUSD = 0.01
 // Anthropic billed the API key the credential's value is. The lines count
 // inside the mapping's interval; a bill row counts for the one mapping of its
 // time (billedMapping), as in the chart and the tile — a value re-saved inside
-// a day is one row for that day, with the bill once. since is moved back to
-// its UTC midnight.
+// a day is one row for that day, with the bill once. The rows are the hourly
+// rule's (chosenRows): the lines split at the exact hand-over, so the bill
+// has to split there too wherever the day's hours allow it, rather than go
+// whole to the newer holder with a fresher 1d row. since is moved back to its
+// UTC midnight.
 func (s *Store) Reconcile(ctx context.Context, orgID uuid.UUID, since time.Time) (Reconciliation, error) {
 	since = since.UTC().Truncate(24 * time.Hour)
 	rec := Reconciliation{Since: since, Days: []ReconcileDay{}}
@@ -499,8 +502,8 @@ maps AS (
 		COALESCE(valid_to, 'infinity'::timestamptz) AS valid_to
 	FROM credential_billing_keys
 	WHERE org_id = $1 AND COALESCE(valid_to, 'infinity'::timestamptz) > $2),
-` + chosenRows("billed_cost", "cpick", "bcost", false) + `,
-` + chosenRows("billed_usage", "upick", "buse", false) + `,
+` + chosenRows("billed_cost", "cpick", "bcost", true) + `,
+` + chosenRows("billed_usage", "upick", "buse", true) + `,
 ours AS (
 	SELECT m.secret_key, m.secret_slot, m.api_key_id, m.workspace_id, ` + day("mu.created_at") + ` AS day, nm.model,
 		SUM(mu.engine_usd) AS reported,
@@ -685,8 +688,8 @@ type BilledSeries struct {
 // mapping would count it once per mapping. A mapping that ended where it began
 // (closed by a write in the same instant) was never valid and holds nothing.
 // The chart (BilledSeries), the tile (BilledWindowFor) and the reconciliation
-// all take it from here; the chart and the tile agree on whose a bucket is as
-// long as they read the same rows (chosenRows with the same hourly).
+// all take it from here; they agree on whose a bucket is as long as they read
+// the same rows (chosenRows with the same hourly).
 const billedMapping = `LEFT JOIN LATERAL (SELECT k.secret_key, k.secret_slot::int AS secret_slot,
 				k.api_key_id, k.workspace_id
 			FROM credential_billing_keys k
