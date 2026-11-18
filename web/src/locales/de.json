@@ -313,7 +313,14 @@
       "saving": "Speichern …",
       "cancel": "Abbrechen",
       "fromHintWeek": "Vorbelegt: Beginn der aktuellen Zählerwoche.",
-      "fromHintNow": "Noch kein Wochen-Reset bekannt, vorbelegt: jetzt."
+      "fromHintNow": "Noch kein Wochen-Reset bekannt, vorbelegt: jetzt.",
+      "errMoved": "Bei anderen Zugangsdaten gespeichert — die Zugangsdaten wurden umsortiert; prüfe beide Tarife.",
+      "fromHintCorrect": "In dieser Zählerwoche beginnt schon ein Preis, vorbelegt: jetzt.",
+      "errConflict": "Zu diesem Zeitpunkt beginnt schon ein Tarif — wähle einen späteren Beginn.",
+      "errInvalid": "Der Server hat den Preis abgelehnt ({{msg}}).",
+      "errForbidden": "Deine Rolle darf keinen Tarifpreis setzen ({{msg}}).",
+      "form": "Tarifpreis für {{name}} setzen",
+      "errGone": "Diese Zugangsdaten sitzen auf keinem Platz mehr — es gibt keinen Ort für den Preis."
     }
   },
   "lang": {

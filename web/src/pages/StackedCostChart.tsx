@@ -628,7 +628,7 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
         <h3 style={{ fontSize: 15, fontWeight: 600 }}>{name}</h3>
         <span className="muted text-xs">{kind}{plan && !subscription ? ` · ${plan}` : ""}</span>
       </div>
-      {subscription && <PlanPrice f={f} readings={readings} editable={canSetPlan} />}
+      {subscription && <PlanPrice f={f} name={name} readings={readings} editable={canSetPlan} />}
       <CredentialTiles f={f} filtered={filtered || layout === "agents"} />
       <NoMultiple f={f} />
       {f.bookingCheck.length > 0 && (

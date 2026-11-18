@@ -313,7 +313,14 @@
       "saving": "Zapisywanie…",
       "cancel": "Anuluj",
       "fromHintWeek": "Domyślnie: początek bieżącego tygodnia licznika.",
-      "fromHintNow": "Nie znamy jeszcze tygodniowego resetu, domyślnie: teraz."
+      "fromHintNow": "Nie znamy jeszcze tygodniowego resetu, domyślnie: teraz.",
+      "errMoved": "Zapisano przy innym poświadczeniu — kolejność poświadczeń się zmieniła; sprawdź oba plany.",
+      "fromHintCorrect": "W tym tygodniu licznika zaczyna się już cena, domyślnie: teraz.",
+      "errConflict": "W tym momencie zaczyna się już plan — wybierz późniejszy początek.",
+      "errInvalid": "Serwer odrzucił cenę ({{msg}}).",
+      "errForbidden": "Twoja rola nie może ustawić ceny planu ({{msg}}).",
+      "form": "Ustaw cenę planu dla {{name}}",
+      "errGone": "To poświadczenie nie jest już na żadnym stanowisku — nie ma gdzie zapisać ceny."
     }
   },
   "lang": {

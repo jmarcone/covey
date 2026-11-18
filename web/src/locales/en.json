@@ -313,7 +313,14 @@
       "saving": "Saving…",
       "cancel": "Cancel",
       "fromHintWeek": "Preset: the start of the current meter week.",
-      "fromHintNow": "No weekly reset known yet, preset: now."
+      "fromHintNow": "No weekly reset known yet, preset: now.",
+      "errMoved": "Saved to another credential — the credentials were reordered; check both plans.",
+      "fromHintCorrect": "A price already starts in this meter week, preset: now.",
+      "errConflict": "A plan already starts at that moment — pick a later start.",
+      "errInvalid": "The server rejected the price ({{msg}}).",
+      "errForbidden": "Your role may not set a plan price ({{msg}}).",
+      "form": "Set plan price for {{name}}",
+      "errGone": "This credential no longer sits on any seat — there is nowhere to save the price."
     }
   },
   "lang": {

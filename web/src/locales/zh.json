@@ -313,7 +313,14 @@
       "saving": "正在保存…",
       "cancel": "取消",
       "fromHintWeek": "默认值：当前计量周的开始。",
-      "fromHintNow": "尚无每周重置信息，默认值：现在。"
+      "fromHintNow": "尚无每周重置信息，默认值：现在。",
+      "errMoved": "已保存到另一个凭据——凭据顺序已变更；请检查两个套餐。",
+      "fromHintCorrect": "本计量周已有价格开始生效，默认值：现在。",
+      "errConflict": "该时刻已有套餐开始生效——请选择更晚的开始时间。",
+      "errInvalid": "服务器拒绝了该价格（{{msg}}）。",
+      "errForbidden": "你的角色无权设置套餐价格（{{msg}}）。",
+      "form": "设置 {{name}} 的套餐价格",
+      "errGone": "该凭据已不在任何工位上——无处保存价格。"
     }
   },
   "lang": {

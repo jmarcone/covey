@@ -313,7 +313,14 @@
       "saving": "Guardando…",
       "cancel": "Cancelar",
       "fromHintWeek": "Valor inicial: el comienzo de la semana actual del contador.",
-      "fromHintNow": "Aún no se conoce el reinicio semanal; valor inicial: ahora."
+      "fromHintNow": "Aún no se conoce el reinicio semanal; valor inicial: ahora.",
+      "errMoved": "Guardado en otra credencial: las credenciales se reordenaron; revisa ambos planes.",
+      "fromHintCorrect": "Ya empieza un precio en esta semana del contador; valor inicial: ahora.",
+      "errConflict": "Ya hay un plan que empieza en ese momento: elige un comienzo posterior.",
+      "errInvalid": "El servidor rechazó el precio ({{msg}}).",
+      "errForbidden": "Tu rol no puede fijar un precio de plan ({{msg}}).",
+      "form": "Fijar precio del plan de {{name}}",
+      "errGone": "Esta credencial ya no está en ningún puesto: no hay dónde guardar el precio."
     }
   },
   "lang": {
