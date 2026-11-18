@@ -2573,6 +2573,12 @@ func (o *Orchestrator) processTask(ctx context.Context, agent agents.Agent, link
 		return err
 	}
 
+	// However the loop ends, what the run's lines say it spent is booked:
+	// a run killed, paused at its budget or cut off with its sandbox never
+	// sends its cost message (the control plane stops reading the moment it
+	// kills), and its lines would stay without a booking.
+	defer o.bookUnreported(context.WithoutCancel(ctx), agent, taskID)
+
 	// Message loop until blocked/task_done.
 	for {
 		msg, err := link.Receive(ctx)
@@ -2697,6 +2703,34 @@ func (o *Orchestrator) bookCost(ctx context.Context, agent agents.Agent, taskID 
 
 // costTolerance is the rounding of one stored dollar figure (NUMERIC(…,6)).
 const costTolerance = 1e-6
+
+// bookUnreported books the task's result lines no cost message claimed, once
+// the task's message loop has ended. Normally there are none: the daemon sends
+// a run's cost before its completion, and the booking links the run's lines.
+// A run that is killed (kill switch, budget pause) or loses its sandbox never
+// sends it — the daemon tries, but the control plane has stopped reading — and
+// what its lines say it spent would be in the measured figures but not in the
+// booked ones, not in the budget and not in the capacity steering.
+//
+// It cannot book twice: it takes only lines no entry holds and links them, and
+// after the loop no cost message of that run can arrive any more.
+func (o *Orchestrator) bookUnreported(ctx context.Context, agent agents.Agent, taskID uuid.UUID) {
+	if o.Obs == nil {
+		return
+	}
+	if d, ok := daemon.Describe(agent.Runtime); !ok || !d.Capabilities.ResultUsage {
+		return
+	}
+	b, err := o.Obs.BookUnreported(ctx, agent.ID, taskID)
+	if err != nil {
+		o.Log.Warn("booking a run's unreported lines failed", "agent", agent.Slug, "task", taskID, "err", err)
+		return
+	}
+	if b.Lines > 0 {
+		o.Log.Info("run ended without reporting its cost; booked from its lines",
+			"agent", agent.Slug, "task", taskID, "booked_usd", b.USD, "lines", b.Lines)
+	}
+}
 
 // recordHTTP puts an HTTP request reported from the sandbox into the request
 // log — with the context only the control plane has (org, agent, task). Without

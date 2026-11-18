@@ -577,6 +577,10 @@ const (
 	// books them carry it, so the cost page can show the gap as its own
 	// kind beside the runs.
 	BasisGap = "gap"
+	// BasisUnreported: lines of a run that never sent its cost (killed,
+	// paused at its budget, its sandbox gone), booked from the lines once
+	// the control plane stopped listening to the run (BookUnreported).
+	BasisUnreported = "unreported"
 )
 
 // CostEntry is one booking of a run.
@@ -688,6 +692,47 @@ func (s *Store) BookRun(ctx context.Context, e CostEntry, fromLines bool) (Booke
 			RETURNING mu.id)
 		SELECT ins.id, ins.usd::float8, ins.basis, s.n, s.usd::float8, (SELECT count(*) FROM l)
 		FROM ins, s`, args...).Scan(&b.ID, &b.USD, &b.Basis, &b.Lines, &b.LinesUSD, new(int64))
+	return b, err
+}
+
+// BookUnreported books the task's lines that no entry holds — one entry of
+// basis unreported per session and credential, at the time of its last line —
+// and links them to it. For the end of a run whose cost message never came
+// (see Orchestrator.bookUnreported); gap rows are booked on their own and are
+// never among them. Booked sums what was written over all entries.
+func (s *Store) BookUnreported(ctx context.Context, agentID, taskID uuid.UUID) (Booked, error) {
+	var b Booked
+	err := s.pool.QueryRow(ctx, `WITH d AS (
+			SELECT id FROM model_usage
+			WHERE task_id = $1 AND agent_id = $2 AND cost_entry_id IS NULL AND basis <> '`+BasisGap+`'
+			FOR UPDATE),
+		s AS (
+			SELECT mu.session_id, mu.runtime_id, mu.credential_ord, mu.secret_key, mu.secret_slot,
+				SUM(mu.engine_usd) AS usd, SUM(mu.input_tokens) AS input_tokens, SUM(mu.output_tokens) AS output_tokens,
+				SUM(mu.cache_read_tokens) AS cache_read_tokens,
+				SUM(mu.cache_write_5m_tokens + mu.cache_write_1h_tokens) AS cache_creation_tokens,
+				(array_agg(mu.model ORDER BY mu.engine_usd DESC))[1] AS model, MAX(mu.created_at) AS created_at,
+				array_agg(mu.id) AS ids
+			FROM model_usage mu WHERE mu.id IN (SELECT id FROM d)
+			GROUP BY 1, 2, 3, 4, 5),
+		ins AS (
+			INSERT INTO cost_entries (agent_id, task_id, usd, input_tokens, output_tokens, cache_read_tokens,
+				cache_creation_tokens, model, runtime_id, credential_ord, secret_key, secret_slot, basis, session_id, created_at)
+			SELECT $2, $1, usd, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+				model, runtime_id, credential_ord, secret_key, secret_slot, '`+BasisUnreported+`', session_id, created_at
+			FROM s
+			RETURNING id, usd, session_id, runtime_id, credential_ord, secret_key, secret_slot),
+		l AS (
+			UPDATE model_usage mu SET cost_entry_id = ins.id
+			FROM ins JOIN s ON s.session_id = ins.session_id
+				AND s.runtime_id IS NOT DISTINCT FROM ins.runtime_id
+				AND s.credential_ord IS NOT DISTINCT FROM ins.credential_ord
+				AND s.secret_key IS NOT DISTINCT FROM ins.secret_key
+				AND s.secret_slot IS NOT DISTINCT FROM ins.secret_slot
+			WHERE mu.id = ANY(s.ids)
+			RETURNING mu.id)
+		SELECT (SELECT count(*) FROM l), COALESCE((SELECT SUM(usd) FROM ins), 0)::float8`,
+		taskID, agentID).Scan(&b.Lines, &b.USD)
 	return b, err
 }
 

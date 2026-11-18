@@ -694,6 +694,12 @@ func (c *Client) runTask(ctx context.Context, task AssignTask) {
 	res, err := runtime.Run(runCtx, spec, func(kind string, payload json.RawMessage) {
 		_ = c.send(TypeEvent, Event{TaskID: task.TaskID, Kind: kind, Payload: payload})
 	})
+	// What the run spent is reported before anything else, cancelled or not:
+	// a run killed after its main result line (or in its handover) has spent
+	// that money, and the result carries it. Best effort on the kill path —
+	// the control plane may have stopped listening already, and then books
+	// the run's lines itself.
+	c.sendCost(task.TaskID, res)
 	if runCtx.Err() != nil {
 		return // kill path: the control plane has taken over
 	}
@@ -703,13 +709,6 @@ func (c *Client) runTask(ctx context.Context, task AssignTask) {
 		res.Status = "failed"
 		res.Error = err.Error()
 	}
-	if res.Measured() {
-		_ = c.send(TypeCost, Cost{TaskID: task.TaskID, USD: res.CostUSD,
-			InputTokens: res.InputTokens, OutputTokens: res.OutputTokens,
-			CacheReadTokens: res.CacheReadTokens, CacheCreationTokens: res.CacheCreationTokens,
-			Model: res.Model, Basis: res.Basis,
-			SessionID: res.SessionID, SessionTotalUSD: res.SessionTotalUSD})
-	}
 	if res.Status == "blocked" {
 		_ = c.send(TypeBlocked, Blocked{TaskID: task.TaskID, CorrelationKey: res.CorrelationKey,
 			Question: res.Question, SessionID: res.SessionID, Reply: res.Reply})
@@ -717,6 +716,18 @@ func (c *Client) runTask(ctx context.Context, task AssignTask) {
 	}
 	_ = c.send(TypeTaskDone, TaskDone{TaskID: task.TaskID, Status: res.Status,
 		Result: res.Result, Error: res.Error, Memory: res.Memory, SessionID: res.SessionID, Reply: res.Reply})
+}
+
+// sendCost reports a run's spend, if it measured any.
+func (c *Client) sendCost(taskID string, res RunResult) {
+	if !res.Measured() {
+		return
+	}
+	_ = c.send(TypeCost, Cost{TaskID: taskID, USD: res.CostUSD,
+		InputTokens: res.InputTokens, OutputTokens: res.OutputTokens,
+		CacheReadTokens: res.CacheReadTokens, CacheCreationTokens: res.CacheCreationTokens,
+		Model: res.Model, Basis: res.Basis,
+		SessionID: res.SessionID, SessionTotalUSD: res.SessionTotalUSD})
 }
 
 // reportUsage answers the control plane's question about the engine's own

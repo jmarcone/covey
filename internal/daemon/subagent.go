@@ -150,15 +150,11 @@ func (c *Client) runSubAgent(ctx context.Context, taskID string, req target.SubA
 	res, err := runtime.Run(ctx, spec, func(kind string, payload json.RawMessage) {
 		_ = c.send(TypeEvent, Event{TaskID: taskID, Kind: kind, Payload: stamp(payload)})
 	})
+	// The spend first: a sub-run cancelled after its result line (the parent
+	// killed, the request's context gone) has spent it all the same.
+	c.sendCost(taskID, res)
 	if err != nil {
 		return target.SubAgentResult{}, err
-	}
-	if res.Measured() {
-		_ = c.send(TypeCost, Cost{TaskID: taskID, USD: res.CostUSD,
-			InputTokens: res.InputTokens, OutputTokens: res.OutputTokens,
-			CacheReadTokens: res.CacheReadTokens, CacheCreationTokens: res.CacheCreationTokens,
-			Model: res.Model, Basis: res.Basis,
-			SessionID: res.SessionID, SessionTotalUSD: res.SessionTotalUSD})
 	}
 
 	changed, deleted := gitChangesSince(ctx, dir, base)
