@@ -397,3 +397,108 @@ func TestCostGapAfterALateLineWithoutUUID(t *testing.T) {
 		t.Fatalf("no process died: the late copy of the first line must not make L2's 0.7 a gap: %+v", g)
 	}
 }
+
+// A session outlives its run: task A's session files a line and blocks, and
+// is resumed after the agent has worked on other things. Other sessions write
+// in between — task B's, and a second one in task A itself (a run started
+// afresh rather than resumed is a session of its own) — each with larger
+// totals for the same model. When A's resumed process dies and the next one
+// writes its line, the gap is A's own: measured from A's line, booked once.
+func TestCostGapOfAResumedSessionAmongOthers(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	agent := s.newSupportAgent("gap-unter-anderen")
+	taskA, taskB := uuid.New(), uuid.New()
+	sidA, sidB, sidC := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	none := observability.CredentialRef{}
+	at := func(usd float64, out int64) ccUsage { return ccUsage{USD: usd, Out: out} }
+	file := func(task uuid.UUID, sid string, n int, l recordedLine) {
+		t.Helper()
+		if err := s.obs.RecordRuntime(ctx, agent.OrgID, agent.ID, &task, none, json.RawMessage(l.json(sid, n, true))); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.obs.BookRun(ctx, observability.CostEntry{AgentID: agent.ID, TaskID: &task, USD: l.since[opus].USD,
+			Model: opus, Basis: observability.BasisInvocation, SessionID: sid}, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A's first line, then A blocks.
+	file(taskA, sidA, 0, recordedLine{0, 1000, 0.5, map[string]ccUsage{opus: at(0.5, 500)}, map[string]ccUsage{opus: at(0.5, 500)}})
+	// Task B in its own session.
+	file(taskB, sidB, 0, recordedLine{0, 1000, 3.0, map[string]ccUsage{opus: at(3.0, 3000)}, map[string]ccUsage{opus: at(3.0, 3000)}})
+	// A second session in task A.
+	file(taskA, sidC, 0, recordedLine{0, 1000, 4.0, map[string]ccUsage{opus: at(4.0, 4000)}, map[string]ccUsage{opus: at(4.0, 4000)}})
+	if g := readGap(t, s, agent.ID); g.rows != 0 {
+		t.Fatalf("every session so far has one line: no gap yet: %+v", g)
+	}
+	// A resumes; that process dies (0.3), the next one writes its line (0.4).
+	file(taskA, sidA, 1, recordedLine{0, 1000, 1.2, map[string]ccUsage{opus: at(1.2, 1200)}, map[string]ccUsage{opus: at(0.4, 400)}})
+	g := readGap(t, s, agent.ID)
+	if g.rows != 1 || g.entries != 1 || math.Abs(g.entryUSD-0.3) > 1e-6 || g.out != 300 || g.gapTask == nil || *g.gapTask != taskA {
+		t.Fatalf("A's dead process is one gap of 0.3 on task A, measured from A's own line: %+v", g)
+	}
+	if math.Abs(g.booked-8.2) > 1e-6 {
+		t.Errorf("booked %v, want the four lines' 7.9 and the gap's 0.3", g.booked)
+	}
+}
+
+// A session whose earlier lines are known nowhere — neither filed nor in the
+// recording (before 0142, pruned) — has a running total that holds its whole
+// history. Its resumed line files its own share; without a known earlier line
+// there is nothing to measure the gap from, so none is booked.
+func TestCostGapNeedsAnEarlierLine(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	agent := s.newSupportAgent("gap-ohne-vorgaenger")
+	task := uuid.New()
+	sid := uuid.NewString()
+	l := recordedLine{0, 1000, 2.0, map[string]ccUsage{opus: {USD: 2.0, Out: 2000}}, map[string]ccUsage{opus: {USD: 0.4, Out: 400}}}
+	if err := s.obs.RecordRuntime(ctx, agent.OrgID, agent.ID, &task, observability.CredentialRef{}, json.RawMessage(l.json(sid, 1, true))); err != nil {
+		t.Fatal(err)
+	}
+	g := readGap(t, s, agent.ID)
+	if g.rows != 0 || g.entries != 0 {
+		t.Fatalf("no earlier line of the session is known: its 1.6 of history is no gap: %+v", g)
+	}
+	if math.Abs(g.measured-0.4) > 1e-6 {
+		t.Errorf("measured %v, want the line's own 0.4", g.measured)
+	}
+}
+
+// A turn-limit continuation carries the session into a child task. Its first
+// line there fails to file, so the child task holds none of the session's
+// rows yet; the next line in the child task still has to find it.
+func TestCostGapAfterAFailedFilingInAContinuation(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	agent := s.newSupportAgent("gap-fortsetzung")
+	parent, child := uuid.New(), uuid.New()
+	sid := uuid.NewString()
+	at := func(usd float64, out int64) ccUsage { return ccUsage{USD: usd, Out: out} }
+	lines := []struct {
+		task uuid.UUID
+		recordedLine
+	}{
+		{parent, recordedLine{0, 1000, 0.5, map[string]ccUsage{opus: at(0.5, 500)}, map[string]ccUsage{opus: at(0.5, 500)}}},
+		// The continuation's line, whose filing fails.
+		{child, recordedLine{1, 1000, 1.3, map[string]ccUsage{opus: at(1.3, 1300)}, map[string]ccUsage{opus: at(0.8, 800)}}},
+		// A process died (0.3), then the next line in the child task (0.4).
+		{child, recordedLine{1, 1000, 2.0, map[string]ccUsage{opus: at(2.0, 2000)}, map[string]ccUsage{opus: at(0.4, 400)}}},
+	}
+	for n, l := range lines {
+		raw := json.RawMessage(l.json(sid, n, true))
+		var err error
+		if n == 1 {
+			err = s.obs.Record(ctx, agent.OrgID, agent.ID, &l.task, observability.KindRuntime, raw)
+		} else {
+			err = s.obs.RecordRuntime(ctx, agent.OrgID, agent.ID, &l.task, observability.CredentialRef{}, raw)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	g := readGap(t, s, agent.ID)
+	if g.rows != 1 || math.Abs(g.rowsUSD-0.3) > 1e-6 || g.out != 300 {
+		t.Fatalf("the dead process's 0.3 is the gap, not the failed line's 0.8 with it: %+v", g)
+	}
+}

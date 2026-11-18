@@ -156,43 +156,40 @@ WHERE d.input_tokens <> 0 OR d.output_tokens <> 0 OR d.thinking_tokens <> 0 OR d
    OR d.cache_write_5m_tokens <> 0 OR d.cache_write_1h_tokens <> 0 OR d.web_search_requests <> 0 OR d.engine_usd <> 0
 ON CONFLICT DO NOTHING`
 
-// figure is one of the figures model_usage keeps per model, and the
-// expression that reads it out of a per-model entry.
-type figure struct{ name, expr string }
-
-// usageColumns reads one per-model entry — the JSON expression v — into the
-// figures model_usage keeps. Guarded like jsonInt: what is not a JSON number
-// is 0; the 5-minute cache write falls back to the plain sum like
-// cacheWrite5m.
-func usageColumns(v string) []figure {
-	return []figure{
-		{"input_tokens", jsonIntOf(v, "inputTokens")},
-		{"output_tokens", jsonIntOf(v, "outputTokens")},
-		{"thinking_tokens", jsonIntOf(v, "thinkingTokens")},
-		{"cache_read_tokens", jsonIntOf(v, "cacheReadInputTokens")},
-		{"cache_write_5m_tokens", cacheWrite5m(v)},
-		{"cache_write_1h_tokens", jsonIntOf(v, "cacheCreationEphemeral1hInputTokens")},
-		{"web_search_requests", jsonIntOf(v, "webSearchRequests")},
-		{"engine_usd", "CASE WHEN jsonb_typeof(" + v + "->'costUSD') = 'number' THEN (" + v + "->>'costUSD')::numeric ELSE 0 END"},
-	}
+// figures are the figures model_usage keeps per model, each with the
+// expression that reads it out of a per-model entry — the JSON expression v.
+// Guarded like jsonInt: what is not a JSON number is 0; the 5-minute cache
+// write falls back to the plain sum like cacheWrite5m.
+var figures = []struct {
+	name string
+	read func(v string) string
+}{
+	{"input_tokens", func(v string) string { return jsonIntOf(v, "inputTokens") }},
+	{"output_tokens", func(v string) string { return jsonIntOf(v, "outputTokens") }},
+	{"thinking_tokens", func(v string) string { return jsonIntOf(v, "thinkingTokens") }},
+	{"cache_read_tokens", func(v string) string { return jsonIntOf(v, "cacheReadInputTokens") }},
+	{"cache_write_5m_tokens", cacheWrite5m},
+	{"cache_write_1h_tokens", func(v string) string { return jsonIntOf(v, "cacheCreationEphemeral1hInputTokens") }},
+	{"web_search_requests", func(v string) string { return jsonIntOf(v, "webSearchRequests") }},
+	{"engine_usd", func(v string) string {
+		return "CASE WHEN jsonb_typeof(" + v + "->'costUSD') = 'number' THEN (" + v + "->>'costUSD')::numeric ELSE 0 END"
+	}},
 }
 
-// usageFigures is usageColumns as a select list, each column named with the
-// prefix p.
+// usageFigures reads one per-model entry — the JSON expression v — into the
+// figures model_usage keeps, each column named with the prefix p.
 func usageFigures(v, p string) string {
-	cols := usageColumns(v)
-	parts := make([]string, len(cols))
-	for i, c := range cols {
-		parts[i] = c.expr + " AS " + p + c.name
+	parts := make([]string, len(figures))
+	for i, c := range figures {
+		parts[i] = c.read(v) + " AS " + p + c.name
 	}
 	return strings.Join(parts, ",\n\t\t")
 }
 
 // usageEach applies x to the name of each figure, named with the prefix p.
 func usageEach(x func(name string) string, p string) string {
-	cols := usageColumns("")
-	parts := make([]string, len(cols))
-	for i, c := range cols {
+	parts := make([]string, len(figures))
+	for i, c := range figures {
 		parts[i] = x(c.name) + " AS " + p + c.name
 	}
 	return strings.Join(parts, ",\n\t\t")
@@ -212,17 +209,32 @@ func usageEach(x func(name string) string, p string) string {
 //
 //   - every earlier line that left a model_usage row (of any basis, a gap row
 //     included), and
-//   - every result line of the session recorded after the latest of those,
-//     found in the agent's recording between the two. That is a line whose
-//     filing failed (an error in the rows, the gap or its booking — one
-//     transaction): the recording stands, the daemon booked its run all the
-//     same, and its share must not come back as a gap.
+//   - every result line of the session recorded after the latest of those.
+//     That is a line whose filing failed (an error in the rows, the gap or
+//     its booking — one transaction): the recording stands, the daemon booked
+//     its run all the same, and its share must not come back as a gap.
+//
+// Those failed lines are looked for in the recording of the session's tasks
+// only — the tasks its filed lines belong to, and this line's — between the
+// latest filed line and this one. A session outlives a run: a blocked task
+// resumes it days later, a turn-limit continuation carries it into a child
+// task. Over the agent's or the install's recording that window holds every
+// other run in between; over the session's tasks it holds their own
+// transcript. The per-task subquery compares (task_id, id) as a row, which
+// only idx_recording_task can answer, and its ORDER BY keeps the planner from
+// folding it into one scan of the whole id range. What it cannot see: a
+// continuation task in between none of whose lines was filed — its lines are
+// not found, and the next line books their shares a second time, as a gap.
 //
 // The largest, not the latest: a running total cannot shrink, so the largest
 // is the session's latest state whatever order the lines arrived in. A line
 // without a uuid that is sent again after later lines is filed again; as the
 // latest line it would put the running total back and book the lines after
-// it a second time.
+// it a second time. That rests on the totals only growing within a session.
+// Should a session ever come back with smaller totals (a CLI that does not
+// restore them on resume, a forked session), every later gap stays hidden
+// until its total climbs past the old largest one: it errs towards booking
+// too little, never twice.
 //
 // Measured from line to line, not against the sum of the session's rows: a
 // session whose earlier lines were never filed (before 0142, or pruned before
@@ -261,17 +273,26 @@ WITH e AS (
 	  AND jsonb_typeof(payload->'model_usage_since_last_result') = 'object'
 	  AND jsonb_typeof(payload->'modelUsage') = 'object'),
 filed AS (
-	SELECT DISTINCT p.event_id AS id
+	SELECT p.event_id AS id, p.task_id
 	FROM model_usage p, e
-	WHERE p.session_id = e.session_id AND p.event_id < e.id),
+	WHERE p.session_id = e.session_id AND p.session_id <> '' AND p.event_id < e.id),
+tasks AS (
+	SELECT task_id FROM filed WHERE task_id IS NOT NULL
+	UNION
+	SELECT task_id FROM e WHERE task_id IS NOT NULL),
 lines AS (
 	SELECT id FROM filed
 	UNION
-	SELECT r.id
-	FROM recording_events r, e
-	WHERE r.agent_id = e.agent_id AND r.id > (SELECT max(id) FROM filed) AND r.id < e.id
-	  AND r.kind = '` + KindRuntime + `' AND r.payload->>'type' = 'result'
-	  AND r.payload->>'session_id' = e.session_id),
+	SELECT w.id
+	FROM e, tasks
+	CROSS JOIN LATERAL (
+		SELECT r.id, r.payload
+		FROM recording_events r
+		WHERE (r.task_id, r.id) > (tasks.task_id, (SELECT max(id) FROM filed))
+		  AND (r.task_id, r.id) < (tasks.task_id, e.id)
+		  AND r.kind = '` + KindRuntime + `'
+		ORDER BY r.task_id, r.id) AS w
+	WHERE w.payload->>'session_id' = e.session_id AND w.payload->>'type' = 'result'),
 known AS (
 	SELECT r.payload->'modelUsage' AS usage
 	FROM recording_events r
