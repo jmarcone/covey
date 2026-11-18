@@ -327,8 +327,9 @@ names (issue, MR, branch, file, path), no hints.`
 
 // maxTurnsSummaryTimeout caps the summary run. It is one answer without tool
 // use; if it takes longer, something is broken and the task should rather fail
-// without a handover than occupy the sandbox.
-const maxTurnsSummaryTimeout = 2 * time.Minute
+// without a handover than occupy the sandbox. A variable only so that a test
+// can run into it.
+var maxTurnsSummaryTimeout = 2 * time.Minute
 
 // maxTurnsSummaryTurns leaves room for one refused tool call. The handover turn
 // carries the run's tools (they are part of the cached prefix), so the model can

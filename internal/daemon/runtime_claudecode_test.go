@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeClaude creates a fake `claude` binary that writes its arguments to
@@ -937,5 +938,84 @@ func TestLenientNumbers(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(`0.25`), &f); err != nil || f != 0.25 {
 		t.Errorf("lenientFloat(0.25) = %v, %v", f, err)
+	}
+}
+
+// A CLI whose running total does not carry across --resume: the handover's
+// total (0.5) is its own figure and lies below the main run's (1.4), the
+// baseline it is measured against. The difference would be negative; the
+// handover's own total is what it spent.
+func TestClaudeCodeHandoverBelowTheBaseline(t *testing.T) {
+	old := func(subtype, terminal, result string, total float64) string {
+		return fmt.Sprintf(`{"type":"result","subtype":%q,"terminal_reason":%q,"session_id":"sess-own","result":%q,"total_cost_usd":%g,"usage":{"output_tokens":10}}`,
+			subtype, terminal, result, total)
+	}
+	bin, dir := fakeClaude(t, byResume(old("error_max_turns", "max_turns", "", 1.4), old("success", "completed", "## Done", 0.5)))
+	res, err := (&ClaudeCode{Binary: bin}).Run(context.Background(),
+		RunSpec{TaskID: "t", Title: "x", HomeDir: dir, MaxTurns: 30}, func(string, json.RawMessage) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !near(res.CostUSD, 1.9) || res.Basis != CostBasisInvocation || res.OutputTokens != 20 {
+		t.Fatalf("main 1.4 + the handover's own 0.5, got %+v", res)
+	}
+}
+
+// The turn limit with several result lines on both sides: the main process
+// was woken again after a first limit (two lines), the handover wrote two as
+// well. Every line's share counts once; the session total is the last line's;
+// the handover's text is its last line's.
+func TestClaudeCodeHandoverWithSeveralResultLines(t *testing.T) {
+	main := ccResultLine("error_max_turns", "max_turns", "", 1.0,
+		opusOnly(ccUsage(1.0, 5, 900, 40000, 0, 12000)), opusOnly(ccUsage(1.0, 5, 900, 40000, 0, 12000))) + "\n" +
+		ccResultLine("error_max_turns", "max_turns", "", 1.6,
+			opusOnly(ccUsage(1.6, 9, 1500, 70000, 0, 13000)), opusOnly(ccUsage(0.6, 4, 600, 30000, 0, 1000)))
+	summary := ccResultLine("success", "completed", "## Done\nfirst", 1.8,
+		opusOnly(ccUsage(1.8, 10, 1600, 90000, 0, 13500)), opusOnly(ccUsage(0.2, 1, 100, 20000, 0, 500))) + "\n" +
+		ccResultLine("success", "completed", "## Done\nsecond", 1.9,
+			opusOnly(ccUsage(1.9, 11, 1700, 95000, 0, 13600)), opusOnly(ccUsage(0.1, 1, 100, 5000, 0, 100)))
+	bin, dir := fakeClaude(t, byResume(main, summary))
+	res, err := (&ClaudeCode{Binary: bin}).Run(context.Background(),
+		RunSpec{TaskID: "t", Title: "x", HomeDir: dir, MaxTurns: 30}, func(string, json.RawMessage) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "incomplete" || !strings.Contains(res.Result, "second") {
+		t.Fatalf("the handover is the summary's last line: %+v", res)
+	}
+	if !near(res.CostUSD, 1.9) || res.OutputTokens != 1700 || res.CacheReadTokens != 95000 || res.CacheCreationTokens != 13600 {
+		t.Fatalf("four lines' shares, 1.0+0.6+0.2+0.1: %+v", res)
+	}
+	if !near(res.SessionTotalUSD, 1.9) || res.Basis != CostBasisInvocation {
+		t.Fatalf("session total / basis: %+v", res)
+	}
+}
+
+// The handover runs into its timeout (or is killed) before its result line.
+// The main run's spend stands as booked; the handover's is not known here —
+// the session's running total keeps it, and the control plane books it as a
+// gap at the session's next line. Nothing of it may be guessed in here.
+func TestClaudeCodeHandoverTimeout(t *testing.T) {
+	old := maxTurnsSummaryTimeout
+	maxTurnsSummaryTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { maxTurnsSummaryTimeout = old })
+	main := ccResultLine("error_max_turns", "max_turns", "", 1.0,
+		opusOnly(ccUsage(1.0, 5, 900, 40000, 0, 12000)), opusOnly(ccUsage(1.0, 5, 900, 40000, 0, 12000)))
+	bin, dir := fakeClaude(t, "if printf '%s\n' \"$@\" | grep -q -- '--resume'; then\nexec sleep 30\nelse\ncat <<'EOF'\n"+
+		main+"\nEOF\nfi")
+	start := time.Now()
+	res, err := (&ClaudeCode{Binary: bin}).Run(context.Background(),
+		RunSpec{TaskID: "t", Title: "x", HomeDir: dir, MaxTurns: 30}, func(string, json.RawMessage) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(start) > 10*time.Second {
+		t.Fatalf("the handover has to be cut off at its timeout, took %v", time.Since(start))
+	}
+	if res.Status != "incomplete" || res.Result != "" || res.SessionID != "sess-cc" {
+		t.Fatalf("without a handover the run stays incomplete with its session: %+v", res)
+	}
+	if !near(res.CostUSD, 1.0) || res.OutputTokens != 900 || !near(res.SessionTotalUSD, 1.0) || res.Basis != CostBasisInvocation {
+		t.Fatalf("the main run's own spend stands, nothing on top: %+v", res)
 	}
 }
