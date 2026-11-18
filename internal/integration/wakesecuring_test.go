@@ -398,6 +398,80 @@ func TestAResumeDuringSecuringIsAnswered(t *testing.T) {
 	pickedUp(t, s, hold, agent.ID, second.ID)
 }
 
+// killedMidTask kills an agent in the middle of a long task and holds its
+// sandbox going down: the session ends with the task put back, not after a
+// last look that found nothing.
+func killedMidTask(t *testing.T, s *stack, hold *holdingProvider, slug string) (agents.Agent, backlog.Task) {
+	t.Helper()
+	agent := s.newSupportAgent(slug)
+	hold.hold(agent.ID)
+	task := s.task(agent.ID, "Long task", "[mock:sleep 30s]")
+	waitFor(t, "the task does not start running", 20*time.Second, func() bool {
+		return s.taskState(task.ID) == backlog.StateInProgress
+	})
+	if err := s.orch.Kill(context.Background(), agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-hold.stopping:
+	case <-time.After(20 * time.Second):
+		t.Fatalf("the sandbox of the killed session never went down; task %s", s.taskState(task.ID))
+	}
+	if st := s.taskState(task.ID); st != backlog.StateOpen {
+		t.Fatalf("the task of the killed session is %q, expected it back open", st)
+	}
+	return agent, task
+}
+
+// A person kills an agent in the middle of a task and resumes it while its
+// sandbox is still going down — "wrong agent, put it back". The resume finds
+// the session and is dropped; the end of the killed session looks at the
+// backlog, and the agent is no longer killed when the next session asks.
+func TestAResumeAfterAKillMidTaskIsAnswered(t *testing.T) {
+	s, hold, ends := wakeStack(t)
+	agent, task := killedMidTask(t, s, hold, "resume-mid-task")
+
+	if err := s.registry.SetKilled(context.Background(), agent.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	s.orch.EnsureRunning(agent.ID) // what POST /agents/{id}/resume does
+	close(hold.release)
+
+	if got := ends.next(t, agent.ID); got != "open work" {
+		t.Errorf("the end of the killed session started %q, expected the next one for open work", got)
+	}
+	waitForOr(t, "the task put back by the kill is not picked up after the resume", 20*time.Second, func() bool {
+		return hold.starts(agent.ID) == 2 && s.taskState(task.ID) == backlog.StateInProgress
+	}, func() string { return s.recordingSummary(agent.ID) })
+	if st := s.agentStatus(agent.ID); st == "killed" {
+		t.Errorf("the resumed agent shows %q", st)
+	}
+}
+
+// The same kill without a resume: the look finds the task, and the successor
+// ends at runAgent's kill check, before any sandbox.
+func TestAKillMidTaskStaysKilled(t *testing.T) {
+	s, hold, ends := wakeStack(t)
+	agent, task := killedMidTask(t, s, hold, "kill-mid-task")
+	close(hold.release)
+
+	if got := ends.next(t, agent.ID); got != "open work" {
+		t.Errorf("the end of the killed session started %q, expected a look at the open work", got)
+	}
+	if got := ends.next(t, agent.ID); got != "none" {
+		t.Errorf("the session after the kill started %q, expected none", got)
+	}
+	if n := hold.starts(agent.ID); n != 1 {
+		t.Errorf("%d sandboxes started after a kill, expected 1", n)
+	}
+	if st := s.taskState(task.ID); st != backlog.StateOpen {
+		t.Errorf("the task of a killed agent is %q, expected it to wait open", st)
+	}
+	if st := s.agentStatus(agent.ID); st != "killed" {
+		t.Errorf("the killed agent shows %q, expected killed", st)
+	}
+}
+
 // A wake that arrives while the control plane shuts down starts nothing: the
 // process is waiting for its own work to stop, not for more of it.
 func TestNoSuccessorAfterSecuringDuringShutdown(t *testing.T) {

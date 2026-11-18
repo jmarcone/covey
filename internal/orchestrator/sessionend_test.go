@@ -68,6 +68,19 @@ func TestAnIdleSessionLooksAgain(t *testing.T) {
 	}
 }
 
+// A session whose agent was stopped looks again at its end: the kill put the
+// task back, and a resume that came while the sandbox went down was dropped
+// on the running session. The successor's own kill check decides.
+func TestAKilledSessionLooksAgain(t *testing.T) {
+	o := New(Options{})
+	id, s := runningSession(o)
+	s.killed = true
+
+	if got := o.endSession(id, s); got != endLook {
+		t.Errorf("a killed session answers %d at its end, expected a look (%d)", got, endLook)
+	}
+}
+
 // During a shutdown nothing is answered, a press included: the process is
 // waiting for its own work to stop, not for more of it.
 func TestNoSuccessorDuringShutdown(t *testing.T) {

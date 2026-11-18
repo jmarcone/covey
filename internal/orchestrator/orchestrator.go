@@ -1186,14 +1186,16 @@ type sessionEnd int
 const (
 	// endQuiet: nothing. Either the control plane is shutting down, or the
 	// session stopped in the middle of something — a lost daemon, a failed
-	// wake, a task that failed, a kill, a budget stop, no free credential.
-	// Open work then waits for the tick, with its spacing: a link loss under
-	// Docker pressure takes several agents in the same second, and answering
-	// each at once would restart all of them in the same second too.
+	// wake, a task that failed, no free credential. Open work then waits for
+	// the tick, with its spacing: a link loss under Docker pressure takes
+	// several agents in the same second, and answering each at once would
+	// restart all of them in the same second too.
 	endQuiet sessionEnd = iota
 	// endLook: the session's last look at the backlog found nothing, and the
 	// session went on after it — mostly to bring its sandbox down or park it.
 	// Whatever became open since, by whichever route, nobody has seen yet.
+	// Or the agent was stopped — a kill, a budget stop — which put its task
+	// back while the sandbox still had to go down.
 	endLook
 	// endWake: a person pressed Wake while the session ran.
 	endWake
@@ -1218,6 +1220,13 @@ func (o *Orchestrator) endSession(agentID uuid.UUID, s *session) sessionEnd {
 		return endWake
 	case s.idle:
 		return endLook
+	case s.killed:
+		// Kill has just put the task back, and the person who pressed it may
+		// take it back before the sandbox is down — "wrong agent, put it
+		// back". The resume found this session and was dropped like any other
+		// wake. The look finds the task; whether the agent is still killed is
+		// for the successor's own check to say, not for this end.
+		return endLook
 	}
 	return endQuiet
 }
@@ -1227,22 +1236,29 @@ func (o *Orchestrator) endSession(agentID uuid.UUID, s *session) sessionEnd {
 // Both answers end in an ordinary dispatch, so runAgent asks what it always
 // asks — killed, draft, fleet stop, open work, a free credential. That is
 // also the one guard against waking a killed agent. Kill does not take a
-// pressed Wake back, and nothing here asks whether the session was killed: a
-// NOTIFY or a person's resume can arrive on either side of a kill, the
+// pressed Wake back, and nothing here asks whether the agent is still killed:
+// a NOTIFY or a person's resume can arrive on either side of a kill, the
 // agent's row says which side won, and the successor of an agent that is
 // still killed ends at its first query.
 //
 // The look is one query. It cannot turn into a loop: a successor starts only
 // for work that is open now, its claim takes that work, and the next look
-// comes after that claim loop has found nothing again. (ClaimNext skips a row
-// another transaction holds locked; those locks last milliseconds, a waking
-// phase seconds.)
+// comes after that claim loop has found nothing again. The successor of a
+// killed session that ends at its first query has neither looked nor been
+// killed itself, so its end is quiet. (ClaimNext skips a row another
+// transaction holds locked; those locks last milliseconds, a waking phase
+// seconds.)
 func (o *Orchestrator) answerEnd(agentID uuid.UUID, end sessionEnd) {
 	successor := "none"
 	switch end {
 	case endWake:
 		successor = "wake pressed"
-		o.WakeNow(agentID)
+		// Not WakeNow: that would hold the same press again on whatever
+		// session a NOTIFY or the tick started since endSession, and answer
+		// it once more after that one ends. The press only needs its skip of
+		// the backoff.
+		o.clearWakeFailure(agentID)
+		o.EnsureRunning(agentID)
 	case endLook:
 		o.mu.Lock()
 		ctx := o.base()
@@ -1258,9 +1274,15 @@ func (o *Orchestrator) answerEnd(agentID uuid.UUID, end sessionEnd) {
 		}
 	}
 	// What started the next session, if anything did. Asked when an agent
-	// wakes again without anybody seeing why — and the integration tests wait
-	// for it, so that "nothing started" is a fact and not a pause.
-	o.Log.Debug("session ended", "agent", agentID, "successor", successor)
+	// wakes again without anybody seeing why, so an end that started
+	// something says so at info level — rare, one line per such end. An end
+	// that started nothing stays at debug: the integration tests wait for it,
+	// so that "nothing started" is a fact and not a pause.
+	level := slog.LevelInfo
+	if successor == "none" {
+		level = slog.LevelDebug
+	}
+	o.Log.Log(context.Background(), level, "session ended", "agent", agentID, "successor", successor)
 }
 
 // markKilled notes on the session that its agent was stopped.
