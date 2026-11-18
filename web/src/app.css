@@ -1215,7 +1215,7 @@
 /* Spalten haben eine Mindestbreite: passen sie nicht mehr nebeneinander, scrollt
    das Board waagerecht, statt die Spuren so schmal zu quetschen, dass Kopfzeilen
    und Karten in die Nachbarspalte laufen. */
-.kanban { display: grid; grid-template-columns: repeat(var(--kcols, 4), minmax(220px, 1fr)); gap: 12px; overflow-x: auto; padding-bottom: 4px; }
+.kanban { display: grid; grid-template-columns: repeat(var(--kcols, 4), minmax(180px, 1fr)); gap: 12px; overflow-x: auto; padding-bottom: 4px; }
 .kcol { min-width: 0; }
 .kc.draggable { cursor: grab; }
 .kc.draggable:active { cursor: grabbing; }
@@ -1236,11 +1236,43 @@
    Zeile bleibt. Die Trefferliste ist bewusst einspaltig — ein Treffer kommt aus
    irgendeiner Spalte, ein Raster würde eine Ordnung behaupten, die es nicht
    gibt. */
-.bl-search { width: 220px; padding: 5px 10px; font-size: 12.5px; }
+.bl-bar { flex-wrap: wrap; }
+.bl-search { width: 220px; max-width: 100%; padding: 5px 10px; font-size: 12.5px; }
 .bl-results { max-width: 720px; }
 .bl-results .kc-empty { color: var(--text-muted); font-size: 12px; padding: 2px 0; }
 .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-@media (max-width: 900px) { .kanban { grid-template-columns: repeat(var(--kcols, 4), minmax(200px, 1fr)); } }
+/* Sideways scrolling shows its clipped edge (useEdgeFade sets data-fade). */
+[data-fade="end"] { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+[data-fade="start"] { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent); }
+[data-fade="both"] { -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); }
+/* Under 768 px the stages stack: one heading per stage, folded by its button. */
+.kh-btn { width: 100%; padding: 8px 2px; border: 0; border-bottom: 0.5px solid var(--border); background: none; font: inherit; font-size: 13px; color: var(--text-primary); text-align: left; cursor: pointer; }
+.kh-btn:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: -2px; border-radius: 6px; }
+.kh-btn .n { margin-left: auto; }
+.kh-btn .chev { margin-left: 4px; color: var(--text-muted); transition: transform 0.15s; }
+.kh-btn[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.kanban.stacked { display: block; overflow-x: visible; -webkit-mask-image: none; mask-image: none; }
+.kanban.stacked .kcol { margin-bottom: 8px; }
+.kanban.stacked .kcol .kh { margin-bottom: 0; }
+.kanban.stacked .kc-stage { padding-top: 10px; }
+
+/* The agent's cost strip: a figure never breaks inside itself, and four
+   fields become 2 × 2 on a phone instead of four squeezed columns. */
+.cost-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px 24px; }
+.cost-strip > * { min-width: 0; }
+.cost-strip .font-medium { white-space: nowrap; }
+/* The phone's content column is about 290 px: 2 × 140 does not fit beside the
+   card's padding, so the minimum gives way to keep two columns. */
+@media (max-width: 768px) {
+  .cost-strip { grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 12px; padding: 12px; }
+}
+
+/* The agent page's tabs: one line, scrolling inside itself (#463 does the same
+   for .subnav). */
+.agent-tabs { position: relative; display: flex; gap: 4px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; border-bottom: 0.5px solid var(--border); }
+.agent-tabs::-webkit-scrollbar { display: none; }
+.agent-tabs > button { flex-shrink: 0; white-space: nowrap; }
+@media (min-width: 769px) { .agent-tabs[data-fade] { -webkit-mask-image: none; mask-image: none; } }
 
 /* ── Org chart: a layered tree on a canvas (#177) ──────────────────────
    Positions come from components/orgchart/layout.ts; the stylesheet only

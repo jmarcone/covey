@@ -8,6 +8,7 @@ import { originOf, viewUrl } from "./agents/views";
 import { NavIcon } from "../components/navicons";
 import { AgentFiles } from "../components/AgentFiles";
 import { PhaseBadge } from "../components/PhaseBadge";
+import { useEdgeFade } from "../components/useEdgeFade";
 import { AgentHome } from "../components/AgentHome";
 import { HireDialog } from "../components/HireDialog";
 import { canFiles, canKill, canManage, canRecord, canSecrets } from "./agent/roles";
@@ -100,6 +101,16 @@ export default function AgentPage({ me }: { me: Principal }) {
       { replace: true },
     );
   }, [tab, setSp]);
+
+  // The tab row scrolls sideways on a phone: the selected tab is brought into
+  // view, and the clipped edge fades. The row exists only once the agent has
+  // loaded, hence the dependency.
+  const tabsRef = useEdgeFade<HTMLDivElement>([agent.isLoading, tab]);
+  useEffect(() => {
+    const row = tabsRef.current;
+    const on = row?.querySelector<HTMLElement>('[aria-current="true"]');
+    if (row && on) row.scrollLeft = on.offsetLeft - (row.clientWidth - on.offsetWidth) / 2;
+  }, [agent.isLoading, tab, tabsRef]);
 
   const act = useMutation({
     mutationFn: (action: string) => post(`/agents/${id}/${action}`),
@@ -204,7 +215,7 @@ export default function AgentPage({ me }: { me: Principal }) {
 
       <LintFindings agentId={a.id} />
 
-      <div className="flex gap-1 mb-4 mt-5" style={{ borderBottom: "0.5px solid var(--border)" }}>
+      <div className="agent-tabs mb-4 mt-5" ref={tabsRef}>
         {(
           [
             ["backlog", t("agent.tabs.backlog")],
@@ -226,6 +237,7 @@ export default function AgentPage({ me }: { me: Principal }) {
           .map(([key, label]) => (
           <button
             key={key}
+            aria-current={tab === key ? "true" : undefined}
             onClick={() => {
               if (key === "recording") setRecTask(null);
               setTab(key);
