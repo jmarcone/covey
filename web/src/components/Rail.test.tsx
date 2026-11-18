@@ -1,5 +1,7 @@
+import { useEffect } from "react";
+import { useLocation, useNavigate } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import Rail, { agentsEntryTarget, railPlace, rememberAgentsView } from "./Rail";
 import { mockFetch, renderWithProviders, testPrincipal, useGerman } from "../test/render";
 
@@ -110,5 +112,43 @@ describe("Rail", () => {
   it("keeps Admin marked on /costs while costs are a page of its column", () => {
     renderRail(true, "/costs");
     expect(screen.getByRole("link", { name: "Verwaltung" })).toHaveAttribute("aria-current", "page");
+  });
+
+  /* The shell writes the view down in an effect, after the rail has
+     rendered: the link must follow the address, not lag one view behind. */
+  it("leads the Agents entry to the view on screen while moving between office and list", () => {
+    function Shell() {
+      const path = useLocation().pathname;
+      const go = useNavigate();
+      // As AppShell does: remember the view after rendering.
+      useEffect(() => rememberAgentsView(path), [path]);
+      return (
+        <>
+          <Rail me={{ ...testPrincipal(), TeamSurface: true }} onLogout={() => {}} onHelp={() => {}} onSearch={() => {}} />
+          <button onClick={() => go("/agents")}>zur Liste</button>
+          <button onClick={() => go("/")}>zum Büro</button>
+          <button onClick={() => go("/workflows")}>zu den Workflows</button>
+        </>
+      );
+    }
+    mockFetch({
+      "/api/v1/inbox": { items: [], pending: 0 },
+      "/api/v1/me/threads": { threads: [] },
+      "/api/v1/setup/state": {},
+    });
+    vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
+    localStorage.setItem("covey.tour.team", "1");
+    renderWithProviders(<Shell />, { route: "/" });
+    const ziel = () => screen.getByRole("link", { name: /^Agenten/ }).getAttribute("href");
+
+    expect(ziel()).toBe("/");
+    fireEvent.click(screen.getByRole("button", { name: "zur Liste" }));
+    expect(ziel()).toBe("/agents");
+    fireEvent.click(screen.getByRole("button", { name: "zum Büro" }));
+    expect(ziel()).toBe("/");
+    // Elsewhere the entry opens the view used last.
+    fireEvent.click(screen.getByRole("button", { name: "zur Liste" }));
+    fireEvent.click(screen.getByRole("button", { name: "zu den Workflows" }));
+    expect(ziel()).toBe("/agents");
   });
 });
