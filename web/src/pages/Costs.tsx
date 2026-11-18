@@ -2,11 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
-import { api, ApiError, type IndicatorReport, type RunCost } from "../api";
+import { api, ApiError, type IndicatorReport, type Principal, type RunCost } from "../api";
 import { exact, fmtBucket, fmtCount, fmtUSD } from "../format";
 import { PriceList } from "../components/PriceList";
 import { CostInsights } from "./CostInsights";
 import { credentialFigures } from "./costFigures";
+import { canSetPlan } from "./PlanPrice";
 import {
   AgentFilter,
   BUCKET_MS,
@@ -19,6 +20,7 @@ import {
   cellTotals,
   useBilled,
   useCostCells,
+  useUsageReadings,
 } from "./StackedCostChart";
 
 // Number formatting lives in format.ts — one for the whole interface; dates
@@ -204,7 +206,7 @@ function ExpensiveRuns({ runs }: { runs: RunCost[] }) {
   );
 }
 
-export default function Costs() {
+export default function Costs({ me }: { me?: Principal }) {
   const { t } = useTranslation();
 
   // 24 hours, hourly: the window in which the cost per hour can actually be read.
@@ -218,6 +220,7 @@ export default function Costs() {
   const scope = selected.size === 1 ? [...selected][0] : "org";
   const cells = useCostCells(days, bucket);
   const billed = useBilled(days, bucket);
+  const readings = useUsageReadings(days);
 
   // A new range can lose agents the selection still names: they would narrow
   // every figure to nothing while no chip shows them. Drop them.
@@ -348,7 +351,7 @@ export default function Costs() {
           />
         </div>
         {metric === "cost" ? (
-          <CostExplorer data={cells.data} billed={billed.data} selected={selected} bucket={bucket} fmtPeriod={fmtPeriod} />
+          <CostExplorer data={cells.data} billed={billed.data} readings={readings.data ?? []} canSetPlan={canSetPlan(me?.Role ?? "")} selected={selected} bucket={bucket} fmtPeriod={fmtPeriod} />
         ) : (
           <TokenExplorer data={cells.data} selected={selected} fmtPeriod={fmtPeriod} />
         )}

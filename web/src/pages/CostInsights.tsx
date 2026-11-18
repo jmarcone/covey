@@ -6,7 +6,7 @@ import { api, type ModelUsageReport, type ModelUsageRow, type UsageReading } fro
 import { fmtBucket, fmtCount, fmtNumber, fmtUSD } from "../format";
 import { perCredentialTotals, usableReadings, type CredentialFigures, type SourceTotal } from "./costFigures";
 import { SOURCES, SOURCE_COLOR, sourceHint, sourceLabel, type Source } from "./costSources";
-import { Chip, OrgWide, Swatch } from "./StackedCostChart";
+import { Chip, OrgWide, Swatch, useUsageReadings } from "./StackedCostChart";
 
 /* Cost insights.
  *
@@ -291,11 +291,7 @@ export function CostInsights({ days, figures, filtered = false }: { days: number
     queryFn: () => api<ModelUsageReport>(`/cost/models?days=${days}`),
     refetchInterval: 30000,
   });
-  const readings = useQuery({
-    queryKey: ["cost", "usage-readings", days],
-    queryFn: () => api<UsageReading[] | null>(`/cost/usage-readings?days=${days}`),
-    refetchInterval: 30000,
-  });
+  const readings = useUsageReadings(days);
   const rs = useMemo(() => readings.data ?? [], [readings.data]);
   const metered = figures.filter((f) => f.meter != null && f.kind !== "api_key");
 

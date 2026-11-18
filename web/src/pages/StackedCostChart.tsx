@@ -2,7 +2,7 @@ import { useId, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { api, type BilledReport, type CellAgent, type CostCell, type CostCells } from "../api";
+import { api, type BilledReport, type CellAgent, type CostCell, type CostCells, type UsageReading } from "../api";
 import { fmtBucket, fmtClockUTC, fmtCount, fmtCountAxis, fmtNumber, fmtUSD, fmtUSDAxis } from "../format";
 import {
   billedFetchBucket,
@@ -13,6 +13,7 @@ import {
   recomputedOf,
   type CredentialFigures,
 } from "./costFigures";
+import { PlanPrice } from "./PlanPrice";
 import { SOURCES, SOURCE_COLOR, sourceHint, sourceLabel, type Source } from "./costSources";
 
 export { SOURCE_COLOR };
@@ -63,6 +64,17 @@ export function useCostCells(days: number, bucket: string) {
   return useQuery({
     queryKey: ["cost", "cells", days, bucket],
     queryFn: () => api<CostCells>(`/cost/cells?days=${days}&bucket=${bucket}`),
+    refetchInterval: 30000,
+  });
+}
+
+/** The provider's meter readings of the period: the cards below the chart
+ *  show them, and the plan form takes a credential's place and its weekly
+ *  reset from them. */
+export function useUsageReadings(days: number) {
+  return useQuery({
+    queryKey: ["cost", "usage-readings", days],
+    queryFn: () => api<UsageReading[] | null>(`/cost/usage-readings?days=${days}`),
     refetchInterval: 30000,
   });
 }
@@ -514,8 +526,8 @@ function NoMultiple({ f }: { f: CredentialFigures }) {
 }
 
 /** One credential: its tiles, its chart, its agents. */
-function CredentialBlock({ f, data, billed, bucket, fmtPeriod, selected, src, split, types, layout, sharedScale, asTable }: {
-  f: CredentialFigures; data: CostCells; billed: BilledReport | undefined; bucket: string; fmtPeriod: (p: string) => string;
+function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPeriod, selected, src, split, types, layout, sharedScale, asTable }: {
+  f: CredentialFigures; data: CostCells; billed: BilledReport | undefined; readings: readonly UsageReading[]; canSetPlan: boolean; bucket: string; fmtPeriod: (p: string) => string;
   selected: Set<string>; src: Record<Source, boolean>; split: Split; types: Set<string>; layout: Layout; sharedScale: boolean; asTable: boolean;
 }) {
   const { t } = useTranslation();
@@ -613,8 +625,9 @@ function CredentialBlock({ f, data, billed, bucket, fmtPeriod, selected, src, sp
     <section className="mb-5" aria-label={name} data-credential={f.id}>
       <div className="flex flex-wrap items-baseline gap-2 mb-2">
         <h3 style={{ fontSize: 15, fontWeight: 600 }}>{name}</h3>
-        <span className="muted text-xs">{kind}{plan ? ` · ${plan}` : ""}</span>
+        <span className="muted text-xs">{kind}{plan && !subscription ? ` · ${plan}` : ""}</span>
       </div>
+      {subscription && <PlanPrice f={f} readings={readings} editable={canSetPlan} />}
       <CredentialTiles f={f} filtered={filtered || layout === "agents"} />
       <NoMultiple f={f} />
       {f.bookingCheck.length > 0 && (
@@ -715,8 +728,9 @@ function ColourKey() {
   );
 }
 
-export function CostExplorer({ data, billed, selected, bucket, fmtPeriod }: {
-  data: CostCells | undefined; billed?: BilledReport; selected: Set<string>; bucket: string; fmtPeriod: (p: string) => string;
+export function CostExplorer({ data, billed, readings = [], canSetPlan = false, selected, bucket, fmtPeriod }: {
+  data: CostCells | undefined; billed?: BilledReport; readings?: readonly UsageReading[]; canSetPlan?: boolean;
+  selected: Set<string>; bucket: string; fmtPeriod: (p: string) => string;
 }) {
   const { t } = useTranslation();
   const [layout, setLayout] = useState<Layout>("combined");
@@ -781,7 +795,7 @@ export function CostExplorer({ data, billed, selected, bucket, fmtPeriod }: {
       {figures.length === 0 ? (
         <div className="muted text-sm" style={{ padding: "40px 0", textAlign: "center" }}>{t("costs.empty")}</div>
       ) : figures.map((f) => (
-        <CredentialBlock key={f.id} f={f} data={data!} billed={billed} bucket={bucket} fmtPeriod={fmtPeriod} selected={selected}
+        <CredentialBlock key={f.id} f={f} data={data!} billed={billed} readings={readings} canSetPlan={canSetPlan} bucket={bucket} fmtPeriod={fmtPeriod} selected={selected}
           src={src} split={split} types={types} layout={layout} sharedScale={sharedScale} asTable={asTable} />
       ))}
     </div>
