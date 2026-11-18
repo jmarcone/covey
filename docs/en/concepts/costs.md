@@ -4,7 +4,7 @@ title: Cost & Tokens
 description: 'What the four figures on the cost page mean and when each one exists, how the real cost of a subscription is estimated from the provider''s meter, how the bill of an API key is read and reconciled, and what the page does not count yet.'
 faq:
   - q: Why does the page show several different dollar figures for the same work?
-    a: 'They answer different questions. Reported by Claude Code is the engine''s own price of its lines, Recomputed from tokens is the same tokens priced with covey''s table, Real cost (estimate) is what a subscription seat used of its weekly allowance, and Billed by Anthropic is what an API key was charged. They are shown per credential and never added up across credentials.'
+    a: 'They answer different questions. Reported by Claude Code is the engine''s own price of its lines, Recomputed from tokens is the same tokens priced with covey''s table, Real cost (estimate) is what a subscription seat used of its weekly allowance, and Billed by Anthropic is what an API key was charged. The tiles and the chart show them per credential and never add them up across credentials; only the per-model table has rows that sum all subscription seats and all API keys (see *Filters*).'
   - q: Why does an hour show 0 real cost when agents were working?
     a: 'The real cost comes from the provider''s meter, and covey reads the meter only when an agent wakes on that credential or while a run streams. A bar shows the points read in that hour since the previous reading; an hour without a reading shows 0, and work from an earlier hour can appear in a later one. Over a longer range the movement adds up, to within one point per week.'
   - q: Why is there no "list per real" multiple for a single hour or for one agent?
@@ -32,7 +32,7 @@ says what money means on it.
 |---|---|---|---|
 | **Reported by Claude Code** | Claude Code's own price of its lines: the sum of the `costUSD` it writes on each result line, one line's own share at a time. Not covey's booking. | The run is on the Claude Code engine and its result line carries usage per model. | The engine writes no such line (Codex reports tokens and no money; see [Runtimes](runtimes.md)). A run that was cut off before its result line is covered below. |
 | **Recomputed from tokens** | The same lines' tokens priced per type — input, output, cache read, cache write for 5 minutes and for 1 hour, web searches — with covey's built-in price table. | The model is in the table. | The table does not know the model: its lines then count at Claude Code's own figure and are marked *Unknown model (engine price)*, without a split by type. |
-| **Real cost (estimate)** | What a subscription seat's weekly meter moved, times the plan's price per point. | The credential is a subscription, its meter has been read, and a plan price is stored. If the meter did not move a whole point, the tile shows only an upper bound, *less than one point's price* (e.g. *< $0.46*), not an estimate. | The credential is an API key; no agent has woken on it yet (*no meter reading for this credential*); or no plan price (*no plan price stored*). |
+| **Real cost (estimate)** | What a subscription seat's weekly meter moved, times the plan's price per point. | The credential is a subscription, its meter has been read, and a plan price is stored. If the meter did not move a whole point, the tile shows only an upper bound, *less than one point's price for each meter week in the range* (e.g. *< $0.46* within one week), not an estimate. | The credential is an API key; no agent has woken on it yet (*no meter reading for this credential*); or no plan price (*no plan price stored*). |
 | **Billed by Anthropic** | What Anthropic's Usage and Cost API reports for the API key behind the credential, after discounts and before credits. | The credential is an API key, an Anthropic admin key is stored, the credential is mapped to its API key, and the bill for the window has landed. | Any of those is missing. The page then says which — *no Anthropic admin key is stored*, *not mapped to an Anthropic API key*, *the bill sync failed*, *Anthropic's data has not landed* — and shows no figure. It never shows $0.00 for a bill that could not be read. |
 
 Two things follow from where the first two come from:
@@ -223,7 +223,18 @@ know is flagged *unpriced*, and then covey's list covers only what it knows.
 - **Source.** Four chips, one per figure. *Reported* and *Recomputed* are on by
   default, *Real cost* and *Billed* are off. *Real cost* and *Billed* belong to a
   whole credential, not to an agent: under an agent filter they appear only as
-  the estimated share in the table.
+  the estimated share in the table. With either one on, the per-model table
+  also gets one row per source under its total:
+  - *Subscription seats, meter span {from} – {to}* sums the real cost of every
+    seat: about the sum (*≈*), with the summed range the whole percents allow.
+    If every seat sits at 0 points, it shows only an upper bound, *<* the summed
+    upper bounds.
+  - *API keys, bill {from} – {to}* sums every measured bill.
+  - Either row shows *–* instead of a figure when one of its credentials has
+    none; hovering says how many (*{n} of {m} credentials without a figure*).
+  - The rows cover the whole organisation even under an agent filter and are
+    marked *whole organization: does not follow the agent filter*; they do not
+    show the agent's share.
 - **Chart.** Split by cost type or not at all; the cost types to draw; combined
   or *Per agent*; amounts or *Real vs list*, which draws only for a subscription
   credential with readings, real cost switched on, no agent filter and a plan
@@ -236,7 +247,8 @@ amount in US dollars, the period (per month or per year) and *Valid from*. Only
 an organisation admin or the security role sees it as editable.
 
 - *Valid from* starts at the beginning of the current meter week (the latest
-  weekly reset the readings name, minus seven days). When no reading names a
+  weekly reset the readings name, minus seven days, moved on to the week that
+  contains now). When no reading names a
   weekly reset, it starts now. If a price already starts in this week, the form
   corrects it and starts now, to the minute.
 - A price is added, never overwritten. The plan valid at *Valid from* ends
@@ -254,8 +266,10 @@ an organisation admin or the security role sees it as editable.
 ## Not yet covered
 
 - **List versus real is per credential.** There is no organisation-wide real cost
-  or multiple: two credentials can be seats of one account, and two sources read
-  the same meter, so nothing is added across credentials or sources.
+  multiple: two credentials can be seats of one account, and two sources read
+  the same meter, so nothing is added across sources. The one place that adds
+  across credentials is the *Subscription seats* row of the per-model table
+  (see *Filters*): two seats of one account are each counted in full there.
 - **Operator sessions outside covey.** Claude Code sessions that drive covey from
   outside — an operator's own — are not in any figure, on any source. On a shared
   subscription they still move the account's meter, so the real cost shown is

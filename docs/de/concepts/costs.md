@@ -4,7 +4,7 @@ title: Kosten & Token
 description: 'Was die vier Zahlen der Kostenseite bedeuten und wann es sie gibt, wie die echten Kosten eines Abonnements aus dem Zähler des Anbieters geschätzt werden, wie die Rechnung eines API-Schlüssels gelesen und abgeglichen wird und was die Seite noch nicht zählt.'
 faq:
   - q: Warum zeigt die Seite für dieselbe Arbeit mehrere Dollarbeträge?
-    a: 'Sie beantworten verschiedene Fragen. „Von Claude Code gemeldet“ ist der eigene Preis der Engine für ihre Zeilen, „Aus Tokens nachgerechnet“ sind dieselben Tokens mit der Tabelle von covey bepreist, „Echte Kosten (Schätzung)“ ist, was ein Abo-Platz von seinem Wochenkontingent verbraucht hat, und „Von Anthropic berechnet“ ist, was ein API-Schlüssel gekostet hat. Sie stehen je Zugangsdaten nebeneinander und werden nie über Zugangsdaten hinweg addiert.'
+    a: 'Sie beantworten verschiedene Fragen. „Von Claude Code gemeldet“ ist der eigene Preis der Engine für ihre Zeilen, „Aus Tokens nachgerechnet“ sind dieselben Tokens mit der Tabelle von covey bepreist, „Echte Kosten (Schätzung)“ ist, was ein Abo-Platz von seinem Wochenkontingent verbraucht hat, und „Von Anthropic berechnet“ ist, was ein API-Schlüssel gekostet hat. In den Kacheln und im Diagramm stehen sie je Zugangsdaten nebeneinander und werden nie über Zugangsdaten hinweg addiert; nur die Tabelle je Modell hat Zeilen, die alle Abo-Zugänge und alle API-Schlüssel summieren (siehe *Filter*).'
   - q: Warum zeigt eine Stunde 0 echte Kosten, obwohl Agenten gearbeitet haben?
     a: 'Die echten Kosten kommen aus dem Zähler des Anbieters, und covey liest den Zähler nur, wenn ein Agent auf diesen Zugangsdaten aufwacht oder solange ein Lauf Daten streamt. Ein Balken zeigt die Punkte, die in dieser Stunde seit der vorigen Ablesung abgelesen wurden; eine Stunde ohne Ablesung zeigt 0, und Arbeit aus einer früheren Stunde kann in einer späteren erscheinen. Über einen längeren Zeitraum addiert sich die Bewegung auf, auf einen Punkt je Woche genau.'
   - q: Warum gibt es für eine einzelne Stunde oder für einen Agenten kein „Listen-$ je echtem $“?
@@ -15,7 +15,7 @@ faq:
     a: 'Noch nicht. In jeder Zahl stecken nur Läufe der Agenten von covey. Sitzungen, die covey von außen steuern, bewegen den Zähler eines gemeinsamen Abonnements trotzdem.'
 ---
 
-Die Kostenseite (*Kosten* in der Seitenleiste) zeigt, was die Arbeit der Agenten
+Die Kostenseite (*Kosten* in der Spalte *Verwaltung* der Seitenleiste; die Seite heißt *Kosten & Token*) zeigt, was die Arbeit der Agenten
 verbraucht hat. Jede Rolle darf sie lesen; einen Tarifpreis setzen dürfen
 Organisationsadmins und die Sicherheitsrolle. Alle Zeiträume werden in UTC
 geschnitten: UTC-Tage, Wochen, die montags UTC beginnen.
@@ -32,7 +32,7 @@ Abo-Token); ihre Art sagt, was Geld dort bedeutet.
 |---|---|---|---|
 | **Von Claude Code gemeldet** | Der eigene Preis von Claude Code für seine Zeilen: die Summe der `costUSD`, die es auf jede Ergebniszeile schreibt, jeweils der eigene Anteil einer Zeile. Keine Buchung von covey. | Der Lauf geht über die Engine Claude Code und seine Ergebniszeile trägt die Nutzung je Modell. | Die Engine schreibt keine solche Zeile (Codex meldet Tokens und kein Geld, siehe [Runtimes](runtimes.md)). Ein Lauf, der vor seiner Ergebniszeile abgebrochen wurde, steht weiter unten. |
 | **Aus Tokens nachgerechnet** | Die Tokens derselben Zeilen, je Art bepreist — Eingabe, Ausgabe, Cache-Lesen, Cache-Schreiben für 5 Minuten und für 1 Stunde, Websuchen — mit der eingebauten Preistabelle von covey. | Das Modell steht in der Tabelle. | Die Tabelle kennt das Modell nicht: Seine Zeilen zählen dann mit dem eigenen Betrag von Claude Code, ohne Aufteilung nach Art, und sind als *Unbekanntes Modell (Preis der Engine)* markiert. |
-| **Echte Kosten (Schätzung)** | Was der Wochenzähler eines Abo-Platzes sich bewegt hat, mal der Preis je Punkt des Tarifs. | Die Zugangsdaten sind ein Abonnement, ihr Zähler wurde gelesen und ein Tarifpreis ist hinterlegt. Hat sich der Zähler keinen ganzen Punkt bewegt, zeigt die Kachel nur eine Obergrenze, *weniger als der Preis eines Punkts* (z. B. *< 0,46 $*), keine Schätzung. | Die Zugangsdaten sind ein API-Schlüssel; noch kein Agent ist auf ihnen aufgewacht (*keine Zählerablesung für diese Zugangsdaten*); oder kein Tarifpreis (*kein Tarifpreis hinterlegt*). |
+| **Echte Kosten (Schätzung)** | Was der Wochenzähler eines Abo-Platzes sich bewegt hat, mal der Preis je Punkt des Tarifs. | Die Zugangsdaten sind ein Abonnement, ihr Zähler wurde gelesen und ein Tarifpreis ist hinterlegt. Hat sich der Zähler keinen ganzen Punkt bewegt, zeigt die Kachel nur eine Obergrenze, *weniger als der Preis eines Punkts je Zählerwoche im Zeitraum* (z. B. *< 0,46 $* innerhalb einer Woche), keine Schätzung. | Die Zugangsdaten sind ein API-Schlüssel; noch kein Agent ist auf ihnen aufgewacht (*keine Zählerablesung für diese Zugangsdaten*); oder kein Tarifpreis (*kein Tarifpreis hinterlegt*). |
 | **Von Anthropic berechnet** | Was die Usage-and-Cost-API von Anthropic für den API-Schlüssel hinter den Zugangsdaten meldet, nach Rabatten und vor Gutschriften. | Die Zugangsdaten sind ein API-Schlüssel, ein Anthropic-Admin-Schlüssel ist hinterlegt, die Zugangsdaten sind ihrem API-Schlüssel zugeordnet und die Rechnung für den Zeitraum ist eingetroffen. | Eines davon fehlt. Die Seite sagt dann welches — *kein Anthropic-Admin-Schlüssel hinterlegt*, *keinem Anthropic-API-Schlüssel zugeordnet*, *der Abgleich der Rechnung schlug fehl*, *Anthropics Daten sind noch nicht da* — und zeigt keine Zahl. Für eine Rechnung, die nicht gelesen werden konnte, steht nie 0,00 $. |
 
 Aus der Herkunft der ersten beiden folgt:
@@ -245,7 +245,19 @@ auf der Seite von covey. Ein Modell, das die Tabelle nicht kennt, ist als
   Tokens nachgerechnet* sind standardmäßig an, *Echte Kosten* und *Von Anthropic
   berechnet* aus. Echte Kosten und die Rechnung gehören zu ganzen Zugangsdaten,
   nicht zu einem Agenten: Mit Agentenfilter erscheinen sie nur als geschätzter
-  Anteil in der Tabelle.
+  Anteil in der Tabelle. Ist eine von beiden an, bekommt die Tabelle je Modell
+  unter ihrer Summe außerdem eine Zeile je Quelle:
+  - *Abo-Zugänge, Zählerzeitraum {von} – {bis}* summiert die echten Kosten aller
+    Plätze: etwa die Summe (*≈*), mit der summierten Spanne, die die ganzen
+    Prozente zulassen. Steht jeder Platz auf 0 Punkten, zeigt sie nur eine
+    Obergrenze, *<* die summierten Obergrenzen.
+  - *API-Schlüssel, Rechnung {von} – {bis}* summiert alle gemessenen Rechnungen.
+  - Beide Zeilen zeigen *–* statt einer Zahl, wenn bei einem ihrer Zugangsdaten
+    keine vorliegt; beim Darüberfahren steht, wie viele (*{n} von {m} Zugängen
+    ohne Zahl*).
+  - Die Zeilen gelten für die ganze Organisation, auch bei Agentenfilter, und
+    sind mit *ganze Organisation: folgt dem Agentenfilter nicht* markiert; den
+    Anteil des Agenten zeigen sie nicht.
 - **Diagramm.** Aufteilen nach Kostenart oder gar nicht; die zu zeichnenden
   Kostenarten; kombiniert oder *Je Agent*; Beträge oder *Echt gegen Liste*, das
   nur für Abo-Zugangsdaten mit Ablesungen gezeichnet wird, bei eingeschalteten
@@ -258,7 +270,8 @@ Betrag in US-Dollar, dem Zeitraum (pro Monat oder pro Jahr) und *Gültig ab*. Nu
 Organisationsadmins und die Sicherheitsrolle sehen es als bearbeitbar.
 
 - *Gültig ab* beginnt am Anfang der laufenden Zählerwoche (das letzte
-  Wochen-Zurücksetzen, das die Ablesungen nennen, minus sieben Tage). Nennt keine
+  Wochen-Zurücksetzen, das die Ablesungen nennen, minus sieben Tage,
+  weitergerückt bis zur Woche, die jetzt enthält). Nennt keine
   Ablesung ein Wochen-Zurücksetzen, beginnt es jetzt. Beginnt in
   dieser Woche schon ein Preis, korrigiert das Formular ihn und beginnt jetzt,
   auf die Minute.
@@ -277,10 +290,12 @@ Organisationsadmins und die Sicherheitsrolle sehen es als bearbeitbar.
 
 ## Noch nicht abgedeckt
 
-- **Liste gegen echt gibt es je Zugangsdaten.** Es gibt keine echten Kosten oder
-  kein Vielfaches für die ganze Organisation: Zwei Zugangsdaten können Plätze
-  eines Kontos sein, und zwei Quellen lesen denselben Zähler, also wird nichts
-  über Zugangsdaten oder Quellen hinweg addiert.
+- **Liste gegen echt gibt es je Zugangsdaten.** Es gibt kein Vielfaches für die
+  ganze Organisation: Zwei Zugangsdaten können Plätze eines Kontos sein, und
+  zwei Quellen lesen denselben Zähler, also wird nichts über Quellen hinweg
+  addiert. Die einzige Stelle, die über Zugangsdaten hinweg addiert, ist die
+  Zeile *Abo-Zugänge* der Tabelle je Modell (siehe *Filter*): Zwei Plätze eines
+  Kontos zählen dort jeder voll.
 - **Sitzungen eines Operators außerhalb von covey.** Claude-Code-Sitzungen, die
   covey von außen steuern — die eines Operators —, stecken in keiner Zahl, bei
   keiner Quelle. Auf einem gemeinsamen Abonnement bewegen sie den Zähler des
