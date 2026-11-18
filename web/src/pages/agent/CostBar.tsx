@@ -25,7 +25,7 @@ export function CostBar({ agentId, budget }: { agentId: string; budget: number }
   const ein = totalInput(c);
   const cached = c.cache_read_tokens + c.cache_creation_tokens;
   return (
-    <div className="card stat-grid text-sm">
+    <div className="card cost-strip text-sm">
       <div>
         <div className="muted text-xs">{t("agent.cost.total")}</div>
         <div className="font-medium" title={`${c.total_usd} $`}>

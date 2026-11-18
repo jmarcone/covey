@@ -130,8 +130,8 @@ describe("Backlog auf dem Telefon", () => {
 
   const stufen = [
     { id: "s1", name: "Neu", color: "", position: 0 },
-    { id: "s2", name: "Läuft", color: "", position: 1 },
-    { id: "s3", name: "Fertig", color: "", position: 2 },
+    { id: "s2", name: "Wartet", color: "", position: 1 },
+    { id: "s3", name: "Läuft", color: "", position: 2 },
     { id: "s4", name: "Leer", color: "", position: 3 },
   ];
   const aufgabe = (id: string, stage_id: string, state: string) => ({
@@ -147,25 +147,34 @@ describe("Backlog auf dem Telefon", () => {
       ...routen(),
       "/api/v1/agents/a1/stages": stufen,
       "/api/v1/agents/a1/backlog": [
-        aufgabe("x1", "s2", "in_progress"),
-        aufgabe("x2", "s3", "done"),
+        aufgabe("x1", "s2", "open"),
+        aufgabe("x2", "s3", "in_progress"),
       ],
     });
     renderWithProviders(<Backlog agentId="a1" canManage onShowRecording={() => {}} />);
 
-    const laeuft = await screen.findByRole("button", { name: /Läuft/ });
+    const wartet = await screen.findByRole("button", { name: /Wartet/ });
     const neu = screen.getByRole("button", { name: /Neu/ });
-    const fertig = screen.getByRole("button", { name: /Fertig/ });
-    // "Neu" is empty, so the first stage with a task is "Läuft" — which also
-    // holds the running task. "Fertig" stays shut.
+    const laeuft = screen.getByRole("button", { name: /Läuft/ });
+    const leer = screen.getByRole("button", { name: /Leer/ });
+    // "Neu" is empty, so the first stage with a task is "Wartet"; the running
+    // task sits further on in "Läuft". Both are open, each for its own reason;
+    // the empty stages stay shut.
     expect(neu).toHaveAttribute("aria-expanded", "false");
+    expect(wartet).toHaveAttribute("aria-expanded", "true");
     expect(laeuft).toHaveAttribute("aria-expanded", "true");
-    expect(fertig).toHaveAttribute("aria-expanded", "false");
+    expect(leer).toHaveAttribute("aria-expanded", "false");
     expect(screen.getByText("Aufgabe x1")).toBeVisible();
-    expect(screen.queryByText("Aufgabe x2")).not.toBeVisible();
-
-    await userEvent.click(fertig);
-    expect(fertig).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("Aufgabe x2")).toBeVisible();
+
+    // A stage that started open and was shut by hand stays shut, also when
+    // another stage is toggled afterwards.
+    await userEvent.click(laeuft);
+    expect(laeuft).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Aufgabe x2")).not.toBeVisible();
+    await userEvent.click(leer);
+    expect(leer).toHaveAttribute("aria-expanded", "true");
+    expect(laeuft).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Aufgabe x2")).not.toBeVisible();
   });
 });

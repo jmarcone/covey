@@ -1256,15 +1256,15 @@
 .kanban.stacked .kcol .kh { margin-bottom: 0; }
 .kanban.stacked .kc-stage { padding-top: 10px; }
 
-/* The cost strip and the like: a figure never breaks inside itself, and four
+/* The agent's cost strip: a figure never breaks inside itself, and four
    fields become 2 × 2 on a phone instead of four squeezed columns. */
-.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px 24px; }
-.stat-grid > * { min-width: 0; }
-.stat-grid .font-medium { white-space: nowrap; }
+.cost-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px 24px; }
+.cost-strip > * { min-width: 0; }
+.cost-strip .font-medium { white-space: nowrap; }
 /* The phone's content column is about 290 px: 2 × 140 does not fit beside the
    card's padding, so the minimum gives way to keep two columns. */
 @media (max-width: 768px) {
-  .stat-grid { grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 12px; padding: 12px; }
+  .cost-strip { grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 12px; padding: 12px; }
 }
 
 /* The agent page's tabs: one line, scrolling inside itself (#463 does the same
