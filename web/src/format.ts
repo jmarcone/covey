@@ -272,7 +272,7 @@ export function fmtBucket(iso: string, bucket: string): string {
   const lang = uiLocale();
   switch (bucket) {
     case "hour":
-      return `${d.toLocaleString(lang, { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "UTC" })} UTC`;
+      return `${d.toLocaleString(lang, { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "UTC" })} UTC`;
     case "month":
       return d.toLocaleDateString(lang, { month: "short", year: "numeric", timeZone: "UTC" });
     case "week":

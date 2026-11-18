@@ -257,6 +257,18 @@ describe("fmtBucket", () => {
     await i18n.changeLanguage("en");
     expect(fmtBucket("2026-11-16T00:00:00Z", "week")).toBe("week of 11/16 UTC");
   });
+
+  // Review of #96: an hour bucket (and the dated "compared until") reads in a
+  // 24-hour clock in every language, as fmtClockUTC does — not "08:00 PM".
+  it("an hour bucket uses a 24-hour clock in English too", async () => {
+    await i18n.changeLanguage("en");
+    const s = fmtBucket("2026-11-17T20:00:00Z", "hour");
+    expect(s).toContain("20:00");
+    expect(s).not.toMatch(/PM|AM/);
+    expect(s.endsWith(" UTC")).toBe(true);
+    await i18n.changeLanguage("de");
+    expect(fmtBucket("2026-11-17T20:00:00Z", "hour")).toBe("17.11., 20:00 UTC");
+  });
 });
 
 describe("fmtUSDAxis", () => {
