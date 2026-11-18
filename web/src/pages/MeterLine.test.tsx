@@ -129,7 +129,10 @@ describe("weekly meter line", () => {
     const tip = screen.getByRole("tooltip");
     expect(within(tip).getByText(/9 % → 10 %/)).toBeInTheDocument();
     const list = tip.querySelector("[data-meter-readings]")!.textContent!;
-    expect(list).toContain("Weekly meter (%): 18:05 UTC 9 % · 18:50 UTC 10 %");
+    expect(list).toContain("Weekly meter: 9 % → 10 % · 18:05 UTC 9 % · 18:50 UTC 10 %");
+    // one name for the meter in the tooltip, and no second line for the crossing
+    expect(tip.textContent).not.toMatch(/Meter: /);
+    expect(list).not.toContain("(%)");
   });
 
   // 6
@@ -162,6 +165,66 @@ describe("weekly meter line", () => {
     fireEvent.click(screen.getByRole("button", { name: "Per agent" }));
     expect(container.querySelector("[data-meter-line]")).toBeNull();
     expect(container.querySelector("[data-meter-axis]")).toBeNull();
+  });
+});
+
+// Design review round 1 of #119.
+describe("weekly meter line: legibility", () => {
+  beforeEach(() => { void i18n.changeLanguage("en"); });
+  const bar = (v: number): Bar[] => [{ key: "x", label: "x", color: "red", valueLabel: true, segs: [{ key: "x", label: "x", color: "red", value: v }] }];
+  const point = (pct: number, slot: number, frac: number, at: string, part = 0) => ({ at, pct, slot, frac, part });
+  const draw = (points: ReturnType<typeof point>[], n = 2) => {
+    const periods = Array.from({ length: n }, (_, i) => iso(18, i));
+    return renderWithProviders(
+      <BarChart title="t" periods={periods} groups={periods.map(() => bar(1))} fmtPeriod={(p) => p} fmtValue={fmtUSD} fmtAxis={fmtUSDAxis}
+        meter={{ points, label: "m", fmtAt: (s) => s }} />,
+    );
+  };
+
+  it("casts a solid casing in the card's colour under each part's dashed line", () => {
+    const { container } = draw([point(10, 0, 0.2, "a"), point(20, 0, 0.8, "b"), point(30, 1, 0.5, "c")]);
+    const lines = [...container.querySelectorAll("g[data-meter-part] polyline")];
+    expect(lines).toHaveLength(2);
+    const [casing, dashed] = lines;
+    expect(casing.getAttribute("stroke")).toBe("var(--surface-2)");
+    expect(casing.getAttribute("stroke-width")).toBe("3.75");
+    expect(casing.getAttribute("stroke-dasharray")).toBeNull();
+    expect(casing.getAttribute("points")).toBe(dashed.getAttribute("points"));
+    expect(dashed.getAttribute("stroke")).toBe("var(--cost-meter)");
+    expect(dashed.getAttribute("stroke-dasharray")).not.toBeNull();
+  });
+
+  it("draws the value labels after the line, so it never strikes one out", () => {
+    const { container } = draw([point(10, 0, 0.2, "a"), point(20, 0, 0.8, "b")]);
+    const line = container.querySelector("[data-meter-line]")!;
+    const labels = [...container.querySelectorAll("[data-value]")];
+    expect(labels.length).toBeGreaterThan(0);
+    for (const l of labels) expect(line.compareDocumentPosition(l) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    for (const bar of container.querySelectorAll("g[data-period] rect[rx]")) expect(bar.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("keeps the full dot and its halo on the ends of each part when the line is dense", () => {
+    const many = Array.from({ length: 60 }, (_, k) => point(k, 0, k / 60, `p${k}`));
+    const { container } = draw(many, 1);
+    const r = dots(parts(container as HTMLElement)[0]).map((d) => d.getAttribute("r"));
+    expect(r[0]).toBe("2.25");
+    expect(r.at(-1)).toBe("2.25");
+    expect(new Set(r.slice(1, -1))).toEqual(new Set(["1.25"]));
+    expect(dots(parts(container as HTMLElement)[0])[0].getAttribute("stroke")).toBe("var(--surface-2)");
+    expect(dots(parts(container as HTMLElement)[0])[30].getAttribute("stroke")).toBeNull();
+  });
+
+  it("scrolls to the newest period, and sets the axis strip off with a border", () => {
+    const sw = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollWidth");
+    Object.defineProperty(HTMLElement.prototype, "scrollWidth", { configurable: true, get: () => 777 });
+    try {
+      const { container } = draw([point(10, 0, 0.2, "a")]);
+      const scroller = container.querySelector("svg")!.parentElement!.parentElement as HTMLElement;
+      expect(scroller.scrollLeft).toBe(777);
+      expect((container.querySelector("svg[data-meter-axis]") as SVGElement).style.borderLeft).toBe("1px solid var(--border)");
+    } finally {
+      if (sw) Object.defineProperty(HTMLElement.prototype, "scrollWidth", sw); else delete (HTMLElement.prototype as unknown as Record<string, unknown>).scrollWidth;
+    }
   });
 });
 

@@ -284,6 +284,7 @@
       "chartDesc": "Totali nel periodo: {{totals}}.",
       "meterCol": "Contatore",
       "meterLine": "Contatore settimanale (%)",
+      "meterName": "Contatore settimanale",
       "nothing": "niente",
       "agentsTitle": "Per agente, per prezzo di listino ricalcolato",
       "agent": "Agente",

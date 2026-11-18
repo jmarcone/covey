@@ -284,6 +284,7 @@
       "chartDesc": "期間の合計：{{totals}}。",
       "meterCol": "メーター",
       "meterLine": "週次メーター（%）",
+      "meterName": "週次メーター",
       "nothing": "なし",
       "agentsTitle": "エージェント別（再計算した定価順）",
       "agent": "エージェント",

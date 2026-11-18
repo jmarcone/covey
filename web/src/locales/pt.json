@@ -284,6 +284,7 @@
       "chartDesc": "Totais no período: {{totals}}.",
       "meterCol": "Medidor",
       "meterLine": "Medidor semanal (%)",
+      "meterName": "Medidor semanal",
       "nothing": "nada",
       "agentsTitle": "Por agente, pelo preço de tabela recalculado",
       "agent": "Agente",

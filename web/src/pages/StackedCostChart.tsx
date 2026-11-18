@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useMemo, useState } from "react";
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -395,22 +395,32 @@ function MeterLine({ points, x, y }: { points: readonly MeterPoint[]; x: (p: Met
     <g aria-hidden pointerEvents="none" data-meter-line>
       {parts.filter(Boolean).map((ps) => (
         <g key={ps[0].part} data-meter-part>
-          {ps.length > 1 && (
-            <polyline points={ps.map((p) => `${x(p).toFixed(1)},${y(p).toFixed(1)}`).join(" ")} fill="none"
-              stroke="var(--cost-meter)" strokeWidth={1.75} strokeDasharray={METER_DASH} strokeLinejoin="round" />
-          )}
-          {ps.map((p) => (
-            <circle key={p.at} cx={x(p)} cy={y(p)} r={dense ? 1.25 : 2.25} fill="var(--cost-meter)"
-              stroke={dense ? undefined : "var(--surface-2)"} strokeWidth={1}
-              data-meter-point data-at={p.at} data-pct={p.pct} />
-          ))}
+          {ps.length > 1 && (() => {
+            const pts = ps.map((p) => `${x(p).toFixed(1)},${y(p).toFixed(1)}`).join(" ");
+            return (
+              <>
+                {/* A solid casing in the card's colour under the dashes: the line keeps its contrast where it crosses a bar. */}
+                <polyline points={pts} fill="none" stroke="var(--surface-2)" strokeWidth={3.75} strokeLinejoin="round" data-meter-casing />
+                <polyline points={pts} fill="none" stroke="var(--cost-meter)" strokeWidth={1.75} strokeDasharray={METER_DASH} strokeLinejoin="round" />
+              </>
+            );
+          })()}
+          {ps.map((p, k) => {
+            // Dense: small dots, but a part's first and last keep their size and halo, so the ends of a gap stay visible.
+            const big = !dense || k === 0 || k === ps.length - 1;
+            return (
+              <circle key={p.at} cx={x(p)} cy={y(p)} r={big ? 2.25 : 1.25} fill="var(--cost-meter)"
+                stroke={big ? "var(--surface-2)" : undefined} strokeWidth={1}
+                data-meter-point data-at={p.at} data-pct={p.pct} />
+            );
+          })}
         </g>
       ))}
     </g>
   );
 }
 
-/** More readings than this and the line's dots are drawn small and without a halo. */
+/** More readings than this and the line's dots are drawn small and without a halo, except each part's ends. */
 const DENSE_POINTS = 48;
 
 /** The line's dash: no bar outline is dashed. */
@@ -455,6 +465,7 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
   const [hover, setHover] = useState<number | null>(null);
   const [pinned, setPinned] = useState<number | null>(null);
   const open = pinned ?? hover;
+  const scroller = useRef<HTMLDivElement>(null);
 
   // The series and their totals: the <desc>, the table's last row.
   const series = useMemo(() => {
@@ -472,6 +483,13 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
     for (const p of meter?.points ?? []) m.set(p.slot, [...(m.get(p.slot) ?? []), p]);
     return m;
   }, [meter]);
+  // A chart with the meter's axis scrolls with its newest period in view: the
+  // axis sticks to the right edge and would otherwise hide the last bar.
+  const hasMeter = meter != null, newest = periods.at(-1);
+  useEffect(() => {
+    const el = scroller.current;
+    if (hasMeter && el) el.scrollLeft = el.scrollWidth;
+  }, [hasMeter, periods.length, newest]);
   const desc = t("costs.fig.chartDesc", { totals: series.map((s) => `${s.label} ${fmtValue(s.total)}`).join(", ") });
 
   if (asTable) {
@@ -534,7 +552,7 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
   const close = () => { setPinned(null); setHover(null); };
 
   return (
-    <div style={{ position: "relative", overflowX: "auto" }}>
+    <div ref={scroller} style={{ position: "relative", overflowX: "auto" }}>
       <div style={{ display: "flex", width: "max-content" }}>
       <svg width={W} height={height} style={{ display: "block", maxWidth: "none" }} role="group"
         aria-labelledby={`${uid}-title`} aria-describedby={`${uid}-desc`}>
@@ -579,7 +597,6 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
               {bars.map((b, bi) => {
                 const bx = x0 + bi * (barW + gap);
                 let acc = 0;
-                const total = sum(b.segs);
                 return (
                   <g key={b.key}>
                     {b.segs.map((g) => {
@@ -589,15 +606,6 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
                       return <rect key={g.key} x={bx} y={top} width={barW} height={h} rx={1.5}
                         fill={b.hatched ? `url(#${hatchId(b.color)})` : g.color} stroke={b.hatched ? b.color : undefined} />;
                     })}
-                    {(isOpen || b.valueLabel) && total > 0 && (
-                      // A halo in the page's colour keeps the value legible where it spills over the bar next to it.
-                      <text x={bx + barW / 2} y={Math.max(10, y(total) - 4)} textAnchor="middle" fontSize={9.5} fill="var(--text-primary)"
-                        stroke="var(--surface-1)" strokeWidth={3} paintOrder="stroke" data-value>{fmtValue(total)}</text>
-                    )}
-                    {b.tag && total > 0 && (
-                      <text x={bx + barW / 2} y={Math.max(10, y(total) - 15)} textAnchor="middle" fontSize={9} fill="var(--text-muted)"
-                        stroke="var(--surface-1)" strokeWidth={3} paintOrder="stroke" data-tag>{b.tag}</text>
-                    )}
                   </g>
                 );
               })}
@@ -605,6 +613,36 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
           );
         })}
         {meter && <MeterLine points={meter.points} x={(p) => padL + (p.slot + p.frac) * slot} y={(p) => meterY(p.pct, padT, plotH)} />}
+        {/* The labels over the bars and the meter's line, so the line never strikes a value out. The period's group
+            beneath still takes the pointer. */}
+        <g aria-hidden pointerEvents="none">
+          {groups.map((bars, i) => {
+            const groupW = bars.length * barW + (bars.length - 1) * gap;
+            const x0 = padL + i * slot + slot / 2 - groupW / 2;
+            const isOpen = open === i;
+            return (
+              <g key={periods.at(i)}>
+                {bars.map((b, bi) => {
+                  const bx = x0 + bi * (barW + gap);
+                  const total = sum(b.segs);
+                  return (
+                    <g key={b.key}>
+                      {(isOpen || b.valueLabel) && total > 0 && (
+                        // A halo in the page's colour keeps the value legible where it spills over the bar next to it.
+                        <text x={bx + barW / 2} y={Math.max(10, y(total) - 4)} textAnchor="middle" fontSize={9.5} fill="var(--text-primary)"
+                          stroke="var(--surface-1)" strokeWidth={3} paintOrder="stroke" data-value>{fmtValue(total)}</text>
+                      )}
+                      {b.tag && total > 0 && (
+                        <text x={bx + barW / 2} y={Math.max(10, y(total) - 15)} textAnchor="middle" fontSize={9} fill="var(--text-muted)"
+                          stroke="var(--surface-1)" strokeWidth={3} paintOrder="stroke" data-tag>{b.tag}</text>
+                      )}
+                    </g>
+                  );
+                })}
+              </g>
+            );
+          })}
+        </g>
         {showX && periods.map((p, i) =>
           i % every !== 0 && i !== n - 1 ? null : (
             <text key={p} aria-hidden x={padL + i * slot + slot / 2} y={height - padB + 18} textAnchor="middle" fontSize={11} fill="var(--text-muted)">{fmtPeriod(p)}</text>
@@ -616,7 +654,7 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
         // right edge of a chart that scrolls, so the line can be read at any
         // scroll position.
         <svg width={METER_AXIS_W} height={height} aria-hidden data-meter-axis
-          style={{ display: "block", flex: "none", position: "sticky", right: 0, background: "var(--surface-2)" }}>
+          style={{ display: "block", flex: "none", position: "sticky", right: 0, background: "var(--surface-2)", borderLeft: "1px solid var(--border)" }}>
           {METER_TICKS.map((v) => (
             <g key={v}>
               <line x1={0} x2={4} y1={meterY(v, padT, plotH)} y2={meterY(v, padT, plotH)} stroke="var(--cost-meter)" />
@@ -650,14 +688,17 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
               ))}
             </div>
           ))}
-          {notes?.get(open) && <div className="muted" style={{ fontSize: 11 }}>{t("costs.fig.meterCol")}: {notes.get(open)}</div>}
-          {meter && readingsAt.get(open) && (
-            <div className="muted" data-meter-readings style={{ fontSize: 11, marginTop: notes?.get(open) ? 2 : 0 }}>
-              {meter.label}: {meterReadings(readingsAt.get(open)!).map((p, k) => p == null
-                ? " … "
-                : <Fragment key={k}>{k > 0 ? " · " : ""}<span style={{ whiteSpace: "nowrap" }}>{meter.fmtAt(p.at)} {fmtNumber(p.pct, 0)} %</span></Fragment>)}
+          {meter && readingsAt.get(open) ? (
+            // One meter, one name: "Weekly meter: 9 % → 10 % · 18:05 UTC 9 % · …".
+            <div className="muted" data-meter-readings style={{ fontSize: 11 }}>
+              {t("costs.fig.meterName")}: {notes?.get(open) && <>{notes.get(open)} · </>}
+              {meterReadings(readingsAt.get(open)!).map((p, k) => (
+                <Fragment key={k}>{k > 0 ? " · " : ""}{p == null
+                  ? "…"
+                  : <span style={{ whiteSpace: "nowrap" }}>{meter.fmtAt(p.at)} {fmtNumber(p.pct, 0)} %</span>}</Fragment>
+              ))}
             </div>
-          )}
+          ) : notes?.get(open) && <div className="muted" style={{ fontSize: 11 }}>{t("costs.fig.meterCol")}: {notes.get(open)}</div>}
           {groups.at(open)!.every((b) => sum(b.segs) <= 0) && !notes?.get(open) && !readingsAt.get(open) && <div className="muted">{t("costs.fig.nothing")}</div>}
         </div>
       )}

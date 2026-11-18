@@ -284,6 +284,7 @@
       "chartDesc": "Totals over the window: {{totals}}.",
       "meterCol": "Meter",
       "meterLine": "Weekly meter (%)",
+      "meterName": "Weekly meter",
       "nothing": "nothing",
       "agentsTitle": "Per agent, by recomputed list price",
       "agent": "Agent",

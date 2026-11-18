@@ -284,6 +284,7 @@
       "chartDesc": "Sumy w okresie: {{totals}}.",
       "meterCol": "Licznik",
       "meterLine": "Licznik tygodniowy (%)",
+      "meterName": "Licznik tygodniowy",
       "nothing": "nic",
       "agentsTitle": "Na agenta, według przeliczonej ceny katalogowej",
       "agent": "Agent",
