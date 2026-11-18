@@ -9,6 +9,7 @@ import (
 
 	"covey/internal/agents"
 	"covey/internal/backlog"
+	"covey/internal/chat"
 	"covey/internal/daemon"
 	"covey/internal/observability"
 )
@@ -25,7 +26,7 @@ import (
 // An allowlist and not a list of the keys to refuse: every blocked task
 // carries a key (the runtime fails a park without one), and the keys of
 // target systems are the plugins' to choose, so no list of them is complete.
-const answerKeyPrefix = "answer:"
+const answerKeyPrefix = backlog.AnswerKeyPrefix
 
 // NoteOnTask is the control-plane side of covey/add_note with a task_id: an
 // agent adds to a colleague's open task, or answers a parked one, instead of
@@ -43,13 +44,14 @@ const answerKeyPrefix = "answer:"
 //     the daemon (#703).
 //   - The author is agent:<slug>, so the task's own run and the people
 //     reading it can tell who wrote it.
-//   - With Answer, a blocked target is resumed — the same store call as a
-//     person's POST /tasks/{id}/reply, Backlog.Answer — but only one parked
-//     on a key under answerKeyPrefix, and only while its agent is not stopped
-//     (the kill switch, as gestoppt holds it for a person's reply). The run
-//     reads the text under the writer's name, so it does not take a
-//     colleague's words for a person's. A target that is not woken keeps the
-//     note, and Reason says why.
+//   - With Answer, a target parked on a key under answerKeyPrefix is
+//     resumed — the same edge as a person's POST /tasks/{id}/reply — and a
+//     running one keeps the answer for its park (Backlog.AnswerAsAgent); both
+//     only while its agent is not stopped (the kill switch, as gestoppt holds
+//     it for a person's reply). The run reads the text under the writer's
+//     name, so it does not take a colleague's words for a person's, and a
+//     question of the park that went to people gets the answer under it. A
+//     target that is not woken keeps the note, and Reason says why.
 func (o *Orchestrator) NoteOnTask(ctx context.Context, agent agents.Agent, taskID uuid.UUID, req daemon.RequestNote) daemon.InjectNote {
 	fail := func(m string) daemon.InjectNote {
 		return daemon.InjectNote{RequestID: req.RequestID, OK: false, Error: m}
@@ -79,16 +81,17 @@ func (o *Orchestrator) NoteOnTask(ctx context.Context, agent agents.Agent, taskI
 		return deny(reason)
 	}
 
-	author := "agent:" + agent.Slug
-	if _, err := o.Backlog.AddNote(ctx, target, author, text); err != nil {
+	resp := daemon.InjectNote{RequestID: req.RequestID, OK: true}
+	if req.Answer {
+		resp.Woken, resp.Reason, err = o.answerTask(ctx, agent, taskID, t, text)
+	} else {
+		_, err = o.Backlog.AddNote(ctx, target, "agent:"+agent.Slug, text)
+	}
+	if err != nil {
 		// The store's own words name tables and SQL states; the agent gets
 		// the fact, the log keeps the cause.
 		o.Log.Warn("add_note: the note was not written", "task", target, "err", err)
 		return fail("the note was not written")
-	}
-	resp := daemon.InjectNote{RequestID: req.RequestID, OK: true}
-	if req.Answer {
-		resp.Woken, resp.Reason = o.answerTask(ctx, agent, taskID, t, text)
 	}
 	_ = o.Obs.Record(ctx, agent.OrgID, agent.ID, &taskID, observability.KindLifecycle,
 		map[string]any{"status": "note", "scope": "task", "task_id": target.String(), "woken": resp.Woken})
@@ -96,36 +99,80 @@ func (o *Orchestrator) NoteOnTask(ctx context.Context, agent agents.Agent, taskI
 	return resp
 }
 
-// answerTask resumes a colleague's parked task with an agent's answer, if it
-// is one an agent may end (see answerKeyPrefix and NoteOnTask). It answers
-// whether the task woke, and why not.
-func (o *Orchestrator) answerTask(ctx context.Context, agent agents.Agent, taskID uuid.UUID, t backlog.Task, text string) (bool, string) {
-	const otherKey = "the task waits for something other than a colleague's answer; " +
-		"only a task parked on a correlation key starting with " + answerKeyPrefix + " is resumed this way"
-	if t.State != backlog.StateBlocked {
-		return false, "the task is not waiting for an answer"
-	}
-	if t.CorrelationKey == nil || !strings.HasPrefix(*t.CorrelationKey, answerKeyPrefix) {
-		return false, otherKey
-	}
+// answerTask writes an agent's answer onto a colleague's task and resumes
+// the task with it, if it is one an agent may end (see answerKeyPrefix and
+// NoteOnTask), or holds it for the task's park while the task still runs. It
+// answers whether the task woke, and why not; an error means the note was not
+// written.
+func (o *Orchestrator) answerTask(ctx context.Context, agent agents.Agent, taskID uuid.UUID, t backlog.Task, text string) (bool, string, error) {
+	author := "agent:" + agent.Slug
 	if stopped, err := o.isKilled(ctx, agents.Agent{ID: t.AgentID}); err != nil || stopped {
+		// The note stands either way; only the wake waits for the release,
+		// as a person's reply does — and nothing holds it until then.
+		if _, err := o.Backlog.AddNote(ctx, t.ID, author, text); err != nil {
+			return false, "", err
+		}
 		if err != nil {
 			o.Log.Warn("add_note: the kill switch could not be read", "task", t.ID, "err", err)
+			return false, "the kill switch could not be checked, so the task was not resumed; " +
+				"the note stands — answer again later", nil
 		}
-		return false, "the task's agent is stopped (kill switch)"
+		return false, "the task's agent is stopped (kill switch); the note stands, but it does not " +
+			"resume the task after the release — answer again then", nil
 	}
 	input := "Answer from agent " + agent.Slug + " (task " + taskID.String() + "):\n" + text
-	switch _, err := o.Backlog.AnswerParkedOn(ctx, t.ID, answerKeyPrefix, "agent:"+agent.Slug, input); {
-	case err == nil:
-		return true, ""
-	case errors.Is(err, backlog.ErrParkedOnOtherKey):
-		// it resumed and parked again on another key since it was read
-		return false, otherKey
-	case errors.Is(err, backlog.ErrInvalidTransition):
-		// it moved on since it was read — nobody is waiting any more
-		return false, "the task is not waiting for an answer"
-	default:
-		o.Log.Warn("add_note: the task could not be resumed", "task", t.ID, "err", err)
-		return false, "the task could not be resumed"
+	a, err := o.Backlog.AnswerAsAgent(ctx, t.ID, answerKeyPrefix, author, text, input)
+	if err != nil {
+		return false, "", err
 	}
+	switch a.Outcome {
+	case backlog.AnswerWoke:
+		o.answerUnderQuestion(ctx, t, a.Park, input)
+		return true, "", nil
+	case backlog.AnswerHeld:
+		return false, "the task is still running; the answer is held for this run and resumes the task " +
+			"as soon as it parks on a correlation key starting with " + answerKeyPrefix, nil
+	case backlog.AnswerOtherKey:
+		return false, "the task waits for something other than a colleague's answer; " +
+			"only a task parked on a correlation key starting with " + answerKeyPrefix + " is resumed this way", nil
+	default:
+		return false, "the task is not waiting for an answer", nil
+	}
+}
+
+// answerUnderQuestion posts an agent's answer into the conversation the
+// park's question went to, under it — as a person's answer is posted there
+// (httpapi antwortZustellen, #620). Otherwise the people would still read an
+// open question that a colleague has answered and that has resumed, and the
+// one who answers it later would answer whatever the task waits for by then.
+// The task's own agent writes it: the question is its own, and it is a member
+// of that conversation; the text names the colleague it is from.
+//
+// A question that has not gone out yet does not go out any more
+// (chat.DueQuestions skips a park an agent answered). Nothing here fails the
+// answer: the note and the wake stand, and a message that cannot be written
+// is logged.
+func (o *Orchestrator) answerUnderQuestion(ctx context.Context, t backlog.Task, park int64, input string) {
+	if o.Chat == nil || park == 0 {
+		return
+	}
+	q, err := o.Chat.Message(ctx, chat.QuestionID(park))
+	if errors.Is(err, chat.ErrNotFound) {
+		return
+	}
+	if err != nil {
+		o.Log.Warn("add_note: the question could not be read", "task", t.ID, "err", err)
+		return
+	}
+	agentID, tid := t.AgentID, t.ID
+	if _, _, err := o.Chat.Post(ctx, chat.Message{
+		ConversationID: q.ConversationID, AuthorKind: chat.MemberAgent, AuthorID: &agentID,
+		Text: input, Kind: chat.MessageText, TaskID: &tid,
+		Meta: map[string]string{"answer_to": t.ID.String(), "question": q.ID.String()},
+	}); err != nil {
+		o.Log.Warn("add_note: the answer was not written into the conversation", "task", t.ID, "err", err)
+		return
+	}
+	o.events.Publish(Event{Type: "chat", AgentID: t.AgentID.String(), OrgID: t.OrgID,
+		Data: map[string]string{"state": "said", "conversation_id": q.ConversationID.String(), "task_id": t.ID.String()}})
 }

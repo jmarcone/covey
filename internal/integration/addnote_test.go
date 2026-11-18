@@ -3,7 +3,6 @@ package integration
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -316,16 +315,24 @@ func TestAnAgentsAnswerLeavesAnApprovalToItsDecision(t *testing.T) {
 }
 
 // TestAnsweringChecksTheKeyBehindTheLock: the key is checked where the state
-// is, inside the transition — a task that resumed and parked again on an
-// approval since the answering agent looked is not taken.
+// is, inside the store's transaction — a task that resumed and parked again on
+// an approval since the answering agent looked is not taken.
 func TestAnsweringChecksTheKeyBehindTheLock(t *testing.T) {
 	s := newStack(t)
 	ctx := context.Background()
 	colleague := s.newSupportAgent("kollegin")
 	s.ohneLaeufe(colleague.ID)
+	answer := func(id uuid.UUID) backlog.Answered {
+		t.Helper()
+		a, err := s.backlog.AnswerAsAgent(ctx, id, "answer:", "agent:schreiber", "go", "Answer: go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
 	task := s.parkedOn(t, colleague.ID, "approval:"+uuid.NewString())
-	if _, err := s.backlog.AnswerParkedOn(ctx, task.ID, "answer:", "agent:schreiber", "go"); !errors.Is(err, backlog.ErrParkedOnOtherKey) {
-		t.Fatalf("a task parked on another key has to be refused: %v", err)
+	if a := answer(task.ID); a.Outcome != backlog.AnswerOtherKey {
+		t.Fatalf("a task parked on another key has to be refused: %+v", a)
 	}
 	if st := s.taskState(task.ID); st != backlog.StateBlocked {
 		t.Fatalf("the task has to stay parked: %s", st)
@@ -334,12 +341,15 @@ func TestAnsweringChecksTheKeyBehindTheLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.backlog.AnswerParkedOn(ctx, open.ID, "answer:", "agent:schreiber", "go"); !errors.Is(err, backlog.ErrInvalidTransition) {
-		t.Fatalf("a task that is not parked is no transition: %v", err)
+	if a := answer(open.ID); a.Outcome != backlog.AnswerNotWaiting {
+		t.Fatalf("a task that is neither parked nor running is not waiting: %+v", a)
 	}
 	asked := s.parkedOn(t, colleague.ID, "answer:rollout")
-	if woken, err := s.backlog.AnswerParkedOn(ctx, asked.ID, "answer:", "agent:schreiber", "go"); err != nil || woken.State != backlog.StateOpen {
-		t.Fatalf("a task parked on an answer key is resumed: %v %s", err, woken.State)
+	if a := answer(asked.ID); a.Outcome != backlog.AnswerWoke || a.Park == 0 || a.Note.Author != "agent:schreiber" {
+		t.Fatalf("a task parked on an answer key is resumed, and the answer names its park: %+v", a)
+	}
+	if st := s.taskState(asked.ID); st != backlog.StateOpen {
+		t.Fatalf("the answered task has to be open: %s", st)
 	}
 }
 
@@ -372,7 +382,10 @@ func TestAnAgentsAnswerWaitsForAStoppedAgent(t *testing.T) {
 			t.Fatal(err)
 		}
 		resp := s.orch.NoteOnTask(ctx, writer, own.ID, daemon.RequestNote{Target: parked.ID.String(), Content: "go", Answer: true})
-		if !resp.OK || resp.Woken || !strings.Contains(resp.Reason, "kill switch") {
+		// The writer learns that this answer will not do it after the
+		// release: nothing holds it, the task stays parked.
+		if !resp.OK || resp.Woken || !strings.Contains(resp.Reason, "kill switch") ||
+			!strings.Contains(resp.Reason, "answer again then") {
 			t.Fatalf("%s: the note stands and nothing wakes: %+v", stop, resp)
 		}
 		if st := s.taskState(parked.ID); st != backlog.StateBlocked {

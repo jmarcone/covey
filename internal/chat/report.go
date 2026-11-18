@@ -141,7 +141,11 @@ type Question struct {
 // DueQuestions reads the questions of the window that have somewhere to go
 // and have not gone there: from a task of a conversation, or from any other
 // task of an agent with a human supervisor. Questions from before the
-// organisation's conversations began are not delivered.
+// organisation's conversations began are not delivered, and neither is the
+// question of a park an agent answered before it went out
+// (backlog.AnswerAsAgent, or an answer held for the run and taken at the park
+// itself): nobody has to read a question that is no longer open. Such an
+// answer's edge carries the note "answered by agent:<slug>".
 func (s *Store) DueQuestions(ctx context.Context, window time.Duration, limit int) ([]Question, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT tr.id, t.id, t.org_id, t.agent_id,
@@ -162,6 +166,9 @@ func (s *Store) DueQuestions(ctx context.Context, window time.Duration, limit in
 		   AND trim(regexp_replace(coalesce(tr.note, ''), '^blocked:', '')) <> ''
 		   AND NOT EXISTS (SELECT 1 FROM conversation_messages m
 		                    WHERE m.task_id = t.id AND m.kind = 'question' AND m.meta->>'transition' = tr.id::text)
+		   AND coalesce((SELECT n.note FROM task_transitions n
+		                   WHERE n.task_id = tr.task_id AND n.id > tr.id
+		                   ORDER BY n.id LIMIT 1), '') NOT LIKE 'answered by agent:%'
 		 ORDER BY tr.created_at
 		 LIMIT $2`, window.Seconds(), limit)
 	if err != nil {

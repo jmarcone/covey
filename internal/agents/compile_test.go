@@ -57,6 +57,19 @@ func TestPromptNamesNotesOnAnotherTask(t *testing.T) {
 			}
 		}
 	}
+	// The colleague has to find the task to answer: the asker hands its id
+	// over, and the colleague's own task carries it as its parent.
+	for _, want := range []string{"your own task id", "`parent_task_id`"} {
+		if !strings.Contains(ProtocolInstructions, want) {
+			t.Errorf("the prompt does not say how the colleague finds the task to answer: %q missing", want)
+		}
+	}
+	// Point 7 says where a correlation key's format stands; the colleague's
+	// answer is one of them.
+	_, completion, _ := strings.Cut(ProtocolInstructions, "7. **Completion protocol:**")
+	if completion, _, _ = strings.Cut(completion, "\n8. "); !strings.Contains(completion, "`answer:<topic>`") {
+		t.Error("point 7 of the protocol does not name answer:<topic> among the correlation keys")
+	}
 }
 
 func TestCompilePromptEmptyFiles(t *testing.T) {

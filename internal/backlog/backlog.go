@@ -50,9 +50,6 @@ func transitionAllowed(from, to string) bool {
 var (
 	ErrNotFound          = errors.New("task not found")
 	ErrInvalidTransition = errors.New("invalid state transition")
-	// ErrParkedOnOtherKey: the task is blocked, but on a key the caller may
-	// not end (AnswerParkedOn).
-	ErrParkedOnOtherKey = errors.New("parked on another correlation key")
 )
 
 type Task struct {
@@ -608,31 +605,8 @@ func (s *Store) transitionIf(ctx context.Context, id uuid.UUID, guard func(Task)
 	if err := guard(t); err != nil {
 		return Task{}, err
 	}
-	if !transitionAllowed(t.State, to) {
-		return Task{}, fmt.Errorf("%w: %s → %s", ErrInvalidTransition, t.State, to)
-	}
-	query := "UPDATE backlog_tasks SET state=$1, updated_at=now()"
-	if set != "" {
-		query += ", " + set
-	}
-	query += " WHERE id=$2"
-	if _, err := tx.Exec(ctx, query, append([]any{to, id}, args...)...); err != nil {
+	if err := applyTransition(ctx, tx, t, to, note, set, args...); err != nil {
 		return Task{}, err
-	}
-	if _, err := tx.Exec(ctx, `INSERT INTO task_transitions (task_id, from_state, to_state, note)
-		VALUES ($1,$2,$3,$4)`, id, t.State, to, note); err != nil {
-		return Task{}, err
-	}
-	if err := syncStage(ctx, tx, id, to); err != nil {
-		return Task{}, err
-	}
-	// The task has just left an agent column — if that column now stands empty,
-	// it goes with it. This keeps the board on the working states that really
-	// exist.
-	if terminalState(to) {
-		if _, err := cleanupEmptyAgentStages(ctx, tx, t.AgentID); err != nil {
-			return Task{}, err
-		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Task{}, err
@@ -640,13 +614,85 @@ func (s *Store) transitionIf(ctx context.Context, id uuid.UUID, guard func(Task)
 	return s.Get(ctx, id)
 }
 
+// applyTransition writes the edge from t's state to `to` inside tx, which
+// holds t's row FOR UPDATE: the state, the caller's set clause ($3 on), the
+// history entry and the board column.
+func applyTransition(ctx context.Context, tx pgx.Tx, t Task, to, note string, set string, args ...any) error {
+	if !transitionAllowed(t.State, to) {
+		return fmt.Errorf("%w: %s → %s", ErrInvalidTransition, t.State, to)
+	}
+	query := "UPDATE backlog_tasks SET state=$1, updated_at=now()"
+	if set != "" {
+		query += ", " + set
+	}
+	query += " WHERE id=$2"
+	if _, err := tx.Exec(ctx, query, append([]any{to, t.ID}, args...)...); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO task_transitions (task_id, from_state, to_state, note)
+		VALUES ($1,$2,$3,$4)`, t.ID, t.State, to, note); err != nil {
+		return err
+	}
+	if err := syncStage(ctx, tx, t.ID, to); err != nil {
+		return err
+	}
+	// The task has just left an agent column — if that column now stands empty,
+	// it goes with it. This keeps the board on the working states that really
+	// exist.
+	if terminalState(to) {
+		if _, err := cleanupEmptyAgentStages(ctx, tx, t.AgentID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Block parks the task: correlation key + runtime session for --resume (spec/12, spec/13).
 //
 // This clears daemon_retries: the run got far enough to ask a question, so
 // whatever connection losses came before it were not a series.
+//
+// A park on a key under AnswerKeyPrefix takes the answers colleagues gave
+// while the run was still going (AnswerAsAgent): the task resumes with them
+// at once, in the same transaction, instead of waiting for an answer that
+// has already come.
 func (s *Store) Block(ctx context.Context, id uuid.UUID, correlationKey, sessionID, question string) (Task, error) {
-	return s.transition(ctx, id, StateBlocked, "blocked: "+question,
-		"correlation_key=$3, runtime_session_id=$4, resume_input=NULL, daemon_retries=0", correlationKey, sessionID)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Task{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	t, err := scanTask(tx.QueryRow(ctx, "SELECT "+taskCols+" FROM backlog_tasks WHERE id=$1 FOR UPDATE", id))
+	if err != nil {
+		return Task{}, err
+	}
+	if err := applyTransition(ctx, tx, t, StateBlocked, "blocked: "+question,
+		"correlation_key=$3, runtime_session_id=$4, resume_input=NULL, daemon_retries=0", correlationKey, sessionID); err != nil {
+		return Task{}, err
+	}
+	resumed := false
+	if strings.HasPrefix(correlationKey, AnswerKeyPrefix) {
+		authors, input, err := takeHeldAnswers(ctx, tx, t.ID)
+		if err != nil {
+			return Task{}, err
+		}
+		if input != "" {
+			t.State = StateBlocked
+			if err := applyTransition(ctx, tx, t, StateOpen, "answered by "+authors,
+				"resume_input=$3, priority=1", input); err != nil {
+				return Task{}, err
+			}
+			resumed = true
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Task{}, err
+	}
+	if resumed {
+		s.notify(ctx, t.AgentID)
+	}
+	return s.Get(ctx, id)
 }
 
 // Complete finishes the task (done) or fails it (failed).
@@ -942,8 +988,8 @@ func (s *Store) CorrelateWake(ctx context.Context, orgID uuid.UUID, correlationK
 }
 
 // Answer is the blocked→open edge for a reply addressed to the task: a
-// person's (POST /tasks/{id}/reply), whatever the key, and through
-// AnswerParkedOn an agent's (covey/add_note with answer). It is CorrelateWake
+// person's (POST /tasks/{id}/reply), whatever the key; AnswerAsAgent is an
+// agent's (covey/add_note with answer). It is CorrelateWake
 // addressed by task instead of by correlation key: a person does not know the
 // key and does not have to — they answer the task they are looking at.
 //
@@ -963,29 +1009,6 @@ func (s *Store) CorrelateWake(ctx context.Context, orgID uuid.UUID, correlationK
 func (s *Store) Answer(ctx context.Context, id uuid.UUID, who, resumeInput string) (Task, error) {
 	t, err := s.transitionFrom(ctx, id, StateBlocked, StateOpen, "answered by "+who,
 		"resume_input=$3, priority=1", resumeInput)
-	if err != nil {
-		return Task{}, err
-	}
-	s.notify(ctx, t.AgentID)
-	return t, nil
-}
-
-// AnswerParkedOn is Answer for a task parked on a key under keyPrefix only.
-// An agent's answer must not end a park that waits for something else — an
-// approval's decision, an event of a target system — or that event would find
-// nobody waiting. The key is checked behind the same lock as the state, so a
-// task that resumed and parked again on another key in the meantime is not
-// taken. A blocked task on another key comes back as ErrParkedOnOtherKey.
-func (s *Store) AnswerParkedOn(ctx context.Context, id uuid.UUID, keyPrefix, who, resumeInput string) (Task, error) {
-	t, err := s.transitionIf(ctx, id, func(t Task) error {
-		if t.State != StateBlocked {
-			return fmt.Errorf("%w: %s → %s (expected %s)", ErrInvalidTransition, t.State, StateOpen, StateBlocked)
-		}
-		if t.CorrelationKey == nil || !strings.HasPrefix(*t.CorrelationKey, keyPrefix) {
-			return ErrParkedOnOtherKey
-		}
-		return nil
-	}, StateOpen, "answered by "+who, "resume_input=$3, priority=1", resumeInput)
 	if err != nil {
 		return Task{}, err
 	}

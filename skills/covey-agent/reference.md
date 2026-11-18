@@ -174,6 +174,12 @@ Three of them need care when designing:
   `"answer":true` it resumes a colleague's task only if that task parked on a correlation key
   starting with `answer:`; a playbook in which an agent waits for a colleague's answer parks on
   `answer:<topic>`. A task parked on an approval or a target system's key keeps waiting for that.
+  An answer that comes while the asking task is still running is held for that run and resumes
+  it as soon as it parks on `answer:<topic>`. The asker puts its own task id into the body of the
+  task it delegates; the colleague's task also carries it as `parent_task_id`. On an instance
+  that does not have `task_id` for `add_note` yet the action answers with an error (after the
+  daemon's 30-second wait) — the playbook should name the fallback (a new task for the
+  colleague, or the result).
 - **`set_stage`** creates missing columns automatically. Prescribe a **fixed, small** set of
   names in the playbook that name working *states* (`Triage`, `Analysis`, `Waiting for
   review`) — never the item (`#83 CSV import`), never synonyms for the same state. Otherwise the
