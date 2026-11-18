@@ -35,6 +35,10 @@ function ModelTable({ rep }: { rep: ModelUsageReport }) {
   const list = rows.reduce((a, r) => a + (r.list_usd ?? 0), 0);
   const priced = rows.filter((r) => r.list_usd !== null).reduce((a, r) => a + r.engine_usd, 0);
   const unpriced = rows.filter((r) => r.list_usd === null).length;
+  // A model the list does not know enters the recomputed figure at Claude
+  // Code's own price; without it here the list total falls short of the
+  // headline by exactly that, with nothing saying so.
+  const unpricedUSD = rows.filter((r) => r.list_usd === null).reduce((a, r) => a + r.engine_usd, 0);
   if (rows.length === 0) return <div className="muted text-sm">{t("costs.empty")}</div>;
   const check = priced > 0 ? ((list - priced) / priced) * 100 : 0;
   return (
@@ -72,10 +76,17 @@ function ModelTable({ rep }: { rep: ModelUsageReport }) {
                 <td style={num}>{r.list_usd === null ? "–" : fmtUSD(r.list_usd)}</td>
               </tr>
             ))}
-            <tr style={{ borderTop: "1px solid var(--border)", fontWeight: 600 }}>
-              <td style={td} colSpan={6}>{t("costs.insights.total")}</td>
+            {unpriced > 0 && (
+              <tr data-unpriced style={{ borderTop: "1px solid var(--border)" }}>
+                <td style={{ ...td, whiteSpace: "normal" }} colSpan={6} className="muted">{t("costs.insights.unpricedRow", { count: unpriced })}</td>
+                <td style={num}>{fmtUSD(unpricedUSD)}</td>
+                <td style={num}>{fmtUSD(unpricedUSD)}</td>
+              </tr>
+            )}
+            <tr data-total style={{ borderTop: "1px solid var(--border)", fontWeight: 600 }}>
+              <td style={td} colSpan={6}>{t(unpriced > 0 ? "costs.insights.totalWithUnpriced" : "costs.insights.total")}</td>
               <td style={num}>{fmtUSD(engine)}</td>
-              <td style={num}>{fmtUSD(list)}</td>
+              <td style={num}>{fmtUSD(list + unpricedUSD)}</td>
             </tr>
           </tbody>
         </table>

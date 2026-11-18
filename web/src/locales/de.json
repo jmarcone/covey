@@ -178,7 +178,9 @@
       "meterAria": "{{label}}: Wochenzähler von {{from}} % bis {{to}} % über {{usd}} Listenpreis",
       "source_usage_cmd": "/usage",
       "source_inband": "im Strom des Laufs",
-      "source_manual": "von Hand eingetragen"
+      "source_manual": "von Hand eingetragen",
+      "unpricedRow": "davon Modelle ohne Listenpreis ({{count}}): zu Claude Codes eigenem Preis, wie in der nachgerechneten Zahl",
+      "totalWithUnpriced": "Summe (Liste, Modelle ohne Listenpreis zu Claude Codes Preis)"
     },
     "filter": {
       "agents": "Agenten",

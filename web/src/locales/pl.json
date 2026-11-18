@@ -178,7 +178,9 @@
       "meterAria": "{{label}}: licznik tygodniowy od {{from}} % do {{to}} % przy {{usd}} ceny katalogowej",
       "source_usage_cmd": "/usage",
       "source_inband": "w strumieniu przebiegu",
-      "source_manual": "wpisane ręcznie"
+      "source_manual": "wpisane ręcznie",
+      "unpricedRow": "w tym modele bez ceny katalogowej ({{count}}): według własnej ceny Claude Code, jak w przeliczonej kwocie",
+      "totalWithUnpriced": "Suma (cennik, modele bez ceny według ceny Claude Code)"
     },
     "filter": {
       "agents": "Agenci",

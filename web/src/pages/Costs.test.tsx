@@ -276,6 +276,29 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     expect(screen.queryByText("Kostenarten")).toBeNull();
   });
 
+  // Review C8: the per-model list total left out the models without a list
+  // price, which the recomputed headline counts at Claude Code's price.
+  it("zeigt den Anteil der Modelle ohne Listenpreis und zählt ihn in die Summe", async () => {
+    const row = (model: string, engine: number, list: number | null) => ({
+      agent_id: "a1", agent_slug: "coordinator", agent_name: "Coordinator", model, credential_kind: "subscription", runs: 1,
+      input_tokens: 0, output_tokens: 0, thinking_tokens: 0, cache_read_tokens: 0, cache_write_5m_tokens: 0, cache_write_1h_tokens: 0,
+      web_search_requests: 0, engine_usd: engine, list_usd: list,
+    });
+    const { container } = serve(cells([2, 2]), {
+      "/api/v1/cost/models": { rows: [row("claude-opus-5-5", 10, 10.5), row("claude-mystery-1", 2, null)], runs_without_breakdown: 0, usd_without_breakdown: 0 },
+    });
+    const unpriced = await waitFor(() => {
+      const r = container.querySelector<HTMLElement>("tr[data-unpriced]");
+      if (!r) throw new Error("no unpriced row yet");
+      return r;
+    });
+    expect(unpriced.textContent).toMatch(/davon Modelle ohne Listenpreis \(1\).*2,00 \$2,00 \$$/);
+    const total = unpriced.parentElement!.querySelector("tr[data-total]")!;
+    expect([...total.querySelectorAll("td")].map((td) => td.textContent)).toEqual([
+      "Summe (Liste, Modelle ohne Listenpreis zu Claude Codes Preis)", "12,00 $", "12,50 $",
+    ]);
+  });
+
   // Review C4: a cost type switched off under "split by cost type" stayed
   // off, invisibly, after the split was switched off again.
   it("lässt einen ausgeblendeten Kostentyp nicht weiterwirken, wenn die Aufteilung aus ist", async () => {

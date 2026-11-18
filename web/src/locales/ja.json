@@ -178,7 +178,9 @@
       "meterAria": "{{label}}：週メーター {{from}} % → {{to}} %（定価 {{usd}} 分）",
       "source_usage_cmd": "/usage",
       "source_inband": "実行ストリーム内",
-      "source_manual": "手入力"
+      "source_manual": "手入力",
+      "unpricedRow": "うち定価のないモデル（{{count}}）：再計算の数値と同じく Claude Code 自身の価格で計上",
+      "totalWithUnpriced": "合計（定価、定価のないモデルは Claude Code の価格）"
     },
     "filter": {
       "agents": "エージェント",

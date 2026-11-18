@@ -178,7 +178,9 @@
       "meterAria": "{{label}}: weekmeter van {{from}} % tot {{to}} % over {{usd}} lijstprijs",
       "source_usage_cmd": "/usage",
       "source_inband": "in de stroom van de run",
-      "source_manual": "met de hand ingevoerd"
+      "source_manual": "met de hand ingevoerd",
+      "unpricedRow": "waarvan modellen zonder lijstprijs ({{count}}): tegen de eigen prijs van Claude Code, zoals in het herberekende bedrag",
+      "totalWithUnpriced": "Totaal (lijst, modellen zonder prijs tegen de prijs van Claude Code)"
     },
     "filter": {
       "agents": "Agents",

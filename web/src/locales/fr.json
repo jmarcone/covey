@@ -178,7 +178,9 @@
       "meterAria": "{{label}} : compteur hebdomadaire de {{from}} % à {{to}} % pour {{usd}} de prix catalogue",
       "source_usage_cmd": "/usage",
       "source_inband": "dans le flux de l'exécution",
-      "source_manual": "saisi à la main"
+      "source_manual": "saisi à la main",
+      "unpricedRow": "dont modèles sans prix catalogue ({{count}}) : au prix propre de Claude Code, comme dans le chiffre recalculé",
+      "totalWithUnpriced": "Total (catalogue, modèles sans prix au prix de Claude Code)"
     },
     "filter": {
       "agents": "Agents",

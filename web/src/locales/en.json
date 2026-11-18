@@ -178,7 +178,9 @@
       "meterAria": "{{label}}: weekly meter from {{from}} % to {{to}} % over {{usd}} of list price",
       "source_usage_cmd": "/usage",
       "source_inband": "in the run's stream",
-      "source_manual": "entered by hand"
+      "source_manual": "entered by hand",
+      "unpricedRow": "of which models without a list price ({{count}}): at Claude Code's own price, as in the recomputed figure",
+      "totalWithUnpriced": "Total (list, unpriced models at Claude Code's price)"
     },
     "filter": {
       "agents": "Agents",

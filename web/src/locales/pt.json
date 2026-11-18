@@ -178,7 +178,9 @@
       "meterAria": "{{label}}: medidor semanal de {{from}} % a {{to}} % sobre {{usd}} de preço de tabela",
       "source_usage_cmd": "/usage",
       "source_inband": "no fluxo da execução",
-      "source_manual": "introduzido à mão"
+      "source_manual": "introduzido à mão",
+      "unpricedRow": "dos quais modelos sem preço de tabela ({{count}}): ao preço próprio do Claude Code, como no valor recalculado",
+      "totalWithUnpriced": "Total (tabela, modelos sem preço ao preço do Claude Code)"
     },
     "filter": {
       "agents": "Agentes",
