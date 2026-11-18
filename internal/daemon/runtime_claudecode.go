@@ -154,12 +154,16 @@ func (o outcome) truncated() bool {
 }
 
 // maxTurnsSummaryPrompt fetches the interim state from the aborted session.
-// Deliberately terse and without tools: one turn against the already cached
-// context, and cheap compared to the run that would otherwise be lost — but not
-// free. Measured on a real handover: 0.63 USD for that single turn, because
-// --resume rewrites the cache (58,843 cache-creation tokens). That is the price
-// of the follow-up task, and it belongs in the billing, hence res is updated in
-// summarize().
+// Deliberately terse: one answer against the already cached context, and cheap
+// compared to the run that would otherwise be lost — but only as long as the
+// handover turn sends the same prefix as the run (see summaryArgs). A first
+// version resumed with nothing but --resume and --model, so Claude Code sent
+// its default tool set instead of the run's --tools; the system prompt was
+// already identical (checked with CLI 2.1.325), but the changed tools broke the
+// prefix and every cached token after them missed. The turn then wrote the
+// whole conversation into the cache again (measured on 84f8f55e: 63,276
+// cache-write tokens, 0.53 USD for a single turn). Its cost belongs in the
+// billing either way, hence res is updated in summarize().
 const maxTurnsSummaryPrompt = `Your run was cut off at the turn limit — you are NOT finished.
 Do not continue working now and do not call any tools. Answer only with a short
 handover state (max. 15 lines, Markdown) in exactly this structure:
@@ -171,10 +175,26 @@ handover state (max. 15 lines, Markdown) in exactly this structure:
 Write it so that a colleague without your context can carry on from it: concrete
 names (issue, MR, branch, file, path), no hints.`
 
-// maxTurnsSummaryTimeout caps the summary run. It is a single turn without
-// tools; if it takes longer, something is broken and the task should rather
-// fail without a handover than occupy the sandbox.
+// maxTurnsSummaryTimeout caps the summary run. It is one answer without tool
+// use; if it takes longer, something is broken and the task should rather fail
+// without a handover than occupy the sandbox.
 const maxTurnsSummaryTimeout = 2 * time.Minute
+
+// maxTurnsSummaryTurns leaves room for one refused tool call. The handover turn
+// carries the run's tools (they are part of the cached prefix), so the model can
+// answer the summary prompt with a tool call despite being told not to. The
+// guard below refuses it, and the second turn is the answer. With a cap of 1 the
+// refused call alone would end the turn as error_max_turns, without a result.
+const maxTurnsSummaryTurns = 2
+
+// summaryToolGuard refuses every tool call in the handover turn: a PreToolUse
+// hook for all tools (built-in and MCP) that exits 2, which blocks the call and
+// hands the message to the model. It goes in through --settings because hooks
+// are not part of the prompt — unlike --tools or --disallowedTools, which take
+// the tools out of the request and with them the cache prefix of the whole
+// conversation.
+const summaryToolGuard = `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command",` +
+	`"command":"echo 'No tools in the handover turn. Answer only with the handover state.' >&2; exit 2"}]}]}}`
 
 func (c *ClaudeCode) buildArgs(spec RunSpec) ([]string, string) {
 	prompt := spec.Title + "\n\n" + spec.Body
@@ -443,23 +463,37 @@ func (c *ClaudeCode) Run(ctx context.Context, spec RunSpec, onEvent func(kind st
 	return res, nil
 }
 
+// summaryArgs builds the handover turn from the run's own arguments: the same
+// appended system prompt, MCP config, tool lists, model and effort, so that the
+// request begins with exactly the prefix the run left in the prompt cache. Only
+// the prompt, --resume and the turn cap differ; the tool guard comes on top as a
+// setting, outside the prompt.
+func (c *ClaudeCode) summaryArgs(spec RunSpec, sessionID string) []string {
+	s := spec
+	s.ResumeSessionID = sessionID
+	s.ResumeInput = maxTurnsSummaryPrompt
+	s.MaxTurns = maxTurnsSummaryTurns
+	args, _ := c.buildArgs(s)
+	return append(args, "--settings", summaryToolGuard)
+}
+
 // summarize asks the session cut off at the turn limit for its handover state:
-// a single turn via --resume on the already cached context, without tools. The
-// result becomes the task's interim state and the brief of its follow-up task.
+// one answer via --resume on the already cached context, tool calls refused.
+// The result becomes the task's interim state and the brief of its follow-up
+// task.
 //
-// Best-effort: if the extra run fails (no session ID, timeout, error), the main
-// run's error text stands — the follow-up task is then created without a
-// handover, but it is created. The cost of the extra run is added to the result
-// so that billing stays complete.
+// Best-effort: if the extra run fails (no session ID, timeout, error, the turn
+// cap spent on tool calls), the main run's error text stands — the follow-up
+// task is then created without a handover, but it is created. The cost of the
+// extra run is added to the result so that billing stays complete.
+//
+// It runs with the run's spec, so in the run's directory (runDir) and with its
+// environment: --resume finds the session where the run left it.
 func (c *ClaudeCode) summarize(ctx context.Context, spec RunSpec, sessionID string, onEvent func(kind string, payload json.RawMessage), res *RunResult) string {
 	if sessionID == "" {
 		return ""
 	}
-	args := []string{"-p", maxTurnsSummaryPrompt, "--output-format", "stream-json", "--verbose",
-		"--dangerously-skip-permissions", "--resume", sessionID, "--max-turns", "1"}
-	if spec.Model != "" {
-		args = append(args, "--model", spec.Model)
-	}
+	args := c.summaryArgs(spec, sessionID)
 	sctx, cancel := context.WithTimeout(ctx, maxTurnsSummaryTimeout)
 	defer cancel()
 

@@ -12,18 +12,23 @@ import {
 } from "../../api";
 import { AddHostForm, EgressLogTable, HostChips } from "../../components/EgressBits";
 
+/* Where each host on the effective allowlist comes from. The source is a
+   kind, not a label: the label is the reader's language, the kind decides
+   the styling ("env" is fixed by configuration and cannot be removed here). */
+type EgressSource = { kind: "base" | "env" | "template" | "own"; name?: string };
+
 function effectiveEgress(
   status: EgressStatus | undefined,
   templates: EgressTemplate[],
   cfg: AgentEgressCfg | undefined,
-): Map<string, string> {
+): Map<string, EgressSource> {
   const assigned = new Set(cfg?.template_ids ?? []);
-  const effective = new Map<string, string>();
-  for (const d of status?.defaults ?? []) effective.set(d.pattern, "Basis");
-  for (const p of status?.env ?? []) if (!effective.has(p)) effective.set(p, "ENV");
+  const effective = new Map<string, EgressSource>();
+  for (const d of status?.defaults ?? []) effective.set(d.pattern, { kind: "base" });
+  for (const p of status?.env ?? []) if (!effective.has(p)) effective.set(p, { kind: "env" });
   for (const tpl of templates.filter((tpl) => assigned.has(tpl.id)))
-    for (const h of tpl.hosts) if (!effective.has(h.pattern)) effective.set(h.pattern, tpl.name);
-  for (const h of cfg?.hosts ?? []) if (!effective.has(h.pattern)) effective.set(h.pattern, "eigener Host");
+    for (const h of tpl.hosts) if (!effective.has(h.pattern)) effective.set(h.pattern, { kind: "template", name: tpl.name });
+  for (const h of cfg?.hosts ?? []) if (!effective.has(h.pattern)) effective.set(h.pattern, { kind: "own" });
   return effective;
 }
 export function AgentEgress({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
@@ -58,9 +63,21 @@ export function AgentEgress({ agentId, canEdit }: { agentId: string; canEdit: bo
         <p className="text-xs font-medium mb-2">{t("agent.egress.effectiveAllowlist")}</p>
         <div className="flex flex-wrap gap-1">
           {[...effective.entries()].map(([pattern, source]) => (
-            <span key={pattern} className={`chip${source === "ENV" ? " is-fixed" : ""}`}>
+            <span
+              key={pattern}
+              className={`chip${source.kind === "env" ? " is-fixed" : ""}`}
+              title={source.kind === "env" ? t("egress.envChipTitle") : undefined}
+            >
               {pattern}
-              <span className="src">{source}</span>
+              <span className="src">
+                {source.kind === "base"
+                  ? t("egress.sourceBase")
+                  : source.kind === "env"
+                    ? "ENV"
+                    : source.kind === "own"
+                      ? t("egress.sourceOwn")
+                      : source.name}
+              </span>
             </span>
           ))}
           {effective.size === 0 && <span className="muted text-xs">{t("agent.egress.allBlocked")}</span>}
@@ -87,7 +104,7 @@ export function AgentEgress({ agentId, canEdit }: { agentId: string; canEdit: bo
                 to={`/egress/templates/${tpl.id}`}
                 className="block text-sm font-medium"
                 style={{ color: "var(--text-primary)", textDecoration: "none" }}
-                title="Template-Detailseite öffnen"
+                title={t("agent.egress.openTemplate")}
                 onClick={(e) => e.stopPropagation()}
               >
                 {tpl.name}

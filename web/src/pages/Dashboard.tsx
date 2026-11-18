@@ -701,7 +701,7 @@ function TemplateStep({ onBack, onDone }: { onBack: () => void; onDone: (a: Agen
                   <div style={{ fontWeight: 500, fontSize: 14 }}>{tpl.name}</div>
                   {tpl.description && <div className="muted text-xs" style={{ marginTop: 2 }}>{tpl.description}</div>}
                   <div className="muted text-xs" style={{ marginTop: 4 }}>
-                    Engine: <span className="mono">{bundle?.agent?.runtime ?? "—"}</span>
+                    {t("templates.engineLabel")} <span className="mono">{bundle?.agent?.runtime ?? "—"}</span>
                   </div>
                 </div>
                 <span className="muted" style={{ fontSize: 18 }}>›</span>

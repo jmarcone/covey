@@ -14,6 +14,7 @@ import { fmtDelta } from "../../format";
 import { canManage } from "../agent/roles";
 import { BlockIcon } from "./canvas";
 import { example, toSource, type Mode } from "./model";
+import { uiLocale } from "../../i18n";
 
 type ModeFilter = "all" | Mode;
 
@@ -217,7 +218,7 @@ export default function Workflows({ me }: { me: Principal }) {
                     <td className={`num${w.runs.stuck && w.mode !== "off" ? " danger" : ""}`}>{w.mode === "off" || !w.runs.stuck ? "–" : w.runs.stuck}</td>
                     <td>
                       {w.owner || "–"}
-                      <div className="wf-desc">{new Date(w.updated_at).toLocaleDateString(i18n.language)}</div>
+                      <div className="wf-desc">{new Date(w.updated_at).toLocaleDateString(uiLocale())}</div>
                     </td>
                   </tr>
                 ))}

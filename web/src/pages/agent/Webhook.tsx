@@ -58,10 +58,10 @@ export function WebhookTrigger({ agentId }: { agentId: string }) {
           </div>
           <label>{t("agent.webhook.example")}</label>
           <pre className="code text-xs mb-3" style={{ whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
-            {`curl -X POST ${url} \\\n  -H 'Content-Type: application/json' \\\n  -d '{"title": "Build fehlgeschlagen", "body": "Pipeline #123 ist rot.", "dedup_key": "pipeline-123"}'`}
+            {`curl -X POST ${url} \\\n  -H 'Content-Type: application/json' \\\n  -d '{"title": "Build failed", "body": "Pipeline #123 is red.", "dedup_key": "pipeline-123"}'`}
           </pre>
           <div className="flex items-center gap-3">
-            <button className="btn sm" disabled={enable.isPending} onClick={() => enable.mutate()} title="Neues Token, alte URL wird ungültig">
+            <button className="btn sm" disabled={enable.isPending} onClick={() => enable.mutate()} title={t("agent.webhook.rotateTitle")}>
               {t("agent.webhook.rotate")}
             </button>
             <button className="btn sm danger" disabled={disable.isPending} onClick={() => disable.mutate()}>

@@ -8,6 +8,7 @@ import type { WorkflowRun } from "../../api";
 import { BlockIcon } from "./canvas";
 import { DigestCard } from "./ChatCards";
 import { isOpen, type Block, type Case, type Mode } from "./model";
+import { uiLocale } from "../../i18n";
 
 export type RunFilter = "all" | "attention" | "mine" | "queued";
 
@@ -306,9 +307,9 @@ export function RunSide({
   // Ends an open run by hand (#598); absent for whoever may not.
   onEnd?: (reason: string) => Promise<void>;
 }) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const log = run.log ?? [];
-  const when = (at: string) => new Date(at).toLocaleString(i18n.language, { weekday: "short", hour: "2-digit", minute: "2-digit" });
+  const when = (at: string) => new Date(at).toLocaleString(uiLocale(), { weekday: "short", hour: "2-digit", minute: "2-digit" });
   return (
     <div>
       <button className="wf-back" onClick={onBack}>

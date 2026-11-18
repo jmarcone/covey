@@ -5,6 +5,7 @@ import { Link, useNavigate } from "react-router";
 import { api, type Agent, type Department, type Verlauf } from "../api";
 import Gesicht from "./Gesicht";
 import { NavIcon } from "./navicons";
+import { uiLocale } from "../i18n";
 
 /* Die Suche als Überblendung, nicht als Feld in der Spalte.
  *
@@ -245,7 +246,7 @@ export default function Suche({
                     {z.task_title && <span className="suche-worin">{z.task_title}</span>}
                   </span>
                   <time className="suche-wann" dateTime={z.at}>
-                    {new Date(z.at).toLocaleDateString()}
+                    {new Date(z.at).toLocaleDateString(uiLocale())}
                   </time>
                 </button>
               ))}

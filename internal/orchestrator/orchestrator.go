@@ -2723,6 +2723,13 @@ func (o *Orchestrator) handleDaemonMessage(ctx context.Context, agent agents.Age
 		return false, o.sendMsg(ctx, link, daemon.TypeInjectOrgChart,
 			daemon.InjectOrgChart{RequestID: req.RequestID, Chart: chart})
 
+	case daemon.TypeRequestTasks:
+		req, err := daemon.DecodePayload[daemon.RequestTasks](msg)
+		if err != nil {
+			return false, nil
+		}
+		return false, o.sendMsg(ctx, link, daemon.TypeInjectTasks, o.AgentTasks(ctx, agent, req))
+
 	case daemon.TypeRequestWiki:
 		req, err := daemon.DecodePayload[daemon.RequestWiki](msg)
 		if err != nil {

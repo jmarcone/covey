@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import i18n from "../../i18n";
+import i18n, { uiLocale } from "../../i18n";
 import {
   api,
   post,
@@ -22,7 +22,7 @@ import { fmtDelta } from "../../format";
 // stands like that in HEARTBEAT.md), finds it there.
 function scheduleLabel(hb: HeartbeatStatus): string {
   if (hb.every_seconds) return i18n.t("agent.heartbeat.schedule_interval", { delta: fmtDelta(hb.every_seconds * 1000) });
-  const locale = i18n.language === "de" ? "de-DE" : "en-US";
+  const locale = uiLocale();
   const next = new Date(hb.next_run);
   const time = isNaN(next.getTime())
     ? (hb.daily_at ?? "")
@@ -31,7 +31,7 @@ function scheduleLabel(hb: HeartbeatStatus): string {
 }
 
 function fmtRunChip(d: Date): string {
-  const locale = i18n.language === "de" ? "de-DE" : "en-US";
+  const locale = uiLocale();
   const time = d.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
   if (d.toDateString() === new Date().toDateString()) return time;
   return `${d.toLocaleDateString(locale, { weekday: "short" })} ${time}`;
@@ -55,7 +55,7 @@ function upcomingRuns(hb: HeartbeatStatus, horizonMs: number): Date[] {
 
 function HeartbeatTimeline({ runs, horizonMs }: { runs: Date[]; horizonMs: number }) {
   const { t } = useTranslation();
-  const locale = i18n.language === "de" ? "de-DE" : "en-US";
+  const locale = uiLocale();
   const now = Date.now();
   return (
     <div>

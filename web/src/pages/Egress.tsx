@@ -417,7 +417,7 @@ function CreateTemplateModal({ onClose, onCreated }: { onClose: () => void; onCr
       <label style={{ marginTop: 10 }}>
         {t("egress.createTemplateOptDesc")}
         <input
-          placeholder="Helpdesk-Produktion + Wissensdatenbank"
+          placeholder={t("egress.createTemplateDescPlaceholder")}
           value={desc}
           onChange={(e) => setDesc(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && name.trim() && create.mutate()}

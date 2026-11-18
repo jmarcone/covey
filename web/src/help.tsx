@@ -781,9 +781,18 @@ const enTopics: HelpTopic[] = [
   },
 ];
 
-export function getHelpTopics(lang: string): HelpTopic[] {
-  return lang === "en" ? enTopics : deTopics;
+/* The help is written in two languages, German and English. German goes to
+   German readers only; every other locale gets English, the base language
+   (langs.ts) — a reader in French can follow English, rarely German. */
+export function helpLanguage(lang: string): "de" | "en" {
+  return lang === "de" || lang.startsWith("de-") ? "de" : "en";
 }
 
+export function getHelpTopics(lang: string): HelpTopic[] {
+  return helpLanguage(lang) === "de" ? deTopics : enTopics;
+}
+
+/* Both lists carry the same ids and the same matchers, so either one answers
+   which topic belongs to a path. */
 export const topicForPath = (path: string): string =>
-  deTopics.find((t) => t.match(path))?.id ?? "erste-schritte";
+  enTopics.find((t) => t.match(path))?.id ?? "erste-schritte";
