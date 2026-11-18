@@ -10,7 +10,24 @@
 # "changes" takes the limit exit to the card "stuck". The operator's "changes"
 # on the card and "retry" on the stuck card end the run: the loop counter of a
 # run is never reset, so a second round inside the same run would count against
-# the limit, and the next change on the PR starts a fresh run with fresh rounds.
+# the limit.
+#
+# What starts a run again: the gate (github:pulls) lists only open PRs by the
+# token's account and drops every PR whose last comment is that account's, and
+# every agent posts as covey-bot. The host also counts a change seen in the
+# first firing after a run ended as that run's own. So a new run comes only
+# from a comment by someone other than covey-bot, made at least one firing
+# (10m) after the run ended. A push, or a comment by covey-bot, does not
+# bring the PR back.
+#
+# Exceptions to "one run per PR": with more than 30 open covey-bot PRs the gate
+# returns the one item github:pulls:many instead, so watch mode starts one run
+# for that case and none per PR.
+#
+# Changing this file: edit it and PUT it (the switch to steer included). Do not
+# save it from the Workflows page, mode buttons included: that rewrites the
+# stored text from the blocks, drops this header and adds a layout: block, and
+# the test here refuses that text.
 workflow: "PR review to merge-ready"
 owner: "admin@covey.local"
 mode: watch
@@ -31,7 +48,7 @@ steps:
     role: "Review"
     # Decorative today: round 1 has no fixer and the two roles do not overlap.
     not_same_as: fix
-    task: "Review {{case.no}} on jmarcone/covey. Read the diff first and try to break it; check every line of org-lessons; then the PR body. Post the review comment in the charter format. Report verdict, exactly the word approve or the word changes (nothing else), and majors (the count of open major findings)."
+    task: "Review {{case.no}}. Read the diff first and try to break it; check every line of org-lessons; then the PR body. Post the review comment in the charter format. Report verdict, exactly the word approve or the word changes (nothing else), and majors (the count of open major findings)."
     result: [verdict, majors]
     limit: "2h"
     next: verdict
@@ -64,7 +81,7 @@ steps:
       "changes": back
   stuck:
     type: approval
-    title: "Three rounds without approval"
+    title: "No approval"
     who: "admin@covey.local"
     ask: "{{case.no}} had no approval after the review rounds (last verdict: {{review.verdict}}). Cut it smaller, retry or drop?"
     next:

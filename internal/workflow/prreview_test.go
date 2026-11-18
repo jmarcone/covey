@@ -127,9 +127,17 @@ func prReviewFindings(src string) []string {
 		}
 	}
 
+	// An agent that runs out of time must be noticed: both limits stay.
+	if rv.Limit != 2*time.Hour {
+		bad("review limit is %s, want 2h", rv.Limit)
+	}
+
 	fx := step("fix", KindAgent)
 	if fx.Role != "Author" || !has(fx.Result, "head") || !fx.Sticky || fx.Next[ExitOut] != "review" {
 		bad("fix: role %q result %v sticky %v next %q", fx.Role, fx.Result, fx.Sticky, fx.Next[ExitOut])
+	}
+	if fx.Limit != 3*time.Hour {
+		bad("fix limit is %s, want 3h", fx.Limit)
 	}
 
 	vd := step("verdict", KindCondition)
@@ -142,6 +150,9 @@ func prReviewFindings(src string) []string {
 			bad("verdict exit %q leads to %q, want %q", exit, vd.Next[exit], to)
 		}
 	}
+	if len(vd.Next) != len(want) {
+		bad("verdict has %d exits, want %d: %v", len(vd.Next), len(want), vd.Next)
+	}
 	// A loop exit counts a round: only "changes" may lead back.
 	if loops := LoopExits(d, "verdict"); len(loops) != 1 || loops[0] != "changes" {
 		bad("verdict exits that count a round: %v, want only changes", loops)
@@ -151,27 +162,33 @@ func prReviewFindings(src string) []string {
 	if card.Who != "admin@covey.local" || !has(card.Options, "merge-ready", "changes") || len(card.Options) != 2 {
 		bad("card: who %q options %v", card.Who, card.Options)
 	}
-	if card.Next["merge-ready"] != "ready" || card.Next["changes"] != "back" {
+	if card.Next["merge-ready"] != "ready" || card.Next["changes"] != "back" || len(card.Next) != 2 {
 		bad("card leads to %v", card.Next)
 	}
 	stuck := step("stuck", KindApproval)
 	if stuck.Who != "admin@covey.local" || !has(stuck.Options, "retry", "drop") || len(stuck.Options) != 2 {
 		bad("stuck: who %q options %v", stuck.Who, stuck.Options)
 	}
-	if stuck.Next["retry"] != "again" || stuck.Next["drop"] != "dropped" {
+	if stuck.Next["retry"] != "again" || stuck.Next["drop"] != "dropped" || len(stuck.Next) != 2 {
 		bad("stuck leads to %v", stuck.Next)
 	}
 	for _, id := range []string{"ready", "back", "again", "dropped"} {
 		step(id, KindEnd)
 	}
 
-	// Every {{step.field}} in a text must be something that step reports.
+	// Every {{step.field}} in a text must be something that step reports. The
+	// host gives a case of the gate only no and title; render leaves anything
+	// else visible as {{case.x}}.
+	caseFields := []string{"no", "title"}
 	for _, id := range d.Order {
 		s := d.Steps[id]
 		for _, text := range []string{s.Task, s.Ask} {
 			for _, m := range placeholder.FindAllStringSubmatch(text, -1) {
 				ref, field := m[1], m[2]
 				if ref == "case" {
+					if !has(caseFields, field) {
+						bad("step %s reads {{case.%s}}, the host gives only %v", id, field, caseFields)
+					}
 					continue
 				}
 				if o := d.Steps[ref]; o == nil || !has(o.Result, field) {
@@ -213,13 +230,20 @@ func TestThePRReviewTestFailsWhenARequiredKeyIsMissing(t *testing.T) {
 		{"no else exit", "      \"else\": stuck\n", ""},
 		{"approve loops back", "\"approve\": card", "\"approve\": fix"},
 		{"no card who", "    title: \"Operator validation\"\n    who: \"admin@covey.local\"\n", "    title: \"Operator validation\"\n"},
-		{"no stuck who", "    title: \"Three rounds without approval\"\n    who: \"admin@covey.local\"\n", "    title: \"Three rounds without approval\"\n"},
+		{"no stuck who", "    title: \"No approval\"\n    who: \"admin@covey.local\"\n", "    title: \"No approval\"\n"},
 		{"no card option", "      \"changes\": back\n", ""},
 		{"retry loops back", "\"retry\": again", "\"retry\": fix"},
 		{"typo in the condition's field", "on: \"review.verdict\"", "on: \"review.verdikt\""},
 		{"typo in a key", "    only_if:", "    onlyif:"},
 		{"a key that does not exist", "    every: \"10m\"\n", "    every: \"10m\"\n    schedule: \"10m\"\n"},
 		{"a placeholder nobody reports", "{{review.majors}}", "{{review.major}}"},
+		{"a case field the host does not give (task)", "Review {{case.no}}.", "Review {{case.number}}."},
+		{"a case field the host does not give (card)", "ask: \"{{case.no}} approved", "ask: \"{{case.number}} approved"},
+		{"a verdict exit added", "      \"limit\": stuck\n", "      \"limit\": stuck\n      \"approved\": ready\n"},
+		{"a timeout exit on the card", "      \"changes\": back\n", "      \"changes\": back\n      \"timeout\": dropped\n"},
+		{"a timeout exit on stuck", "      \"drop\": dropped\n", "      \"drop\": dropped\n      \"timeout\": dropped\n"},
+		{"no review limit", "    limit: \"2h\"\n", ""},
+		{"no fix limit", "    limit: \"3h\"\n", ""},
 	} {
 		if !strings.Contains(src, c.old) {
 			t.Errorf("%s: %q is not in the file, the case tests nothing", c.name, c.old)
@@ -249,7 +273,7 @@ func prReviewEngine(t *testing.T, mode Mode, w *world) *Engine {
 
 func startPRReview(t *testing.T, e *Engine) string {
 	t.Helper()
-	r, err := e.Start("github:pull:jmarcone/covey#131", map[string]string{"no": "pull:jmarcone/covey#131", "title": "PR review"})
+	r, err := e.Start("github:pull:jmarcone/covey#136", map[string]string{"no": "pull:jmarcone/covey#136", "title": "PR review"})
 	must(t, err)
 	return r.ID
 }
@@ -263,7 +287,7 @@ func TestInWatchModeThePRReviewOnlyRecordsTheCase(t *testing.T) {
 	if len(w.tasks)+len(w.actions)+len(w.questions)+len(w.messages) != 0 {
 		t.Fatalf("a watching run sent out tasks %v, actions %v, questions %v, messages %v", w.tasks, w.actions, w.questions, w.messages)
 	}
-	if got := logOf(r); got != "  trigger: started for github:pull:jmarcone/covey#131\n  review: seen here\n" {
+	if got := logOf(r); got != "  trigger: started for github:pull:jmarcone/covey#136\n  review: seen here\n" {
 		t.Errorf("log:\n%s", got)
 	}
 }
@@ -291,17 +315,23 @@ func TestAnApprovalInTheThirdRoundStillReachesTheOperator(t *testing.T) {
 	expect(t, at(t, e, id), "ready", StateDone)
 }
 
-func TestTheOperatorsChangesEndTheRunSoTheNextChangeStartsFreshRounds(t *testing.T) {
+// The run ends at the operator's "changes"; the loop counter belongs to a run
+// and is never reset. That a new run follows is the host's call, not this
+// test's: the gate drops a PR that covey-bot commented last and the host takes
+// a change seen in the first firing after the end as the run's own (see the
+// header of the file), so Start is called by hand here and only shows that a
+// new run, once there is one, has fresh rounds.
+func TestTheOperatorsChangesEndTheRunAndANewRunStartsFreshRounds(t *testing.T) {
 	w := &world{}
 	e := prReviewEngine(t, ModeSteer, w)
 	id := startPRReview(t, e)
 	must(t, e.Done(id, map[string]string{"verdict": "approve", "majors": "0"}))
 	must(t, e.Decide(id, "changes"))
 	expect(t, at(t, e, id), "back", StateDone)
-	if _, open := e.OpenRun("github:pull:jmarcone/covey#131"); open {
+	if _, open := e.OpenRun("github:pull:jmarcone/covey#136"); open {
 		t.Fatal("the case is still held by the finished run")
 	}
-	// The gate starts a new run for the case, and its rounds start at one.
+	// A new run for the case, however it comes about, starts at one round.
 	again := startPRReview(t, e)
 	if again == id {
 		t.Fatal("no new run")
