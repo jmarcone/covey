@@ -146,8 +146,8 @@
       "period": "Período"
     },
     "mix": {
-      "title": "Tipos de custo",
-      "hint": "O peso está no lado da entrada em cache, não no que os agentes escrevem — o prompt é lido de novo em cada turno."
+      "title": "Tipos de token",
+      "hint": "Partes dos tokens, não dos dólares. O peso está no lado da entrada em cache, não no que os agentes escrevem — o prompt é lido de novo em cada turno."
     },
     "insights": {
       "modelsTitle": "Consumo por modelo",

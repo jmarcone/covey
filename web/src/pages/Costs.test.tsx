@@ -267,6 +267,15 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     expect(screen.getByText("Gesamte Organisation")).toBeInTheDocument();
   });
 
+  // Review C12: the card shows shares of TOKENS under the title "cost types".
+  it("nennt die Karte der Token-Anteile nicht Kostenarten", async () => {
+    render([2, 2]);
+    await screen.findByRole("group", { name: MULTIPLE });
+    expect(screen.getByText("Token-Arten")).toBeInTheDocument();
+    expect(screen.getByText(/^Anteile an den Token, nicht an den Dollar\./)).toBeInTheDocument();
+    expect(screen.queryByText("Kostenarten")).toBeNull();
+  });
+
   // Review C4: a cost type switched off under "split by cost type" stayed
   // off, invisibly, after the split was switched off again.
   it("lässt einen ausgeblendeten Kostentyp nicht weiterwirken, wenn die Aufteilung aus ist", async () => {

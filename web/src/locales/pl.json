@@ -146,8 +146,8 @@
       "period": "Okres"
     },
     "mix": {
-      "title": "Rodzaje kosztów",
-      "hint": "Ciężar leży po stronie wejścia z pamięci podręcznej, nie po stronie tego, co agenci piszą — prompt jest czytany od nowa w każdej turze."
+      "title": "Rodzaje tokenów",
+      "hint": "Udziały w tokenach, nie w dolarach. Ciężar leży po stronie wejścia z pamięci podręcznej, nie po stronie tego, co agenci piszą — prompt jest czytany od nowa w każdej turze."
     },
     "insights": {
       "modelsTitle": "Zużycie według modelu",

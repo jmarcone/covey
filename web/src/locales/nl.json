@@ -146,8 +146,8 @@
       "period": "Periode"
     },
     "mix": {
-      "title": "Kostensoorten",
-      "hint": "Het gewicht ligt bij de invoer uit de cache, niet bij wat de agenten schrijven — de prompt wordt bij elke beurt opnieuw gelezen."
+      "title": "Tokensoorten",
+      "hint": "Aandelen in de tokens, niet in de dollars. Het gewicht ligt bij de invoer uit de cache, niet bij wat de agenten schrijven — de prompt wordt bij elke beurt opnieuw gelezen."
     },
     "insights": {
       "modelsTitle": "Verbruik per model",

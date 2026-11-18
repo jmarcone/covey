@@ -146,8 +146,8 @@
       "period": "Zeitraum"
     },
     "mix": {
-      "title": "Kostenarten",
-      "hint": "Das Gewicht liegt auf der gecachten Eingabeseite, nicht auf dem, was die Agenten schreiben — der Prompt wird in jedem Turn neu gelesen."
+      "title": "Token-Arten",
+      "hint": "Anteile an den Token, nicht an den Dollar. Das Gewicht liegt auf der gecachten Eingabeseite, nicht auf dem, was die Agenten schreiben — der Prompt wird in jedem Turn neu gelesen."
     },
     "insights": {
       "modelsTitle": "Verbrauch je Modell",

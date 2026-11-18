@@ -146,8 +146,8 @@
       "period": "Periodo"
     },
     "mix": {
-      "title": "Tipi di costo",
-      "hint": "Il peso sta sull'ingresso in cache, non su quello che scrivono gli agenti — il prompt viene riletto a ogni turno."
+      "title": "Tipi di token",
+      "hint": "Quote dei token, non dei dollari. Il peso sta sull'ingresso in cache, non su quello che scrivono gli agenti — il prompt viene riletto a ogni turno."
     },
     "insights": {
       "modelsTitle": "Consumo per modello",

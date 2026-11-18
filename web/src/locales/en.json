@@ -146,8 +146,8 @@
       "period": "Period"
     },
     "mix": {
-      "title": "Cost types",
-      "hint": "The weight sits on the cached input side, not on what the agents write — the prompt is read afresh on every turn."
+      "title": "Token types",
+      "hint": "Shares of tokens, not of dollars. The weight sits on the cached input side, not on what the agents write — the prompt is read afresh on every turn."
     },
     "insights": {
       "modelsTitle": "Usage per model",

@@ -146,8 +146,8 @@
       "period": "Période"
     },
     "mix": {
-      "title": "Types de coût",
-      "hint": "Le poids est du côté de l'entrée mise en cache, pas de ce qu'écrivent les agents — le prompt est relu à chaque tour."
+      "title": "Types de jetons",
+      "hint": "Parts des jetons, pas des dollars. Le poids est du côté de l'entrée mise en cache, pas de ce qu'écrivent les agents — le prompt est relu à chaque tour."
     },
     "insights": {
       "modelsTitle": "Consommation par modèle",
