@@ -92,6 +92,13 @@ jobs:
           go-version: "1.26"
           check-latest: true
           cache: true
+          # The cache key is the hash of these files. The security job below
+          # keys on go.sum alone and finishes first, so with the same key it
+          # would save the cache and this job's compiled test packages would
+          # never be stored: the first job to finish owns a key.
+          cache-dependency-path: |
+            go.sum
+            go.mod
       - uses: actions/download-artifact@v4
         with:
           name: web-dist
@@ -140,7 +147,24 @@ jobs:
           # cache holds test results too. A rerun of an unchanged tree could
           # replay "ok (cached)" instead of running the suite against the
           # fresh Postgres, and a flaky test would look stable.
-        run: go test -timeout 45m -count=1 -coverprofile=coverage.out -coverpkg="$(go list ./... | paste -sd, -)" ./...
+        run: |
+          set -o pipefail
+          go test -timeout 45m -count=1 -coverprofile=coverage.out -coverpkg="$(go list ./... | paste -sd, -)" ./... 2>&1 | tee "$RUNNER_TEMP/go-test.log"
+      # A job log needs a sign-in, an annotation does not: this is what puts the
+      # failing test and its message where a run page, the checks API and an
+      # agent without a login can read them. The awk keeps each `--- FAIL` line
+      # with the indented lines go prints under it, plus package FAIL and panic
+      # lines; %0A is how a workflow command spells a newline.
+      - name: Failed tests as an annotation
+        if: failure()
+        run: |
+          msg=$(awk '
+            /^[[:space:]]*--- FAIL/ { n = 8; print; next }
+            n > 0 && /^[[:space:]]+[^[:space:]]/ { print; n--; next }
+            /^(FAIL|panic:)/ { print }
+            { n = 0 }
+          ' "$RUNNER_TEMP/go-test.log" | head -c 3500 | sed 's/%/%25/g' | awk 'BEGIN { ORS = "%0A" } { print }')
+          echo "::error title=go test failed::${msg:-no FAIL line in the output, see the job log}"
       # The total is the number the README shows. `go tool cover` prints it as
       # the last line of its table; the awk cuts the percent sign off so the
       # badge job gets something it can compare.
