@@ -895,6 +895,9 @@ export type BilledWindow = {
   end: string;
   /** 1h | 1d */
   width: string;
+  /** Where the totals' reported and recomputed figures end: the bill's
+   *  data_refreshed_at when that is before `end`, else `end`. */
+  compared_until: string;
   totals: BilledTotal[] | null;
 };
 

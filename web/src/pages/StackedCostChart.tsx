@@ -13,11 +13,11 @@ import {
   billedPerPeriod,
   credentialFigures,
   credId,
-  isSeat,
   meterCrossings,
   recomputedOf,
   type CredentialFigures,
 } from "./costFigures";
+import { fmtUSDBelow, fmtUSDFixed } from "../format";
 import { PlanPrice } from "./PlanPrice";
 
 /* The cost explorer. The credential is the first level: what money means
@@ -105,10 +105,8 @@ export function agentColor(agents: readonly { id: string }[], id: string) {
   return AGENT_COLORS[(i < 0 ? 0 : i) % AGENT_COLORS.length];
 }
 
-export function Chip({ on, color, hatched, children, onClick, onDoubleClick, locked, title }: {
+export function Chip({ on, color, hatched, children, onClick, onDoubleClick }: {
   on: boolean; color?: string; hatched?: boolean; children: React.ReactNode; onClick: () => void; onDoubleClick?: () => void;
-  /** The last chip that is on: it stays, and says so instead of ignoring the click. */
-  locked?: boolean; title?: string;
 }) {
   return (
     <button
@@ -116,15 +114,13 @@ export function Chip({ on, color, hatched, children, onClick, onDoubleClick, loc
       onClick={onClick}
       onDoubleClick={onDoubleClick}
       aria-pressed={on}
-      aria-disabled={locked || undefined}
-      title={title}
       className="text-xs"
       style={{
         display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 6,
         border: `1px solid ${on ? "var(--border-strong)" : "var(--border)"}`,
         background: on ? "var(--surface-2)" : "transparent",
         color: on ? "var(--text-primary)" : "var(--text-muted)",
-        cursor: locked ? "default" : "pointer", lineHeight: 1.2,
+        cursor: "pointer", lineHeight: 1.2,
       }}
     >
       {color && <Swatch color={color} hatched={hatched} dim={!on} />}
@@ -449,7 +445,7 @@ function CredentialTiles({ f, filtered }: { f: CredentialFigures; filtered: bool
     <Tile key="rec" label={t("costs.fig.recomputed")} value={fmtUSD(f.recomputed)}
       sub={f.check != null ? t("costs.fig.priceTableCheck", { pct: pct(f.check) }) : undefined} color={SOURCE_COLOR.recomputed} />,
   ];
-  if (isSeat(f)) {
+  if (f.kind === "subscription" || (f.kind === "" && f.meter)) {
     const r = f.real;
     // The price per point the server priced the movement at, on average.
     const pp = r && r.points > 0 ? r.value / r.points : null;
@@ -466,11 +462,11 @@ function CredentialTiles({ f, filtered }: { f: CredentialFigures; filtered: bool
       tiles.push(<Tile key="real" label={t("costs.fig.shareOfReal")} value={`≈ ${fmtUSD(share)}`}
         sub={t("costs.fig.shareOfRealSub", { usd: fmtUSD(r.value) })} span={span} note={t("costs.fig.accountWideCaveat")} color={SOURCE_COLOR.real} hatched />);
     } else if (r && r.below) {
-      tiles.push(<Tile key="real" label={t("costs.fig.realEstimate")} value={`< ${fmtUSD(r.high)}`}
+      tiles.push(<Tile key="real" label={t("costs.fig.realEstimate")} value={fmtUSDBelow(r.high)}
         sub={t("costs.fig.realBelow")} span={span} note={t("costs.fig.accountWideCaveat")} color={SOURCE_COLOR.real} hatched />);
     } else if (r) {
       tiles.push(<Tile key="real" label={t("costs.fig.realEstimate")} value={`≈ ${fmtUSD(r.value)}`}
-        sub={t("costs.fig.realRange", { low: fmtUSD(r.low), high: fmtUSD(r.high), pts: r.points, pp: pp != null ? fmtUSD(pp) : "–" })}
+        sub={t("costs.fig.realRange", { low: fmtUSD(r.low), high: fmtUSD(r.high), pts: r.points, pp: pp != null ? fmtUSDFixed(pp, 4) : "–" })}
         span={span} note={t("costs.fig.accountWideCaveat")} color={SOURCE_COLOR.real} hatched />);
     } else {
       tiles.push(<Tile key="real" label={t("costs.fig.realEstimate")} value="–" sub={t("costs.fig.noMeter")} color={SOURCE_COLOR.real} hatched />);
@@ -496,12 +492,18 @@ function CredentialTiles({ f, filtered }: { f: CredentialFigures; filtered: bool
         : t("costs.fig.billedUnavailable");
       tiles.push(<Tile key="billed" label={t("costs.fig.billed")} value="–" sub={why} color={SOURCE_COLOR.billed} />);
     } else {
-      // The bill covers whole billed buckets; the same window's reported and
-      // recomputed figures stand beside it, not the page's.
-      const win = b.window ? t("costs.fig.billedWindow", {
-        from: fmtBucket(b.window.start.toISOString(), "hour"),
-        unit: t(b.window.width === "1h" ? "costs.fig.billedUnitHours" : "costs.fig.billedUnitDays"),
-        reported: fmtUSD(b.reported), list: fmtUSD(b.recomputed),
+      // The bill covers whole billed buckets; the reported and recomputed
+      // figures of the same window stand beside it, not the page's — up to
+      // compared_until, where the bill is complete, not up to now. Without a
+      // date it would read as today, so a day other than the window's end
+      // gets one.
+      const w = b.window;
+      const until = w && (w.comparedUntil.toISOString().slice(0, 10) === w.end.toISOString().slice(0, 10)
+        ? fmtClockUTC(w.comparedUntil) : fmtBucket(w.comparedUntil.toISOString(), "hour"));
+      const win = w ? t("costs.fig.billedWindow", {
+        from: fmtBucket(w.start.toISOString(), "hour"),
+        unit: t(w.width === "1h" ? "costs.fig.billedUnitHours" : "costs.fig.billedUnitDays"),
+        reported: fmtUSD(b.reported), list: fmtUSD(b.recomputed), until,
       }) : undefined;
       const failed = b.error ? t("costs.fig.billedLastSyncFailed", { error: b.error }) : undefined;
       tiles.push(<Tile key="billed" label={t("costs.fig.billed")} value={fmtUSD(b.usd)} sub={status}
@@ -625,7 +627,7 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
   const name = f.secretKey == null ? t("costs.fig.notAttributable") : `${f.secretKey} #${f.slot}`;
   const kind = t(`costs.fig.kind_${f.kind || "unknown"}`);
   const plan = planLabel(f);
-  const subscription = isSeat(f);
+  const subscription = f.kind === "subscription" || (f.kind === "" && f.meter != null);
 
   return (
     <section className="mb-5" aria-label={name} data-credential={f.id}>

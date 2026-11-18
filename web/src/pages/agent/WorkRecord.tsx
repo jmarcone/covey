@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, type AgentReview, type WorkRecord as Record } from "../../api";
-import { fmtUSD } from "../../format";
+import { fmtUSD, fmtUSDUnit } from "../../format";
 import { Markdown } from "../../components/Markdown";
 import { uiLocale } from "../../i18n";
 
@@ -105,7 +105,7 @@ export function WorkRecord({ agentId }: { agentId: string }) {
                 {i.count}
                 {i.goal > 0 && <span className="muted"> / {i.goal}</span>}
               </span>
-              {i.unit_usd != null && <span className="muted text-xs">{fmtUSD(i.unit_usd)}</span>}
+              {i.unit_usd != null && <span className="muted text-xs">{fmtUSDUnit(i.unit_usd)}</span>}
             </div>
           ))}
         </Section>
