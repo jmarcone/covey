@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { ApiError, api, put, type CredentialPlan, type RuntimeInstance, type UsageReading } from "../api";
 import { fmtBucket, fmtNumber, fmtUSD } from "../format";
+import { uiLocale } from "../i18n";
 import type { CredentialFigures } from "./costFigures";
 
 /* The plan price of a subscription credential, set from the cost page.
@@ -36,16 +37,24 @@ export function planPlace(f: CredentialFigures, instances: readonly RuntimeInsta
 }
 
 /** The latest weekly reset the credential's readings name, in ms; NaN when
- *  they name none. A five-hour window does not say when the week began. */
+ *  they name none. A five-hour window does not say when the week began (the
+ *  server files every reading under a window name, seven_day when the
+ *  reader gave none). The readings of the meter's own source come first: the
+ *  week is the one the meter's points are counted in, and another source can
+ *  name another reset. The others only stand in when that one names none. */
 function weeklyReset(f: CredentialFigures, readings: readonly UsageReading[]): number {
-  let latest = NaN;
-  for (const r of readings) {
-    if (r.secret_key !== f.secretKey || r.secret_slot !== f.slot || !r.resets_at) continue;
-    if (r.window_kind !== "seven_day" && r.window_kind !== "") continue;
-    const ms = Date.parse(r.resets_at);
-    if (!Number.isNaN(ms) && !(ms <= latest)) latest = ms;
-  }
-  return latest;
+  const latest = (source: string | null) => {
+    let out = NaN;
+    for (const r of readings) {
+      if (r.secret_key !== f.secretKey || r.secret_slot !== f.slot || !r.resets_at || r.window_kind !== "seven_day") continue;
+      if (source != null && r.source !== source) continue;
+      const ms = Date.parse(r.resets_at);
+      if (!Number.isNaN(ms) && !(ms <= out)) out = ms;
+    }
+    return out;
+  };
+  const own = f.meter ? latest(f.meter.source) : NaN;
+  return Number.isNaN(own) ? latest(null) : own;
 }
 
 /** The start of the current meter week: the latest weekly reset the
@@ -91,13 +100,23 @@ function currentPlan(t: TFunction, p: CredentialPlan): string {
   });
 }
 
+/** An instant in UTC, with the year: a start the reader types can lie in
+ *  another year, and the cost page's short notation would hide that. */
+function fmtInstantUTC(d: Date): string {
+  return `${d.toLocaleString(uiLocale(), { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "UTC" })} UTC`;
+}
+
 /** The server stored the price at another credential than the form's. */
 class PlanMoved extends Error {}
+
+/** The credential sits on no runtime instance any more: nowhere to send it. */
+class PlanGone extends Error {}
 
 /** What a failed save says, in the reader's language; the server's own text
  *  in parentheses where it says more than the status. */
 function saveError(t: TFunction, err: Error): string {
   if (err instanceof PlanMoved) return t("costs.plan.errMoved");
+  if (err instanceof PlanGone) return t("costs.plan.errGone");
   if (err instanceof ApiError) {
     // A plan starting at that very instant: the server does not overwrite.
     if (err.status === 409) return t("costs.plan.errConflict");
@@ -150,7 +169,8 @@ export function PlanPrice({ f, name, readings, editable }: {
   const place = planPlace(f, instances.data);
   const save = useMutation({
     mutationFn: async (body: { amount: number; currency: string; period: string; valid_from: string }) => {
-      const saved = await put<CredentialPlan>(`/runtime-instances/${place!.runtimeId}/credentials/${place!.ord}/plan`, body);
+      if (!place) throw new PlanGone();
+      const saved = await put<CredentialPlan>(`/runtime-instances/${place.runtimeId}/credentials/${place.ord}/plan`, body);
       // The server resolved the place when the request arrived. A reorder
       // since the list was fetched gave it to another secret, and the price
       // is stored there now: say so, and look again for the next try.
@@ -185,11 +205,17 @@ export function PlanPrice({ f, name, readings, editable }: {
 
   const amountNum = amount.trim() === "" ? NaN : Number(amount);
   const whenMs = from === toLocalInput(fallback) ? fallback.getTime() : new Date(from).getTime();
-  const valid = Number.isFinite(amountNum) && amountNum >= 0 && Number.isFinite(whenMs);
+  // A price of nothing is no plan: a free seat has no meter to price.
+  const valid = Number.isFinite(amountNum) && amountNum > 0 && Number.isFinite(whenMs);
   const hint = { week: "costs.plan.fromHintWeek", now: "costs.plan.fromHintNow", correct: "costs.plan.fromHintCorrect" }[why];
-  const error = save.error ? saveError(t, save.error) : null;
-  // A 409 is about the start alone; anything else may be about either field.
-  const badAmount = error != null && !(save.error instanceof ApiError && save.error.status === 409);
+  // The place can go while the form is open (the credential was removed):
+  // the form stays with what was typed, and says why it cannot save.
+  const gone = !place && !instances.isFetching;
+  const error = save.error ? saveError(t, save.error) : gone ? t("costs.plan.errGone") : null;
+  // A refused save is about the fields; a 409 about the start alone. A place
+  // that went is about neither.
+  const badFrom = save.error != null && !(save.error instanceof PlanGone);
+  const badAmount = badFrom && !(save.error instanceof ApiError && save.error.status === 409);
   const hintId = `${uid}-hint`;
   const errorId = `${uid}-error`;
   const described = (...ids: string[]) => [...ids, ...(error ? [errorId] : [])].join(" ") || undefined;
@@ -202,7 +228,7 @@ export function PlanPrice({ f, name, readings, editable }: {
           <button ref={setRef} type="button" className="btn sm ghost" onClick={show}>{t("costs.plan.set")}</button>
         )}
       </div>
-      {editable && place && open && (
+      {editable && open && (
         <form
           className="mt-3"
           aria-label={t("costs.plan.form", { name })}
@@ -235,11 +261,11 @@ export function PlanPrice({ f, name, readings, editable }: {
             <label className="text-xs" htmlFor={`${uid}-from`}>
               <span className="block mb-1">{t("costs.plan.validFrom")}</span>
               <input id={`${uid}-from`} type="datetime-local" required value={from}
-                aria-invalid={error != null || undefined} aria-describedby={described(hintId)}
+                aria-invalid={badFrom || undefined} aria-describedby={described(hintId)}
                 onChange={(e) => setFrom(e.target.value)} />
             </label>
             <div className="flex gap-2">
-              <button type="submit" className="btn sm primary" disabled={!valid || save.isPending || instances.isFetching}>
+              <button type="submit" className="btn sm primary" disabled={!valid || !place || save.isPending || instances.isFetching}>
                 {save.isPending ? t("costs.plan.saving") : t("costs.plan.save")}
               </button>
               <button type="button" className="btn sm ghost" disabled={save.isPending} onClick={close}>{t("costs.plan.cancel")}</button>
@@ -247,7 +273,7 @@ export function PlanPrice({ f, name, readings, editable }: {
           </div>
           <p id={hintId} className="muted text-xs mt-1 mb-0">
             {/* The input is the reader's clock; the cost page is UTC. */}
-            {Number.isFinite(whenMs) && <>{fmtBucket(new Date(whenMs).toISOString(), "hour")} · </>}
+            {Number.isFinite(whenMs) && <>{fmtInstantUTC(new Date(whenMs))} · </>}
             {t(hint)}
           </p>
           {error && (

@@ -311,7 +311,8 @@
       "errConflict": "Já há um plano que começa nesse momento — escolha um início posterior.",
       "errInvalid": "O servidor rejeitou o preço ({{msg}}).",
       "errForbidden": "O seu papel não pode definir um preço de plano ({{msg}}).",
-      "form": "Definir preço do plano de {{name}}"
+      "form": "Definir preço do plano de {{name}}",
+      "errGone": "Esta credencial já não está em nenhum lugar — não há onde guardar o preço."
     }
   },
   "lang": {

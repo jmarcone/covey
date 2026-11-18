@@ -311,7 +311,8 @@
       "errConflict": "Ya hay un plan que empieza en ese momento: elige un comienzo posterior.",
       "errInvalid": "El servidor rechazó el precio ({{msg}}).",
       "errForbidden": "Tu rol no puede fijar un precio de plan ({{msg}}).",
-      "form": "Fijar precio del plan de {{name}}"
+      "form": "Fijar precio del plan de {{name}}",
+      "errGone": "Esta credencial ya no está en ningún puesto: no hay dónde guardar el precio."
     }
   },
   "lang": {

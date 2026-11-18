@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Costs from "./Costs";
 import { canSetPlan, defaultValidFrom, planPlace, presetValidFrom } from "./PlanPrice";
@@ -375,8 +375,41 @@ describe("Kosten — Tarifpreis setzen", () => {
     const { container } = page(testPrincipal("org_admin"));
     const b = await block(container);
     await userEvent.click(await within(b).findByRole("button", { name: "Tarifpreis setzen" }));
-    // the week start, 13 Nov 16:00 UTC, in the page's own notation
-    expect(within(b).getByText(/^13\.11\.,? 16:00 UTC · /)).toBeInTheDocument();
+    // the week start, 13 Nov 16:00 UTC, in the page's notation with the year
+    expect(within(b).getByText(/^13\.11\.2026,? 16:00 UTC · /)).toBeInTheDocument();
+  });
+
+  it("sperrt Speichern bei einem Betrag von 0", async () => {
+    serve({ readings: [reading()] });
+    const { container } = page(testPrincipal("org_admin"));
+    const b = await block(container);
+    await userEvent.click(await within(b).findByRole("button", { name: "Tarifpreis setzen" }));
+    await userEvent.type(within(b).getByLabelText("Betrag (USD)"), "0");
+    await waitFor(() => expect(within(b).queryByRole("alert")).toBeNull());
+    expect(within(b).getByRole("button", { name: "Speichern" })).toBeDisabled();
+    await userEvent.type(within(b).getByLabelText("Betrag (USD)"), ".5");
+    await waitFor(() => expect(within(b).getByRole("button", { name: "Speichern" })).toBeEnabled());
+  });
+
+  it("behält das Formular, wenn die Zugangsdaten verschwinden, und sagt, dass es keinen Ort gibt", async () => {
+    const s = serve({ readings: [reading()] });
+    const { container, qc } = page(testPrincipal("org_admin"));
+    const b = await block(container);
+    await userEvent.click(await within(b).findByRole("button", { name: "Tarifpreis setzen" }));
+    await userEvent.type(within(b).getByLabelText("Betrag (USD)"), "200");
+    // the seat was removed from the instance meanwhile
+    s.srv.instances = [instance(RT, [["other_key", 0]])];
+    await qc.invalidateQueries({ queryKey: ["runtime-instances"] });
+
+    const alert = await within(b).findByRole("alert");
+    expect(alert).toHaveTextContent("Diese Zugangsdaten sitzen auf keinem Platz mehr — es gibt keinen Ort für den Preis.");
+    expect(within(b).getByLabelText("Betrag (USD)")).toHaveValue(200);
+    expect(within(b).getByRole("button", { name: "Speichern" })).toBeDisabled();
+    // Enter submits past the disabled button: still no request, no TypeError
+    fireEvent.submit(within(b).getByRole("form"));
+    await act(() => new Promise((r) => setTimeout(r, 50))); // let the save settle
+    expect(within(b).getByRole("alert")).toHaveTextContent(/^Diese Zugangsdaten sitzen auf keinem Platz mehr — es gibt keinen Ort für den Preis\.$/);
+    expect(s.puts).toHaveLength(0);
   });
 
   it("nur Fünf-Stunden-Ablesungen: Vorbelegung jetzt und der Hinweis dazu, nicht der Wochenhinweis", async () => {
@@ -430,6 +463,21 @@ describe("Tarifpreis — Rollen, Ort und Vorbelegung", () => {
     expect(planPlace(fig(), undefined)).toBeNull();
     // a stored plan's place is not trusted: a reorder may have given it away
     expect(planPlace(fig({ plan: { runtime_id: "p", ord: 3 } as CredentialPlan }), [])).toBeNull();
+  });
+
+  it("nimmt den Reset aus der Quelle des Zählers, andere Quellen nur ersatzweise", () => {
+    const now = new Date("2026-11-18T12:00:00Z");
+    const meter = (source: string) => fig({ meter: { source } as CredentialFigures["meter"] });
+    const rs = [
+      reading({ source: "usage_cmd" }), // resets 20 Nov 16:00
+      reading({ source: "inband", resets_at: "2026-11-21T10:00:00Z" }), // later, but not the meter's
+    ];
+    expect(defaultValidFrom(meter("usage_cmd"), rs, now).toISOString()).toBe(WEEK_START);
+    expect(defaultValidFrom(meter("inband"), rs, now).toISOString()).toBe("2026-11-14T10:00:00.000Z");
+    // the meter's source names no reset: the others stand in
+    expect(defaultValidFrom(meter("manual"), rs, now).toISOString()).toBe("2026-11-14T10:00:00.000Z");
+    // and only weekly windows count, an unnamed one included in none
+    expect(defaultValidFrom(fig(), [reading({ window_kind: "" })], now)).toEqual(now);
   });
 
   it("beginnt die aktuelle Zählerwoche sieben Tage vor dem jüngsten Wochen-Reset", () => {

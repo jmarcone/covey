@@ -311,7 +311,8 @@
       "errConflict": "W tym momencie zaczyna się już plan — wybierz późniejszy początek.",
       "errInvalid": "Serwer odrzucił cenę ({{msg}}).",
       "errForbidden": "Twoja rola nie może ustawić ceny planu ({{msg}}).",
-      "form": "Ustaw cenę planu dla {{name}}"
+      "form": "Ustaw cenę planu dla {{name}}",
+      "errGone": "To poświadczenie nie jest już na żadnym stanowisku — nie ma gdzie zapisać ceny."
     }
   },
   "lang": {

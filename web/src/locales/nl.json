@@ -311,7 +311,8 @@
       "errConflict": "Op dat moment begint al een abonnement — kies een later begin.",
       "errInvalid": "De server heeft de prijs geweigerd ({{msg}}).",
       "errForbidden": "Uw rol mag geen abonnementsprijs instellen ({{msg}}).",
-      "form": "Abonnementsprijs instellen voor {{name}}"
+      "form": "Abonnementsprijs instellen voor {{name}}",
+      "errGone": "Deze referentie zit op geen enkele werkplek meer — er is geen plek om de prijs op te slaan."
     }
   },
   "lang": {

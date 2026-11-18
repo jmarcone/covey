@@ -311,7 +311,8 @@
       "errConflict": "A plan already starts at that moment — pick a later start.",
       "errInvalid": "The server rejected the price ({{msg}}).",
       "errForbidden": "Your role may not set a plan price ({{msg}}).",
-      "form": "Set plan price for {{name}}"
+      "form": "Set plan price for {{name}}",
+      "errGone": "This credential no longer sits on any seat — there is nowhere to save the price."
     }
   },
   "lang": {

@@ -311,7 +311,8 @@
       "errConflict": "Un forfait commence déjà à ce moment — choisissez un début plus tardif.",
       "errInvalid": "Le serveur a refusé le prix ({{msg}}).",
       "errForbidden": "Votre rôle ne permet pas de définir un prix de forfait ({{msg}}).",
-      "form": "Définir le prix du forfait de {{name}}"
+      "form": "Définir le prix du forfait de {{name}}",
+      "errGone": "Cet identifiant n'est plus sur aucun poste — il n'y a nulle part où enregistrer le prix."
     }
   },
   "lang": {
