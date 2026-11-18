@@ -8,7 +8,18 @@ import {
   type Dream,
 } from "../../api";
 
-const LOG_PREFIXES = ["neue Seite: ", "ergänzt: ", "gelöscht: ", "bearbeitet: "];
+/* The verbs the wiki writes in front of a page title (internal/memory). They
+   are English today; the German ones stay for log rows written before. */
+const LOG_PREFIXES = [
+  "new page: ",
+  "appended: ",
+  "edited: ",
+  "deleted: ",
+  "neue Seite: ",
+  "ergänzt: ",
+  "bearbeitet: ",
+  "gelöscht: ",
+];
 
 // logDetail decides whether the summary adds anything beyond the page name.
 // Usually it reads `<Vorgang>: <Seitentitel>` — then the same stands twice

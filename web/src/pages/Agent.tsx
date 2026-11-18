@@ -179,7 +179,7 @@ export default function AgentPage({ me }: { me: Principal }) {
               {t("agent.resume")}
             </button>
           ) : (
-            <button className="btn sm danger" onClick={() => act.mutate("kill")} title="Kill-Switch">
+            <button className="btn sm danger" onClick={() => act.mutate("kill")} title={t("agent.stopTitle")}>
               {t("agent.stop")}
             </button>
           ))}

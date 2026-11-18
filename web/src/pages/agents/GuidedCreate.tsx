@@ -35,7 +35,7 @@ type Step = "who" | "job" | "may" | "org";
 const STEPS: Step[] = ["who", "job", "may", "org"];
 
 export function GuidedCreate({ onBack, onDone }: { onBack: () => void; onDone: (a: Agent) => void }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [step, setStep] = useState<Step>("who");
 
   const [name, setName] = useState("");
@@ -61,12 +61,17 @@ export function GuidedCreate({ onBack, onDone }: { onBack: () => void; onDone: (
       // The configuration in one pass: what the flow asked for then stands
       // in the same files the editor shows too — there is no
       // second, hidden place for the same statement.
+      // The headings are prompt text, not interface: like the brief the
+      // hiring desk writes (httpapi/hiring.go), German for German, English
+      // for everyone else.
+      const de = i18n.language === "de" || i18n.language.startsWith("de-");
+      const L = (d: string, e: string) => (de ? d : e);
       const files: Record<string, string> = {};
       if (role.trim()) {
-        files["SOUL.md"] = `# ${name.trim()}\n\n## Rolle\n${role.trim()}\n`;
+        files["SOUL.md"] = `# ${name.trim()}\n\n## ${L("Rolle", "Role")}\n${role.trim()}\n`;
       }
       if (remit.trim()) {
-        files["CAPABILITIES.md"] = `# Zuständigkeit\n\n${remit.trim()}\n`;
+        files["CAPABILITIES.md"] = `# ${L("Zuständigkeit", "Remit")}\n\n${remit.trim()}\n`;
       }
       const access = Object.entries(systems)
         .filter(([, sc]) => sc.length > 0 || systems[""] !== undefined)
@@ -76,7 +81,10 @@ export function GuidedCreate({ onBack, onDone }: { onBack: () => void; onDone: (
       }
       const boss = org.data?.humans.find((h) => h.id === supervisor);
       if (boss) {
-        files["ORG.md"] = `# Organisation\n\nVorgesetzt: ${boss.display_name}. Dorthin eskalieren.\n`;
+        files["ORG.md"] = L(
+          `# Organisation\n\nVorgesetzt: ${boss.display_name}. Dorthin eskalieren.\n`,
+          `# Organisation\n\nSupervisor: ${boss.display_name}. Escalate there.\n`,
+        );
       }
       if (Object.keys(files).length > 0) {
         await put(`/agents/${agent.id}/config`, { files });

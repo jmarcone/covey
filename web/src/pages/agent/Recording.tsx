@@ -80,7 +80,7 @@ export function Recording({
           </>
         )}
         <span className="flex-1" />
-        <div className="seg" role="tablist" aria-label="Ansicht">
+        <div className="seg" role="tablist" aria-label={t("agent.recording.viewLabel")}>
           <button
             className={view === "feed" ? "active" : ""}
             onClick={() => setView("feed")}

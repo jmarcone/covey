@@ -200,7 +200,7 @@ function CreateRule({ agents }: { agents: Agent[] }) {
               value={pattern}
               onChange={(e) => setPattern(e.target.value)}
               className="mono"
-              placeholder="z. B. zammad:reply_external"
+              placeholder="zammad:reply_external"
               required
             />
           </div>
