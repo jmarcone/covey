@@ -288,7 +288,7 @@ function CredentialStep({
               disabled={!values[c.key] || save.isPending}
               onClick={() => save.mutate(c.key)}
             >
-              {t("secrets.save", "Speichern")}
+              {t("secrets.save")}
             </button>
           </div>
           {check[c.key] && <p className="text-xs danger-text">{check[c.key]}</p>}

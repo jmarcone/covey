@@ -568,7 +568,7 @@ function CreateCode({ orgs, onDone }: { orgs: Organization[]; onDone: () => void
           </div>
           <div style={{ width: 150 }}>
             <label>{t("platform.codePattern")}</label>
-            <input value={pattern} onChange={(e) => setPattern(e.target.value)} placeholder="@firma.de" />
+            <input value={pattern} onChange={(e) => setPattern(e.target.value)} placeholder="@example.org" />
           </div>
           <button className="btn primary" disabled={mut.isPending}>{t("platform.createCode")}</button>
         </div>

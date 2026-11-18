@@ -41,7 +41,7 @@ function hostOf(url?: string): string {
 const exampleManifest = `{
   "name": "helpdesk",
   "label": "Helpdesk",
-  "description": "Beispiel: REST-Zielsystem per Manifest",
+  "description": "Example: a REST target system by manifest",
   "auth": { "header": "X-API-Key", "format": "{token}" },
   "webhook": {
     "id_field": "issue.id",
@@ -54,7 +54,7 @@ const exampleManifest = `{
     "get_issue": { "method": "GET", "path": "/issues/{issue_id}" },
     "comment": { "method": "POST", "path": "/issues/{issue_id}/comments" }
   },
-  "prompt_doc": "Verfügbare helpdesk-Aktionen: get_issue {\\"issue_id\\":N}, comment {\\"issue_id\\":N,\\"text\\":\\"...\\"}."
+  "prompt_doc": "Available helpdesk actions: get_issue {\\"issue_id\\":N}, comment {\\"issue_id\\":N,\\"text\\":\\"...\\"}."
 }`;
 
 // Order of the category chips; anything unknown lands at the back under
@@ -614,7 +614,7 @@ function AddMCP({ onClose, onDone }: { onClose: () => void; onDone: () => void }
         </label>
         <label className="text-xs">
           {t("targets.mcpLabel")}
-          <input value={f.label} onChange={set("label")} placeholder="Wetterdienst" />
+          <input value={f.label} onChange={set("label")} placeholder={t("targets.mcpLabelPlaceholder")} />
         </label>
       </div>
       <label className="text-xs">

@@ -164,7 +164,7 @@ export function Backlog({
                 <button
                   className="btn sm"
                   disabled={cleanupCount === 0 || cleanup.isPending}
-                  title="Archiviert alle erledigten, fehlgeschlagenen und verworfenen Aufgaben — nichts wird gelöscht."
+                  title={t("agent.backlog.cleanupTitle")}
                   onClick={() => cleanup.mutate()}
                 >
                   {t("agent.backlog.cleanup")}{cleanupCount > 0 ? ` (${cleanupCount})` : ""}
@@ -655,7 +655,7 @@ function TaskCard({
               <button
                 className="btn sm"
                 disabled={archive.isPending}
-                title="Blendet die Aufgabe aus dem aktiven Backlog aus — Historie und Recording bleiben erhalten."
+                title={t("agent.backlog.archiveTitle")}
                 onClick={(e) => {
                   e.stopPropagation();
                   archive.mutate();
