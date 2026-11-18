@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"covey/internal/daemon"
 	"covey/internal/observability"
 )
@@ -108,5 +110,57 @@ func TestMeterCoveragePricedPerReading(t *testing.T) {
 		if m.SecretKey == "ohne_plan" && (m.USD != nil || m.UnpricedPoints != 3) {
 			t.Errorf("coverage without a plan: %+v — want usd nil and 3 unpriced points", m)
 		}
+	}
+}
+
+// meterPointsOf files each case as its own secret and returns the points per
+// secret over the window, summed over the steps, one source.
+func meterPointsOf(t *testing.T, s *stack, since time.Time, cases map[string][]meterReading) map[string]float64 {
+	t.Helper()
+	ctx := context.Background()
+	agent := s.newSupportAgent("zaehler-" + fmt.Sprint(len(cases)))
+	for key, rs := range cases {
+		rt := uuid.New()
+		for _, r := range rs {
+			cred := observability.CredentialRef{RuntimeID: rt, SecretKey: key, Kind: "subscription"}
+			if err := s.obs.AddUsageReading(ctx, agent.OrgID, observability.MeterReading{Credential: cred,
+				Supported: true, WindowPercent: -1, WeekPercent: r.pct, ResetsAt: r.resets,
+				FetchedAt: since.Add(time.Duration(r.min) * time.Minute)}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	cells, err := s.obs.CostCellsFor(ctx, agent.OrgID, "hour", since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]float64{}
+	for _, st := range cells.Subscription {
+		got[st.SecretKey] += st.Points
+	}
+	return got
+}
+
+// A reading of a week that is already over, arriving late (its reset time an
+// hour or more before the one an earlier reading gave), is dropped. Kept, it
+// rejoined the old week's level inside the new one and added the difference
+// as points, and the next reading of the new week counted it from 0 again.
+func TestMeterDropsLateReadingOfAnOldWeek(t *testing.T) {
+	s := newStack(t)
+	since := time.Now().Add(-5 * time.Hour).Truncate(time.Hour)
+	week1 := since.Add(48 * time.Hour)
+	week2 := week1.Add(7 * 24 * time.Hour)
+	got := meterPointsOf(t, s, since, map[string][]meterReading{
+		// 90 in week 1; week 2 begins at 2; a late 92 and 93 of week 1; 4.
+		"late": {{min: -30, pct: 90, resets: week1}, {min: 10, pct: 2, resets: week2},
+			{min: 20, pct: 92, resets: week1}, {min: 25, pct: 93, resets: week1}, {min: 30, pct: 4, resets: week2}},
+		// Less than an hour apart is the same reset, read twice: kept.
+		"jitter": {{min: -30, pct: 10, resets: week1}, {min: 10, pct: 12, resets: week1.Add(-30 * time.Minute)}},
+	})
+	if got["late"] != 4 {
+		t.Errorf("late reading of the old week: %v points, want 4 (2 + 2 in the new week)", got["late"])
+	}
+	if got["jitter"] != 2 {
+		t.Errorf("reset times 30 min apart: %v points, want 2", got["jitter"])
 	}
 }

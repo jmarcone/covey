@@ -517,6 +517,12 @@ func planAt(plans []CredentialPlan, key string, slot int, t time.Time) (Credenti
 //
 //   - stale and unsupported readings are dropped: an hour-old figure read as
 //     current turns a lag into movement;
+//   - a reading of a week that is already over is dropped: its reset time
+//     lies more than an hour before the latest one an earlier reading gave.
+//     Kept, it would rejoin the old week's level inside the new week and add
+//     the whole difference as points (and its successor would count the new
+//     week from 0 a second time). The mark is the latest reset time of ALL
+//     earlier readings, so a run of late readings is dropped as a whole;
 //   - a reading begins a new week when its reset time moved forward. Where a
 //     reading carries no reset time, when the previous one's reset has
 //     passed; and only where the reset times say nothing, when it collapsed
@@ -531,12 +537,18 @@ func planAt(plans []CredentialPlan, key string, slot int, t time.Time) (Credenti
 // Partitioned by the secret, not the runtime: the same value on two runtimes
 // is one meter, and its history survives a Reorder.
 const meterQuery = `
-WITH r AS (
+WITH r0 AS (
 	SELECT id, secret_key, secret_slot, source, window_kind, credential_kind, fetched_at,
-		week_percent AS pct, resets_at
+		week_percent AS pct, resets_at,
+		MAX(resets_at) OVER (PARTITION BY secret_key, secret_slot, source, window_kind ORDER BY fetched_at, id
+			ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS seen_resets
 	FROM usage_readings
 	WHERE org_id = $1 AND supported AND NOT stale AND week_percent IS NOT NULL AND secret_key IS NOT NULL
 	  AND fetched_at >= $3::timestamptz - interval '8 days'),
+r AS (
+	SELECT id, secret_key, secret_slot, source, window_kind, credential_kind, fetched_at, pct, resets_at
+	FROM r0
+	WHERE resets_at IS NULL OR seen_resets IS NULL OR resets_at >= seen_resets - interval '1 hour'),
 l AS (
 	SELECT r.*, LAG(pct) OVER w AS prev_pct, LAG(resets_at) OVER w AS prev_resets, LAG(fetched_at) OVER w AS prev_at
 	FROM r
