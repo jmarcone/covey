@@ -2674,7 +2674,8 @@ a.tm-file:hover { background: var(--tint); }
 /* ── Der Überblick ────────────────────────────────────────────────────
    Die Seite, auf der jeder landet. Drei Blöcke, jeder darf fehlen — siehe
    team/Ueberblick.tsx, warum sie nicht mehr nur zeigt, was wartet. */
-.tm-ueberblick { padding: 30px 28px 48px; overflow-y: auto; }
+/* No padding of its own: the office sits in the console's frame
+   (.konsole-inhalt), like the list it is a view beside. */
 .tm-ueberblick-kopf { margin-bottom: 26px; }
 .tm-ueberblick-kopf h1 { font-size: 23px; font-weight: 600; letter-spacing: -0.02em; }
 .tm-ueberblick-kopf .tm-leise { padding: 5px 0 0; font-size: 14px; }
@@ -2723,6 +2724,13 @@ a.tm-file:hover { background: var(--tint); }
 .tm-wartet-titel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
 .tm-wartet-wer { font-size: 13px; color: var(--text-secondary); white-space: nowrap; }
 .tm-wartet-zeile time { font-size: 12px; white-space: nowrap; }
+/* At phone width the time goes under the title. The office used to sit in a
+   box of its own that clipped it; in the console's frame it widened the
+   page. */
+@media (max-width: 560px) {
+  .tm-wartet-zeile { grid-template-columns: auto minmax(0, 1fr) auto; row-gap: 2px; }
+  .tm-wartet-zeile time { grid-column: 2 / -1; }
+}
 .tm-wartet-alle { display: inline-block; margin-top: 18px; font-size: 13px; color: var(--text-accent); }
 
 /* Schmale Fenster: Die Spalte bleibt stehen, wie sie in der Konsole stehen

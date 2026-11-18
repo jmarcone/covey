@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Link } from "react-router";
+import { Link, useLocation } from "react-router";
 import { api, inbox, myThreads, setupIsOpen, type Principal, type SetupState } from "../api";
 import { BirdMark } from "./BirdMark";
 import { NavIcon } from "./navicons";
@@ -9,30 +9,81 @@ import ShellFoot from "./ShellFoot";
 import Tour, { TEAM_TOUR, tourGesehen } from "./Tour";
 
 /* The rail (#388, #389): the thin column of icons at the left of every
- * signed-in page — team, notes, administration; search and the person
- * below. Both shells carry it, the same in both, so it never disappears
- * when one moves from a conversation to the settings: what changes is the
- * column beside it.
+ * signed-in page — agents, team, notes, administration; search and the
+ * person below. Both shells carry it, the same in both, so it never
+ * disappears when one moves from a conversation to the settings: what
+ * changes is the column beside it.
  *
  * Without the team surface (#328) there is no team to go to, and the notes
- * live in the console. */
-export type RailPlace = "office" | "team" | "workflows" | "notes" | "admin";
+ * live in the console. Its slot goes to the inbox, where the decisions are
+ * made without a conversation. */
+export type RailPlace = "agents" | "team" | "inbox" | "workflows" | "costs" | "notes" | "admin";
+
+/* Which place an address belongs to. One function for both shells, so the
+ * mark cannot depend on which of them happens to render the page.
+ *
+ * The agents area is the office, the list and every agent's page: daily
+ * work, not a setting. An agent id is a UUID, so /agents/board and
+ * /agents/<id> both stay in it without a clash. The inbox is a place of
+ * its own only without the team surface; with it /inbox leads to /team. */
+export function railPlace(path: string, teamSurface: boolean): RailPlace {
+  const under = (p: string) => path === p || path.startsWith(p + "/");
+  if (path === "/" || under("/agents")) return "agents";
+  if (under("/team/notes") || under("/notes")) return "notes";
+  if (under("/team")) return "team";
+  if (path === "/inbox") return teamSurface ? "team" : "inbox";
+  if (under("/workflows")) return "workflows";
+  if (under("/costs")) return "costs";
+  return "admin";
+}
+
+/* The agents entry opens the view used last in this browser: whoever works
+ * from the list should not land on the office every time, and the other way
+ * round. A view the installation does not offer — the office without the
+ * team surface — falls back to the list. */
+const AGENTS_VIEW = "covey.agents.view";
+type AgentsView = "office" | "list";
+
+export function rememberAgentsView(path: string) {
+  const view: AgentsView | null = path === "/" ? "office" : path === "/agents" ? "list" : null;
+  if (!view) return;
+  try {
+    localStorage.setItem(AGENTS_VIEW, view);
+  } catch {
+    // Without storage the entry opens the default view; nothing more is lost.
+  }
+}
+
+export function agentsEntryTarget(teamSurface: boolean): string {
+  let view: string | null = null;
+  try {
+    view = localStorage.getItem(AGENTS_VIEW);
+  } catch {
+    view = null;
+  }
+  if (!teamSurface || view === "list") return "/agents";
+  return "/";
+}
 
 export default function Rail({
   me,
-  active,
   onLogout,
   onHelp,
   onSearch,
 }: {
   me: Principal;
-  active: RailPlace;
   onLogout: () => void;
   onHelp: () => void;
   onSearch: () => void;
 }) {
   const { t } = useTranslation();
   const team = !!me.TeamSurface;
+  const path = useLocation().pathname;
+  const active = railPlace(path, team);
+  /* On one of the two views the entry leads to the view on screen. The shell
+     remembers the view in an effect, after this render, so reading the
+     storage alone would leave the link one view behind. */
+  const agentsTo = !team ? "/agents" : path === "/" || path === "/agents" ? path : agentsEntryTarget(team);
   const threads = useQuery({
     queryKey: ["threads"],
     queryFn: myThreads,
@@ -41,13 +92,13 @@ export default function Rail({
     enabled: team,
   });
   const unread = (threads.data ?? []).reduce((n, th) => n + th.unread, 0);
-  /* The office's number: open decisions, the same query the team's list
-     keeps warm. */
+  /* Open decisions, the same query the office keeps warm. With the team
+     surface the number stands on Agents, because the office lists them;
+     without it on the inbox, where they are made. */
   const waiting = useQuery({
     queryKey: ["inbox", "workspace-liste"],
     queryFn: () => inbox({ status: "open", limit: 100 }),
     refetchInterval: 30_000,
-    enabled: team,
   });
   const pending = waiting.data?.pending ?? 0;
   /* Setup, while it is not finished (#391): right under the mark, where
@@ -65,17 +116,17 @@ export default function Rail({
      visit. */
   const [tour, setTour] = useState(() => team && !tourGesehen());
 
-  // A badge counts unread messages, or on the office open decisions.
-  const item = (place: RailPlace, to: string, icon: string, label: string, badge = 0) => (
+  // A badge counts unread messages, or on agents and the inbox open decisions.
+  const item = (place: RailPlace, to: string, icon: string, label: string, badge = 0, also = false) => (
     <Link
       to={to}
-      className={`tm-rail-item${active === place ? " on" : ""}`}
+      className={`tm-rail-item${active === place || also ? " on" : ""}`}
       data-tour={place}
-      aria-current={active === place ? "page" : undefined}
+      aria-current={active === place || also ? "page" : undefined}
       title={label}
       aria-label={
         badge > 0
-          ? `${label} · ${place === "office" ? t("team.wartetLead", { count: badge }) : t("team.ungelesen", { count: badge })}`
+          ? `${label} · ${place === "team" ? t("team.ungelesen", { count: badge }) : t("team.wartetLead", { count: badge })}`
           : label
       }
     >
@@ -97,14 +148,19 @@ export default function Rail({
           <span className="tm-rail-wort">{t("nav.setupPage")}</span>
         </Link>
       )}
-      {team && item("office", "/", "office", t("team.ueberblick"), pending)}
-      {team && item("team", "/team", "chat", t("team.workspace"), unread)}
+      {/* Agents are a main view, not a setting: the office,
+          the list and every agent's page sit behind this one entry. */}
+      {item("agents", agentsTo, "robot", t("nav.agents"), team ? pending : 0)}
+      {team ? item("team", "/team", "chat", t("team.workspace"), unread) : item("inbox", "/inbox", "bell", t("nav.inbox"), pending)}
       {/* Workflows (#560) are their own place, not a setting: the live view
           is daily work, and a workflow crosses departments rather than
           belonging to one. */}
       {item("workflows", "/workflows", "flow", t("nav.workflows"))}
       {item("notes", team ? "/team/notes" : "/notes", "note", t("mobile.notizen"))}
-      {item("admin", "/agents", "sliders", t("team.verwaltung"))}
+      {/* Admin lands on the org chart, the first item of its column. Until
+          costs have a place of their own, /costs is a page of that column,
+          and the entry stays marked there. */}
+      {item("admin", "/org", "sliders", t("team.verwaltung"), 0, active === "costs")}
       <span className="tm-rail-luft" />
       <button className="tm-rail-item" data-tour="search" onClick={onSearch} title={`${t("team.suche")} (⌘K)`} aria-label={t("team.suche")}>
         <NavIcon name="search" />
