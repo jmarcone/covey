@@ -50,6 +50,9 @@ func transitionAllowed(from, to string) bool {
 var (
 	ErrNotFound          = errors.New("task not found")
 	ErrInvalidTransition = errors.New("invalid state transition")
+	// ErrParkedOnOtherKey: the task is blocked, but on a key the caller may
+	// not end (AnswerParkedOn).
+	ErrParkedOnOtherKey = errors.New("parked on another correlation key")
 )
 
 type Task struct {
@@ -579,6 +582,17 @@ func (s *Store) transition(ctx context.Context, id uuid.UUID, to, note string, s
 // an answer meant for a parked task would restart a running one, and the run
 // that was already going would lose its result at `open → done`.
 func (s *Store) transitionFrom(ctx context.Context, id uuid.UUID, from, to, note string, set string, args ...any) (Task, error) {
+	return s.transitionIf(ctx, id, func(t Task) error {
+		if from != "" && t.State != from {
+			return fmt.Errorf("%w: %s → %s (expected %s)", ErrInvalidTransition, t.State, to, from)
+		}
+		return nil
+	}, to, note, set, args...)
+}
+
+// transitionIf is transition with a guard of the caller's own on the task as
+// it stands behind the lock; an error from guard ends it without a write.
+func (s *Store) transitionIf(ctx context.Context, id uuid.UUID, guard func(Task) error, to, note string, set string, args ...any) (Task, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Task{}, err
@@ -591,8 +605,8 @@ func (s *Store) transitionFrom(ctx context.Context, id uuid.UUID, from, to, note
 	}
 	// The guard is inside the transaction, behind the FOR UPDATE: checked
 	// outside, the state could change between the look and the write.
-	if from != "" && t.State != from {
-		return Task{}, fmt.Errorf("%w: %s → %s (expected %s)", ErrInvalidTransition, t.State, to, from)
+	if err := guard(t); err != nil {
+		return Task{}, err
 	}
 	if !transitionAllowed(t.State, to) {
 		return Task{}, fmt.Errorf("%w: %s → %s", ErrInvalidTransition, t.State, to)
@@ -927,7 +941,9 @@ func (s *Store) CorrelateWake(ctx context.Context, orgID uuid.UUID, correlationK
 	return t, nil
 }
 
-// Answer is the blocked→open edge for a HUMAN reply. It is CorrelateWake
+// Answer is the blocked→open edge for a reply addressed to the task: a
+// person's (POST /tasks/{id}/reply), whatever the key, and through
+// AnswerParkedOn an agent's (covey/add_note with answer). It is CorrelateWake
 // addressed by task instead of by correlation key: a person does not know the
 // key and does not have to — they answer the task they are looking at.
 //
@@ -947,6 +963,29 @@ func (s *Store) CorrelateWake(ctx context.Context, orgID uuid.UUID, correlationK
 func (s *Store) Answer(ctx context.Context, id uuid.UUID, who, resumeInput string) (Task, error) {
 	t, err := s.transitionFrom(ctx, id, StateBlocked, StateOpen, "answered by "+who,
 		"resume_input=$3, priority=1", resumeInput)
+	if err != nil {
+		return Task{}, err
+	}
+	s.notify(ctx, t.AgentID)
+	return t, nil
+}
+
+// AnswerParkedOn is Answer for a task parked on a key under keyPrefix only.
+// An agent's answer must not end a park that waits for something else — an
+// approval's decision, an event of a target system — or that event would find
+// nobody waiting. The key is checked behind the same lock as the state, so a
+// task that resumed and parked again on another key in the meantime is not
+// taken. A blocked task on another key comes back as ErrParkedOnOtherKey.
+func (s *Store) AnswerParkedOn(ctx context.Context, id uuid.UUID, keyPrefix, who, resumeInput string) (Task, error) {
+	t, err := s.transitionIf(ctx, id, func(t Task) error {
+		if t.State != StateBlocked {
+			return fmt.Errorf("%w: %s → %s (expected %s)", ErrInvalidTransition, t.State, StateOpen, StateBlocked)
+		}
+		if t.CorrelationKey == nil || !strings.HasPrefix(*t.CorrelationKey, keyPrefix) {
+			return ErrParkedOnOtherKey
+		}
+		return nil
+	}, StateOpen, "answered by "+who, "resume_input=$3, priority=1", resumeInput)
 	if err != nil {
 		return Task{}, err
 	}
