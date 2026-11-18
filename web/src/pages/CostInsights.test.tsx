@@ -273,9 +273,12 @@ describe("Nutzung je Modell: Quellen", () => {
   // or its totals disagree with it. What is per credential stays org-wide.
   it("folgt dem Agentenfilter: Zeilen und Summen nur des gewählten Agenten, Zugangszeilen als organisationsweit gekennzeichnet", async () => {
     const other = { ...row("claude-haiku-5", 100, 110), agent_id: "a2", agent_slug: "reviewer", agent_name: "Reviewer" };
-    const models = { rows: [...MODELS.rows, other], runs_without_breakdown: 3, usd_without_breakdown: 4 };
+    const otherUnpriced = { ...row("claude-mystery-2", 30, null), agent_id: "a2", agent_slug: "reviewer", agent_name: "Reviewer" };
+    const models = { rows: [...MODELS.rows, other, otherUnpriced], runs_without_breakdown: 3, usd_without_breakdown: 4 };
     show([seat], new Set(["a1"]), models);
     expect(await totals()).toEqual([TOTAL, "12,00 $", "12,50 $"]);
+    // the models without a list price are the chosen agent's too: one, at 2 $, not the other's 30 $
+    expect(await rowCells("tr[data-unpriced]")).toEqual([expect.stringMatching(/\(1\)/), "2,00 $", "2,00 $"]);
     expect(screen.queryByText("Reviewer")).toBeNull();
     expect(screen.getAllByText("Coordinator", { selector: "a" })).toHaveLength(2);
     // the card's figures are the filter's now: no badge on its title ...
@@ -327,12 +330,16 @@ describe("Nutzung je Modell: Quellen", () => {
   });
 
   it("zeigt Echte Kosten und Rechnung auch dann, wenn das Fenster keine Modellzeilen hat", async () => {
-    show([seat, key], undefined, { rows: [], runs_without_breakdown: 0, usd_without_breakdown: 0 });
+    const first = show([seat, key], undefined, { rows: [], runs_without_breakdown: 0, usd_without_breakdown: 0 });
     await waitFor(() => expect(document.querySelector("tr[data-empty]")).not.toBeNull());
     await userEvent.click(chip(/^Echte Kosten/));
     expect(await rowCells("tr[data-credential-row=real]")).toContain("≈ 7,00 $");
+    first.unmount();
     // without any meter or bill there is nothing but the empty note
     show([], undefined, { rows: [], runs_without_breakdown: 0, usd_without_breakdown: 0 });
+    expect(await screen.findByText("Keine Kostendaten im gewählten Zeitraum.")).toBeInTheDocument();
+    expect(document.querySelector("table")).toBeNull();
+    expect(screen.queryByRole("group", { name: "Quelle" })).toBeNull();
   });
 
   it("sagt an der Rechnung, dass der letzte Abgleich fehlschlug", async () => {
@@ -340,6 +347,19 @@ describe("Nutzung je Modell: Quellen", () => {
     await totals();
     await userEvent.click(chip(/^Von Anthropic berechnet/));
     expect(document.querySelector("tr[data-credential-row=billed] td[data-col=billed]")!.getAttribute("title")).toMatch(/HTTP 401/);
+  });
+
+  // The case the hint explains best: a key's bill is missing because the sync failed.
+  it("sagt den fehlgeschlagenen Abgleich auch, wo er einem Schlüssel die Rechnung nahm", async () => {
+    const failed = keyOf("key#2", { state: "failed", usd: 0, reported: 0, recomputed: 0, error: "HTTP 401" });
+    show([keyOf("key#1", { error: "HTTP 401" }), failed]);
+    await totals();
+    await userEvent.click(chip(/^Von Anthropic berechnet/));
+    const cell = document.querySelector<HTMLElement>("tr[data-credential-row=billed] td[data-col=billed]")!;
+    expect(cell.textContent).toBe("–");
+    expect(cell.getAttribute("title")).toBe("1 von 2 Zugängen ohne Zahl · letzter Abgleich fehlgeschlagen: HTTP 401");
+    const foot = document.querySelector("table")!.parentElement!.nextElementSibling!.textContent!;
+    expect(foot).toMatch(/letzter Abgleich fehlgeschlagen: HTTP 401/);
   });
 
   // Titles are not there on a phone or for a keyboard.
@@ -353,5 +373,22 @@ describe("Nutzung je Modell: Quellen", () => {
     expect(foot).toMatch(/Zwischen 6,00 \$ und 8,46 \$/);
     expect(foot).toMatch(/nur bis zum letzten Abgleich vollständig/);
     expect(foot).toMatch(/Pro Zugang, nicht pro Modell/);
+  });
+
+  it("setzt die Zählerzeiträume je Zugang unter die Tabelle, wo die Zeile mehrere zusammenfasst", async () => {
+    show([seat, seatOf("seat2#0", { meter: { baseline_at: "2026-11-16T18:00:00Z", last_at: "2026-11-17T22:00:00Z" } })]);
+    await totals();
+    await userEvent.click(chip(/^Echte Kosten/));
+    const foot = document.querySelector("table")!.parentElement!.nextElementSibling!.textContent!;
+    expect(foot).toMatch(/seat#0: .*17\.11\..*18:00 UTC – .*21:00 UTC; seat2#0: .*16\.11\..*18:00 UTC – .*22:00 UTC/);
+  });
+
+  // A credential of a kind covey does not know yet has no real cost in the
+  // seats row, so the card shows no meter for it either.
+  it("zeigt im Zählerkärtchen nur die Zugänge, die die Abo-Zeile zählt", async () => {
+    show([seat, seatOf("odd#2", { kind: "mystery" })]);
+    await totals();
+    await waitFor(() => expect(document.querySelector("[data-meter='seat#0']")).not.toBeNull());
+    expect(document.querySelector("[data-meter='odd#2']")).toBeNull();
   });
 });

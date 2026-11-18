@@ -22,7 +22,8 @@ type SourceInfo = {
   defaultOn: boolean;
   /** For a per-credential source, the label of its row under the total. */
   rowLabel?: string;
-  /** Shown as "≈" with a range: the meter's real cost is an estimate, a bill is not. */
+  /** Shown as "≈" with a range, and hatched wherever it has a swatch: the
+   *  meter's real cost is an estimate, a bill is not. */
   estimate?: boolean;
 };
 

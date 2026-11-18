@@ -13,6 +13,7 @@ import {
   billedPerPeriod,
   credentialFigures,
   credId,
+  isSeat,
   meterCrossings,
   recomputedOf,
   type CredentialFigures,
@@ -448,7 +449,7 @@ function CredentialTiles({ f, filtered }: { f: CredentialFigures; filtered: bool
     <Tile key="rec" label={t("costs.fig.recomputed")} value={fmtUSD(f.recomputed)}
       sub={f.check != null ? t("costs.fig.priceTableCheck", { pct: pct(f.check) }) : undefined} color={SOURCE_COLOR.recomputed} />,
   ];
-  if (f.kind === "subscription" || (f.kind === "" && f.meter)) {
+  if (isSeat(f)) {
     const r = f.real;
     // The price per point the server priced the movement at, on average.
     const pp = r && r.points > 0 ? r.value / r.points : null;
@@ -624,7 +625,7 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
   const name = f.secretKey == null ? t("costs.fig.notAttributable") : `${f.secretKey} #${f.slot}`;
   const kind = t(`costs.fig.kind_${f.kind || "unknown"}`);
   const plan = planLabel(f);
-  const subscription = f.kind === "subscription" || (f.kind === "" && f.meter != null);
+  const subscription = isSeat(f);
 
   return (
     <section className="mb-5" aria-label={name} data-credential={f.id}>

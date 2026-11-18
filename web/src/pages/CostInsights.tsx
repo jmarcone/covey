@@ -5,7 +5,7 @@ import { Link } from "react-router";
 import { api, type ModelUsageReport, type ModelUsageRow, type UsageReading } from "../api";
 import { fmtBucket, fmtCount, fmtNumber, fmtUSD } from "../format";
 import { DEFAULT_SOURCES, SOURCES, SOURCE_INFO, isPerModel, modelFigure, sourceHint, sourceLabel, type Source } from "./costSources";
-import { perCredentialTotals, scopeFigure, type SourceTotal } from "./costFigures";
+import { isSeat, perCredentialTotals, scopeFigure, type SourceTotal } from "./costFigures";
 import { Chip } from "./StackedCostChart";
 import { usableReadings, type CredentialFigures } from "./costFigures";
 import { OrgWide, SOURCE_COLOR, Swatch, useUsageReadings } from "./StackedCostChart";
@@ -100,9 +100,13 @@ function ModelTable({ rep, figures, agents }: { rep: ModelUsageReport; figures: 
   };
   // The cell of a per-credential source in its own row, and the reason for
   // it where there is one: none where the credentials with a figure are not
-  // all of them.
+  // all of them. A failed sync is said in either case: a bill it left out is
+  // what it explains best.
   const perCell = (c: Source, total: SourceTotal) => {
-    if (total.with < total.of) return { text: "–", why: t("costs.insights.someWithout", { n: total.of - total.with, m: total.of }) };
+    const failed = total.syncError ? t("costs.fig.billedLastSyncFailed", { error: total.syncError }) : "";
+    if (total.with < total.of) {
+      return { text: "–", why: [t("costs.insights.someWithout", { n: total.of - total.with, m: total.of }), failed].filter(Boolean).join(" · ") };
+    }
     if (total.with === 0) return { text: "–", why: undefined };
     if (SOURCE_INFO[c].estimate) {
       if (total.below) return { text: `< ${fmtUSD(total.high)}`, why: undefined };
@@ -110,10 +114,7 @@ function ModelTable({ rep, figures, agents }: { rep: ModelUsageReport; figures: 
       // somewhere between the lowest and the highest each seat's range allows.
       return { text: `≈ ${fmtUSD(total.usd)}`, why: t("costs.insights.sumRange", { low: fmtUSD(total.low), high: fmtUSD(total.high) }) };
     }
-    const why = [
-      total.pending ? t("costs.insights.billedPending") : "",
-      total.syncError ? t("costs.fig.billedLastSyncFailed", { error: total.syncError }) : "",
-    ].filter(Boolean).join(" ");
+    const why = [total.pending ? t("costs.insights.billedPending") : "", failed].filter(Boolean).join(" ");
     return { text: fmtUSD(total.usd), why: why || undefined };
   };
   // The figures of the per-model sources beside it: the same credentials over the same span.
@@ -131,8 +132,10 @@ function ModelTable({ rep, figures, agents }: { rep: ModelUsageReport; figures: 
     from: fmtBucket(new Date(Math.min(...c.spans.map((x) => x.from.getTime()))).toISOString(), "hour"),
     to: fmtBucket(new Date(Math.max(...c.spans.map((x) => x.to.getTime()))).toISOString(), "hour"),
   } : { from: "–", to: "–" };
-  const spanTitle = (c: SourceTotal) => c.spans.length > 1
-    ? c.spans.map((x) => `${x.id}: ${fmtBucket(x.from.toISOString(), "hour")} – ${fmtBucket(x.to.toISOString(), "hour")}`).join("\n") : undefined;
+  // Where the row combines several credentials, the span of each: its label
+  // names only the combined one.
+  const spansOf = (c: SourceTotal) => c.spans.length > 1
+    ? c.spans.map((x) => `${x.id}: ${fmtBucket(x.from.toISOString(), "hour")} – ${fmtBucket(x.to.toISOString(), "hour")}`) : [];
 
   const credentialRows = visible.filter((c) => !isPerModel(c) && perBy[c] != null);
   if (rows.length === 0 && credentialRows.length === 0 && offered.every(isPerModel)) return <div className="muted text-sm">{t("costs.empty")}</div>;
@@ -154,7 +157,8 @@ function ModelTable({ rep, figures, agents }: { rep: ModelUsageReport; figures: 
   }
   for (const c of visible.filter((x) => !isPerModel(x))) {
     const total = perBy[c];
-    notes.push([sourceLabel(t, c) + ":", perCredential, total ? perCell(c, total).why : undefined].filter(Boolean).join(" "));
+    notes.push([sourceLabel(t, c) + ":", perCredential, total ? perCell(c, total).why : undefined,
+      total ? spansOf(total).join("; ") : undefined].filter(Boolean).join(" "));
   }
   return (
     <div>
@@ -163,7 +167,7 @@ function ModelTable({ rep, figures, agents }: { rep: ModelUsageReport; figures: 
         {offered.map((c) => {
           const locked = visible.length === 1 && visible[0] === c;
           return (
-            <Chip key={c} on={visible.includes(c)} color={SOURCE_COLOR[c]} hatched={c === "real"} onClick={() => toggle(c)}
+            <Chip key={c} on={visible.includes(c)} color={SOURCE_COLOR[c]} hatched={SOURCE_INFO[c].estimate} onClick={() => toggle(c)}
               locked={locked} title={locked ? t("costs.insights.lastColumn") : undefined}>
               {sourceLabel(t, c)}
             </Chip>
@@ -228,7 +232,7 @@ function ModelTable({ rep, figures, agents }: { rep: ModelUsageReport; figures: 
               const total = perBy[c]!;
               return (
                 <tr key={c} data-credential-row={c} style={{ borderTop: "1px solid var(--border)" }}>
-                  <td style={{ ...td, whiteSpace: "normal" }} colSpan={6} title={spanTitle(total)}>
+                  <td style={{ ...td, whiteSpace: "normal" }} colSpan={6} title={spansOf(total).join("\n") || undefined}>
                     {t(SOURCE_INFO[c].rowLabel!, spanOf(total))}{filtered && <OrgWide />}
                   </td>
                   {visible.map((x) => {
@@ -325,7 +329,7 @@ export function CostInsights({ days, figures, agents = NO_AGENTS }: { days: numb
   const readings = useUsageReadings(days);
   const rs = useMemo(() => readings.data ?? [], [readings.data]);
   const filtered = agents.size > 0;
-  const metered = figures.filter((f) => f.meter != null && f.kind !== "api_key");
+  const metered = figures.filter((f) => f.meter != null && isSeat(f));
 
   return (
     <div className="grid gap-4 mt-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(420px, 100%), 1fr))" }}>

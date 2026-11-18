@@ -7,6 +7,7 @@ import {
   billedStatus,
   bucketStart,
   credentialFigures,
+  isSeat,
   meterCrossings,
   meterRange,
   meterWeeks,
@@ -16,6 +17,7 @@ import {
   pricePerPoint,
   realCost,
   realFromWeeks,
+  type CredentialFigures,
 } from "./costFigures";
 
 // The figures the Costs page shows are argued with, so every rule that turns
@@ -331,6 +333,16 @@ describe("per credential", () => {
       });
       expect(other.find((f) => f.secretKey === "odd_credential")!.kind).toBe("mystery");
       expect(perCredentialTotals(other).real).toMatchObject({ with: 1, of: 1 });
+    });
+
+    // The model table's seats row, the meter card and the tiles take the same credentials.
+    it("takes a subscription, or a credential of no reported kind with a meter, for a seat, and nothing else", () => {
+      const meter = {} as CredentialFigures["meter"];
+      expect(isSeat({ kind: "subscription", meter: null })).toBe(true);
+      expect(isSeat({ kind: "", meter })).toBe(true);
+      expect(isSeat({ kind: "", meter: null })).toBe(false);
+      expect(isSeat({ kind: "api_key", meter })).toBe(false);
+      expect(isSeat({ kind: "mystery", meter })).toBe(false);
     });
 
     it("keeps a key without a bill in the count, whether it is unmapped or its bill has not landed", () => {

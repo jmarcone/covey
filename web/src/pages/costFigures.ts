@@ -550,14 +550,21 @@ export function scopeFigure(total: SourceTotal, source: Source): number | null {
   return source === "reported" ? total.reported : source === "recomputed" ? total.recomputed : null;
 }
 
+/** Whether a credential is a subscription seat: one whose tile offers a real
+ *  cost, whose card shows its meter and whose figure the seats' row sums. A
+ *  credential of a kind a newer daemon reports is none of these until covey
+ *  knows it; one of no reported kind counts where it has a meter. */
+export function isSeat(f: Pick<CredentialFigures, "kind" | "meter">): boolean {
+  return f.kind === "subscription" || (f.kind === "" && f.meter != null);
+}
+
 /** Real cost and bill over the whole organisation's credentials, as each tile
  *  shows them: a source is offered (non-null) only when some credential has a
  *  meter or a bill to read. */
 export function perCredentialTotals(figures: readonly CredentialFigures[]): { real: SourceTotal | null; billed: SourceTotal | null } {
-  // The credentials whose tile offers a real cost (StackedCostChart's
-  // CredentialTiles): a credential of another kind has none, so it is not one
-  // of the credentials the figure is "of".
-  const subs = figures.filter((f) => f.secretKey != null && (f.kind === "subscription" || (f.kind === "" && f.meter != null)));
+  // The credentials whose tile offers a real cost: a credential of another
+  // kind has none, so it is not one of the credentials the figure is "of".
+  const subs = figures.filter((f) => f.secretKey != null && isSeat(f));
   const meters = subs.filter((f) => f.real != null);
   let real: SourceTotal | null = null;
   if (meters.length > 0) {
