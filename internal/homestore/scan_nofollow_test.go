@@ -95,6 +95,83 @@ func TestScanSkipsFileSwappedForLinkBeforeRead(t *testing.T) {
 	}
 }
 
+// A file swapped for a link and put back before the refused open is judged is
+// still a change: the name was a link when it was opened. Looking at it again
+// finds the very file the walk classified — the same inode, here because it
+// was moved back, under a writer because a new file reused the number — and
+// that must not turn the refusal into a failed scan (#11).
+func TestOpenOfFileSwappedForLinkAndBackIsAChange(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// The link that stands in for f while it is opened: one out of the
+		// home ("path escapes from parent") and one the root gives up on
+		// (ELOOP).
+		link func(outFile string) string
+	}{
+		{"link out of the home", func(outFile string) string { return outFile }},
+		{"link loop", func(string) string { return "f" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, outFile, _, secret := outsideHome(t)
+			f := filepath.Join(home, "f")
+			kept := filepath.Join(home, ".kept")
+			if err := os.WriteFile(f, []byte("harmless"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(home, "g"), []byte("inside"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			withScanHook(t, func(rel string) {
+				if rel != "f" {
+					return
+				}
+				if err := os.Rename(f, kept); err != nil {
+					t.Error(err)
+				}
+				if err := os.Symlink(tc.link(outFile), f); err != nil {
+					t.Error(err)
+				}
+			})
+			var refused bool
+			openRefusedHook = func(rel string) {
+				if rel != "f" {
+					return
+				}
+				refused = true
+				if err := os.Rename(kept, f); err != nil {
+					t.Error(err)
+				}
+			}
+			t.Cleanup(func() { openRefusedHook = nil })
+
+			m, err := Scan(home, nil, func(_ string, data []byte) error {
+				if bytes.Equal(data, secret) {
+					t.Errorf("the scan read the file outside the home")
+				}
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("scan: %v", err)
+			}
+			if !refused {
+				t.Fatalf("the open of f was not refused; the test did not reach its window")
+			}
+			var g bool
+			for _, e := range m.Entries {
+				if e.Path == "f" && len(e.Blocks) > 0 {
+					t.Errorf("f was a link when it was opened and still carries content: %+v", e)
+				}
+				if e.Path == "g" && len(e.Blocks) == 1 {
+					g = true
+				}
+			}
+			if !g {
+				t.Errorf("the rest of the home was lost: %+v", m.Entries)
+			}
+		})
+	}
+}
+
 // A directory that becomes a link before the walk descends into it is not
 // walked: nothing beneath the link's target turns up in the manifest.
 func TestScanDoesNotDescendIntoDirSwappedForLink(t *testing.T) {

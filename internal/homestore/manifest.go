@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 )
 
 // Manifest is one snapshot of a home: which file lies where, and which blocks
@@ -312,6 +313,25 @@ func changedFromDir(home *os.Root, rel string) bool {
 // errChanged marks a file that is no longer the one the walk classified.
 var errChanged = errors.New("changed under the scan")
 
+// openRefusedHook, if set, runs after the open of a classified file failed
+// and before the failure is judged. Tests use it to put the file back
+// at exactly that moment.
+var openRefusedHook func(rel string)
+
+// refusedLink reports whether an open through the root failed because the
+// name led through a link: ELOOP when the link was gone again before the root
+// could read it (or there were too many of them), "path escapes from parent"
+// when its target lies outside the home. The second is a plain error in the
+// os package with no exported value to compare against, hence the text; a
+// test pins it (TestOpenOfFileSwappedForLinkAndBackIsAChange).
+func refusedLink(err error) bool {
+	if errors.Is(err, syscall.ELOOP) {
+		return true
+	}
+	var pe *os.PathError
+	return errors.As(err, &pe) && pe.Err.Error() == "path escapes from parent"
+}
+
 // openSame opens rel inside the home and returns it only if the descriptor is
 // the regular file want describes. The root resolves any link inside the home
 // at most, and the identity check turns even that into a refusal: a name that
@@ -319,9 +339,21 @@ var errChanged = errors.New("changed under the scan")
 func openSame(home *os.Root, rel string, want fs.FileInfo) (*os.File, fs.FileInfo, error) {
 	f, err := home.Open(filepath.FromSlash(rel))
 	if err != nil {
+		if openRefusedHook != nil {
+			openRefusedHook(rel)
+		}
 		// A link put in its place that leads out of the home fails here
 		// rather than at the identity check. Either way it is a change, not
 		// a fault of the sync.
+		//
+		// The refusal itself says so: the walk classified a regular file, and
+		// the root met a link under that name. Asking the name again
+		// afterwards cannot tell — by then a writer may have put a regular
+		// file back, and a file just created may carry the inode number the
+		// classified one freed, so os.SameFile vouches for it (#11).
+		if refusedLink(err) {
+			return nil, nil, fmt.Errorf("%s: %w", rel, errChanged)
+		}
 		if now, lerr := home.Lstat(filepath.FromSlash(rel)); lerr != nil || !os.SameFile(now, want) {
 			return nil, nil, fmt.Errorf("%s: %w", rel, errChanged)
 		}
