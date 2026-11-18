@@ -432,7 +432,6 @@
   },
   "agent": {
     "notFound": "Nie znaleziono agenta.",
-    "breadcrumb": "Agenci",
     "sandbox": "Piaskownica aktywna",
     "wake": "Obudź",
     "resume": "Wznów",
@@ -980,6 +979,13 @@
       "syncFailed": "Stanowisko nie zostało zabezpieczone od {{when}}: {{error}} — poniższe liczby opisują starszy stan."
     },
     "wakeFailedWhy": "{{n}} nieudanych prób obudzenia: {{err}}"
+  },
+  "agents": {
+    "views": "Widoki agentów",
+    "view": {
+      "list": "Lista"
+    },
+    "backTo": "Wróć do: {{view}}"
   },
   "approvals": {
     "approve": "Zatwierdź",
@@ -3198,8 +3204,8 @@
       "text": "Państwa współpracownicy to tutaj agenci AI. Zleca im Państwo pracę tak, jak zleciliby ją Państwo człowiekowi: pisząc do nich. W minutę pokażemy, gdzie co jest."
     },
     "buero": {
-      "titel": "Biuro",
-      "text": "Zespół jako budynek: jeden pokój na dział, jedno biurko na osobę. Podświetlone biurko oznacza, że trwa tam zadanie. Liczba pokazuje, ile decyzji czeka na Państwa."
+      "titel": "Agenci",
+      "text": "Tu są Państwa współpracownicy. Biuro pokazuje zespół jako budynek, lista pokazuje każdego agenta i to, co robi, a kliknięcie nazwy otwiera jego stronę. Liczba pokazuje, ile decyzji czeka na Państwa."
     },
     "team": {
       "titel": "Zespół",

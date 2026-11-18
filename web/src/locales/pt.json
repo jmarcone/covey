@@ -432,7 +432,6 @@
   },
   "agent": {
     "notFound": "Agente não encontrado.",
-    "breadcrumb": "Agentes",
     "sandbox": "Sandbox ativa",
     "wake": "Acordar",
     "resume": "Retomar",
@@ -980,6 +979,13 @@
       "syncFailed": "O posto de trabalho não é salvaguardado desde {{when}}: {{error}} — os números abaixo descrevem um estado mais antigo."
     },
     "wakeFailedWhy": "{{n}} despertares falhados: {{err}}"
+  },
+  "agents": {
+    "views": "Vistas dos agentes",
+    "view": {
+      "list": "Lista"
+    },
+    "backTo": "Voltar a {{view}}"
   },
   "approvals": {
     "approve": "Aprovar",
@@ -3198,8 +3204,8 @@
       "text": "Os seus colegas aqui são agentes de IA. Dá-lhes trabalho como o daria a uma pessoa: escrevendo-lhes. Num minuto mostramos-lhe onde está cada coisa."
     },
     "buero": {
-      "titel": "O escritório",
-      "text": "A equipa como um edifício: uma sala por departamento, uma secretária por colega. Uma secretária iluminada significa que ali decorre uma tarefa. O número indica quantas decisões estão à sua espera."
+      "titel": "Agentes",
+      "text": "Aqui vivem os seus colegas. O escritório mostra a equipa como um edifício, a lista mostra cada agente e o que está a fazer, e um clique num nome abre a sua página. O número indica quantas decisões estão à sua espera."
     },
     "team": {
       "titel": "A equipa",

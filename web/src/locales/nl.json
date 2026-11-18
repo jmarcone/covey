@@ -432,7 +432,6 @@
   },
   "agent": {
     "notFound": "Agent niet gevonden.",
-    "breadcrumb": "Agenten",
     "sandbox": "Sandbox actief",
     "wake": "Wekken",
     "resume": "Hervatten",
@@ -980,6 +979,13 @@
       "syncFailed": "De werkplek is sinds {{when}} niet meer veiliggesteld: {{error}} — de cijfers hieronder beschrijven een oudere stand."
     },
     "wakeFailedWhy": "{{n}} mislukte wekpogingen: {{err}}"
+  },
+  "agents": {
+    "views": "Weergaven van agenten",
+    "view": {
+      "list": "Lijst"
+    },
+    "backTo": "Terug naar {{view}}"
   },
   "approvals": {
     "approve": "Goedkeuren",
@@ -3198,8 +3204,8 @@
       "text": "Uw collega's hier zijn AI-agenten. U geeft hun werk zoals u dat aan een mens zou geven: door ze te schrijven. In een minuut laten we zien waar alles staat."
     },
     "buero": {
-      "titel": "Het kantoor",
-      "text": "Het personeel als gebouw: een kamer per afdeling, een bureau per collega. Een verlicht bureau betekent dat daar een taak loopt. Het getal toont hoeveel beslissingen op u wachten."
+      "titel": "Agenten",
+      "text": "Hier wonen uw collega's. Het kantoor toont het personeel als gebouw, de lijst toont elke agent en wat die doet, en een klik op een naam opent de pagina ervan. Het getal toont hoeveel beslissingen op u wachten."
     },
     "team": {
       "titel": "Het team",

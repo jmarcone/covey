@@ -8,6 +8,7 @@ import { rollAgentName, slugify } from "../names";
 import { fmtUSD } from "../format";
 import { PhaseBadge } from "../components/PhaseBadge";
 import { GuidedCreate } from "./agents/GuidedCreate";
+import { fromView } from "./agents/views";
 import { Brief } from "./agents/Brief";
 import { Modal, ConfirmDialog } from "../components/Modal";
 import { Onboarding } from "../components/Onboarding";
@@ -173,7 +174,10 @@ export default function Dashboard({ me }: { me: Principal }) {
   return (
     <div>
       <div className="flex items-center gap-3 mb-4">
-        <h1 className="text-[22px]">{t("dashboard.title")}</h1>
+        {/* At the top of the row, not centred in it: the search is taller than the
+            heading, and the title starts on the same line in every view of the
+            agents area. */}
+        <h1 className="text-[22px] self-start">{t("dashboard.title")}</h1>
         {/* The search at eye level with the heading, centred between it and
             the buttons: a row of its own below cost height for nothing. The
             count "2 in the organisation" stood beside it and answered a
@@ -393,7 +397,7 @@ function AgentRow({
   const { t } = useTranslation();
   const draft = isDraft(agent);
   return (
-    <Link to={`/agents/${agent.id}`} className={`reg-row no-underline${draft ? " reg-row-draft" : ""}`}>
+    <Link to={`/agents/${agent.id}`} state={fromView("list")} className={`reg-row no-underline${draft ? " reg-row-draft" : ""}`}>
       {/* Dasselbe Gesicht wie im Team und im Organigramm — es wird aus dem
           Kürzel gerechnet, also ist es überall dasselbe. */}
       <Avatar name={agent.display_name} slug={agent.slug} zustand={stateOf(agent)} size={34} />

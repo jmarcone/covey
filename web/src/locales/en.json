@@ -432,7 +432,6 @@
   },
   "agent": {
     "notFound": "Agent not found.",
-    "breadcrumb": "Agents",
     "sandbox": "Sandbox active",
     "wake": "Wake",
     "resume": "Resume",
@@ -980,6 +979,13 @@
       "syncFailed": "The workplace has not been secured since {{when}}: {{error}} — the figures below describe an older state."
     },
     "wakeFailedWhy": "{{n}} failed wakes: {{err}}"
+  },
+  "agents": {
+    "views": "Agent views",
+    "view": {
+      "list": "List"
+    },
+    "backTo": "Back to {{view}}"
   },
   "approvals": {
     "approve": "Approve",
@@ -3198,8 +3204,8 @@
       "text": "Your colleagues here are AI agents. You give them work the way you would give it to a person: by writing to them. This takes a minute and shows you where everything is."
     },
     "buero": {
-      "titel": "The office",
-      "text": "The workforce as a building: a room per department, a desk per colleague. A lit desk means a task is running there. The number shows how many decisions are waiting for you."
+      "titel": "Agents",
+      "text": "Your colleagues live here. The office shows the workforce as a building, the list shows every agent and what it is doing, and a click on a name opens its page. The number shows how many decisions are waiting for you."
     },
     "team": {
       "titel": "The team",

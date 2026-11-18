@@ -432,7 +432,6 @@
   },
   "agent": {
     "notFound": "Agent introuvable.",
-    "breadcrumb": "Agents",
     "sandbox": "Bac à sable actif",
     "wake": "Réveiller",
     "resume": "Reprendre",
@@ -980,6 +979,13 @@
       "syncFailed": "Le poste de travail n'a plus été sauvegardé depuis {{when}} : {{error}} — les chiffres ci-dessous décrivent un état plus ancien."
     },
     "wakeFailedWhy": "{{n}} réveils échoués : {{err}}"
+  },
+  "agents": {
+    "views": "Vues des agents",
+    "view": {
+      "list": "Liste"
+    },
+    "backTo": "Retour à {{view}}"
   },
   "approvals": {
     "approve": "Valider",
@@ -3198,8 +3204,8 @@
       "text": "Vos collègues ici sont des agents d'IA. Vous leur confiez du travail comme à une personne : en leur écrivant. En une minute, nous vous montrons où se trouve chaque chose."
     },
     "buero": {
-      "titel": "Le bureau",
-      "text": "L'équipe sous forme de bâtiment : une pièce par service, un bureau par collègue. Un bureau éclairé signifie qu'une tâche y est en cours. Le nombre indique combien de décisions vous attendent."
+      "titel": "Agents",
+      "text": "Vos collègues sont ici. Le bureau montre l'équipe sous forme de bâtiment, la liste montre chaque agent et ce qu'il fait, et un clic sur un nom ouvre sa page. Le nombre indique combien de décisions vous attendent."
     },
     "team": {
       "titel": "L'équipe",
