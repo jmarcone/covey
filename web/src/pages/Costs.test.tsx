@@ -358,8 +358,8 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     await click("Keine");
     await click("Als Tabelle zeigen");
     const values = [...container.querySelectorAll("tr[data-totals] td[data-total]")].map((td) => td.textContent);
-    // reported 16, recomputed 16: output 11 + cache read 5, not 5
-    expect(values).toEqual(["16,00 $", "16,00 $"]);
+    // reported 16, recomputed 16: output 11 + cache read 5, not 5; real 4 points
+    expect(values).toEqual(["16,00 $", "16,00 $", "1,85 $"]);
   });
 
   // Review C1: cache writes were counted as hits, so 94 % read the cache
@@ -380,7 +380,89 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     });
     const totals = container.querySelector("tr[data-totals]")!;
     const values = [...totals.querySelectorAll("td[data-total]")].map((td) => td.textContent!);
-    expect(values).toEqual(["16,00 $", "16,00 $"]);
+    expect(values).toEqual(["16,00 $", "16,00 $", "1,85 $"]);
     for (const v of values) expect(desc).toContain(v);
+  });
+
+  // #77: at an hour the bars are the meter's whole points × the plan's price,
+  // as the server priced them, and add up to the real tile.
+  describe("echte Kosten je Stunde und im Vergleich zur Liste", () => {
+    const click = async (name: string | RegExp) => act(async () => { await userEvent.click(screen.getByRole("button", { name })); });
+    const realCol = (container: HTMLElement) => {
+      // the chart's table, not the agents'
+      const table = container.querySelector("tr[data-totals]")!.closest("table")!;
+      const heads = [...table.querySelectorAll("thead th")].map((th) => th.textContent);
+      const col = heads.indexOf("Echte Kosten (Schätzung)");
+      const rows = [...table.querySelectorAll("tbody tr")].map((tr) => tr.querySelectorAll("td")[col - 1]?.textContent);
+      const total = table.querySelector("tr[data-totals]")!.querySelectorAll("td[data-total]")[col - 1]?.textContent;
+      return { col, rows, total };
+    };
+
+    it("zeichnet je Stunde echte Balken, die sich zur Kachel summieren, und ersetzt den Hinweis", async () => {
+      const { container } = render([2, 3]);
+      const tile = await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+      await click("Als Tabelle zeigen");
+      const { col, rows, total } = realCol(container);
+      expect(col).toBeGreaterThan(0);
+      expect(rows).toEqual(["0,92 $", "1,38 $"]);
+      // the tile: 5 points × $0.4615
+      expect(total).toBe("2,31 $");
+      expect(within(tile).getByText("≈ 2,31 $")).toBeInTheDocument();
+      const note = container.querySelector("[data-hour-note]")!.textContent!;
+      expect(note).toMatch(/0,46 \$ je Punkt/);
+      expect(note).toMatch(/Stunden ohne Überschreitung zeigen 0/);
+      expect(note).not.toMatch(/nicht in Dollar/);
+    });
+
+    it("zeigt für eine Stunde ohne Überschreitung 0 und keinen Balken", async () => {
+      const { container } = render([2, 0]);
+      await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+      expect(container.querySelectorAll("g[data-period] rect[fill^='url(']").length).toBe(1);
+      await click("Als Tabelle zeigen");
+      expect(realCol(container).rows).toEqual(["0,92 $", "0,00 $"]);
+    });
+
+    it("zeichnet für Punkte ohne Tarifpreis keinen echten Balken", async () => {
+      const data = cells([2, 2]);
+      data.subscription![1] = { ...data.subscription![1], usd: null, unpriced_points: 2 };
+      const { container } = serve(data);
+      await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+      expect(container.querySelector("g[data-period] rect[fill^='url(']")).toBeNull();
+      expect(container.querySelector("[data-hour-note]")).toBeNull();
+      await click("Als Tabelle zeigen");
+      expect(realCol(container).col).toBe(-1);
+    });
+
+    it("zeigt in „Echt gegen Liste“ den echten Wert am Balken und das Vielfache der Periode", async () => {
+      const { container } = render([2, 0]);
+      await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+      expect(container.querySelector("[data-value]")).toBeNull();
+      await click("Echt gegen Liste");
+      // the list bar and the real bar of each hour; the gap hour has no real value, hence no multiple
+      expect(container.querySelectorAll("g[data-period]")[0].querySelectorAll("rect").length).toBe(3);
+      expect([...container.querySelectorAll("[data-value]")].map((e) => e.textContent)).toEqual(["0,92 $"]);
+      // 8 $ list over 2 points × 0,4615 $
+      expect([...container.querySelectorAll("[data-tag]")].map((e) => e.textContent)).toEqual(["8,7×"]);
+      expect(container.querySelector("[data-vs-note]")).not.toBeNull();
+      await click("Beträge");
+      expect(container.querySelector("[data-tag]")).toBeNull();
+    });
+
+    it("behält beim Wechsel der Ansicht Quellen- und Agentenfilter", async () => {
+      const { container } = render([2, 2]);
+      await screen.findByRole("group", { name: MULTIPLE });
+      const chip = (name: string) => screen.getByRole("button", { name });
+      await act(async () => { await userEvent.click(within(screen.getByText("Quelle").parentElement!).getByRole("button", { name: "Von Claude Code gemeldet" })); });
+      await click(/^Coordinator/);
+      await click("Echt gegen Liste");
+      expect(within(screen.getByText("Quelle").parentElement!).getByRole("button", { name: "Von Claude Code gemeldet" })).toHaveAttribute("aria-pressed", "false");
+      expect(chip("Echt gegen Liste")).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByRole("button", { name: /^Coordinator/ })).toHaveAttribute("aria-pressed", "true");
+      // an agent filter has no real bar to set against the list
+      expect(container.querySelector("[data-tag]")).toBeNull();
+      await click("Beträge");
+      expect(within(screen.getByText("Quelle").parentElement!).getByRole("button", { name: "Von Claude Code gemeldet" })).toHaveAttribute("aria-pressed", "false");
+      expect(screen.getByRole("button", { name: /^Coordinator/ })).toHaveAttribute("aria-pressed", "true");
+    });
   });
 });

@@ -10,6 +10,7 @@ import {
   credentialFigures,
   credId,
   meterCrossings,
+  pricePerPoint,
   recomputedOf,
   type CredentialFigures,
 } from "./costFigures";
@@ -35,6 +36,8 @@ import {
 export type Split = "type" | "none";
 type Source = "reported" | "recomputed" | "real" | "billed";
 type Layout = "combined" | "agents";
+/** "amounts": every source's bar; "vs": the list bar and the real bar of each period side by side. */
+type View = "amounts" | "vs";
 
 /** One colour per source, everywhere on the page (styles.css). */
 export const SOURCE_COLOR: Record<Source, string> = {
@@ -208,14 +211,20 @@ export function niceAxis(max: number) {
 }
 
 export type Seg = { key: string; label: string; color: string; value: number };
-export type Bar = { key: string; label: string; color: string; hatched?: boolean; segs: Seg[] };
+export type Bar = {
+  key: string; label: string; color: string; hatched?: boolean; segs: Seg[];
+  /** Print the bar's value above it, not only in the details. */
+  valueLabel?: boolean;
+  /** A small label above the value, e.g. a multiple. */
+  tag?: string;
+};
 
 const sum = (s: Seg[]) => s.reduce((a, x) => a + x.value, 0);
 
 /** Groups of bars over the periods. Every period is focusable: focus or hover
  *  opens its details, Enter/Space (or a tap) pins them, Escape closes them.
  *  "Show as table" renders the same numbers as a table. */
-export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis, height = 280, max, notes, showX = true, asTable }: {
+export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis, height = 280, max, notes, showX = true, asTable, wide }: {
   title: string;
   periods: string[];
   groups: Bar[][];
@@ -230,6 +239,8 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
   notes?: Map<number, string>;
   showX?: boolean;
   asTable?: boolean;
+  /** Wider bars, for a value printed above each: the label spills over less. */
+  wide?: boolean;
 }) {
   const { t } = useTranslation();
   const uid = useId().replace(/[^a-zA-Z0-9_-]/g, "");
@@ -285,16 +296,20 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
     );
   }
 
-  const padL = 64, padR = 16, padT = 18, padB = showX ? 34 : 8;
+  const tagged = groups.some((g) => g.some((b) => b.tag != null));
+  const padL = 64, padR = 16, padT = tagged ? 30 : 18, padB = showX ? 34 : 8;
   const plotH = height - padT - padB;
   const n = periods.length;
   const nb = Math.max(1, ...groups.map((g) => g.length));
-  const barW = nb === 1 ? 28 : nb === 2 ? 20 : 16, gap = 3;
+  const barW = wide ? 30 : nb === 1 ? 28 : nb === 2 ? 20 : 16, gap = 3;
   const slot = Math.max(nb * (barW + gap) + 24, n <= 1 ? 160 : Math.min(120, Math.round(900 / Math.max(1, n))));
   const W = Math.max(560, padL + padR + Math.max(1, n) * slot);
   const ax = niceAxis(max ?? Math.max(0, ...groups.flatMap((g) => g.map((b) => sum(b.segs)))));
   const y = (v: number) => padT + plotH - (v / ax.top) * plotH;
-  const every = Math.ceil(n / Math.max(1, Math.floor((W - padL - padR) / 84)));
+  // A label of the widest period's length must not touch its neighbour: at an
+  // hour it is "11/17, 04:00 PM UTC", wider than a slot.
+  const labelW = Math.max(84, Math.max(0, ...periods.map((p) => fmtPeriod(p).length)) * 6 + 12);
+  const every = Math.max(1, Math.ceil(labelW / slot));
   const tipW = 250;
   const hx = open != null ? padL + open * slot + slot / 2 : 0;
   const tipLeft = open == null ? 0 : Math.max(0, Math.min(hx + 16 + tipW > W ? hx - 16 - tipW : hx + 16, W - tipW));
@@ -359,8 +374,14 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
                       return <rect key={g.key} x={bx} y={top} width={barW} height={h} rx={1.5}
                         fill={b.hatched ? `url(#${hatchId(b.color)})` : g.color} stroke={b.hatched ? b.color : undefined} />;
                     })}
-                    {isOpen && total > 0 && (
-                      <text x={bx + barW / 2} y={Math.max(10, y(total) - 4)} textAnchor="middle" fontSize={9.5} fill="var(--text-primary)">{fmtValue(total)}</text>
+                    {(isOpen || b.valueLabel) && total > 0 && (
+                      // A halo in the page's colour keeps the value legible where it spills over the bar next to it.
+                      <text x={bx + barW / 2} y={Math.max(10, y(total) - 4)} textAnchor="middle" fontSize={9.5} fill="var(--text-primary)"
+                        stroke="var(--surface-1)" strokeWidth={3} paintOrder="stroke" data-value>{fmtValue(total)}</text>
+                    )}
+                    {b.tag && total > 0 && (
+                      <text x={bx + barW / 2} y={Math.max(10, y(total) - 15)} textAnchor="middle" fontSize={9} fill="var(--text-muted)"
+                        stroke="var(--surface-1)" strokeWidth={3} paintOrder="stroke" data-tag>{b.tag}</text>
                     )}
                   </g>
                 );
@@ -520,9 +541,9 @@ function NoMultiple({ f }: { f: CredentialFigures }) {
 }
 
 /** One credential: its tiles, its chart, its agents. */
-function CredentialBlock({ f, data, billed, bucket, fmtPeriod, selected, src, split, types, layout, sharedScale, asTable }: {
+function CredentialBlock({ f, data, billed, bucket, fmtPeriod, selected, src, split, types, layout, view, sharedScale, asTable }: {
   f: CredentialFigures; data: CostCells; billed: BilledReport | undefined; bucket: string; fmtPeriod: (p: string) => string;
-  selected: Set<string>; src: Record<Source, boolean>; split: Split; types: Set<string>; layout: Layout; sharedScale: boolean; asTable: boolean;
+  selected: Set<string>; src: Record<Source, boolean>; split: Split; types: Set<string>; layout: Layout; view: View; sharedScale: boolean; asTable: boolean;
 }) {
   const { t } = useTranslation();
   const planLabel = usePlanLabel();
@@ -551,8 +572,10 @@ function CredentialBlock({ f, data, billed, bucket, fmtPeriod, selected, src, sp
   const byType = split === "type" && layout === "combined";
   const typeList = byType ? COST_TYPES.filter((k) => types.has(k)) : COST_TYPES;
   // Real bars only where every point has a plan price: a bar of the priced
-  // part alone would read as the whole.
-  const showReal = src.real && !filtered && f.kind !== "api_key" && f.meter != null && bucket !== "hour" && f.real?.priced === true;
+  // part alone would read as the whole. At an hour a bar is the whole points
+  // the meter crossed in it, as the server priced them: 0 without a crossing.
+  const showReal = src.real && !filtered && f.kind !== "api_key" && f.meter != null && f.real?.priced === true;
+  const vs = view === "vs" && layout === "combined" && showReal;
   const showBilled = src.billed && !filtered && f.kind === "api_key";
   const realPer = useMemo(() => {
     const v = new Array<number>(periods.length).fill(0);
@@ -583,6 +606,21 @@ function CredentialBlock({ f, data, billed, bucket, fmtPeriod, selected, src, sp
 
   const barsFor = (cs: CostCell[], i: number, withMoney: boolean): Bar[] => {
     const out: Bar[] = [];
+    if (vs && withMoney) {
+      // The list bar and the real bar of the period, side by side; the real
+      // value stands on its bar and the period's multiple above it. The
+      // reported figure is not part of this comparison.
+      const list = cs.reduce((a, c) => a + recomputedOf(c, typeList), 0);
+      const real = realPer[i];
+      const segs = byType
+        ? typeList.map((k) => ({ key: k, label: t(`costs.stack.${k}`), color: TYPE_COLOR[k], value: cs.reduce((a, c) => a + (c.measured[k] ?? 0), 0) }))
+        : [{ key: "m", label: t("costs.fig.recomputed"), color: SOURCE_COLOR.recomputed, value: list }];
+      out.push({ key: "recomputed", label: t("costs.fig.recomputed"), color: SOURCE_COLOR.recomputed, segs });
+      out.push({ key: "real", label: t("costs.fig.realEstimate"), color: SOURCE_COLOR.real, hatched: true, valueLabel: true,
+        tag: real > 0 && list > 0 ? times(list / real) : undefined,
+        segs: [{ key: "real", label: t("costs.fig.realEstimate"), color: SOURCE_COLOR.real, value: real }] });
+      return out;
+    }
     if (src.reported) {
       out.push({ key: "reported", label: t("costs.fig.reported"), color: SOURCE_COLOR.reported,
         segs: [{ key: "r", label: t("costs.fig.reported"), color: SOURCE_COLOR.reported, value: cs.reduce((a, c) => a + (c.engine_usd ?? 0), 0) }] });
@@ -614,6 +652,9 @@ function CredentialBlock({ f, data, billed, bucket, fmtPeriod, selected, src, sp
   const kind = t(`costs.fig.kind_${f.kind || "unknown"}`);
   const plan = planLabel(f);
   const subscription = f.kind === "subscription" || (f.kind === "" && f.meter != null);
+  // What a point was priced at on average over the span (the tile's figure);
+  // without movement, the plan's own price per point.
+  const pointPrice = f.real && f.real.points > 0 ? f.real.value / f.real.points : f.plan ? pricePerPoint(f.plan) : null;
 
   return (
     <section className="mb-5" aria-label={name} data-credential={f.id}>
@@ -638,7 +679,7 @@ function CredentialBlock({ f, data, billed, bucket, fmtPeriod, selected, src, sp
         <div className="muted text-sm" style={{ padding: "20px 0", textAlign: "center" }}>{t("costs.empty")}</div>
       ) : layout === "combined" ? (
         <BarChart title={`${t("costs.chartCost")} · ${name}`} periods={periods} groups={combined} fmtPeriod={fmtPeriod}
-          fmtValue={fmtUSD} fmtAxis={fmtUSDAxis} notes={notes} asTable={asTable} />
+          fmtValue={fmtUSD} fmtAxis={fmtUSDAxis} notes={notes} asTable={asTable} wide={vs} />
       ) : (
         <div style={{ display: "grid", gap: 6 }}>
           {perAgent.map((r, i) => (
@@ -654,7 +695,10 @@ function CredentialBlock({ f, data, billed, bucket, fmtPeriod, selected, src, sp
           {perAgent.length === 0 && <div className="muted text-sm">{t("costs.empty")}</div>}
         </div>
       )}
-      {subscription && bucket === "hour" && src.real && !filtered && <p className="muted text-xs mt-1 mb-0">{t("costs.fig.hourRealNote")}</p>}
+      {vs && layout === "combined" && !asTable && <p className="muted text-xs mt-1 mb-0" data-vs-note>{t("costs.fig.vsNote")}</p>}
+      {subscription && bucket === "hour" && showReal && pointPrice != null && <p className="muted text-xs mt-1 mb-0" data-hour-note>
+        {t("costs.fig.hourRealNote", { usd: fmtUSD(pointPrice) })}
+      </p>}
       {filtered && (subscription || f.kind === "api_key") && <p className="muted text-xs mt-1 mb-0">{t("costs.fig.filteredRealNote")}</p>}
 
       {f.agents.length > 0 && <AgentTable f={f} agents={agents} subscription={subscription} />}
@@ -726,6 +770,7 @@ export function CostExplorer({ data, billed, selected, bucket, fmtPeriod }: {
 }) {
   const { t } = useTranslation();
   const [layout, setLayout] = useState<Layout>("combined");
+  const [view, setView] = useState<View>("amounts");
   const [split, setSplit] = useState<Split>("none");
   const [sharedScale, setSharedScale] = useState(true);
   const [asTable, setAsTable] = useState(false);
@@ -760,6 +805,12 @@ export function CostExplorer({ data, billed, selected, bucket, fmtPeriod }: {
           {(["reported", "recomputed", "real", "billed"] as Source[]).map((s) => <li key={s}>{hint(s)}</li>)}
         </ul>
       </details>
+      {layout === "combined" && (
+        <Row label={t("costs.filter.compare")}>
+          <Chip on={view === "amounts"} onClick={() => setView("amounts")}>{t("costs.filter.view_amounts")}</Chip>
+          <Chip on={view === "vs"} onClick={() => setView("vs")}>{t("costs.filter.view_vs")}</Chip>
+        </Row>
+      )}
       <Row label={t("costs.filter.layout")}>
         <Chip on={layout === "combined"} onClick={() => setLayout("combined")}>{t("costs.filter.layout_combined")}</Chip>
         <Chip on={layout === "agents"} onClick={() => setLayout("agents")}>{t("costs.filter.layout_agents")}</Chip>
@@ -790,7 +841,7 @@ export function CostExplorer({ data, billed, selected, bucket, fmtPeriod }: {
         <div className="muted text-sm" style={{ padding: "40px 0", textAlign: "center" }}>{t("costs.empty")}</div>
       ) : figures.map((f) => (
         <CredentialBlock key={f.id} f={f} data={data!} billed={billed} bucket={bucket} fmtPeriod={fmtPeriod} selected={selected}
-          src={src} split={split} types={types} layout={layout} sharedScale={sharedScale} asTable={asTable} />
+          src={src} split={split} types={types} layout={layout} view={view} sharedScale={sharedScale} asTable={asTable} />
       ))}
     </div>
   );

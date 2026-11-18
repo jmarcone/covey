@@ -197,7 +197,10 @@
       "layout_combined": "Ensemble",
       "layout_agents": "Par agent",
       "billedHint": "Facturé par Anthropic : ce que l'API d'usage et de coût indique pour la clé API derrière l'identifiant, après remises et avant crédits. Les données arrivent avec 4 à 24 h de retard ; la marque indique jusqu'où elles sont complètes.",
-      "sourceHints": "Ce que signifient les quatre chiffres"
+      "sourceHints": "Ce que signifient les quatre chiffres",
+      "compare": "Comparer",
+      "view_amounts": "Montants",
+      "view_vs": "Réel et liste"
     },
     "stack": {
       "cache_read": "Cache lu",
@@ -259,7 +262,7 @@
       "keyBilled": "bleu canard : facturé par Anthropic",
       "crossing": "{{from}} % → {{to}} %",
       "crossingReset": "nouvelle semaine → {{to}} %",
-      "hourRealNote": "À la résolution horaire, le compteur est montré par ses franchissements de pourcentage entier, pas en dollars : un point est trop grossier pour une heure.",
+      "hourRealNote": "À la résolution horaire, une barre correspond aux points entiers franchis par le compteur dans l’heure × {{usd}} par point ; les heures sans franchissement affichent 0. Les étiquettes au-dessus des barres sont les franchissements.",
       "filteredRealNote": "Le coût réel et la facture appartiennent à tout l'identifiant : avec un filtre d'agents, ils n'apparaissent que comme part estimée dans le tableau.",
       "showAsTable": "Afficher en tableau",
       "period": "Période",
@@ -278,7 +281,8 @@
       "noMultipleUnpriced": "Ni coût réel ni multiple : pas de prix de forfait pour {{n}} des {{m}} points.",
       "noMultipleNoPlan": "Ni coût réel ni multiple : aucun prix de forfait n'est enregistré pour cet identifiant.",
       "realSince": "réel depuis {{from}} (relevé de référence du compteur), dernier relevé {{to}}",
-      "shareOfRealSpan": "la part réelle porte sur le coût réel depuis {{from}} (relevé de référence du compteur) jusqu'à {{to}}, pas sur la seule période"
+      "shareOfRealSpan": "la part réelle porte sur le coût réel depuis {{from}} (relevé de référence du compteur) jusqu'à {{to}}, pas sur la seule période",
+      "vsNote": "× est le prix catalogue d’une période ÷ son coût réel. Le compteur avance par points entiers : le multiple d’une période de quelques points est approximatif ; celui de la tuile indique sa fourchette."
     },
     "kpiAllCredentials": "tous les identifiants, d'après les lignes",
     "tok": {

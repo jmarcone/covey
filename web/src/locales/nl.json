@@ -197,7 +197,10 @@
       "layout_combined": "Samen",
       "layout_agents": "Per agent",
       "billedHint": "Gefactureerd door Anthropic: wat de Usage-and-Cost-API meldt voor de API-sleutel achter de referentie, na kortingen en vóór tegoeden. Het komt 4–24 uur later binnen; de markering zegt tot wanneer het volledig is.",
-      "sourceHints": "Wat de vier cijfers betekenen"
+      "sourceHints": "Wat de vier cijfers betekenen",
+      "compare": "Vergelijken",
+      "view_amounts": "Bedragen",
+      "view_vs": "Echt en lijst"
     },
     "stack": {
       "cache_read": "Cache gelezen",
@@ -259,7 +262,7 @@
       "keyBilled": "petrol: gefactureerd door Anthropic",
       "crossing": "{{from}} % → {{to}} %",
       "crossingReset": "nieuwe week → {{to}} %",
-      "hourRealNote": "Per uur toont de grafiek de meter als zijn hele-procentstappen, niet in dollars: één punt is te grof voor een uur.",
+      "hourRealNote": "Per uur is een balk het aantal hele punten dat de meter in dat uur passeerde × {{usd}} per punt; uren zonder passage tonen 0. De labels boven de balken zijn de passages.",
       "filteredRealNote": "Werkelijke kosten en de factuur horen bij de hele referentie: met een agentfilter staan ze alleen als geschat aandeel in de tabel.",
       "showAsTable": "Als tabel tonen",
       "period": "Periode",
@@ -278,7 +281,8 @@
       "noMultipleUnpriced": "Geen werkelijke kosten en geen veelvoud: geen abonnementsprijs voor {{n}} van {{m}} punten.",
       "noMultipleNoPlan": "Geen werkelijke kosten en geen veelvoud: voor deze inloggegevens is geen abonnementsprijs opgeslagen.",
       "realSince": "werkelijk sinds {{from}} (basisaflezing van de meter), laatste aflezing {{to}}",
-      "shareOfRealSpan": "het werkelijke aandeel is van de werkelijke kosten sinds {{from}} (basisaflezing van de meter) tot {{to}}, niet van alleen de periode"
+      "shareOfRealSpan": "het werkelijke aandeel is van de werkelijke kosten sinds {{from}} (basisaflezing van de meter) tot {{to}}, niet van alleen de periode",
+      "vsNote": "× is de lijstprijs van een periode ÷ de echte kosten ervan. De meter beweegt in hele punten, dus de factor van een periode met weinig punten is ruw; die van de tegel heeft zijn bereik erbij."
     },
     "kpiAllCredentials": "alle referenties, uit de regels",
     "tok": {

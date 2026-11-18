@@ -197,7 +197,10 @@
       "layout_combined": "Conjunta",
       "layout_agents": "Por agente",
       "billedHint": "Facturado por Anthropic: lo que la API de uso y coste informa para la clave de API de la credencial, tras descuentos y antes de créditos. Llega con 4–24 h de retraso; la marca indica hasta dónde está completo.",
-      "sourceHints": "Qué significan las cuatro cifras"
+      "sourceHints": "Qué significan las cuatro cifras",
+      "compare": "Comparar",
+      "view_amounts": "Importes",
+      "view_vs": "Real frente a lista"
     },
     "stack": {
       "cache_read": "Caché leída",
@@ -259,7 +262,7 @@
       "keyBilled": "verde azulado: facturado por Anthropic",
       "crossing": "{{from}} % → {{to}} %",
       "crossingReset": "nueva semana → {{to}} %",
-      "hourRealNote": "Con resolución horaria el medidor se muestra como sus cruces de porcentaje entero, no en dólares: un punto es demasiado grueso para una hora.",
+      "hourRealNote": "Con resolución horaria, una barra son los puntos enteros que el medidor cruzó en esa hora × {{usd}} por punto; las horas sin cruce muestran 0. Las etiquetas sobre las barras son los cruces.",
       "filteredRealNote": "El coste real y la factura pertenecen a toda la credencial: con un filtro de agentes solo se muestran como parte estimada en la tabla.",
       "showAsTable": "Mostrar como tabla",
       "period": "Periodo",
@@ -278,7 +281,8 @@
       "noMultipleUnpriced": "Sin coste real ni múltiplo: sin precio de plan para {{n}} de {{m}} puntos.",
       "noMultipleNoPlan": "Sin coste real ni múltiplo: no hay precio de plan guardado para esta credencial.",
       "realSince": "real desde {{from}} (lectura base del medidor), última lectura {{to}}",
-      "shareOfRealSpan": "la parte real se refiere al coste real desde {{from}} (lectura base del medidor) hasta {{to}}, no solo al periodo"
+      "shareOfRealSpan": "la parte real se refiere al coste real desde {{from}} (lectura base del medidor) hasta {{to}}, no solo al periodo",
+      "vsNote": "× es el precio de lista de un periodo ÷ su coste real. El medidor se mueve en puntos enteros, así que el múltiplo de un periodo con pocos puntos es aproximado; el múltiplo de la ficha indica su rango."
     },
     "kpiAllCredentials": "todas las credenciales, de las líneas",
     "tok": {
