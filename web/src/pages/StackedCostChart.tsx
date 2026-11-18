@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { api, type BilledReport, type CellAgent, type CostCell, type CostCells } from "../api";
-import { fmtBucket, fmtClockUTC, fmtCount, fmtNumber, fmtUSD, fmtUSDAxis } from "../format";
+import { fmtBucket, fmtClockUTC, fmtCount, fmtCountAxis, fmtNumber, fmtUSD, fmtUSDAxis } from "../format";
 import {
   billedFetchBucket,
   billedPerPeriod,
@@ -185,7 +185,7 @@ function Tile({ label, value, sub, span, note, color, hatched }: {
 }
 
 /** A "nice" axis: a top and a step that read as round numbers. */
-function niceAxis(max: number) {
+export function niceAxis(max: number) {
   const raw = Math.max(1e-9, max) / 4;
   const mag = Math.pow(10, Math.floor(Math.log10(raw)));
   const n = raw / mag;
@@ -193,7 +193,7 @@ function niceAxis(max: number) {
   const top = Math.ceil(Math.max(1e-9, max) / step) * step;
   const ticks: number[] = [];
   for (let i = 0; i * step <= top + step / 2; i++) ticks.push(i * step);
-  return { top, ticks };
+  return { top, ticks, step };
 }
 
 export type Seg = { key: string; label: string; color: string; value: number };
@@ -210,7 +210,8 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
   groups: Bar[][];
   fmtPeriod: (p: string) => string;
   fmtValue: (v: number) => string;
-  fmtAxis: (v: number) => string;
+  /** A tick label; step is the distance between ticks, so a tick can carry its precision. */
+  fmtAxis: (v: number, step: number) => string;
   height?: number;
   /** A shared top for several charts (small multiples). */
   max?: number;
@@ -309,7 +310,7 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
         {ax.ticks.map((v, i) => (
           <g key={i} aria-hidden>
             <line x1={padL} x2={W - padR} y1={y(v)} y2={y(v)} stroke="var(--border)" strokeDasharray={i === 0 ? undefined : "2 4"} />
-            <text x={padL - 8} y={y(v) + 4} textAnchor="end" fontSize={11} fill="var(--text-muted)">{fmtAxis(v)}</text>
+            <text x={padL - 8} y={y(v) + 4} textAnchor="end" fontSize={11} fill="var(--text-muted)">{fmtAxis(v, ax.step)}</text>
           </g>
         ))}
         {groups.map((bars, i) => {
@@ -820,7 +821,7 @@ export function TokenExplorer({ data, selected, fmtPeriod }: {
         <Chip on={asTable} onClick={() => setAsTable((v) => !v)}>{t("costs.fig.showAsTable")}</Chip>
       </div>
       <BarChart title={t("costs.chartTokens")} periods={periods} groups={groups} fmtPeriod={fmtPeriod}
-        fmtValue={(v) => `${fmtCount(v)} ${t("costs.tok.unit")}`} fmtAxis={fmtCount} asTable={asTable} />
+        fmtValue={(v) => `${fmtCount(v)} ${t("costs.tok.unit")}`} fmtAxis={fmtCountAxis} asTable={asTable} />
     </div>
   );
 }

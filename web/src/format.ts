@@ -187,13 +187,44 @@ export function fmtDelta(ms: number): string {
 // fmtUSDAxis is fmtUSD for an axis tick: as short as the round steps allow —
 // `0 $`, `0,25 $`, `12 $`, `1,5 k $`. An axis with `12,00 $` next to
 // `0,2500 $` reads as two scales.
-export function fmtUSDAxis(v: number): string {
+//
+// With the axis' step, every tick carries the step's precision: at a step of
+// 0,0025 $ the ticks read `0,0025 $`, `0,0050 $`, not `0,003 $`, and at a top
+// of 0,0003 $ not `0 $` four times.
+export function fmtUSDAxis(v: number, step?: number): string {
   if (v === 0) return dollar("0");
+  if (step != null && step > 0) {
+    if (Math.abs(v) >= 1000) return dollar(`${fmtNumber(v / 1000, stepDigits(step / 1000))} k`);
+    return dollar(fmtNumber(v, stepDigits(step)));
+  }
   if (Math.abs(v) >= 1000) return dollar(`${trim(v / 1000)} k`);
   const digits = Math.abs(v) >= 10 ? 0 : Math.abs(v) >= 1 ? 1 : Math.abs(v) >= 0.1 ? 2 : 3;
   let s = v.toFixed(digits);
   if (s.includes(".")) s = s.replace(/0+$/, "").replace(/\.$/, "");
   return dollar(s.replace(".", komma()));
+}
+
+// fmtCountAxis is fmtCount for an axis tick with the axis' step: in the unit
+// fmtCount would pick for the tick, with as many digits as the step carries
+// there — `750 k`, `1,25 M` at a step of 250 k, where fmtCount rounds to
+// `1,3 M`.
+export function fmtCountAxis(v: number, step: number): string {
+  const a = Math.abs(v);
+  if (v === 0 || !(step > 0)) return fmtCount(v);
+  if (a >= 1_000_000_000) return `${fmtNumber(v / 1e9, stepDigits(step / 1e9))} ${milliarde()}`;
+  if (a >= 1_000_000) return `${fmtNumber(v / 1e6, stepDigits(step / 1e6))} M`;
+  if (a >= 10_000) return `${fmtNumber(v / 1e3, stepDigits(step / 1e3))} k`;
+  return fmtNumber(v, stepDigits(step));
+}
+
+// stepDigits: the decimal digits a step needs to be written exactly — 0 for
+// 250, 2 for 0,25, 4 for 0,0025.
+function stepDigits(step: number): number {
+  for (let d = 0; d < 10; d++) {
+    const x = step * 10 ** d;
+    if (Math.abs(x - Math.round(x)) < 1e-6 * Math.max(1, Math.abs(x))) return d;
+  }
+  return 10;
 }
 
 // fmtBucket labels a cost bucket in the UI's language. Buckets are UTC (the
