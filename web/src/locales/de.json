@@ -305,7 +305,7 @@
       "saving": "Speichern …",
       "cancel": "Abbrechen",
       "fromHintWeek": "Vorbelegt: Beginn der aktuellen Zählerwoche.",
-      "fromHintNow": "Noch keine Zählerablesung, vorbelegt: jetzt."
+      "fromHintNow": "Noch kein Wochen-Reset bekannt, vorbelegt: jetzt."
     }
   },
   "lang": {

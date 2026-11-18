@@ -305,7 +305,7 @@
       "saving": "Opslaan…",
       "cancel": "Annuleren",
       "fromHintWeek": "Vooringevuld: het begin van de huidige meterweek.",
-      "fromHintNow": "Nog geen meterstand, vooringevuld: nu."
+      "fromHintNow": "Nog geen wekelijkse reset bekend, vooringevuld: nu."
     }
   },
   "lang": {

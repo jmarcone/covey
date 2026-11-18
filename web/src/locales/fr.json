@@ -305,7 +305,7 @@
       "saving": "Enregistrement…",
       "cancel": "Annuler",
       "fromHintWeek": "Valeur par défaut : le début de la semaine actuelle du compteur.",
-      "fromHintNow": "Pas encore de relevé du compteur, valeur par défaut : maintenant."
+      "fromHintNow": "Pas encore de réinitialisation hebdomadaire connue, valeur par défaut : maintenant."
     }
   },
   "lang": {

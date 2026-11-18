@@ -305,7 +305,7 @@
       "saving": "Zapisywanie…",
       "cancel": "Anuluj",
       "fromHintWeek": "Domyślnie: początek bieżącego tygodnia licznika.",
-      "fromHintNow": "Brak jeszcze odczytu licznika, domyślnie: teraz."
+      "fromHintNow": "Nie znamy jeszcze tygodniowego resetu, domyślnie: teraz."
     }
   },
   "lang": {

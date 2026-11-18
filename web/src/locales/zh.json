@@ -305,7 +305,7 @@
       "saving": "正在保存…",
       "cancel": "取消",
       "fromHintWeek": "默认值：当前计量周的开始。",
-      "fromHintNow": "尚无计量读数，默认值：现在。"
+      "fromHintNow": "尚无每周重置信息，默认值：现在。"
     }
   },
   "lang": {

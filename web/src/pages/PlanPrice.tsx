@@ -1,8 +1,8 @@
 import { useId, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { put, type CredentialPlan, type UsageReading } from "../api";
+import { api, put, type CredentialPlan, type RuntimeInstance, type UsageReading } from "../api";
 import { fmtBucket, fmtNumber, fmtUSD } from "../format";
 import type { CredentialFigures } from "./costFigures";
 
@@ -12,31 +12,32 @@ import type { CredentialFigures } from "./costFigures";
  * costs, and that needs the plan's price (spec/07 D13). The endpoint is
  * PUT /runtime-instances/{id}/credentials/{ord}/plan; it appends a price valid
  * from a moment and never overwrites. The price follows the secret value, but
- * the endpoint is addressed by the place the credential sits at, so the place
- * comes from the credential's own readings. */
+ * the endpoint is addressed by the place the credential sits at, and the server
+ * resolves that place when the request arrives. A reading or a stored plan
+ * keeps the ord it was written with, which a reorder has since given to
+ * another secret, so the place comes from the runtime instances as they are
+ * now. */
 
 const WEEK_MS = 7 * 86400_000;
 
 /** The roles the plan endpoint lets through (securityRoles in httpapi). */
 export const canSetPlan = (role: string) => role === "org_admin" || role === "security";
 
-/** Where the credential sits, from its latest reading — or from the plan,
- *  when one was entered at a place that still exists. Null: nowhere to send
- *  the price to. */
-export function planPlace(f: CredentialFigures, readings: readonly UsageReading[]): { runtimeId: string; ord: number } | null {
-  const own = readings
-    .filter((r) => r.secret_key === f.secretKey && r.secret_slot === f.slot)
-    .sort((a, b) => Date.parse(b.fetched_at) - Date.parse(a.fetched_at));
-  if (own.length > 0) return { runtimeId: own[0].runtime_id, ord: own[0].credential_ord };
-  if (f.plan?.runtime_id != null && f.plan.ord != null) return { runtimeId: f.plan.runtime_id, ord: f.plan.ord };
+/** Where the credential sits now: any instance and ord whose credential holds
+ *  its secret key and slot. The price follows the secret value, so every such
+ *  place is right. Null: it sits nowhere (or the instances are not loaded),
+ *  and there is nowhere to send the price to. */
+export function planPlace(f: CredentialFigures, instances: readonly RuntimeInstance[] | null | undefined): { runtimeId: string; ord: number } | null {
+  for (const rt of instances ?? []) {
+    const c = rt.creds.find((x) => x.secret_key === f.secretKey && x.secret_slot === f.slot);
+    if (c) return { runtimeId: rt.id, ord: c.ord };
+  }
   return null;
 }
 
-/** The start of the current meter week: the latest weekly reset the
- *  credential's readings name, minus seven days. A reset already behind us
- *  (the last reading is old) starts a week itself, so it is stepped forward
- *  to the week that contains `now`. Without a reading: now. */
-export function defaultValidFrom(f: CredentialFigures, readings: readonly UsageReading[], now: Date): Date {
+/** The latest weekly reset the credential's readings name, in ms; NaN when
+ *  they name none. A five-hour window does not say when the week began. */
+function weeklyReset(f: CredentialFigures, readings: readonly UsageReading[]): number {
   let latest = NaN;
   for (const r of readings) {
     if (r.secret_key !== f.secretKey || r.secret_slot !== f.slot || !r.resets_at) continue;
@@ -44,6 +45,15 @@ export function defaultValidFrom(f: CredentialFigures, readings: readonly UsageR
     const ms = Date.parse(r.resets_at);
     if (!Number.isNaN(ms) && !(ms <= latest)) latest = ms;
   }
+  return latest;
+}
+
+/** The start of the current meter week: the latest weekly reset the
+ *  credential's readings name, minus seven days. A reset already behind us
+ *  (the last reading is old) starts a week itself, so it is stepped forward
+ *  to the week that contains `now`. Without a reading: now. */
+export function defaultValidFrom(f: CredentialFigures, readings: readonly UsageReading[], now: Date): Date {
+  const latest = weeklyReset(f, readings);
   if (Number.isNaN(latest)) return now;
   let start = latest - WEEK_MS;
   while (start + WEEK_MS <= now.getTime()) start += WEEK_MS;
@@ -79,7 +89,14 @@ export function PlanPrice({ f, readings, editable }: { f: CredentialFigures; rea
   // the minute the input shows does not round a reset that has seconds.
   const [fallback, setFallback] = useState<Date>(() => new Date());
 
-  const place = planPlace(f, readings);
+  // Only the roles that see the form need the place. The list is the one the
+  // instances page keeps, so it is fetched once for all credentials.
+  const instances = useQuery({
+    queryKey: ["runtime-instances"],
+    queryFn: () => api<RuntimeInstance[]>("/runtime-instances"),
+    enabled: editable,
+  });
+  const place = planPlace(f, instances.data);
   const save = useMutation({
     mutationFn: (body: { amount: number; currency: string; period: string; valid_from: string }) =>
       put(`/runtime-instances/${place!.runtimeId}/credentials/${place!.ord}/plan`, body),
@@ -91,6 +108,9 @@ export function PlanPrice({ f, readings, editable }: { f: CredentialFigures; rea
   });
 
   const show = () => {
+    // A reorder since the list was fetched moves the ord: look again while the
+    // form is filled in, the place is read when it is saved.
+    void instances.refetch();
     const d = defaultValidFrom(f, readings, new Date());
     setFallback(d);
     setFrom(toLocalInput(d));
@@ -103,7 +123,7 @@ export function PlanPrice({ f, readings, editable }: { f: CredentialFigures; rea
   const amountNum = amount.trim() === "" ? NaN : Number(amount);
   const whenMs = from === toLocalInput(fallback) ? fallback.getTime() : new Date(from).getTime();
   const valid = Number.isFinite(amountNum) && amountNum >= 0 && Number.isFinite(whenMs);
-  const hasReading = readings.some((r) => r.secret_key === f.secretKey && r.secret_slot === f.slot && r.resets_at);
+  const hasReset = !Number.isNaN(weeklyReset(f, readings));
 
   return (
     <div className="mb-2" data-plan-price={f.id}>
@@ -144,10 +164,14 @@ export function PlanPrice({ f, readings, editable }: { f: CredentialFigures; rea
               <button type="submit" className="btn sm primary" disabled={!valid || save.isPending}>
                 {save.isPending ? t("costs.plan.saving") : t("costs.plan.save")}
               </button>
-              <button type="button" className="btn sm ghost" onClick={() => setOpen(false)}>{t("costs.plan.cancel")}</button>
+              <button type="button" className="btn sm ghost" disabled={save.isPending} onClick={() => setOpen(false)}>{t("costs.plan.cancel")}</button>
             </div>
           </div>
-          <p className="muted text-xs mt-1 mb-0">{t(hasReading ? "costs.plan.fromHintWeek" : "costs.plan.fromHintNow")}</p>
+          <p className="muted text-xs mt-1 mb-0">
+            {/* The input is the reader's clock; the cost page is UTC. */}
+            {Number.isFinite(whenMs) && <>{fmtBucket(new Date(whenMs).toISOString(), "hour")} · </>}
+            {t(hasReset ? "costs.plan.fromHintWeek" : "costs.plan.fromHintNow")}
+          </p>
           {save.error && (
             <p className="text-xs mt-1 mb-0" role="alert" style={{ color: "var(--text-danger)" }}>{(save.error as Error).message}</p>
           )}

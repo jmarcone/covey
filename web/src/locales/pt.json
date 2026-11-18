@@ -305,7 +305,7 @@
       "saving": "A guardar…",
       "cancel": "Cancelar",
       "fromHintWeek": "Predefinido: o início da semana atual do contador.",
-      "fromHintNow": "Ainda sem leitura do contador, predefinido: agora."
+      "fromHintNow": "Ainda sem reinício semanal conhecido, predefinido: agora."
     }
   },
   "lang": {

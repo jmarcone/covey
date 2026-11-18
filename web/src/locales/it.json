@@ -305,7 +305,7 @@
       "saving": "Salvataggio…",
       "cancel": "Annulla",
       "fromHintWeek": "Preimpostato: l'inizio della settimana corrente del contatore.",
-      "fromHintNow": "Ancora nessuna lettura del contatore, preimpostato: adesso."
+      "fromHintNow": "Ancora nessun reset settimanale noto, preimpostato: adesso."
     }
   },
   "lang": {

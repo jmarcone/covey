@@ -305,7 +305,7 @@
       "saving": "Saving…",
       "cancel": "Cancel",
       "fromHintWeek": "Preset: the start of the current meter week.",
-      "fromHintNow": "No meter reading yet, preset: now."
+      "fromHintNow": "No weekly reset known yet, preset: now."
     }
   },
   "lang": {
