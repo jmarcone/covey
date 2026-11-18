@@ -339,6 +339,14 @@ type Config struct {
 	// tool does not exist for the run at all. MCP tools (the action proxy) are
 	// not affected; they reach the run through their own route.
 	RuntimeTools []string
+	// GitAuthorEmail is the address an agent's commits are attributed to
+	// (COVEY_GIT_AUTHOR_EMAIL); the name is "<agent slug> (covey agent)". The
+	// commit action writes over the GitHub API and sends no author, so without
+	// this GitHub records the token's account and that account's own address.
+	// A noreply address (<id>+<login>@users.noreply.github.com) keeps the
+	// commit linked to the account without publishing the private one. Empty =
+	// not set, as before.
+	GitAuthorEmail string
 
 	// MarketplaceURL is the plugin catalogue the store offers target systems
 	// from (COVEY_MARKETPLACE_URL, spec/22). One plain GET of one JSON file —
@@ -421,6 +429,7 @@ func FromEnv() (Config, error) {
 		RunnerToken:          getenv("COVEY_RUNNER_TOKEN", ""),
 		WikiCleanup:          strings.TrimSpace(os.Getenv("COVEY_WIKI_CLEANUP")),
 		RuntimeTools:         splitList(os.Getenv("COVEY_RUNTIME_TOOLS")),
+		GitAuthorEmail:       strings.TrimSpace(os.Getenv("COVEY_GIT_AUTHOR_EMAIL")),
 		MarketplaceURL:       getenv("COVEY_MARKETPLACE_URL", DefaultMarketplaceURL),
 
 		EmbeddingProvider: getenv("COVEY_EMBEDDING_PROVIDER", "builtin"),

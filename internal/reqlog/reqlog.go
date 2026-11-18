@@ -30,6 +30,7 @@ import (
 	"sync"
 	"time"
 
+	"covey/internal/gitauthor"
 	"covey/internal/netguard"
 )
 
@@ -119,7 +120,14 @@ func Emit(ctx context.Context, e Entry) {
 // plugins build their clients with it — they inherit logging without knowing
 // about it.
 func Client(system string, timeout time.Duration) *http.Client {
-	return &http.Client{Timeout: timeout, Transport: Transport(system, nil)}
+	rt := Transport(system, nil)
+	if system == "github" {
+		// The commit action sends no author (see package gitauthor); the
+		// identity comes out of the context and is added before the request
+		// is logged, so the log shows what was sent.
+		rt = gitauthor.Transport(rt)
+	}
+	return &http.Client{Timeout: timeout, Transport: rt}
 }
 
 // Transport wraps a RoundTripper (nil = http.DefaultTransport) and logs every

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"covey/internal/gitauthor"
 	"covey/internal/reqlog"
 	"github.com/benjaminLedel/covey-plugin-sdk/target"
 	"github.com/google/uuid"
@@ -791,6 +792,11 @@ func (p *actionProxy) execute(ctx context.Context, system, action string, params
 	// Workdir for actions that materialize files into the sandbox (e.g. gitlab
 	// checkout) — the credential itself stays in the daemon.
 	ctx = target.WithWorkdir(ctx, p.client.homeDir)
+	// The commit action writes over the API and sends no author; the identity
+	// on the context is what the HTTP client adds to the request (gitauthor).
+	p.client.mu.Lock()
+	ctx = gitauthor.WithIdentity(ctx, p.client.cfg.GitAuthor)
+	p.client.mu.Unlock()
 	// Sub-agent runner: lets a plugin (dev:agent) start a nested runtime run in
 	// the project checkout without knowing the daemon.
 	ctx = target.WithSubAgent(ctx, p.client.subAgentRunner(p.taskID))

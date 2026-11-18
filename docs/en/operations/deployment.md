@@ -459,6 +459,29 @@ The `Skill` tool is added per run and only when skills have been materialized
 for the agent — it pulls the descriptions of all built-in skills into the prompt
 (+2.454 tokens) and is dead weight without skills of its own.
 
+### `COVEY_GIT_AUTHOR_EMAIL`
+
+The address an agent's commits are attributed to; the name is
+`<agent slug> (covey agent)`. Empty = not set.
+
+The github plugin's `commit` action writes the commit over the GitHub API and
+sends no author, so GitHub records the account the token belongs to — with that
+account's own address, on a public repository. A `git config` in the agent's
+checkout never reaches that request. With this variable the platform adds author
+and committer to the request itself, and puts `GIT_AUTHOR_*`/`GIT_COMMITTER_*`
+into the run's environment for an agent that runs `git commit` in its sandbox.
+
+Use the account's noreply address, `<id>+<login>@users.noreply.github.com`
+(GitHub → Settings → Emails): the commit stays linked to the account and the
+private address stays out of the history.
+
+```bash
+COVEY_GIT_AUTHOR_EMAIL="358193092+covey-bot@users.noreply.github.com"
+```
+
+It applies to commits made after the control plane restarts; existing history
+is not rewritten.
+
 ### Where the money went
 
 Two views answer that, both under **Costs**:

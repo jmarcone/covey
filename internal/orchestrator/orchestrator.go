@@ -34,6 +34,7 @@ import (
 	"covey/internal/daemon"
 	"covey/internal/egress"
 	"covey/internal/engines"
+	"covey/internal/gitauthor"
 	"covey/internal/guardrails"
 	"covey/internal/homestore"
 	"covey/internal/identity"
@@ -139,6 +140,10 @@ type Options struct {
 	// Empty → daemon.DefaultAllowedTools. The list decides not only what a run
 	// may use but what exists for it at all — see daemon.DefaultAllowedTools.
 	RuntimeTools []string
+	// GitAuthorEmail is the address agents' commits carry (COVEY_GIT_AUTHOR_EMAIL),
+	// with the agent's slug as the name. Empty = no identity is set and GitHub
+	// attributes a commit to the token's account (package gitauthor).
+	GitAuthorEmail string
 	// Chat and Org carry covey/message (#537): the agent writes to a person
 	// of its organisation, into their direct conversation. nil = the action
 	// answers that it is not available on this instance.
@@ -2551,6 +2556,7 @@ func (o *Orchestrator) processTask(ctx context.Context, agent agents.Agent, link
 		AllowedTools: o.RuntimeTools,
 		MaxTurns:     maxTurns,
 		ActionTools:  actionTools,
+		GitAuthor:    gitauthor.ForAgent(agent.Slug, o.GitAuthorEmail),
 	}); err != nil {
 		return err
 	}
