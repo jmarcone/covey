@@ -17,6 +17,15 @@ import { fmtUSD } from "../../format";
 import { upstreamIssueURL } from "../../upstream";
 import { PhaseBadge } from "../../components/PhaseBadge";
 
+const PARKED_PREFIX = "parked:";
+
+/** What a parked task waits for — its correlation key without "parked:" — or
+ *  undefined when the task is not a blocked, parked one. */
+export function parkedOn(task: Pick<Task, "state" | "correlation_key">): string | undefined {
+  if (task.state !== "blocked" || !task.correlation_key?.startsWith(PARKED_PREFIX)) return undefined;
+  return task.correlation_key.slice(PARKED_PREFIX.length);
+}
+
 export function Backlog({
   agentId,
   phase,
@@ -512,11 +521,16 @@ function TaskCard({
   // Draggable only where there is somewhere to drop it: the search list has no
   // columns, and a grab cursor that leads nowhere is a lie.
   const draggable = canManage && !archived && !!onDragStart;
+  // A task blocked on "parked:<what>" waits on purpose until <what> is ready
+  // (a branch, a PR); the board says so instead of "waiting on parked:…".
+  const parkedUntil = parkedOn(task);
   const subtitle =
     task.state === "blocked"
-      ? task.correlation_key
-        ? t("agent.backlog.waitingOn", { key: task.correlation_key })
-        : t("agent.backlog.blocked")
+      ? parkedUntil !== undefined
+        ? t("agent.backlog.parkedUntil", { key: parkedUntil })
+        : task.correlation_key
+          ? t("agent.backlog.waitingOn", { key: task.correlation_key })
+          : t("agent.backlog.blocked")
       : relTime(task.updated_at);
   return (
     <div
@@ -528,7 +542,9 @@ function TaskCard({
       style={archived ? { opacity: 0.55 } : undefined}
     >
       <div className="kc-title">
-        <span className={`badge state st-${task.state} kc-state`}>{t(`status.${task.state}`, task.state)}</span>
+        <span className={`badge state st-${task.state} kc-state`}>
+          {parkedUntil !== undefined ? t("agent.backlog.parked") : t(`status.${task.state}`, task.state)}
+        </span>
         <span className={`font-medium min-w-0 truncate${task.redacted ? " muted" : ""}`}>{title}</span>
         {archived && <span className="muted text-[11px] shrink-0">{t("agent.backlog.archived")}</span>}
         <span className="kc-prio">P{task.priority}</span>
@@ -563,6 +579,11 @@ function TaskCard({
             <p>
               <span className="muted">{t("agent.backlog.waitingOn", { key: "" }).replace(" ", "")}:</span>{" "}
               <span className="mono">{task.correlation_key}</span>
+            </p>
+          )}
+          {task.state === "blocked" && !task.redacted && task.blocked_reason && (
+            <p>
+              <span className="muted">{t("agent.backlog.reason")}:</span> {task.blocked_reason}
             </p>
           )}
           {task.cost_usd !== undefined && (

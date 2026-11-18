@@ -144,6 +144,9 @@ export type Task = {
   priority: number;
   origin: string;
   correlation_key?: string;
+  // Why a blocked task waits: the question it was blocked with. Present only
+  // on blocked tasks that have one.
+  blocked_reason?: string;
   runtime_session_id?: string;
   result?: string;
   error?: string;
