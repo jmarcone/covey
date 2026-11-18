@@ -413,6 +413,14 @@ type MeterCoverage struct {
 	// must not depend on the chart's bucket: a cell holds only part of its
 	// bucket at both ends of the window, and the baseline can lie before it.
 	MeasuredUSD float64 `json:"measured_usd"`
+	// USD/UnpricedPoints are Points priced the way the steps are: each
+	// reading's points at the plan valid when it was read, summed over the
+	// window — the sum of the steps' own figures, so a reader never re-prices
+	// the movement at one plan. USD is nil when no plan covers any of the
+	// points, and for every window but the weekly all-models one; points read
+	// while no plan was valid are UnpricedPoints and not in USD.
+	USD            *float64 `json:"usd"`
+	UnpricedPoints float64  `json:"unpriced_points"`
 }
 
 // MeterSegment is one week of a credential's meter within the window.
@@ -658,6 +666,14 @@ func (s *Store) measuredBetween(ctx context.Context, orgID uuid.UUID, key string
 	return usd, rows.Err()
 }
 
+// addUSD adds usd to a figure that is nil until something was priced.
+func addUSD(sum *float64, usd float64) *float64 {
+	if sum != nil {
+		usd += *sum
+	}
+	return &usd
+}
+
 // meterPartition is one credential × source × window: its steps per period
 // within the window, and its coverage. ok is false when nothing was read in
 // the window.
@@ -711,13 +727,11 @@ func meterPartition(rs []meterRow, since time.Time, plans []CredentialPlan) ([]M
 		st.LongestGapSecs = max(st.LongestGapSecs, r.gap)
 		if priced {
 			if p, ok := planAt(plans, r.key, r.slot, r.at); ok {
-				usd := r.points * p.USDPerPoint
-				if st.USD != nil {
-					usd += *st.USD
-				}
-				st.USD = &usd
+				st.USD = addUSD(st.USD, r.points*p.USDPerPoint)
+				c.USD = addUSD(c.USD, r.points*p.USDPerPoint)
 			} else {
 				st.UnpricedPoints += r.points
+				c.UnpricedPoints += r.points
 			}
 		}
 		c.Readings++
