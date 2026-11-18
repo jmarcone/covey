@@ -1237,6 +1237,17 @@
    irgendeiner Spalte, ein Raster würde eine Ordnung behaupten, die es nicht
    gibt. */
 .bl-search { width: 220px; padding: 5px 10px; font-size: 12.5px; }
+/* The toolbar is the first row of the tab. "+ New task" opens the right-hand
+   group as its strongest control; on a narrow screen it stays beside the search
+   and only the quieter buttons wrap into a second row. */
+.bl-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.bl-toolbar .bl-new { margin-left: auto; white-space: nowrap; }
+@media (max-width: 560px) { .bl-toolbar .bl-search { flex: 1 1 140px; width: auto; min-width: 0; } }
+/* A card just added: the outline says which one, the tint fades out with it.
+   Without motion the outline alone carries it. */
+.kc.kc-new { outline: 2px solid var(--text-accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: no-preference) { .kc.kc-new { animation: kc-new 2s ease-out; } }
+@keyframes kc-new { from { background: color-mix(in srgb, var(--text-accent) 18%, var(--surface-2)); } }
 .bl-results { max-width: 720px; }
 .bl-results .kc-empty { color: var(--text-muted); font-size: 12px; padding: 2px 0; }
 .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }

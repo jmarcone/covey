@@ -517,6 +517,8 @@
       "titlePlaceholder": "Tytuł",
       "descPlaceholder": "Opis / kontekst",
       "addToBacklog": "Dodaj do backlogu",
+      "cancelNewTask": "Anuluj",
+      "addFailed": "Nie udało się dodać zadania: {{error}}",
       "noStages": "Jeszcze nie ma etapów — agent tworzy je w trakcie pracy, albo możesz dodać je tutaj.",
       "stagesInfo": "Odznaka statusu pochodzi od agenta; kolumny to Twój porządek — przeciągaj zadania swobodnie.",
       "stagesReadonly": "Etapy prowadzą agent i osoby odpowiedzialne.",

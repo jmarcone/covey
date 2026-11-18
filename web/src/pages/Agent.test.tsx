@@ -175,7 +175,9 @@ describe("Unbekannte und englische Reiter-Namen", () => {
   it("?tab=quatsch zeigt das Backlog statt einer leeren Seite", async () => {
     zeigeAgent(`/agents/${AGENT_ID}?tab=quatsch`);
     await screen.findByRole("heading", { name: "Test-Agent" });
-    expect(await screen.findByPlaceholderText("Titel")).toBeInTheDocument();
+    // The search sits in the Backlog's toolbar for everyone who sees the tab;
+    // the New task fields stay closed until asked for.
+    expect(await screen.findByPlaceholderText("Backlog durchsuchen …")).toBeInTheDocument();
   });
 
   // The English names of the German slugs: whoever types `workspace` or

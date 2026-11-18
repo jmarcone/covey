@@ -517,6 +517,8 @@
       "titlePlaceholder": "标题",
       "descPlaceholder": "描述／背景",
       "addToBacklog": "加入待办",
+      "cancelNewTask": "取消",
+      "addFailed": "无法添加任务：{{error}}",
       "noStages": "还没有阶段——智能体会在工作中创建，你也可以在这里添加。",
       "stagesInfo": "状态徽章来自智能体；列是你的整理方式——任务可以随意拖动。",
       "stagesReadonly": "阶段由智能体和负责人维护。",
