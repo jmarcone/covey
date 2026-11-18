@@ -171,6 +171,22 @@ func TestATokenTriggerStartsARunWhoseActionRunsAsAColleague(t *testing.T) {
 		t.Fatalf("zammad did not get the action: %v", upd)
 	}
 
+	// A title that is only whitespace (Unicode spaces included) gets the
+	// default title, here as for /api/trigger/<token>: it is the run's title
+	// and {{case.title}}.
+	if code, out = postJSON(t, url, []byte(`{"case":"7","title":" \t\u00a0 ","body":"b"}`), nil); code != http.StatusOK || out["outcome"] != "started" {
+		t.Fatalf("trigger with a blank title: %d %v", code, out)
+	}
+	var blank map[string]any
+	for _, r := range admin.expectList(http.MethodGet, "/api/v1/workflows/orders/runs", nil, http.StatusOK) {
+		if r["case"] == "7" {
+			blank = admin.expect(http.MethodGet, "/api/v1/workflows/orders/runs/"+r["id"].(string), nil, http.StatusOK)
+		}
+	}
+	if blank == nil || blank["title"] != "Webhook trigger" {
+		t.Fatalf("the run of a blank title: %v", blank)
+	}
+
 	// Under a rule that requires approval the run waits for it.
 	if _, err := s.rails.Create(ctx, railRule(s.orgID, "require_approval", "zammad:set_state")); err != nil {
 		t.Fatal(err)
