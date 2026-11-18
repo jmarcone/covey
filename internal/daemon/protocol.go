@@ -733,16 +733,47 @@ func DecodePayload[T any](m Message) (T, error) {
 }
 
 // RequestUsage asks the daemon for the engine's own utilisation figure.
+//
+// Runtime names the engine to ask. The question goes out as soon as the link
+// is up, and that is BEFORE the first task brings its inject_config: a daemon
+// that looked the engine up in its config found none and answered "not
+// supported" within milliseconds — which is all the live path ever filed.
+// Empty (a control plane from before the field): the daemon falls back to its
+// config.
 type RequestUsage struct {
 	RequestID string `json:"request_id"`
+	Runtime   string `json:"runtime,omitempty"`
 }
 
-// UsageReport answers it. Supported=false means the engine cannot ask its
-// provider — then the platform's own estimate stays the source, which for at
-// least one engine is the only one there is.
+// UsageReport answers it. Supported=false means the engine could not say —
+// then the platform's own estimate stays the source, which for at least one
+// engine is the only one there is.
+//
+// Reason says why, as one of the Usage* reason codes: a code, never text, so
+// it can be stored and shown without carrying anything the engine printed.
+// Error is the daemon's own description for the log; it is never stored.
 type UsageReport struct {
 	RequestID string `json:"request_id"`
 	Supported bool   `json:"supported"`
 	Usage     Usage  `json:"usage"`
+	Reason    string `json:"reason,omitempty"`
 	Error     string `json:"error,omitempty"`
 }
+
+// Why a usage report carries no (fresh) figure.
+const (
+	// UsageNoRuntimeConfig: the request named no engine and no config had
+	// arrived yet — nothing to ask.
+	UsageNoRuntimeConfig = "no_runtime_config"
+	// UsageNoReporter: the engine cannot ask its provider. A property of the
+	// engine, so the control plane stops asking.
+	UsageNoReporter = "no_reporter"
+	// UsageExecFailed: the engine could ask but the question failed (the
+	// binary, the credential, a timeout). Worth asking again later.
+	UsageExecFailed = "exec_failed"
+	// UsageUnparsed: an answer came back, but no figure could be read from it.
+	UsageUnparsed = "unparsed"
+	// UsageStale: a figure, but the engine served it from its own cache
+	// because the provider's endpoint was rate limited. Supported, flagged.
+	UsageStale = "stale"
+)

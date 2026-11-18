@@ -12,7 +12,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"covey/internal/agents"
 	"covey/internal/backlog"
+	"covey/internal/daemon"
 	"covey/internal/observability"
 )
 
@@ -384,13 +386,14 @@ func TestCumulativeSessionAndMeterSteps(t *testing.T) {
 		t.Errorf("derived rows = %d, want both lines", derived)
 	}
 
-	rt := uuid.New()
+	seat := observability.CredentialRef{RuntimeID: uuid.New(), SecretKey: "kumuliert_token", Kind: "subscription"}
 	base := time.Now().Truncate(time.Hour).Add(-2 * time.Hour)
 	for _, r := range []struct {
 		at  time.Duration
 		pct float64
 	}{{0, 9}, {30 * time.Minute, 10}, {70 * time.Minute, 12}, {100 * time.Minute, 3}} {
-		if err := s.obs.AddUsageReading(ctx, agent.OrgID, rt, 0, true, 1, r.pct, "", "", false, base.Add(r.at)); err != nil {
+		if err := s.obs.AddUsageReading(ctx, agent.OrgID, observability.MeterReading{Credential: seat,
+			Supported: true, WindowPercent: 1, WeekPercent: r.pct, FetchedAt: base.Add(r.at)}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -402,47 +405,102 @@ func TestCumulativeSessionAndMeterSteps(t *testing.T) {
 	for _, st := range cells.Subscription {
 		got[st.Period.UTC().Format("15")] += st.Points
 	}
-	// 9 → 10 in the first hour; 10 → 12, then a reset to 3 (counted as 3) in the second.
+	// 9 → 10 in the first hour; 10 → 12, then a collapse to 3 without any
+	// reset time (counted as a new week, 3) in the second.
 	if got[base.UTC().Format("15")] != 1 || got[base.Add(time.Hour).UTC().Format("15")] != 5 {
 		t.Errorf("meter steps per hour = %v, want 1 then 5", got)
 	}
 }
 
-// The provider's answer is kept as history, and each reading carries the
-// list-price cost booked up to it — the meter read against the bill it would be.
-func TestUsageReadingsCarryTheCostSoFar(t *testing.T) {
+// Each reading carries the MEASURED list price on its own credential up to
+// it: the model_usage lines of the runs that went out on the same secret,
+// summed in time order — not the booked cost, and nothing of another seat.
+// Unsupported readings are listed too, with their reason.
+func TestUsageReadingsMeasuredPerCredential(t *testing.T) {
 	s := newStack(t)
 	ctx := context.Background()
 	admin := login(t, s, "admin@test.local", "admin-passwort")
 	agent := s.newSupportAgent("abo-zaehler")
-	rt := uuid.New()
+	seat := observability.CredentialRef{RuntimeID: uuid.New(), SecretKey: "claude_code_oauth_token", Kind: "subscription"}
+	other := observability.CredentialRef{RuntimeID: seat.RuntimeID, Ord: 1, SecretKey: "claude_code_oauth_token", SecretSlot: 1, Kind: "subscription"}
+	start := time.Now().Add(-time.Hour)
 
-	if err := s.obs.AddUsageReading(ctx, agent.OrgID, rt, 0, true, 3, 9, "", "Nov 20", false, time.Now().Add(-2*time.Hour)); err != nil {
+	reading := func(c observability.CredentialRef, pct float64, supported bool, reason string) {
+		t.Helper()
+		r := observability.MeterReading{Credential: c, Supported: supported, Reason: reason,
+			WindowPercent: -1, WeekPercent: -1, FetchedAt: time.Now()}
+		if supported {
+			r.WeekPercent = pct
+		}
+		if err := s.obs.AddUsageReading(ctx, agent.OrgID, r); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	line := func(c observability.CredentialRef, n int) {
+		t.Helper()
+		task := uuid.New()
+		if err := s.obs.RecordRuntime(ctx, agent.OrgID, agent.ID, &task, c, json.RawMessage(session[n].json("sess-"+task.String(), n, true))); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	// A booking that is no line at all must not count either.
+	if err := s.obs.AddCost(ctx, agent.ID, nil, 30, observability.Tokens{Output: 10}, opus, uuid.Nil, -1); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.obs.AddCost(ctx, agent.ID, nil, 30, observability.Tokens{Output: 10}, "claude-opus-5-5", uuid.Nil, -1); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.obs.AddUsageReading(ctx, agent.OrgID, rt, 0, true, 5, 10, "", "Nov 20", false, time.Now().Add(time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-	// An unsupported answer is kept but not shown as a reading.
-	if err := s.obs.AddUsageReading(ctx, agent.OrgID, rt, 0, false, -1, -1, "", "", false, time.Now()); err != nil {
-		t.Fatal(err)
-	}
+	reading(seat, 9, true, "")
+	line(seat, 4)  // 0.6587372
+	line(other, 1) // 0.732072, on the other value
+	reading(seat, 10, true, "")
+	reading(other, 0, false, "exec_failed")
+	line(seat, 3) // 1.0027642
+	reading(seat, 11, true, "")
+	reading(other, 20, true, "")
 
-	rs, err := s.obs.UsageReadings(ctx, agent.OrgID, time.Now().Add(-24*time.Hour))
+	rs, err := s.obs.UsageReadings(ctx, agent.OrgID, start)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rs) != 2 {
-		t.Fatalf("readings = %d, want 2 supported ones", len(rs))
+	if len(rs) != 5 {
+		t.Fatalf("readings = %d, want 5 (the unsupported one too)", len(rs))
 	}
-	if rs[0].CostUSD != 0 || rs[1].CostUSD != 30 {
-		t.Errorf("cost so far = %v / %v, want 0 / 30", rs[0].CostUSD, rs[1].CostUSD)
+	// What each reading must carry: the lines of its own credential up to it,
+	// from model_usage itself.
+	var want []float64
+	for _, r := range rs {
+		var sum float64
+		if err := s.pool.QueryRow(ctx, `SELECT COALESCE(SUM(engine_usd),0)::float8 FROM model_usage
+			WHERE org_id = $1 AND secret_key = $2 AND secret_slot = $3 AND created_at >= $4 AND created_at <= $5`,
+			agent.OrgID, *r.SecretKey, *r.SecretSlot, start, r.FetchedAt).Scan(&sum); err != nil {
+			t.Fatal(err)
+		}
+		want = append(want, sum)
 	}
-	if rs[1].WeekPercent == nil || *rs[1].WeekPercent != 10 {
-		t.Errorf("week percent = %v, want 10", rs[1].WeekPercent)
+	for i, r := range rs {
+		if r.CostUSD == nil || math.Abs(*r.CostUSD-want[i]) > 1e-9 {
+			t.Errorf("reading %d (%s#%d, %v%%): cost so far %v, want %v", i, *r.SecretKey, *r.SecretSlot, r.WeekPercent, r.CostUSD, want[i])
+		}
+	}
+	if math.Abs(want[0]) > 1e-9 || math.Abs(want[1]-0.658737) > 1e-6 || math.Abs(want[3]-(0.658737+1.002764)) > 1e-6 || math.Abs(want[4]-0.732072) > 1e-6 {
+		t.Errorf("fixture: per credential %v", want)
+	}
+	if rs[2].Supported || rs[2].Reason != "exec_failed" || rs[2].WeekPercent != nil {
+		t.Errorf("the unsupported reading: %+v", rs[2])
+	}
+	if rs[1].Source != observability.SourceUsageCmd || rs[1].WindowKind != observability.WindowSevenDay {
+		t.Errorf("source/window: %q/%q", rs[1].Source, rs[1].WindowKind)
+	}
+
+	got := admin.expectList(http.MethodGet, "/api/v1/cost/usage-readings?days=1", nil, http.StatusOK)
+	if len(got) != 5 {
+		t.Fatalf("GET /cost/usage-readings: %d rows", len(got))
+	}
+	first := got[0]
+	for _, k := range []string{"source", "window_kind", "resets_at", "reason", "cost_usd", "secret_key"} {
+		if _, ok := first[k]; !ok {
+			t.Errorf("GET /cost/usage-readings lacks %q: %v", k, first)
+		}
 	}
 	admin.expectList(http.MethodGet, "/api/v1/cost/subscription?days=1", nil, http.StatusOK)
 }
@@ -601,5 +659,405 @@ func TestRecordRuntimeModelUsageSurvivesBadCast(t *testing.T) {
 	_ = s.pool.QueryRow(ctx, `SELECT count(*) FROM recording_events WHERE task_id=$1 AND kind='runtime'`, task).Scan(&lines)
 	if lines != 2 {
 		t.Errorf("recording events = %d, want both lines", lines)
+	}
+}
+
+// --- The subscription meter (migration 0145) ---
+
+// mockSeatEngine is the mock engine on a subscription seat. The mock itself
+// needs no credential and is therefore never asked for its meter; an engine
+// that declares one is, and that is the path these tests drive — the daemon,
+// the protocol and the filing as they run for Claude Code, without a provider.
+const mockSeatEngine = "mock-seat"
+
+type mockSeat struct{ daemon.Mock }
+
+func (mockSeat) Name() string { return mockSeatEngine }
+
+func init() {
+	daemon.RegisterRuntime(daemon.RuntimeDescriptor{
+		Name: mockSeatEngine, Label: "Mock (seat)",
+		Description: "The mock engine on a subscription seat, for the meter tests.",
+		Credentials: []daemon.RuntimeCredential{{Kind: daemon.CredSubscription, Label: "subscription",
+			Secret: "mock_seat_token", EnvVar: "MOCK_SEAT_TOKEN"}},
+		Capabilities: daemon.RuntimeCapabilities{Resume: true, SkillsDir: ".claude/skills", ResultUsage: true},
+		New:          func() daemon.Runtime { return mockSeat{} },
+	})
+}
+
+// meterSeatAgent creates an agent on a seat of the mock-seat engine.
+func (s *stack) meterSeatAgent(t *testing.T, slug string) (agents.Agent, uuid.UUID) {
+	t.Helper()
+	ctx := context.Background()
+	rt, err := s.runtimes.Create(ctx, s.orgID, mockSeatEngine, "Mock-Sitz "+slug, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.seat(t, rt.ID, daemon.CredSubscription, "mock_seat_token", "mock-"+slug, "A")
+	agent, err := s.registry.Create(ctx, s.orgID, slug, "Zaehler-Agent", mockSeatEngine, &s.adminID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.registry.SaveConfig(ctx, agent.ID, map[string]string{
+		"SOUL.md":   "# Zaehler-Agent\n\n## Role\nMisst.",
+		"ACCESS.md": "- system: zammad scope: read",
+	}, &s.adminID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.runtimes.Assign(ctx, s.orgID, agent.ID, rt.ID); err != nil {
+		t.Fatal(err)
+	}
+	return agent, rt.ID
+}
+
+// The control plane asks for the meter the moment the link is up — before the
+// first task brings the daemon its config. A daemon that looked the engine up
+// in that config answered "not supported" within milliseconds, and that was
+// the only reading the live path ever filed. The question names the engine
+// now: a fresh daemon asks it, and a supported reading lands on the secret.
+func TestUsageRequestBeforeInjectConfig(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	agent, rt := s.meterSeatAgent(t, "zaehler-frisch")
+	task, err := s.backlog.Create(ctx, s.orgID, agent.ID, "Lauf", "[mock:result fertig]", "manual", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "task done", 20*time.Second, func() bool { return s.taskState(task.ID) == backlog.StateDone })
+	waitFor(t, "a usage reading", 10*time.Second, func() bool {
+		var n int
+		_ = s.pool.QueryRow(ctx, `SELECT count(*) FROM usage_readings WHERE runtime_id = $1`, rt).Scan(&n)
+		return n > 0
+	})
+
+	var (
+		supported              bool
+		week, window           *float64
+		reason, key, kind, src string
+		slot                   int
+		resets                 *time.Time
+		fetched                time.Time
+	)
+	if err := s.pool.QueryRow(ctx, `SELECT supported, week_percent, window_percent, reason, secret_key, secret_slot,
+		credential_kind, source, resets_at, fetched_at FROM usage_readings WHERE runtime_id = $1 ORDER BY id LIMIT 1`, rt).
+		Scan(&supported, &week, &window, &reason, &key, &slot, &kind, &src, &resets, &fetched); err != nil {
+		t.Fatal(err)
+	}
+	if !supported || reason != "" {
+		t.Fatalf("the first reading is supported=%v, reason %q — the daemon did not ask the named engine", supported, reason)
+	}
+	if week == nil || *week != 13 || window == nil || *window != 4 {
+		t.Errorf("percents week %v, window %v — want the mock's 13 / 4", week, window)
+	}
+	if key != "mock_seat_token" || slot != 0 || kind != "subscription" || src != observability.SourceUsageCmd {
+		t.Errorf("filed on %s#%d (%s), source %s", key, slot, kind, src)
+	}
+	want, _ := daemon.ParseResets("Nov 20, 4:59pm", "Europe/Berlin", fetched)
+	if resets == nil || !resets.Equal(want) {
+		t.Errorf("resets_at = %v, want %v", resets, want)
+	}
+}
+
+// event9802 is a rate_limit_event as the first cost evening recorded it.
+const event9802 = `{"type": "rate_limit_event", "uuid": "16494fc1-cc52-4575-bb1f-af1456f515bf", "session_id": "49ca4226-eebf-452c-ad27-7b50d0b33282", "rate_limit_info": {"status": "allowed", "resetsAt": 1795190400, "overageStatus": "rejected", "rateLimitType": "seven_day", "isUsingOverage": false, "unifiedWindows": {"seven_day": {"status": "allowed", "resetsAt": 1795190400, "utilization": 0.13}}, "overageDisabledReason": "out_of_credits"}}`
+
+// twoWindows names the five-hour and the weekly window at once.
+const twoWindows = `{"type":"rate_limit_event","session_id":"s2","rate_limit_info":{"status":"allowed_warning","unifiedWindows":{"five_hour":{"status":"allowed_warning","resetsAt":1795100000,"utilization":0.41},"seven_day":{"status":"allowed","resetsAt":1795190400,"utilization":0.135}}}}`
+
+// Claude Code's rate_limit_event is the provider's meter in band: every
+// window it names, its utilisation and its reset. Each window becomes one
+// reading of the run's credential, source inband — directly and through the
+// orchestrator's filing of a run's line.
+func TestInbandReadingFiled(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	agent := s.newSupportAgent("im-band")
+	seat := observability.CredentialRef{RuntimeID: uuid.New(), SecretKey: "claude_code_oauth_token", Kind: "subscription"}
+
+	if err := s.obs.AddInbandReadings(ctx, agent.OrgID, seat, json.RawMessage(event9802)); err != nil {
+		t.Fatal(err)
+	}
+	// Nothing for a run without a credential, nothing for another line.
+	if err := s.obs.AddInbandReadings(ctx, agent.OrgID, observability.CredentialRef{}, json.RawMessage(event9802)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.obs.AddInbandReadings(ctx, agent.OrgID, seat, json.RawMessage(resultLine)); err != nil {
+		t.Fatal(err)
+	}
+	type row struct {
+		window, status, key, src string
+		week, five               *float64
+		resets                   *time.Time
+	}
+	read := func(where string, args ...any) []row {
+		t.Helper()
+		rows, err := s.pool.Query(ctx, `SELECT window_kind, status, COALESCE(secret_key,''), source, week_percent, window_percent, resets_at
+			FROM usage_readings WHERE `+where+` ORDER BY window_kind`, args...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var out []row
+		for rows.Next() {
+			var r row
+			if err := rows.Scan(&r.window, &r.status, &r.key, &r.src, &r.week, &r.five, &r.resets); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, r)
+		}
+		return out
+	}
+	got := read(`org_id = $1 AND runtime_id = $2`, agent.OrgID, seat.RuntimeID)
+	if len(got) != 1 {
+		t.Fatalf("readings = %d, want one per window", len(got))
+	}
+	r := got[0]
+	if r.src != observability.SourceInband || r.window != "seven_day" || r.status != "allowed" || r.key != "claude_code_oauth_token" {
+		t.Errorf("reading: %+v", r)
+	}
+	if r.week == nil || *r.week != 13 || r.five != nil {
+		t.Errorf("percent = %v (five-hour %v), want 13 in week_percent", r.week, r.five)
+	}
+	if want := time.Date(2026, 11, 20, 16, 0, 0, 0, time.UTC); r.resets == nil || !r.resets.Equal(want) {
+		t.Errorf("resets_at = %v, want %v", r.resets, want)
+	}
+
+	// Through a run: the line is filed as a runtime event, and its windows as
+	// readings of the phase's credential.
+	runner, rt := s.meterSeatAgent(t, "im-band-lauf")
+	task, err := s.backlog.Create(ctx, s.orgID, runner.ID, "Lauf", "[mock:line "+twoWindows+"]\n[mock:result fertig]", "manual", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "task done", 20*time.Second, func() bool { return s.taskState(task.ID) == backlog.StateDone })
+	got = read(`runtime_id = $1 AND source = 'inband'`, rt)
+	if len(got) != 2 {
+		t.Fatalf("in-band readings of the run = %d, want five_hour + seven_day", len(got))
+	}
+	if got[0].window != "five_hour" || got[0].five == nil || *got[0].five != 41 || got[0].week != nil || got[0].status != "allowed_warning" {
+		t.Errorf("five-hour reading: %+v", got[0])
+	}
+	if got[1].window != "seven_day" || got[1].week == nil || *got[1].week != 13.5 || got[1].key != "mock_seat_token" {
+		t.Errorf("weekly reading: %+v", got[1])
+	}
+}
+
+// meterReading is one reading of a meterSteps case.
+type meterReading struct {
+	min    int // minutes after the window's start; negative: before it
+	pct    float64
+	stale  bool
+	resets time.Time
+	source string
+	rt     uuid.UUID // zero: the case's runtime
+	ord    int
+}
+
+// meterSteps against the real database, case by case. Every case is its own
+// secret; the steps of a case are summed per source, the way a reader of one
+// credential and one source would.
+func TestMeterStepsCases(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	agent := s.newSupportAgent("zaehler-faelle")
+	since := time.Now().Add(-5 * time.Hour).Truncate(time.Hour)
+	week1 := since.Add(48 * time.Hour)
+	week2 := week1.Add(7 * 24 * time.Hour)
+	other := uuid.New()
+
+	cases := []struct {
+		name     string
+		key      string
+		readings []meterReading
+		want     map[string]float64 // source → points
+	}{
+		{"a lagging reading adds nothing", "lag", []meterReading{
+			{min: -30, pct: 10}, {min: 10, pct: 9}, {min: 20, pct: 10}, {min: 30, pct: 11}},
+			map[string]float64{"usage_cmd": 1}},
+		{"a stale reading is dropped", "stale", []meterReading{
+			{min: -30, pct: 30}, {min: 10, pct: 20, stale: true}, {min: 20, pct: 31}},
+			map[string]float64{"usage_cmd": 1}},
+		{"two credentials keep their own baselines (a)", "cred-a", []meterReading{
+			{min: -120, pct: 10}, {min: 30, pct: 12}},
+			map[string]float64{"usage_cmd": 2}},
+		{"two credentials keep their own baselines (b)", "cred-b", []meterReading{
+			{min: -60, pct: 20}, {min: 40, pct: 25}},
+			map[string]float64{"usage_cmd": 5}},
+		{"a reset by resets_at counts the new week from 0", "reset", []meterReading{
+			{min: -30, pct: 95, resets: week1}, {min: 10, pct: 3, resets: week2}, {min: 20, pct: 5, resets: week2}},
+			map[string]float64{"usage_cmd": 3 + 2}},
+		{"a drop within the same week (resets_at unchanged) is a lag", "same-week", []meterReading{
+			{min: -30, pct: 30, resets: week1}, {min: 10, pct: 14, resets: week1}, {min: 20, pct: 31, resets: week1}},
+			map[string]float64{"usage_cmd": 1}},
+		{"in-band 12 after /usage 13: no reset, nothing extra", "sources", []meterReading{
+			{min: -30, pct: 10, resets: week1}, {min: 10, pct: 13, resets: week1},
+			{min: 20, pct: 12, resets: week1, source: "inband"}},
+			map[string]float64{"usage_cmd": 3, "inband": 0}},
+		{"the same secret on two runtimes is one meter", "shared", []meterReading{
+			{min: -30, pct: 10}, {min: 10, pct: 11, rt: other, ord: 2}, {min: 20, pct: 12}, {min: 30, pct: 12, rt: other, ord: 2}},
+			map[string]float64{"usage_cmd": 2}},
+		{"after a Reorder the history follows the secret", "reordered", []meterReading{
+			{min: -30, pct: 10, ord: 0}, {min: 30, pct: 14, ord: 1}},
+			map[string]float64{"usage_cmd": 4}},
+		{"12 -> 3 without reset times is still a new week, counted as 3", "collapse", []meterReading{
+			{min: -30, pct: 12}, {min: 30, pct: 3}},
+			map[string]float64{"usage_cmd": 3}},
+	}
+	for _, c := range cases {
+		rt := uuid.New()
+		for _, r := range c.readings {
+			cred := observability.CredentialRef{RuntimeID: rt, Ord: r.ord, SecretKey: c.key, Kind: "subscription"}
+			if r.rt != uuid.Nil {
+				cred.RuntimeID = r.rt
+			}
+			if err := s.obs.AddUsageReading(ctx, agent.OrgID, observability.MeterReading{Credential: cred,
+				Source: r.source, Supported: true, WindowPercent: -1, WeekPercent: r.pct, Stale: r.stale,
+				ResetsAt: r.resets, FetchedAt: since.Add(time.Duration(r.min) * time.Minute)}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	cells, err := s.obs.CostCellsFor(ctx, agent.OrgID, "hour", since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]map[string]float64{}
+	for _, st := range cells.Subscription {
+		if got[st.SecretKey] == nil {
+			got[st.SecretKey] = map[string]float64{}
+		}
+		got[st.SecretKey][st.Source] += st.Points
+	}
+	for _, c := range cases {
+		if fmt.Sprint(got[c.key]) != fmt.Sprint(c.want) {
+			t.Errorf("%s: points per source %v, want %v", c.name, got[c.key], c.want)
+		}
+	}
+
+	// The coverage says what the movement counts from and how sure it is.
+	cov := map[string]observability.MeterCoverage{}
+	for _, m := range cells.Meter {
+		cov[m.SecretKey+"/"+m.Source] = m
+	}
+	if l := cov["lag/usage_cmd"]; !l.BaselineBefore || l.BaselinePercent != 10 || l.Points != 1 ||
+		l.PointsLow != 0 || l.PointsHigh != 2 || l.LastPercent != 11 || l.Readings != 3 {
+		t.Errorf("coverage of the lagging case: %+v", l)
+	}
+	// The baseline's week ended before the window's first reading: the window
+	// spans one week, begun by a reset and counted from 0.
+	if r := cov["reset/usage_cmd"]; len(r.Segments) != 1 || !r.Segments[0].Reset || r.Segments[0].From != 0 ||
+		r.Segments[0].Points != 5 || r.Segments[0].To != 5 {
+		t.Errorf("segments of the reset case: %+v", r.Segments)
+	}
+	// A collapse right after the baseline: one week in the window, 3 points,
+	// known to ±1.
+	if c := cov["collapse/usage_cmd"]; len(c.Segments) != 1 || c.PointsLow != 2 || c.PointsHigh != 4 {
+		t.Errorf("coverage of the collapse case: %+v", c)
+	}
+	if b := cov["sources/inband"]; b.BaselineBefore || b.Readings != 1 {
+		t.Errorf("the in-band source has no reading before the window: %+v", b)
+	}
+	if st := cells.Subscription[0]; st.USD != nil || st.UnpricedPoints != st.Points {
+		t.Errorf("without a plan a step is unpriced: %+v", st)
+	}
+}
+
+// A plan price is dated: a change mid-window prices the points before it at
+// the old rate and the points after it at the new one, and PUT only ever
+// appends — the row before is closed, never rewritten.
+func TestCredentialPlanValidity(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	admin := login(t, s, "admin@test.local", "admin-passwort")
+	agent := s.newSupportAgent("plan-preis")
+	rt, err := s.runtimes.Create(ctx, s.orgID, "claude-code", "Claude", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ord := s.seat(t, rt.ID, daemon.CredSubscription, "claude_code_oauth_token", "sitz", "A")
+	path := fmt.Sprintf("/api/v1/runtime-instances/%s/credentials/%d/plan", rt.ID, ord)
+
+	since := time.Now().Add(-5 * time.Hour).Truncate(time.Hour)
+	change := since.Add(time.Hour)
+	put := func(amount float64, from time.Time, status int) map[string]any {
+		t.Helper()
+		return admin.expect(http.MethodPut, path, map[string]any{"plan_name": "Max", "amount": amount,
+			"currency": "USD", "period": "month", "tax_basis": "net", "valid_from": from}, status)
+	}
+	put(100, since.Add(-time.Hour), http.StatusOK)
+	put(200, change, http.StatusOK)
+	// Never overwritten: the same start again is a conflict, and nothing moved.
+	put(999, change, http.StatusConflict)
+	// What cannot be priced is refused.
+	admin.expect(http.MethodPut, path, map[string]any{"amount": 10, "period": "week"}, http.StatusBadRequest)
+	admin.expect(http.MethodPut, path, map[string]any{"period": "month"}, http.StatusBadRequest)
+	admin.expect(http.MethodPut, path, map[string]any{"amount": 10, "period": "month", "currency": "EUR"}, http.StatusBadRequest)
+	admin.expect(http.MethodPut, fmt.Sprintf("/api/v1/runtime-instances/%s/credentials/9/plan", rt.ID),
+		map[string]any{"amount": 10, "period": "month"}, http.StatusNotFound)
+	// A price entered after the fact for an earlier period ends where the
+	// next one begins.
+	put(50, since.Add(-3*time.Hour), http.StatusOK)
+
+	plans, err := s.runtimes.Plans(ctx, s.orgID, rt.ID, ord)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plans) != 3 {
+		t.Fatalf("plans = %d, want 3 rows", len(plans))
+	}
+	if plans[0].Amount != 200 || plans[0].ValidTo != nil || !plans[0].ValidFrom.Equal(change) {
+		t.Errorf("current plan: %+v", plans[0])
+	}
+	if plans[1].Amount != 100 || plans[1].ValidTo == nil || !plans[1].ValidTo.Equal(change) {
+		t.Errorf("the plan before the change was not closed at it: %+v", plans[1])
+	}
+	if plans[2].Amount != 50 || plans[2].ValidTo == nil || !plans[2].ValidTo.Equal(plans[1].ValidFrom) {
+		t.Errorf("the backdated plan: %+v", plans[2])
+	}
+	if got := admin.expectList(http.MethodGet, path, nil, http.StatusOK); len(got) != 3 {
+		t.Errorf("GET plan: %d rows", len(got))
+	}
+
+	// The meter: 10 before the window, 12 before the change, 15 after it.
+	cred := observability.CredentialRef{RuntimeID: rt.ID, Ord: ord, SecretKey: "claude_code_oauth_token", Kind: "subscription"}
+	for _, r := range []struct {
+		at  time.Time
+		pct float64
+	}{{since.Add(-30 * time.Minute), 10}, {since.Add(30 * time.Minute), 12}, {change.Add(30 * time.Minute), 15}} {
+		if err := s.obs.AddUsageReading(ctx, agent.OrgID, observability.MeterReading{Credential: cred,
+			Supported: true, WindowPercent: -1, WeekPercent: r.pct, FetchedAt: r.at}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cells, err := s.obs.CostCellsFor(ctx, agent.OrgID, "hour", since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	perPoint := func(monthly float64) float64 { return monthly * 12 / 52 / 100 }
+	byPeriod := map[time.Time]observability.MeterStep{}
+	for _, st := range cells.Subscription {
+		byPeriod[st.Period] = st
+	}
+	before, after := byPeriod[since.UTC()], byPeriod[change.UTC()]
+	if before.Points != 2 || before.USD == nil || math.Abs(*before.USD-2*perPoint(100)) > 1e-9 {
+		t.Errorf("before the change: %v points, %v USD — want 2 at the old rate (%v)", before.Points, before.USD, 2*perPoint(100))
+	}
+	if after.Points != 3 || after.USD == nil || math.Abs(*after.USD-3*perPoint(200)) > 1e-9 {
+		t.Errorf("after the change: %v points, %v USD — want 3 at the new rate (%v)", after.Points, after.USD, 3*perPoint(200))
+	}
+	if len(cells.Plans) != 2 {
+		t.Errorf("plans valid in the window = %d, want the two around the change", len(cells.Plans))
+	}
+	for _, p := range cells.Plans {
+		if math.Abs(p.USDPerPoint-perPoint(p.Amount)) > 1e-12 {
+			t.Errorf("usd_per_point of %v/month = %v", p.Amount, p.USDPerPoint)
+		}
+	}
+	got := admin.expect(http.MethodGet, "/api/v1/cost/cells?days=1&bucket=hour", nil, http.StatusOK)
+	for _, k := range []string{"subscription", "meter", "plans"} {
+		if _, ok := got[k].([]any); !ok {
+			t.Errorf("GET /cost/cells lacks %q", k)
+		}
 	}
 }

@@ -195,9 +195,12 @@ func TestMigration0144CostDeltas(t *testing.T) {
 		t.Errorf("started_at = %v, want %v", started, want)
 	}
 
-	// Down: everything as it was.
-	if err := db.MigrateDown(ctx, s.pool, migrations.FS); err != nil {
-		t.Fatal(err)
+	// Down: everything as it was. Up applied what came after 0144 too; down
+	// goes back past all of it.
+	for version() > 143 {
+		if err := db.MigrateDown(ctx, s.pool, migrations.FS); err != nil {
+			t.Fatal(err)
+		}
 	}
 	muAfter, ceAfter := snapshot()
 	if muAfter != muBefore {
@@ -205,6 +208,134 @@ func TestMigration0144CostDeltas(t *testing.T) {
 	}
 	if ceAfter != ceBefore {
 		t.Errorf("cost_entries after down differ:\n%s", diffLines(ceBefore, ceAfter))
+	}
+	if _, err := db.MigrateUp(ctx, s.pool, migrations.FS); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Migration 0145 keys the meter readings on the secret and files the in-band
+// readings the recordings still hold: one per window of every
+// rate_limit_event, on the credential the agent's phase was brokered. Running
+// it twice adds nothing; down gives the readings back as they were.
+func TestMigration0145MeterReadings(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := s.pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("%v\n%s", err, sql)
+		}
+	}
+	version := func() int {
+		var v int
+		if err := s.pool.QueryRow(ctx, `SELECT max(version) FROM schema_migrations`).Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	for version() > 144 {
+		if err := db.MigrateDown(ctx, s.pool, migrations.FS); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	agent := s.newSupportAgent("vor-0145")
+	stranger := s.newSupportAgent("ohne-sitz")
+	rt, err := s.runtimes.Create(ctx, s.orgID, "claude-code", "Claude", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ord := s.seat(t, rt.ID, daemon.CredSubscription, "claude_code_oauth_token", "sitz", "A")
+	base := time.Now().Add(-2 * time.Hour).UTC().Truncate(time.Second)
+	event := func(agentID uuid.UUID, kind, payload string, at time.Time) {
+		exec(`INSERT INTO recording_events (org_id, agent_id, kind, payload, created_at)
+			VALUES ($1,$2,$3,$4::jsonb,$5)`, s.orgID, agentID, kind, payload, at)
+	}
+	// The phase's credential, then two lines of the run; and a line of an
+	// agent no credential was ever brokered to.
+	event(agent.ID, "credential", fmt.Sprintf(`{"system":"anthropic","granted":true,"proactive":true,"runtime":%q,"ord":%d,"label":""}`, rt.ID, ord), base)
+	event(agent.ID, "runtime", event9802, base.Add(time.Minute))
+	event(agent.ID, "runtime", twoWindows, base.Add(2*time.Minute))
+	event(stranger.ID, "runtime", event9802, base.Add(3*time.Minute))
+	// The readings as 0142 kept them: one figure, one answer without.
+	exec(`INSERT INTO usage_readings (org_id, runtime_id, credential_ord, supported, window_percent, week_percent,
+		window_resets, week_resets, stale, fetched_at) VALUES
+		($1,$2,$3,true,4,9,'','Nov 20',false,$4), ($1,$2,$3,false,NULL,NULL,'','',false,$5)`,
+		s.orgID, rt.ID, ord, base.Add(-time.Hour), base.Add(5*time.Minute))
+
+	snapshot := func() string {
+		t.Helper()
+		var out string
+		if err := s.pool.QueryRow(ctx, `SELECT COALESCE(string_agg(concat_ws('|', id, runtime_id, credential_ord, supported,
+			window_percent, week_percent, window_resets, week_resets, stale, fetched_at), E'\n' ORDER BY id), '')
+			FROM usage_readings WHERE org_id = $1`, s.orgID).Scan(&out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	before := snapshot()
+
+	if _, err := db.MigrateUp(ctx, s.pool, migrations.FS); err != nil {
+		t.Fatal(err)
+	}
+	count := func() (all, inband int) {
+		t.Helper()
+		if err := s.pool.QueryRow(ctx, `SELECT count(*), count(*) FILTER (WHERE source = 'inband')
+			FROM usage_readings WHERE org_id = $1`, s.orgID).Scan(&all, &inband); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	all, inband := count()
+	if all != 5 || inband != 3 {
+		t.Fatalf("after 0145: %d readings, %d in band — want the 2 kept and 3 windows (the stranger's line has no credential)", all, inband)
+	}
+	var keyed int
+	_ = s.pool.QueryRow(ctx, `SELECT count(*) FROM usage_readings WHERE org_id = $1 AND secret_key = 'claude_code_oauth_token'
+		AND secret_slot = 0 AND credential_kind = 'subscription'`, s.orgID).Scan(&keyed)
+	if keyed != 5 {
+		t.Errorf("%d of 5 readings carry the secret", keyed)
+	}
+	var week float64
+	var resets time.Time
+	var status string
+	if err := s.pool.QueryRow(ctx, `SELECT week_percent, resets_at, status FROM usage_readings
+		WHERE org_id = $1 AND source = 'inband' AND fetched_at = $2`, s.orgID, base.Add(time.Minute)).Scan(&week, &resets, &status); err != nil {
+		t.Fatal(err)
+	}
+	if week != 13 || !resets.Equal(time.Date(2026, 11, 20, 16, 0, 0, 0, time.UTC)) || status != "allowed" {
+		t.Errorf("event 9802 filed as %v %% resetting %v (%s)", week, resets, status)
+	}
+	var five float64
+	if err := s.pool.QueryRow(ctx, `SELECT window_percent FROM usage_readings
+		WHERE org_id = $1 AND source = 'inband' AND window_kind = 'five_hour'`, s.orgID).Scan(&five); err != nil || five != 41 {
+		t.Errorf("the five-hour window: %v (%v)", five, err)
+	}
+
+	// The whole file once more: nothing is added twice.
+	up, err := migrations.FS.ReadFile("0145_meter_readings.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec(string(up))
+	if a, i := count(); a != all || i != inband {
+		t.Errorf("0145 run twice: %d readings (%d in band), want %d (%d)", a, i, all, inband)
+	}
+
+	// Down: the readings as they were, the plans gone.
+	for version() > 144 {
+		if err := db.MigrateDown(ctx, s.pool, migrations.FS); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if after := snapshot(); after != before {
+		t.Errorf("usage_readings after down differ:\n%s", diffLines(before, after))
+	}
+	var plans bool
+	_ = s.pool.QueryRow(ctx, `SELECT to_regclass('credential_plans') IS NOT NULL`).Scan(&plans)
+	if plans {
+		t.Error("credential_plans survived the down migration")
 	}
 	if _, err := db.MigrateUp(ctx, s.pool, migrations.FS); err != nil {
 		t.Fatal(err)

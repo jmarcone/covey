@@ -1364,7 +1364,11 @@ func (o *Orchestrator) runAgent(ctx context.Context, agentID uuid.UUID, s *sessi
 		// stopped, so the request went out and the answer fell into a closed
 		// room. Nothing failed, no figure ever arrived, and the interface
 		// simply showed none.
-		o.refreshUsage(ctx, link, cred.RuntimeID, cred.Ord)
+		//
+		// The question names the engine: the daemon gets its config only with
+		// the first task, and one that looked the engine up there answered
+		// "not supported" on every fresh wake.
+		o.refreshUsage(ctx, link, agent.Runtime, cred.RuntimeID, cred.Ord)
 	}
 
 	for ctx.Err() == nil {
@@ -2741,6 +2745,17 @@ func (o *Orchestrator) handleDaemonMessage(ctx context.Context, agent agents.Age
 				o.Log.Warn("filing a runtime line failed",
 					"agent", agent.Slug, "task", taskID, "err", err)
 			}
+			// A rate_limit_event is the provider's meter, in band: every
+			// window it names (five_hour, seven_day, …) with its utilisation
+			// and reset time, at no cost and without a rate limit of its own.
+			// Filed as readings of the phase's credential, beside the /usage
+			// answers and told apart from them by source (migration 0145).
+			if observability.IsRateLimitEvent(payload) {
+				if err := o.Obs.AddInbandReadings(ctx, agent.OrgID, s.credential(), payload); err != nil {
+					o.Log.Warn("filing an in-band meter reading failed",
+						"agent", agent.Slug, "task", taskID, "err", err)
+				}
+			}
 		} else {
 			_ = o.Obs.Record(ctx, agent.OrgID, agent.ID, &taskID, kind, payload)
 		}
@@ -2761,8 +2776,8 @@ func (o *Orchestrator) handleDaemonMessage(ctx context.Context, agent agents.Age
 		if err != nil {
 			return false, nil
 		}
-		o.noteUsage(rep, s.credRuntime, s.credOrd)
-		o.keepUsageReading(ctx, agent.OrgID, rep, s.credRuntime, s.credOrd)
+		o.noteUsage(rep, s.credential())
+		o.keepUsageReading(ctx, agent.OrgID, rep, s.credential())
 		return false, nil
 
 	case daemon.TypeRequestCredential:

@@ -43,6 +43,19 @@ type Mock struct{}
 
 func (Mock) Name() string { return "mock" }
 
+// MockUsageText is what the mock answers when asked for its utilisation: the
+// shape of Claude Code's `/usage`, so the whole path — request, the parser,
+// the report, the filing — runs as it does for the real engine. The mock
+// itself needs no credential and is never asked; an engine built on it that
+// declares one is (the integration tests do).
+const MockUsageText = `Current session: 4% used · resets 6:59pm (Europe/Berlin)
+Current week (all models): 13% used · resets Nov 20, 4:59pm (Europe/Berlin)`
+
+// Usage answers MockUsageText — no provider, no rate limit.
+func (Mock) Usage(ctx context.Context, env []string) (Usage, error) {
+	return ParseUsage(MockUsageText), nil
+}
+
 func init() {
 	RegisterRuntime(RuntimeDescriptor{
 		Name:        "mock",

@@ -690,6 +690,10 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/runtime-instances/{id}/credentials/order", s.rbac(securityRoles, s.handleReorderRuntimeCredentials))
 	mux.Handle("PATCH /api/v1/runtime-instances/{id}/credentials/{ord}", s.rbac(securityRoles, s.handlePatchRuntimeCredential))
 	mux.Handle("DELETE /api/v1/runtime-instances/{id}/credentials/{ord}", s.rbac(securityRoles, s.handleDeleteRuntimeCredential))
+	// The credential's dated plan price (0145): for measuring what the
+	// subscription meter's points cost, never for a budget.
+	mux.Handle("GET /api/v1/runtime-instances/{id}/credentials/{ord}/plan", s.rbac(securityRoles, s.handleGetCredentialPlan))
+	mux.Handle("PUT /api/v1/runtime-instances/{id}/credentials/{ord}/plan", s.rbac(securityRoles, s.handlePutCredentialPlan))
 	mux.Handle("POST /api/v1/agents/{id}/runtime-instance", s.agentScoped(manage, s.handleAssignRuntime))
 	mux.Handle("GET /api/v1/marketplace", s.rbac(anyRole, s.handleMarketplace))
 	mux.Handle("POST /api/v1/marketplace/{name}/install", s.rbac(securityRoles, s.handleMarketplaceInstall))
@@ -717,6 +721,7 @@ func (s *Server) Handler() http.Handler {
 	// provider's subscription meter next to the booked list-price cost.
 	mux.Handle("GET /api/v1/cost/models", s.rbac(anyRole, s.handleModelUsage))
 	mux.Handle("GET /api/v1/cost/subscription", s.rbac(anyRole, s.handleUsageReadings))
+	mux.Handle("GET /api/v1/cost/usage-readings", s.rbac(anyRole, s.handleUsageReadings))
 	mux.Handle("GET /api/v1/cost/cells", s.rbac(anyRole, s.handleCostCells))
 	mux.Handle("GET /api/v1/agents/{id}/cost/runs", s.agentScoped(anyRole, s.handleAgentRunCosts))
 	// The price list: delivery next to the cost, same scope, same period

@@ -1,8 +1,10 @@
 package orchestrator
 
 import (
+	"bytes"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 
 	"covey/internal/agents"
 	"covey/internal/daemon"
+	"covey/internal/observability"
 )
 
 // The engine's own utilisation figure is what decides whether a seat is skipped
@@ -18,29 +21,62 @@ import (
 // remembered without an expiry, because that property does not change between
 // two runs.
 func TestUsageCacheExpiresFiguresButNotUnsupported(t *testing.T) {
+	now := time.Date(2026, 11, 18, 9, 0, 0, 0, time.UTC)
 	c := newUsageCache()
+	c.now = func() time.Time { return now }
 	k := usageKey{uuid.New(), 0}
 
 	if _, ok := c.get(k); ok {
 		t.Error("an empty cache answered")
 	}
 
-	c.put(k, usageEntry{usage: daemon.Usage{WindowPercent: 40}, at: time.Now()})
+	c.put(k, usageEntry{usage: daemon.Usage{WindowPercent: 40}, at: now})
 	if e, fresh := c.get(k); !fresh || e.usage.WindowPercent != 40 {
 		t.Errorf("a fresh figure = %+v, fresh=%v", e, fresh)
 	}
 
 	// Older than the TTL: remembered, but no longer something to act on.
-	c.put(k, usageEntry{usage: daemon.Usage{WindowPercent: 40}, at: time.Now().Add(-2 * usageCacheTTL)})
+	c.put(k, usageEntry{usage: daemon.Usage{WindowPercent: 40}, at: now.Add(-2 * usageCacheTTL)})
 	if _, fresh := c.get(k); fresh {
 		t.Error("a figure past its TTL still counts as fresh")
 	}
 
 	// "This engine cannot say" has no expiry.
-	c.put(k, usageEntry{unsupported: true, at: time.Now().Add(-100 * usageCacheTTL)})
+	c.put(k, usageEntry{unsupported: true, reason: daemon.UsageNoReporter, at: now.Add(-100 * usageFailureTTL)})
 	e, fresh := c.get(k)
 	if !fresh || !e.unsupported {
 		t.Errorf("an engine that cannot answer was forgotten: %+v, %v", e, fresh)
+	}
+}
+
+// Every other answer without a figure is asked about again after the failure
+// TTL: one failed question — a binary that did not start, a daemon without its
+// config yet — must not silence the meter for the life of the process. That
+// is what the first version did.
+func TestUsageCacheForgetsAFailedQuestion(t *testing.T) {
+	now := time.Date(2026, 11, 18, 9, 0, 0, 0, time.UTC)
+	c := newUsageCache()
+	c.now = func() time.Time { return now }
+	for _, reason := range []string{daemon.UsageExecFailed, daemon.UsageUnparsed, daemon.UsageNoRuntimeConfig, ""} {
+		k := usageKey{uuid.New(), 0}
+		c.put(k, usageEntry{unsupported: true, reason: reason})
+		if _, fresh := c.get(k); !fresh {
+			t.Errorf("%q: a failure just filed is not remembered", reason)
+		}
+		now = now.Add(usageFailureTTL - time.Second)
+		if _, fresh := c.get(k); !fresh {
+			t.Errorf("%q: forgotten before the TTL", reason)
+		}
+		now = now.Add(2 * time.Second)
+		if _, fresh := c.get(k); fresh {
+			t.Errorf("%q: still remembered after the TTL — the meter would never be asked again", reason)
+		}
+	}
+	k := usageKey{uuid.New(), 0}
+	c.put(k, usageEntry{unsupported: true, reason: daemon.UsageNoReporter})
+	now = now.Add(1000 * usageFailureTTL)
+	if _, fresh := c.get(k); !fresh {
+		t.Error("no_reporter is a property of the engine and stays remembered")
 	}
 }
 
@@ -107,27 +143,48 @@ func TestReportedUtilisationWithholdsStaleAndUnknown(t *testing.T) {
 func TestNoteUsageFilesUnsupportedAsUnsupported(t *testing.T) {
 	o := &Orchestrator{Options: Options{Log: slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))}, usage: newUsageCache()}
 	rt := uuid.New()
+	cred := func(ord int) observability.CredentialRef {
+		return observability.CredentialRef{RuntimeID: rt, Ord: ord, SecretKey: "claude_code_oauth_token", SecretSlot: ord}
+	}
 
-	o.noteUsage(daemon.UsageReport{Supported: false}, rt, 0)
+	o.noteUsage(daemon.UsageReport{Supported: false, Reason: daemon.UsageExecFailed}, cred(0))
 	e, fresh := o.usage.get(usageKey{rt, 0})
-	if !fresh || !e.unsupported {
+	if !fresh || !e.unsupported || e.reason != daemon.UsageExecFailed {
 		t.Errorf("an unsupported answer was filed as %+v", e)
 	}
 	if _, ok := o.reportedUtilisation(rt, 0); ok {
 		t.Error("an engine that cannot answer was read as 0 %")
 	}
 
-	o.noteUsage(daemon.UsageReport{Supported: true, Usage: daemon.Usage{WindowPercent: 12}}, rt, 1)
+	o.noteUsage(daemon.UsageReport{Supported: true, Usage: daemon.Usage{WindowPercent: 12}}, cred(1))
 	if pct, ok := o.reportedUtilisation(rt, 1); !ok || pct != 12 {
 		t.Errorf("reportedUtilisation = %v, %v", pct, ok)
 	}
 
 	// A runtime nobody named, or a negative slot, is filed nowhere rather than
 	// under the zero uuid.
-	o.noteUsage(daemon.UsageReport{Supported: true}, uuid.Nil, 0)
-	o.noteUsage(daemon.UsageReport{Supported: true}, rt, -1)
+	o.noteUsage(daemon.UsageReport{Supported: true}, observability.CredentialRef{})
+	o.noteUsage(daemon.UsageReport{Supported: true}, observability.CredentialRef{RuntimeID: rt, Ord: -1})
 	if _, ok := o.usage.get(usageKey{uuid.Nil, 0}); ok {
 		t.Error("a figure was filed under the zero uuid")
+	}
+}
+
+// An answer without a figure is said once per credential and reason, not on
+// every wake: loud enough to be found, quiet enough to be read.
+func TestNoteUsageWarnsOncePerCredentialAndReason(t *testing.T) {
+	var buf bytes.Buffer
+	o := &Orchestrator{Options: Options{Log: slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))}, usage: newUsageCache()}
+	cred := observability.CredentialRef{RuntimeID: uuid.New(), SecretKey: "claude_code_oauth_token"}
+	for range 3 {
+		o.noteUsage(daemon.UsageReport{Reason: daemon.UsageExecFailed, Error: "exit status 1: sk-ant-oat-geheim"}, cred)
+	}
+	o.noteUsage(daemon.UsageReport{Reason: daemon.UsageUnparsed}, cred)
+	if n := strings.Count(buf.String(), "utilisation not reported"); n != 2 {
+		t.Errorf("%d warnings, want one per reason: %s", n, buf.String())
+	}
+	if strings.Contains(buf.String(), "geheim") {
+		t.Error("the daemon's error text reached the log")
 	}
 }
 

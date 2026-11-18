@@ -9,7 +9,10 @@ import (
 
 // handleCostCells: the data behind the combinable cost chart — per bucket and
 // agent the reported cost (booked, the engine's figure) and the measured cost
-// (raw tokens priced per type with the list). The UI filters and splits it.
+// (raw tokens priced per type with the list); per credential and meter source
+// the subscription meter's movement, priced by the plan valid when it was
+// read, its coverage, and the plan rows of the window. The UI filters and
+// splits it; nothing is summed across credentials here.
 // ?days= and ?bucket= as on the other cost endpoints.
 func (s *Server) handleCostCells(w http.ResponseWriter, r *http.Request) {
 	p := principalFrom(r)
@@ -48,8 +51,10 @@ func (s *Server) handleModelUsage(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUsageReadings: the provider's utilisation readings for the
-// organisation's credentials over the window, each with the list-price cost
-// booked up to that moment — the meter read against the bill it would be.
+// organisation's credentials over the window — both sources (usage_cmd,
+// inband), every window, the unsupported ones with their reason — each with
+// the measured list price on its own credential up to that moment.
+// Served as /cost/usage-readings and, for the existing page, /cost/subscription.
 func (s *Server) handleUsageReadings(w http.ResponseWriter, r *http.Request) {
 	p := principalFrom(r)
 	_, since := costWindow(r)

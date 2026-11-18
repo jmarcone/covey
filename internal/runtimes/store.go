@@ -3,7 +3,9 @@ package runtimes
 import (
 	"context"
 	"errors"
+	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -474,4 +476,201 @@ func (s *Store) depositedSlots(ctx context.Context, orgID uuid.UUID, key string)
 		out = append(out, slot)
 	}
 	return out, rows.Err()
+}
+
+// --- Plan prices (migration 0145) ---
+//
+// What a credential costs, dated. It exists for MEASUREMENT: the subscription
+// meter's points priced at the plan's weekly share, next to the list price of
+// the same work. Nothing steers by it — limits and budgets stay on the
+// list-price figure (spec/07 D13, spec/18).
+//
+// Kept on the secret value, not on the credential's place: a Reorder moves
+// places, and the same value hung on two runtimes is one contract. A change
+// adds a row and closes the one before; no row is ever overwritten, so a past
+// period stays priced at what it cost then.
+
+// Plan is one dated price of a credential.
+type Plan struct {
+	// RuntimeID/Ord: where the plan was entered (nil once that is gone).
+	RuntimeID  *uuid.UUID `json:"runtime_id"`
+	Ord        *int       `json:"ord"`
+	SecretKey  string     `json:"secret_key"`
+	SecretSlot int        `json:"secret_slot"`
+	PlanName   string     `json:"plan_name"`
+	// Amount per Period (month | year) in Currency, as invoiced: net or gross
+	// of tax (TaxBasis).
+	Amount   float64 `json:"amount"`
+	Currency string  `json:"currency"`
+	Period   string  `json:"period"`
+	TaxBasis string  `json:"tax_basis"`
+	// FXToUSD is the rate the amount is converted at (1 for USD), FXDate the
+	// day that rate is from (YYYY-MM-DD).
+	FXToUSD float64 `json:"fx_to_usd"`
+	FXDate  *string `json:"fx_date"`
+	// Valid over [ValidFrom, ValidTo); ValidTo nil while it is the current one.
+	ValidFrom time.Time  `json:"valid_from"`
+	ValidTo   *time.Time `json:"valid_to"`
+}
+
+// ErrPlanExists: a plan of this credential already starts at that moment.
+// Never overwritten — a correction is a new row from a later moment.
+var ErrPlanExists = errors.New("a plan of this credential already starts at that moment")
+
+// InvalidPlan names a field a plan cannot carry.
+type InvalidPlan struct{ Reason string }
+
+func (e InvalidPlan) Error() string { return "invalid plan: " + e.Reason }
+
+// validate normalises a plan and refuses what cannot be priced.
+func (p *Plan) validate() error {
+	p.Currency = strings.ToUpper(strings.TrimSpace(p.Currency))
+	if p.Currency == "" {
+		p.Currency = "USD"
+	}
+	if len(p.Currency) != 3 || strings.Trim(p.Currency, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") != "" {
+		return InvalidPlan{"currency must be a three-letter code"}
+	}
+	if p.Amount < 0 || math.IsNaN(p.Amount) || math.IsInf(p.Amount, 0) || p.Amount >= 1e10 {
+		return InvalidPlan{"amount must be a non-negative number"}
+	}
+	if p.Period != "month" && p.Period != "year" {
+		return InvalidPlan{`period must be "month" or "year"`}
+	}
+	if p.TaxBasis == "" {
+		p.TaxBasis = "net"
+	}
+	if p.TaxBasis != "net" && p.TaxBasis != "gross" {
+		return InvalidPlan{`tax_basis must be "net" or "gross"`}
+	}
+	if p.FXToUSD == 0 && p.Currency == "USD" {
+		p.FXToUSD = 1
+	}
+	if !(p.FXToUSD > 0) || p.FXToUSD >= 1e6 {
+		return InvalidPlan{"fx_to_usd must be a positive rate"}
+	}
+	if p.Currency == "USD" && p.FXToUSD != 1 {
+		return InvalidPlan{"a USD plan converts at 1"}
+	}
+	if p.FXDate != nil {
+		if *p.FXDate == "" {
+			p.FXDate = nil
+		} else if _, err := time.Parse("2006-01-02", *p.FXDate); err != nil {
+			return InvalidPlan{"fx_date must be YYYY-MM-DD"}
+		}
+	}
+	p.PlanName = strings.TrimSpace(p.PlanName)
+	return nil
+}
+
+// rowQuerier is what credentialSecret needs: the pool or a transaction.
+type rowQuerier interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+// credentialSecret is the secret value behind a credential's place, within
+// the organisation.
+func credentialSecret(ctx context.Context, q rowQuerier, orgID, runtimeID uuid.UUID, ord int) (string, int, error) {
+	var key string
+	var slot int
+	err := q.QueryRow(ctx, `SELECT rc.secret_key, rc.secret_slot FROM runtime_credentials rc
+		JOIN runtimes r ON r.id = rc.runtime_id
+		WHERE r.org_id = $1 AND rc.runtime_id = $2 AND rc.ord = $3`, orgID, runtimeID, ord).Scan(&key, &slot)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", 0, ErrNotFound
+	}
+	return key, slot, err
+}
+
+// Plans returns the price history of the credential at a place, newest first.
+// It follows the secret value: a plan entered before a Reorder is still there.
+func (s *Store) Plans(ctx context.Context, orgID, runtimeID uuid.UUID, ord int) ([]Plan, error) {
+	key, slot, err := credentialSecret(ctx, s.pool, orgID, runtimeID, ord)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, `SELECT runtime_id, ord, secret_key, secret_slot, plan_name, amount::float8,
+		currency, period, tax_basis, fx_to_usd::float8, to_char(fx_date, 'YYYY-MM-DD'), valid_from, valid_to
+		FROM credential_plans WHERE org_id = $1 AND secret_key = $2 AND secret_slot = $3
+		ORDER BY valid_from DESC`, orgID, key, slot)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Plan{}
+	for rows.Next() {
+		var p Plan
+		var o *int16
+		if err := rows.Scan(&p.RuntimeID, &o, &p.SecretKey, &p.SecretSlot, &p.PlanName, &p.Amount,
+			&p.Currency, &p.Period, &p.TaxBasis, &p.FXToUSD, &p.FXDate, &p.ValidFrom, &p.ValidTo); err != nil {
+			return nil, err
+		}
+		if o != nil {
+			v := int(*o)
+			p.Ord = &v
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// SetPlan appends a price to the credential at a place, valid from
+// p.ValidFrom (now when zero). The plan valid at that moment is closed there;
+// one that starts later bounds the new one. Nothing is overwritten: a plan
+// starting at the same moment is ErrPlanExists.
+func (s *Store) SetPlan(ctx context.Context, orgID, runtimeID uuid.UUID, ord int, p Plan) (Plan, error) {
+	if err := p.validate(); err != nil {
+		return Plan{}, err
+	}
+	if p.ValidFrom.IsZero() {
+		p.ValidFrom = time.Now()
+	}
+	p.ValidFrom = p.ValidFrom.UTC().Truncate(time.Microsecond)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Plan{}, err
+	}
+	defer tx.Rollback(ctx)
+	key, slot, err := credentialSecret(ctx, tx, orgID, runtimeID, ord)
+	if err != nil {
+		return Plan{}, err
+	}
+	// One writer per credential at a time: the close and the insert belong
+	// together.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1::uuid::text || '/' || $2::text || '#' || $3::int::text))`,
+		orgID, key, slot); err != nil {
+		return Plan{}, err
+	}
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM credential_plans
+		WHERE org_id = $1 AND secret_key = $2 AND secret_slot = $3 AND valid_from = $4)`,
+		orgID, key, slot, p.ValidFrom).Scan(&exists); err != nil {
+		return Plan{}, err
+	}
+	if exists {
+		return Plan{}, ErrPlanExists
+	}
+	// A plan that starts later bounds this one (a price entered after the
+	// fact for a period that another already followed).
+	if err := tx.QueryRow(ctx, `SELECT min(valid_from) FROM credential_plans
+		WHERE org_id = $1 AND secret_key = $2 AND secret_slot = $3 AND valid_from > $4`,
+		orgID, key, slot, p.ValidFrom).Scan(&p.ValidTo); err != nil {
+		return Plan{}, err
+	}
+	// The plan valid at that moment ends there.
+	if _, err := tx.Exec(ctx, `UPDATE credential_plans SET valid_to = $4
+		WHERE org_id = $1 AND secret_key = $2 AND secret_slot = $3
+		  AND valid_from < $4 AND (valid_to IS NULL OR valid_to > $4)`,
+		orgID, key, slot, p.ValidFrom); err != nil {
+		return Plan{}, err
+	}
+	p.RuntimeID, p.Ord, p.SecretKey, p.SecretSlot = &runtimeID, &ord, key, slot
+	if _, err := tx.Exec(ctx, `INSERT INTO credential_plans (org_id, runtime_id, ord, secret_key, secret_slot,
+		plan_name, amount, currency, period, tax_basis, fx_to_usd, fx_date, valid_from, valid_to)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::date,$13,$14)`,
+		orgID, runtimeID, ord, key, slot, p.PlanName, p.Amount, p.Currency, p.Period, p.TaxBasis,
+		p.FXToUSD, p.FXDate, p.ValidFrom, p.ValidTo); err != nil {
+		return Plan{}, err
+	}
+	return p, tx.Commit(ctx)
 }

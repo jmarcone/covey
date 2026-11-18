@@ -69,16 +69,21 @@ type CostCells struct {
 	Agents  []CellAgent `json:"agents"`
 	Types   []string    `json:"types"`
 	Cells   []CostCell  `json:"cells"`
-	// Subscription is how far the provider's weekly meter moved per period
-	// (percentage points), the third figure beside the two list prices: what
-	// the work really used of a flat-rate seat. Account-wide, so not per agent.
+	// Subscription is how far the provider's weekly meter moved per period,
+	// per credential and source (percentage points): the third figure beside
+	// the two list prices, what the work really used of a flat-rate seat.
+	// The meter is account-wide — anything else on the account moves it too —
+	// so it is per credential, never per agent. Nothing is added up across
+	// credentials or sources here: two sources read the same meter, and two
+	// credentials may be seats of one account.
 	Subscription []MeterStep `json:"subscription"`
-}
-
-// MeterStep is the weekly meter's movement within one period.
-type MeterStep struct {
-	Period time.Time `json:"period"`
-	Points float64   `json:"points"`
+	// Meter says how well each credential's meter was read over the window,
+	// per source: the reading the movement counts from, the last one, the
+	// weeks it spans.
+	Meter []MeterCoverage `json:"meter"`
+	// Plans are the dated plan prices valid in the window, per credential
+	// (migration 0145). The steps are priced with them.
+	Plans []CredentialPlan `json:"plans"`
 }
 
 // CostCellsFor builds the data set for the organisation since `since`.
@@ -261,11 +266,16 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 	// Costliest first: the palette and the bottom of every bar follow the ranking.
 	sort.Slice(out.Agents, func(i, j int) bool { return out.Agents[i].Reported > out.Agents[j].Reported })
 
-	steps, err := s.meterSteps(ctx, orgID, bucket, since)
+	plans, err := s.CredentialPlans(ctx, orgID, since)
 	if err != nil {
 		return out, err
 	}
-	out.Subscription = steps
+	out.Plans = plans
+	steps, coverage, err := s.meterSteps(ctx, orgID, bucket, since, plans)
+	if err != nil {
+		return out, err
+	}
+	out.Subscription, out.Meter = steps, coverage
 	return out, nil
 }
 
@@ -277,51 +287,335 @@ func credOrder(c CostCell) string {
 	return fmt.Sprintf("%s\x00%06d", *c.SecretKey, *c.SecretSlot)
 }
 
-// meterSteps turns the weekly readings into movement per period. Each reading
-// is compared with the one before it (the last one before the window included);
-// a drop means the week was reset, and then the new value is the movement.
-// With several credentials the steps add up, as their seats would.
-func (s *Store) meterSteps(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time) ([]MeterStep, error) {
-	rows, err := s.pool.Query(ctx, `SELECT runtime_id, credential_ord, date_trunc($2, fetched_at, 'UTC'), week_percent
-		FROM usage_readings
-		WHERE org_id = $1 AND supported AND week_percent IS NOT NULL
-		  AND fetched_at >= COALESCE((SELECT max(fetched_at) FROM usage_readings
-		      WHERE org_id = $1 AND supported AND week_percent IS NOT NULL AND fetched_at < $3), $3)
-		ORDER BY runtime_id, credential_ord, fetched_at`, orgID, bucket, since)
+// MeterStep is how far one credential's meter moved within one period, as
+// read by one source. Steps of different credentials or sources are never
+// added up here: the reader decides what to compare.
+type MeterStep struct {
+	Period         time.Time `json:"period"`
+	SecretKey      string    `json:"secret_key"`
+	SecretSlot     int       `json:"secret_slot"`
+	CredentialKind string    `json:"credential_kind"`
+	// Source: usage_cmd | inband | manual. WindowKind: the provider's window.
+	Source     string  `json:"source"`
+	WindowKind string  `json:"window_kind"`
+	Points     float64 `json:"points"`
+	// Readings in the period, and how many of them began a new week.
+	Readings int `json:"readings"`
+	Resets   int `json:"resets"`
+	// LongestGapSecs is the longest time between a reading in the period and
+	// the one before it: how coarsely the movement was observed.
+	LongestGapSecs float64 `json:"longest_gap_secs"`
+	// USD is the points priced at the plan valid when each was read (the
+	// plan's weekly price over 100 points). Nil when no plan covers any of
+	// them, and for every window but the weekly all-models one. Points read
+	// while no plan was valid are UnpricedPoints and not in USD.
+	USD            *float64 `json:"usd"`
+	UnpricedPoints float64  `json:"unpriced_points"`
+}
+
+// MeterCoverage is how well one credential's meter was read over the window,
+// by one source.
+type MeterCoverage struct {
+	SecretKey      string `json:"secret_key"`
+	SecretSlot     int    `json:"secret_slot"`
+	CredentialKind string `json:"credential_kind"`
+	Source         string `json:"source"`
+	WindowKind     string `json:"window_kind"`
+	// BaselineAt/BaselinePercent: the reading the window's movement counts
+	// from — the last one before the window (up to eight days back), else the
+	// first one in it. BaselineBefore says which: without a reading before
+	// the window, whatever moved before the first one is not in the figure.
+	BaselineAt      time.Time `json:"baseline_at"`
+	BaselinePercent float64   `json:"baseline_percent"`
+	BaselineBefore  bool      `json:"baseline_before_window"`
+	LastAt          time.Time `json:"last_at"`
+	LastPercent     float64   `json:"last_percent"`
+	// Readings in the window.
+	Readings int `json:"readings"`
+	// Points is the movement over the window. The meter shows whole
+	// percents, so each week segment's movement is known to ±1 point:
+	// PointsLow/PointsHigh are the bounds that leaves.
+	Points         float64 `json:"points"`
+	PointsLow      float64 `json:"points_low"`
+	PointsHigh     float64 `json:"points_high"`
+	LongestGapSecs float64 `json:"longest_gap_secs"`
+	// Segments are the weeks the window spans: a new one at every reset.
+	Segments []MeterSegment `json:"segments"`
+}
+
+// MeterSegment is one week of a credential's meter within the window.
+type MeterSegment struct {
+	StartAt time.Time `json:"start_at"`
+	EndAt   time.Time `json:"end_at"`
+	// From is what the movement counts from: the baseline's level for the
+	// first segment, 0 for a week that began with a reset. To is the highest
+	// reading of the week up to its last one in the window.
+	From   float64 `json:"from_percent"`
+	To     float64 `json:"to_percent"`
+	Reset  bool    `json:"reset"`
+	Points float64 `json:"points"`
+}
+
+// CredentialPlan is a credential's plan price, valid over [ValidFrom,
+// ValidTo) (migration 0145). For measurement only: it prices the meter's
+// points, it is never a budget.
+type CredentialPlan struct {
+	RuntimeID  *uuid.UUID `json:"runtime_id"`
+	Ord        *int       `json:"ord"`
+	SecretKey  string     `json:"secret_key"`
+	SecretSlot int        `json:"secret_slot"`
+	PlanName   string     `json:"plan_name"`
+	Amount     float64    `json:"amount"`
+	Currency   string     `json:"currency"`
+	Period     string     `json:"period"`
+	TaxBasis   string     `json:"tax_basis"`
+	FXToUSD    float64    `json:"fx_to_usd"`
+	FXDate     *string    `json:"fx_date"`
+	ValidFrom  time.Time  `json:"valid_from"`
+	ValidTo    *time.Time `json:"valid_to"`
+	// WeeklyUSD is the plan's price per week in USD (a month is 52/12
+	// weeks); USDPerPoint is one point of the weekly meter — what the seat
+	// costs per percent of the week's allowance, IF the allowance is used up.
+	// At half the allowance used, a used point costs twice that.
+	WeeklyUSD   float64 `json:"weekly_usd"`
+	USDPerPoint float64 `json:"usd_per_point"`
+}
+
+// WeeklyUSD spreads a plan's price over the weeks of its period.
+func WeeklyUSD(amount, fxToUSD float64, period string) float64 {
+	usd := amount * fxToUSD
+	if period == "year" {
+		return usd / 52
+	}
+	return usd * 12 / 52
+}
+
+// CredentialPlans returns the organisation's plan rows valid at any point
+// since `since`, per credential in order of validity.
+func (s *Store) CredentialPlans(ctx context.Context, orgID uuid.UUID, since time.Time) ([]CredentialPlan, error) {
+	rows, err := s.pool.Query(ctx, `SELECT runtime_id, ord, secret_key, secret_slot, plan_name, amount::float8,
+		currency, period, tax_basis, fx_to_usd::float8, to_char(fx_date, 'YYYY-MM-DD'), valid_from, valid_to
+		FROM credential_plans
+		WHERE org_id = $1 AND (valid_to IS NULL OR valid_to > $2)
+		ORDER BY secret_key, secret_slot, valid_from`, orgID, since)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	type cred struct {
-		rt  uuid.UUID
-		ord int
-	}
-	last := map[cred]float64{}
-	seen := map[cred]bool{}
-	byPeriod := map[time.Time]float64{}
+	out := []CredentialPlan{}
 	for rows.Next() {
-		var c cred
-		var p time.Time
-		var pct float64
-		if err := rows.Scan(&c.rt, &c.ord, &p, &pct); err != nil {
+		var p CredentialPlan
+		var ord *int16
+		if err := rows.Scan(&p.RuntimeID, &ord, &p.SecretKey, &p.SecretSlot, &p.PlanName, &p.Amount,
+			&p.Currency, &p.Period, &p.TaxBasis, &p.FXToUSD, &p.FXDate, &p.ValidFrom, &p.ValidTo); err != nil {
 			return nil, err
 		}
-		if seen[c] {
-			d := pct - last[c]
-			if d < 0 {
-				d = pct // the week was reset
-			}
-			byPeriod[p.UTC()] += d
+		if ord != nil {
+			o := int(*ord)
+			p.Ord = &o
 		}
-		seen[c], last[c] = true, pct
+		p.WeeklyUSD = WeeklyUSD(p.Amount, p.FXToUSD, p.Period)
+		p.USDPerPoint = p.WeeklyUSD / 100
+		out = append(out, p)
 	}
+	return out, rows.Err()
+}
+
+// planAt is the plan of a credential valid at t.
+func planAt(plans []CredentialPlan, key string, slot int, t time.Time) (CredentialPlan, bool) {
+	for _, p := range plans {
+		if p.SecretKey == key && p.SecretSlot == slot && !t.Before(p.ValidFrom) && (p.ValidTo == nil || t.Before(*p.ValidTo)) {
+			return p, true
+		}
+	}
+	return CredentialPlan{}, false
+}
+
+// meterQuery computes each reading's step, per credential (by its secret),
+// source and window, over the window and the eight days before it, in one
+// pass of window functions:
+//
+//   - stale and unsupported readings are dropped: an hour-old figure read as
+//     current turns a lag into movement;
+//   - a reading begins a new week when its reset time moved forward. Where a
+//     reading carries no reset time, when the previous one's reset has
+//     passed; and only where the reset times say nothing, when it collapsed
+//     (below half the previous value AND at least 5 points lower) — a small
+//     drop is a lagging reading, not a new week;
+//   - within a week the meter only rises: a step is the rise of the running
+//     maximum, so a lagging reading adds 0 instead of counting its catch-up
+//     a second time;
+//   - the first reading of a new week counts in full (the meter started at
+//     0); the first reading of a credential is its baseline and counts 0.
+//
+// Partitioned by the secret, not the runtime: the same value on two runtimes
+// is one meter, and its history survives a Reorder.
+const meterQuery = `
+WITH r AS (
+	SELECT id, secret_key, secret_slot, source, window_kind, credential_kind, fetched_at,
+		week_percent AS pct, resets_at
+	FROM usage_readings
+	WHERE org_id = $1 AND supported AND NOT stale AND week_percent IS NOT NULL AND secret_key IS NOT NULL
+	  AND fetched_at >= $3::timestamptz - interval '8 days'),
+l AS (
+	SELECT r.*, LAG(pct) OVER w AS prev_pct, LAG(resets_at) OVER w AS prev_resets, LAG(fetched_at) OVER w AS prev_at
+	FROM r
+	WINDOW w AS (PARTITION BY secret_key, secret_slot, source, window_kind ORDER BY fetched_at, id)),
+f AS (
+	SELECT l.*, CASE
+		WHEN prev_pct IS NULL THEN 0
+		WHEN resets_at IS NOT NULL AND prev_resets IS NOT NULL THEN
+			CASE WHEN resets_at > prev_resets + interval '1 hour' THEN 1 ELSE 0 END
+		WHEN prev_resets IS NOT NULL AND prev_resets <= fetched_at THEN 1
+		WHEN pct < prev_pct / 2 AND pct <= prev_pct - 5 THEN 1
+		ELSE 0 END AS reset
+	FROM l),
+g AS (
+	SELECT f.*, SUM(reset) OVER (PARTITION BY secret_key, secret_slot, source, window_kind
+		ORDER BY fetched_at, id) AS week
+	FROM f),
+m AS (
+	SELECT g.*, MAX(pct) OVER (PARTITION BY secret_key, secret_slot, source, window_kind, week
+		ORDER BY fetched_at, id) AS top
+	FROM g)
+SELECT secret_key, secret_slot, MAX(credential_kind) OVER (PARTITION BY secret_key, secret_slot),
+	source, window_kind, fetched_at, date_trunc($2, fetched_at, 'UTC'),
+	pct, top, week::bigint, reset = 1,
+	CASE WHEN prev_pct IS NULL THEN 0
+	     WHEN reset = 1 THEN top
+	     ELSE top - LAG(top) OVER (PARTITION BY secret_key, secret_slot, source, window_kind ORDER BY fetched_at, id) END,
+	COALESCE(EXTRACT(EPOCH FROM fetched_at - prev_at)::float8, 0)
+FROM m
+ORDER BY secret_key, secret_slot, source, window_kind, fetched_at, id`
+
+// meterRow is one reading with its step.
+type meterRow struct {
+	key            string
+	slot           int
+	kind           string
+	source, window string
+	at, period     time.Time
+	pct, top       float64
+	week           int64
+	reset          bool
+	points, gap    float64
+}
+
+// meterSteps turns the readings into movement per period, per credential and
+// source, and says how well each was covered. Points of the weekly all-models
+// window are priced with the plan valid when they were read.
+func (s *Store) meterSteps(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time, plans []CredentialPlan) ([]MeterStep, []MeterCoverage, error) {
+	rows, err := s.pool.Query(ctx, meterQuery, orgID, bucket, since)
+	if err != nil {
+		return nil, nil, err
+	}
+	var all []meterRow
+	for rows.Next() {
+		var m meterRow
+		if err := rows.Scan(&m.key, &m.slot, &m.kind, &m.source, &m.window, &m.at, &m.period,
+			&m.pct, &m.top, &m.week, &m.reset, &m.points, &m.gap); err != nil {
+			rows.Close()
+			return nil, nil, err
+		}
+		m.period = m.period.UTC()
+		all = append(all, m)
+	}
+	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	out := []MeterStep{}
-	for p, v := range byPeriod {
-		out = append(out, MeterStep{Period: p, Points: v})
+
+	steps, coverage := []MeterStep{}, []MeterCoverage{}
+	for start := 0; start < len(all); {
+		end := start + 1
+		for end < len(all) && all[end].key == all[start].key && all[end].slot == all[start].slot &&
+			all[end].source == all[start].source && all[end].window == all[start].window {
+			end++
+		}
+		if st, cov, ok := meterPartition(all[start:end], since, plans); ok {
+			steps = append(steps, st...)
+			coverage = append(coverage, cov)
+		}
+		start = end
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Period.Before(out[j].Period) })
-	return out, nil
+	sort.SliceStable(steps, func(i, j int) bool { return steps[i].Period.Before(steps[j].Period) })
+	return steps, coverage, nil
+}
+
+// meterPartition is one credential × source × window: its steps per period
+// within the window, and its coverage. ok is false when nothing was read in
+// the window.
+func meterPartition(rs []meterRow, since time.Time, plans []CredentialPlan) ([]MeterStep, MeterCoverage, bool) {
+	first := 0
+	for first < len(rs) && rs[first].at.Before(since) {
+		first++
+	}
+	if first == len(rs) {
+		return nil, MeterCoverage{}, false
+	}
+	base := first // no reading before the window: the first one in it
+	if first > 0 {
+		base = first - 1 // the last one before it
+	}
+	c := MeterCoverage{SecretKey: rs[0].key, SecretSlot: rs[0].slot, CredentialKind: rs[0].kind,
+		Source: rs[0].source, WindowKind: rs[0].window,
+		BaselineAt: rs[base].at, BaselinePercent: rs[base].pct, BaselineBefore: first > 0,
+		LastAt: rs[len(rs)-1].at, LastPercent: rs[len(rs)-1].pct, Segments: []MeterSegment{}}
+
+	seg := MeterSegment{StartAt: rs[base].at, EndAt: rs[base].at, From: rs[base].top, To: rs[base].top}
+	week, inSeg := rs[base].week, 0
+	byPeriod := map[time.Time]*MeterStep{}
+	var order []time.Time
+	priced := c.WindowKind == WindowSevenDay
+	for _, r := range rs[first:] {
+		if r.week != week {
+			// A baseline whose week ended before the window's first reading
+			// moved nothing in the window: no segment of its own.
+			if inSeg > 0 {
+				c.Segments = append(c.Segments, seg)
+			}
+			seg, week, inSeg = MeterSegment{StartAt: r.at, Reset: true}, r.week, 0
+		}
+		inSeg++
+		seg.EndAt, seg.To = r.at, r.top
+		seg.Points += r.points
+
+		st, ok := byPeriod[r.period]
+		if !ok {
+			st = &MeterStep{Period: r.period, SecretKey: r.key, SecretSlot: r.slot, CredentialKind: c.CredentialKind,
+				Source: r.source, WindowKind: r.window}
+			byPeriod[r.period] = st
+			order = append(order, r.period)
+		}
+		st.Points += r.points
+		st.Readings++
+		if r.reset {
+			st.Resets++
+		}
+		st.LongestGapSecs = max(st.LongestGapSecs, r.gap)
+		if priced {
+			if p, ok := planAt(plans, r.key, r.slot, r.at); ok {
+				usd := r.points * p.USDPerPoint
+				if st.USD != nil {
+					usd += *st.USD
+				}
+				st.USD = &usd
+			} else {
+				st.UnpricedPoints += r.points
+			}
+		}
+		c.Readings++
+		c.Points += r.points
+		c.LongestGapSecs = max(c.LongestGapSecs, r.gap)
+	}
+	c.Segments = append(c.Segments, seg)
+	for _, sg := range c.Segments {
+		c.PointsLow += max(0, sg.Points-1)
+		c.PointsHigh += sg.Points + 1
+	}
+	steps := make([]MeterStep, 0, len(order))
+	for _, p := range order {
+		steps = append(steps, *byPeriod[p])
+	}
+	return steps, c, true
 }
