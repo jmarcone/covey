@@ -525,9 +525,10 @@ func planAt(plans []CredentialPlan, key string, slot int, t time.Time) (Credenti
 //     earlier readings, so a run of late readings is dropped as a whole;
 //   - a reading begins a new week when its reset time moved forward. Where a
 //     reading carries no reset time, when the previous one's reset has
-//     passed; and only where the reset times say nothing, when it collapsed
-//     (below half the previous value AND at least 5 points lower) — a small
-//     drop is a lagging reading, not a new week;
+//     passed (and not while it is still ahead); and only where no reset time
+//     says anything, when it dropped by more than one point — the meter shows
+//     whole percents, so a drop of one is a lagging reading, but a small week
+//     (6 % then 2 %) is a new one and must not be missed;
 //   - within a week the meter only rises: a step is the rise of the running
 //     maximum, so a lagging reading adds 0 instead of counting its catch-up
 //     a second time;
@@ -558,8 +559,9 @@ f AS (
 		WHEN prev_pct IS NULL THEN 0
 		WHEN resets_at IS NOT NULL AND prev_resets IS NOT NULL THEN
 			CASE WHEN resets_at > prev_resets + interval '1 hour' THEN 1 ELSE 0 END
-		WHEN prev_resets IS NOT NULL AND prev_resets <= fetched_at THEN 1
-		WHEN pct < prev_pct / 2 AND pct <= prev_pct - 5 THEN 1
+		WHEN prev_resets IS NOT NULL THEN
+			CASE WHEN prev_resets <= fetched_at THEN 1 ELSE 0 END
+		WHEN pct < prev_pct - 1 THEN 1
 		ELSE 0 END AS reset
 	FROM l),
 g AS (
