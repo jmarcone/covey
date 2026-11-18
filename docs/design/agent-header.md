@@ -48,7 +48,7 @@ Status: proposal, waiting for product-owner's acceptance. Design for issue #20. 
   - Hired: `+ New task` (primary), Wake, then Stop or Resume, a hairline, then `Open conversation` (ghost, team surface only).
   - Draft: Hire (primary) and `+ New task`.
   - **Wake is hidden while the agent is stopped:** `orchestrator.go:1170` refuses a killed agent, so the button did nothing.
-  - `+ New task` is the button from PR #5/#15, moved here so it exists once per page. It opens the backlog form on `?tab=backlog`, the same form the `n` shortcut (PR #6) opens. Its always-open card above the kanban goes.
+  - `+ New task` is the button from PR #5, moved here so it exists once per page (details in §7). It opens the backlog form on `?tab=backlog`, the same form the `n` shortcut (PR #6) opens. Its always-open card above the kanban goes.
 
 **Row 2, the figures** (13 px; label muted, value weight 550, tabular numbers):
 - **Separators:** a hairline between items on the same row only. Use `border-left` on each item, a negative margin on the group and `overflow: hidden`, so a wrapped item never starts with a line.
@@ -113,3 +113,35 @@ Status: proposal, waiting for product-owner's acceptance. Design for issue #20. 
 1. `orgPath` and the crumb, plus `?dept=` on List, Board and Office. Needs the frame (agents-area PR 2) or uses the fallback root.
 2. Compact head: rows 1 and 2 with B, C, D and E, the actions, and the states.
 3. Cost A and the running share F, once the price table exists.
+
+## 7. Addendum: the `+ New task` button (wish of 2026-11-18)
+> “New task should not be open by default; there should be a nice big coloured button to make it appear.”
+
+Built first in the Backlog toolbar by PR #5 (with `n` in PR #6). This section settles where the button ends up, how it looks and how the result is shown. The section-1 Office floor outline keeps its own rule; this section changes only the backlog card.
+
+1. **Place.**
+   - **Final:** the first action in head row 1 (§2), on every tab and once per page. On another tab it switches to `?tab=backlog`, opens the form and puts focus in Title.
+   - **Until build PR 2 lands:** it stays where PR #5 put it, first in the toolbar's right group. PR 2 removes it from the toolbar, which then holds only the quiet board tools.
+   - **Why the head:** it is above the fold on every tab, it sits beside the other actions on this agent, and the toolbar's job is to filter and arrange.
+2. **Form = inline, not a dialog.** It opens below the toolbar and above the board.
+   - Why: the board stays visible, so you see where the task lands. The draft survives Escape. There is no focus trap. `n` (PR #6) ignores `aria-modal` dialogs, so a dialog would break the shortcut.
+   - The form sits on an `.edit-panel` ground (tinted, no frame) instead of a `.card`, so it does not read as one more kanban card. There is no inner “New task” heading: the button's label already says it.
+3. **Size and weight.**
+   - Regular `.btn primary`, not `sm`: 13 px and about 30 px tall, against 26 px for the `sm` tools. The plus is the `plus` icon from `navicons.tsx` (`.ic`, `aria-hidden`), not a “+” character, so screen readers read only “New task”.
+   - It is the only filled button on the page. Hire takes that place on a draft.
+   - **Colour = the app's primary (`--accent-solid`), not clay.** I read the wish's “coloured” as “the one filled button”. A clay fill (`--text-accent`, 7.3 : 1 light / 7.9 : 1 dark for the label) would put clay twice in row 1: the Working badge beside the name and this button would share a colour with two meanings. In dark it would also sit beside Stop (`#ef8d84`) at almost the same hue as `#f0a184`.
+   - **Known gap, not solved here:** in dark, `--accent-solid` `#2c3038` stands 1.4 : 1 against the page `#121214`, so the label carries the button. That is an app-wide primary-button question, for its own topic.
+   - **While the form is open** the button stays enabled with `aria-expanded="true"` and `aria-controls` set to the form. A click puts focus back in Title, the same as `n`. It is not `disabled`: at 0.5 opacity it reads as forbidden, and it would drop out of the tab order.
+   - **Narrow widths.** In the head, the actions take their own line at ≤ 768 px and may wrap at ≤ 520 px. `+ New task` stays first and never shrinks. In the interim toolbar at ≤ 560 px, search and `+ New task` share line 1 and the quiet tools go to line 2 (as PR #5 does). Nothing scrolls sideways at 390 px.
+4. **The just-added card.**
+   - **What changes:** no outline. PR #5's `outline: 2px solid var(--text-accent); outline-offset: 2px` is exactly `:focus-visible` (`styles.css:185`). Because focus returns to the button after adding, two identical rings appear, one meaning “keyboard here” and one meaning “new here”.
+   - **The mark instead:** a 3 px inner left edge `box-shadow: inset 3px 0 0 var(--text-accent)` plus `--accent-tint` ground, held for 1.4 s and then faded over 0.6 s (2 s in total, `ADDED_MARK_MS`).
+   - **`prefers-reduced-motion: reduce`:** the edge and the tint appear without a transition, stay 2 s and go without a fade. No smooth scroll; `scrollIntoView({ block: "nearest" })` jumps.
+   - **Words carry it without colour:** the card's meta already says “just now”. A polite live region (`role="status"`) reads the new key `agent.backlog.added` “Added “{{title}}””. It does this also when the card is not on screen (search, archive), where nothing is marked.
+
+**Acceptance criteria (add to §5):**
+
+10. The Backlog tab opens with the form closed. Exactly one `+ New task` exists on the page: in the toolbar before PR 2, in the head after. It is regular-size `btn primary` with the plus icon, and its accessible name is “New task”.
+11. While the form is open, the button is not `disabled` and has `aria-expanded="true"`. A click on it, or `n`, puts focus in Title. Escape closes the form, keeps the draft and returns focus to the button.
+12. After adding, the new card has no `outline` (computed `outline-style: none`). It has the inset left edge and the tint for 2 s; with reduced motion, `animation-name: none`. The live region reads `agent.backlog.added`. Only the focused button shows a ring.
+13. At 390 px in light and dark, the button sits on line 1 and nothing scrolls sideways. `agent.backlog.added` exists in all ten locales.
