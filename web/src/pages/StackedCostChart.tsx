@@ -520,7 +520,10 @@ function CredentialBlock({ f, data, billed, bucket, fmtPeriod, selected, src, sp
   }, [own, steps, bill]);
   const idx = useMemo(() => new Map(periods.map((p, i) => [Date.parse(p), i])), [periods]);
 
-  const typeList = COST_TYPES.filter((k) => types.has(k));
+  // The cost-type filter belongs to the split by type, and its chips are
+  // only on screen then: switched off (or per agent), every type counts.
+  const byType = split === "type" && layout === "combined";
+  const typeList = byType ? COST_TYPES.filter((k) => types.has(k)) : COST_TYPES;
   // Real bars only where every point has a plan price: a bar of the priced
   // part alone would read as the whole.
   const showReal = src.real && !filtered && f.kind !== "api_key" && f.meter != null && bucket !== "hour" && f.real?.priced === true;
@@ -559,7 +562,7 @@ function CredentialBlock({ f, data, billed, bucket, fmtPeriod, selected, src, sp
         segs: [{ key: "r", label: t("costs.fig.reported"), color: SOURCE_COLOR.reported, value: cs.reduce((a, c) => a + (c.engine_usd ?? 0), 0) }] });
     }
     if (src.recomputed) {
-      const segs = split === "type"
+      const segs = byType
         ? typeList.map((k) => ({ key: k, label: t(`costs.stack.${k}`), color: TYPE_COLOR[k], value: cs.reduce((a, c) => a + (c.measured[k] ?? 0), 0) }))
         : [{ key: "m", label: t("costs.fig.recomputed"), color: SOURCE_COLOR.recomputed, value: cs.reduce((a, c) => a + recomputedOf(c, typeList), 0) }];
       out.push({ key: "recomputed", label: t("costs.fig.recomputed"), color: SOURCE_COLOR.recomputed, segs });

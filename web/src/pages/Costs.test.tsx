@@ -211,6 +211,21 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     expect(tile.textContent).not.toMatch(/≈|0,00|< /);
   });
 
+  // Review C4: a cost type switched off under "split by cost type" stayed
+  // off, invisibly, after the split was switched off again.
+  it("lässt einen ausgeblendeten Kostentyp nicht weiterwirken, wenn die Aufteilung aus ist", async () => {
+    const { container } = render([2, 2]);
+    await screen.findByRole("group", { name: MULTIPLE });
+    const click = async (name: string) => act(async () => { await userEvent.click(screen.getByRole("button", { name })); });
+    await click("Kostenart");
+    await click("Ausgabe");
+    await click("Keine");
+    await click("Als Tabelle zeigen");
+    const values = [...container.querySelectorAll("tr[data-totals] td[data-total]")].map((td) => td.textContent);
+    // reported 16, recomputed 16: output 11 + cache read 5, not 5
+    expect(values).toEqual(["16,00 $", "16,00 $"]);
+  });
+
   // Review C1: cache writes were counted as hits, so 94 % read the cache
   // as 100 %.
   it("rechnet Cache-Schreibvorgänge nicht als Treffer", async () => {
