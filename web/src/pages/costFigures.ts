@@ -518,3 +518,40 @@ export function meterCrossings(cov: MeterCoverage, steps: readonly MeterStep[]):
   }
   return out;
 }
+
+// --- The per-model table's totals ----------------------------------------------
+
+/** The sum of one money source over the credentials that have it: the real
+ *  cost and the bill are per credential, so the per-model table can show them
+ *  in its totals row only. `of` counts the credentials the source applies to,
+ *  `with` those that have a figure; a sum over fewer is not the total, and the
+ *  table shows no number then. */
+export type SourceTotal = { usd: number; high: number; below: boolean; with: number; of: number; pending: boolean };
+
+/** Real cost and bill over the whole organisation's credentials, as each tile
+ *  shows them: a source is offered (non-null) only when some credential has a
+ *  meter or a bill to read. */
+export function perCredentialTotals(figures: readonly CredentialFigures[]): { real: SourceTotal | null; billed: SourceTotal | null } {
+  const subs = figures.filter((f) => f.secretKey != null && f.kind !== "api_key");
+  const meters = subs.filter((f) => f.real != null);
+  let real: SourceTotal | null = null;
+  if (meters.length > 0) {
+    const priced = meters.filter((f) => f.real!.priced);
+    real = {
+      usd: priced.reduce((a, f) => a + f.real!.value, 0),
+      high: priced.reduce((a, f) => a + f.real!.high, 0),
+      below: priced.length > 0 && priced.every((f) => f.real!.below),
+      with: priced.length, of: subs.length, pending: false,
+    };
+  }
+  const keys = figures.filter((f) => f.billed != null);
+  const measured = keys.filter((f) => f.billed!.state === "measured");
+  let billed: SourceTotal | null = null;
+  if (measured.length > 0) {
+    billed = {
+      usd: measured.reduce((a, f) => a + f.billed!.usd, 0), high: 0, below: false,
+      with: measured.length, of: keys.length, pending: measured.some((f) => f.billed!.status.state === "pending"),
+    };
+  }
+  return { real, billed };
+}

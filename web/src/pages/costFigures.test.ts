@@ -12,6 +12,7 @@ import {
   meterWeeks,
   multiple,
   multipleOf,
+  perCredentialTotals,
   pricePerPoint,
   realCost,
   realFromWeeks,
@@ -290,6 +291,31 @@ describe("per credential", () => {
   });
   const keyOf = (billed: BilledReport | null) =>
     credentialFigures({ cells: mixed, billed, bucketMs: HOUR, windowEnd: new Date("2026-11-17T23:00:00Z") }).find((f) => f.id === `${KEY}#1`)!;
+
+  // The per-model table shows the real cost and the bill in its totals row
+  // only, as the sum of the figures the tiles show per credential.
+  describe("totals of the per-credential sources", () => {
+    const figs = (billed: BilledReport | null) => credentialFigures({ cells: mixed, billed, bucketMs: HOUR, windowEnd: new Date("2026-11-17T23:00:00Z") });
+
+    it("adds the seat's real cost and the key's bill, each from its own credential", () => {
+      const { real, billed } = perCredentialTotals(figs(report()));
+      expect(real).toMatchObject({ with: 1, of: 1, below: false });
+      expect(real!.usd).toBeCloseTo(4 * PP, 10);
+      expect(billed).toMatchObject({ usd: 80.5, with: 1, of: 1, pending: true });
+    });
+
+    it("offers no bill where none can be read, and no real cost without a meter", () => {
+      expect(perCredentialTotals(figs(null)).billed).toBeNull();
+      expect(perCredentialTotals(figs(report({ sync: sync({ configured: false }) }))).billed).toBeNull();
+      const noMeter = credentialFigures({ cells: { ...mixed, meter: [], subscription: [] }, bucketMs: HOUR, windowEnd: new Date("2026-11-17T23:00:00Z") });
+      expect(perCredentialTotals(noMeter).real).toBeNull();
+    });
+
+    it("counts the credentials without a figure, so a partial sum is not passed off as the total", () => {
+      const noPlan = credentialFigures({ cells: { ...mixed, plans: [], subscription: mixed.subscription!.map((x) => ({ ...x, usd: null, unpriced_points: x.points })) }, bucketMs: HOUR, windowEnd: new Date("2026-11-17T23:00:00Z") });
+      expect(perCredentialTotals(noPlan).real).toMatchObject({ with: 0, of: 1 });
+    });
+  });
 
   it("sums an API key's bill over the window the server names, beside the same window's lines, pending after data_refreshed_at", () => {
     const key = keyOf(report());

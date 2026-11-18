@@ -97,7 +97,7 @@ export function agentColor(agents: readonly { id: string }[], id: string) {
   return AGENT_COLORS[(i < 0 ? 0 : i) % AGENT_COLORS.length];
 }
 
-function Chip({ on, color, hatched, children, onClick, onDoubleClick }: {
+export function Chip({ on, color, hatched, children, onClick, onDoubleClick }: {
   on: boolean; color?: string; hatched?: boolean; children: React.ReactNode; onClick: () => void; onDoubleClick?: () => void;
 }) {
   return (
