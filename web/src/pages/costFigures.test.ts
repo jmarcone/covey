@@ -14,6 +14,7 @@ import {
   multiple,
   multipleOf,
   perCredentialTotals,
+  periodMultiple,
   pricePerPoint,
   realCost,
   realFromWeeks,
@@ -156,6 +157,23 @@ describe("the meter and the multiple", () => {
     expect(pricePerPoint({ amount: 200, period: "month", fx_to_usd: 1, currency: "USD" })).toBeCloseTo(PP, 12);
     // a foreign plan without a rate is not priced as if it were dollars
     expect(pricePerPoint({ amount: 200, period: "month", fx_to_usd: 0, currency: "EUR" })).toBeNull();
+  });
+
+  it("gives a period a multiple only by the tile's rule", () => {
+    const P = "2026-11-17T18:00:00Z";
+    // below 3 points none, however large the list
+    expect(periodMultiple(150, [step(P, 1)])).toBeNull();
+    expect(periodMultiple(8, [step(P, 2)])).toBeNull();
+    // from 3 points the tile's figure and range
+    expect(periodMultiple(8, [step(P, 4)])).toEqual(multipleOf(8, realCost(4, PP)));
+    // a list under a cent, or an estimate that would read 0.0×, says nothing
+    expect(periodMultiple(0.009, [step(P, 4)])).toBeNull();
+    expect(periodMultiple(0.02, [step(P, 4)])).toBeNull();
+    // a reset inside the period is a second run of readings: ±1 point more
+    const reset = periodMultiple(8, [step(P, 4, { resets: 1 })]);
+    expect(reset).toEqual(multipleOf(8, { value: 4 * PP, low: 2 * PP, high: 6 * PP, points: 4 }));
+    // points without a plan price: no figure
+    expect(periodMultiple(8, [step(P, 4, { usd: 2 * PP, unpriced_points: 2 })])).toBeNull();
   });
 });
 

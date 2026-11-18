@@ -206,7 +206,10 @@
       "layout_combined": "Combined",
       "layout_agents": "Per agent",
       "billedHint": "Billed by Anthropic: what the Usage and Cost API reports for the API key behind the credential, after discounts and before credits. It lands 4–24 h late; the marker says how far it is complete.",
-      "sourceHints": "What the four figures mean"
+      "sourceHints": "What the four figures mean",
+      "compare": "Compare",
+      "view_amounts": "Amounts",
+      "view_vs": "Real vs list"
     },
     "stack": {
       "cache_read": "Cache read",
@@ -268,7 +271,9 @@
       "keyBilled": "teal: billed by Anthropic",
       "crossing": "{{from}} % → {{to}} %",
       "crossingReset": "new week → {{to}} %",
-      "hourRealNote": "At hourly resolution the meter is shown as its whole-percent crossings, not as dollars: one point is too coarse for an hour.",
+      "hourRealNote": "At hourly resolution a point is worth {{usd}}; a bar shows the points read in that hour since the previous reading — work in earlier hours can show up later; hours without a reading show 0. The labels along the top of the chart are the meter's movement read in each hour.",
+      "hourRealNoteMixed": "At hourly resolution a point is worth the price per point of the plan valid at each reading; a bar shows the points read in that hour since the previous reading — work in earlier hours can show up later; hours without a reading show 0. The labels along the top of the chart are the meter's movement read in each hour.",
+      "vsAbsent": "“Real vs list” is not drawn here: it needs a subscription credential with meter readings, real cost switched on under Source, no agent filter and a plan price for every point. The chart shows amounts.",
       "filteredRealNote": "Real cost and the bill belong to the whole credential: with an agent filter they are shown only as an estimated share in the table.",
       "showAsTable": "Show as table",
       "period": "Period",
@@ -287,7 +292,8 @@
       "noMultipleUnpriced": "No real figure and no multiple: no plan price for {{n}} of {{m}} points.",
       "noMultipleNoPlan": "No real figure and no multiple: no plan price is stored for this credential.",
       "realSince": "real since {{from}} (meter baseline), last reading {{to}}",
-      "shareOfRealSpan": "the real share is of the real cost since {{from}} (meter baseline) to {{to}}, not of the window alone"
+      "shareOfRealSpan": "the real share is of the real cost since {{from}} (meter baseline) to {{to}}, not of the window alone",
+      "vsNote": "× is a period's list price ÷ its real cost. The meter moves in whole points, so a period's real cost is ±1 point: a period gets a × only from 3 points of movement, as the tile does, and its range is in the period's details."
     },
     "kpiAllCredentials": "all credentials, from the lines",
     "tok": {

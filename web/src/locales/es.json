@@ -206,7 +206,10 @@
       "layout_combined": "Conjunta",
       "layout_agents": "Por agente",
       "billedHint": "Facturado por Anthropic: lo que la API de uso y coste informa para la clave de API de la credencial, tras descuentos y antes de créditos. Llega con 4–24 h de retraso; la marca indica hasta dónde está completo.",
-      "sourceHints": "Qué significan las cuatro cifras"
+      "sourceHints": "Qué significan las cuatro cifras",
+      "compare": "Comparar",
+      "view_amounts": "Importes",
+      "view_vs": "Real frente a lista"
     },
     "stack": {
       "cache_read": "Caché leída",
@@ -268,7 +271,9 @@
       "keyBilled": "verde azulado: facturado por Anthropic",
       "crossing": "{{from}} % → {{to}} %",
       "crossingReset": "nueva semana → {{to}} %",
-      "hourRealNote": "Con resolución horaria el medidor se muestra como sus cruces de porcentaje entero, no en dólares: un punto es demasiado grueso para una hora.",
+      "hourRealNote": "Con resolución horaria, un punto vale {{usd}}; una barra muestra los puntos leídos en esa hora desde la lectura anterior — el trabajo de horas anteriores puede aparecer más tarde; las horas sin lectura muestran 0. Las etiquetas en la parte superior del gráfico son el movimiento del medidor leído en cada hora.",
+      "hourRealNoteMixed": "Con resolución horaria, un punto vale el precio por punto del plan vigente en cada lectura; una barra muestra los puntos leídos en esa hora desde la lectura anterior — el trabajo de horas anteriores puede aparecer más tarde; las horas sin lectura muestran 0. Las etiquetas en la parte superior del gráfico son el movimiento del medidor leído en cada hora.",
+      "vsAbsent": "«Real frente a lista» no se dibuja aquí: necesita una credencial de suscripción con lecturas del medidor, el coste real activado en Fuente, sin filtro de agentes y con precio de plan para cada punto. El gráfico muestra importes.",
       "filteredRealNote": "El coste real y la factura pertenecen a toda la credencial: con un filtro de agentes solo se muestran como parte estimada en la tabla.",
       "showAsTable": "Mostrar como tabla",
       "period": "Periodo",
@@ -287,7 +292,8 @@
       "noMultipleUnpriced": "Sin coste real ni múltiplo: sin precio de plan para {{n}} de {{m}} puntos.",
       "noMultipleNoPlan": "Sin coste real ni múltiplo: no hay precio de plan guardado para esta credencial.",
       "realSince": "real desde {{from}} (lectura base del medidor), última lectura {{to}}",
-      "shareOfRealSpan": "la parte real se refiere al coste real desde {{from}} (lectura base del medidor) hasta {{to}}, no solo al periodo"
+      "shareOfRealSpan": "la parte real se refiere al coste real desde {{from}} (lectura base del medidor) hasta {{to}}, no solo al periodo",
+      "vsNote": "× es el precio de lista de un periodo ÷ su coste real. El medidor se mueve en puntos enteros, así que el coste real de un periodo es ±1 punto: un periodo solo muestra × a partir de 3 puntos de movimiento, como la ficha, y su rango aparece en los detalles del periodo."
     },
     "kpiAllCredentials": "todas las credenciales, de las líneas",
     "tok": {

@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import Costs from "./Costs";
 import type { CostCells } from "../api";
 import { mockFetch, renderWithProviders, useGerman } from "../test/render";
+import { multipleOf, realCost } from "./costFigures";
 
 // The Costs page is argued with, so what it may and may not show is pinned:
 // the multiple only from three points of meter movement, never the booked
@@ -71,6 +72,12 @@ function render(points: [number, number]) {
 }
 
 const MULTIPLE = "Listen-$ je echtem $";
+
+
+// The chart's own source row. Since #79 the Usage per model card has a
+// "Quelle" row too (a labelled group); the chart's row is the one that isn't.
+const chartSources = () =>
+  screen.getAllByText("Quelle").map((e) => e.parentElement!).find((p) => p.getAttribute("role") !== "group")!;
 
 describe("Kosten — Zahlen je Zugangsdaten", () => {
   beforeEach(() => useGerman());
@@ -358,8 +365,8 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     await click("Keine");
     await click("Als Tabelle zeigen");
     const values = [...container.querySelectorAll("tr[data-totals] td[data-total]")].map((td) => td.textContent);
-    // reported 16, recomputed 16: output 11 + cache read 5, not 5
-    expect(values).toEqual(["16,00 $", "16,00 $"]);
+    // reported 16, recomputed 16: output 11 + cache read 5, not 5; real 4 points
+    expect(values).toEqual(["16,00 $", "16,00 $", "1,85 $"]);
   });
 
   // Review C1: cache writes were counted as hits, so 94 % read the cache
@@ -380,7 +387,241 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     });
     const totals = container.querySelector("tr[data-totals]")!;
     const values = [...totals.querySelectorAll("td[data-total]")].map((td) => td.textContent!);
-    expect(values).toEqual(["16,00 $", "16,00 $"]);
+    expect(values).toEqual(["16,00 $", "16,00 $", "1,85 $"]);
     for (const v of values) expect(desc).toContain(v);
+  });
+
+  // #77: at an hour the bars are the meter's whole points × the plan's price,
+  // as the server priced them, and add up to the real tile.
+  describe("echte Kosten je Stunde und im Vergleich zur Liste", () => {
+    const click = async (name: string | RegExp) => act(async () => { await userEvent.click(screen.getByRole("button", { name })); });
+    const realCol = (container: HTMLElement) => {
+      // the chart's table, not the agents'
+      const table = container.querySelector("tr[data-totals]")!.closest("table")!;
+      const heads = [...table.querySelectorAll("thead th")].map((th) => th.textContent);
+      const col = heads.indexOf("Echte Kosten (Schätzung)");
+      const rows = [...table.querySelectorAll("tbody tr")].map((tr) => tr.querySelectorAll("td")[col - 1]?.textContent);
+      const total = table.querySelector("tr[data-totals]")!.querySelectorAll("td[data-total]")[col - 1]?.textContent;
+      return { col, rows, total };
+    };
+
+    it("zeichnet je Stunde echte Balken, die sich zur Kachel summieren, und ersetzt den Hinweis", async () => {
+      const { container } = render([2, 3]);
+      const tile = await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+      await click("Als Tabelle zeigen");
+      const { col, rows, total } = realCol(container);
+      expect(col).toBeGreaterThan(0);
+      expect(rows).toEqual(["0,92 $", "1,38 $"]);
+      // the tile: 5 points × $0.4615
+      expect(total).toBe("2,31 $");
+      expect(within(tile).getByText("≈ 2,31 $")).toBeInTheDocument();
+      const note = container.querySelector("[data-hour-note]")!.textContent!;
+      expect(note).toMatch(/ein Punkt 0,46 \$ wert/);
+      // a bar is what was read in the hour, since the previous reading — not what was worked in it
+      expect(note).toMatch(/die in dieser Stunde seit der vorigen Ablesung abgelesen wurden/);
+      expect(note).toMatch(/Arbeit aus früheren Stunden kann später erscheinen/);
+      expect(note).toMatch(/Stunden ohne Ablesung zeigen 0/);
+      expect(note).not.toMatch(/Überschreitung/);
+      expect(note).not.toMatch(/nicht in Dollar/);
+    });
+
+    it("zeigt für eine Stunde ohne Ablesung 0 und keinen Balken", async () => {
+      const { container } = render([2, 0]);
+      await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+      expect(container.querySelectorAll("g[data-period] rect[fill^='url(']").length).toBe(1);
+      await click("Als Tabelle zeigen");
+      expect(realCol(container).rows).toEqual(["0,92 $", "0,00 $"]);
+    });
+
+    it("zeichnet für Punkte ohne Tarifpreis keinen echten Balken", async () => {
+      const data = cells([2, 2]);
+      data.subscription![1] = { ...data.subscription![1], usd: null, unpriced_points: 2 };
+      const { container } = serve(data);
+      await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+      expect(container.querySelector("g[data-period] rect[fill^='url(']")).toBeNull();
+      expect(container.querySelector("[data-hour-note]")).toBeNull();
+      await click("Als Tabelle zeigen");
+      expect(realCol(container).col).toBe(-1);
+    });
+
+    const tags = (container: HTMLElement) => [...container.querySelectorAll("[data-tag]")].map((e) => e.textContent);
+
+    it("zeigt in „Echt gegen Liste“ den echten Wert am Balken und das Vielfache der Periode", async () => {
+      const { container } = render([4, 0]);
+      await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+      expect(container.querySelector("[data-value]")).toBeNull();
+      await click("Echt gegen Liste");
+      // the list bar and the real bar of each hour; the gap hour has no real value, hence no multiple
+      expect(container.querySelectorAll("g[data-period]")[0].querySelectorAll("rect").length).toBe(3);
+      expect([...container.querySelectorAll("[data-value]")].map((e) => e.textContent)).toEqual(["1,85 $"]);
+      // 8 $ list over 4 points × 0,4615 $, ±1 point in the details as the tile's range
+      expect(tags(container)).toEqual(["≈ 4,3×"]);
+      fireEvent.focus(container.querySelectorAll("g[data-period]")[0]);
+      expect(container.querySelector("[data-tag-detail]")!.textContent).toBe("≈ 4,3× · Spanne 3,5× – 5,8×");
+      expect(container.querySelector("[data-vs-note]")).not.toBeNull();
+      // the table keeps the note: it is the only explanation of the comparison
+      await click("Als Tabelle zeigen");
+      expect(container.querySelector("tr[data-totals]")).not.toBeNull();
+      expect(container.querySelector("[data-vs-note]")).not.toBeNull();
+      await click("Als Tabelle zeigen");
+      await click("Beträge");
+      expect(container.querySelector("[data-tag]")).toBeNull();
+      expect(container.querySelector("[data-vs-note]")).toBeNull();
+    });
+
+    // PR #80 review: an hour is 1–3 points of ±1 each; the tile shows no
+    // multiple below 3 points, and neither does a period.
+    it("zeigt für eine Stunde unter drei Punkten kein Vielfaches, auch bei hohem Listenpreis", async () => {
+      const data = cells([1, 2]);
+      data.cells[0] = { ...data.cells[0], measured: { output: 148, cache_read: 2 }, engine_usd: 150 };
+      const { container } = serve(data);
+      await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+      await click("Echt gegen Liste");
+      expect([...container.querySelectorAll("[data-value]")].map((e) => e.textContent)).toEqual(["0,46 $", "0,92 $"]);
+      expect(tags(container)).toEqual([]);
+      expect(container.textContent).not.toMatch(/325,0×/);
+    });
+
+    it("zeigt für eine Periode mit Listenpreis von wenigen Cent kein Vielfaches", async () => {
+      const data = cells([4, 4]);
+      data.cells[0] = { ...data.cells[0], measured: { output: 0.02 }, engine_usd: 0.02 };
+      data.cells[1] = { ...data.cells[1], measured: { output: 0.004 }, engine_usd: 0.004 };
+      const { container } = serve(data);
+      await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+      await click("Echt gegen Liste");
+      expect([...container.querySelectorAll("[data-value]")].map((e) => e.textContent)).toEqual(["1,85 $", "1,85 $"]);
+      expect(tags(container)).toEqual([]);
+      expect(container.textContent).not.toContain("0,0×");
+    });
+
+    it("zeigt für einen Tag mit vier Punkten das Vielfache, das multipleOf nennt", async () => {
+      const data = cells([4, 2]);
+      const day = (p: string) => p.replace(/^2026-11-17T18:00:00Z$/, "2026-11-16T00:00:00Z").replace(/^2026-11-17T19:00:00Z$/, "2026-11-17T00:00:00Z");
+      data.periods = data.periods.map(day);
+      data.cells = data.cells.map((c) => ({ ...c, period: day(c.period) }));
+      data.subscription = data.subscription!.map((s) => ({ ...s, period: day(s.period) }));
+      data.meter![0] = { ...data.meter![0], baseline_at: "2026-11-16T00:00:00Z", last_at: "2026-11-17T20:00:00Z" };
+      const { container } = serve(data);
+      await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+      await act(async () => { await userEvent.click(screen.getByRole("button", { name: "7 Tage" })); });
+      await click("Echt gegen Liste");
+      // the day's whole list (6 + 2 $) over its 4 points, by the tile's rule
+      const m = multipleOf(8, realCost(4, PP))!;
+      expect(m.kind).toBe("estimate");
+      const fmt = (v: number) => `${v.toFixed(1).replace(".", ",")}×`;
+      expect(tags(container)).toEqual([`≈ ${fmt((m as { value: number }).value)}`]);
+      fireEvent.focus(container.querySelectorAll("g[data-period]")[0]);
+      expect(container.querySelector("[data-tag-detail]")!.textContent).toContain(`Spanne ${fmt(m.low)} – ${fmt(m.high)}`);
+    });
+
+    // Review 1: the multiple is the whole list over the real cost, as the
+    // tile's; a cost type switched off only shortens the list bar.
+    it("lässt das Vielfache der Periode bei einem ausgeblendeten Kostentyp unverändert", async () => {
+      const { container } = render([4, 4]);
+      await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+      await click("Echt gegen Liste");
+      expect(tags(container)).toEqual(["≈ 4,3×", "≈ 4,3×"]);
+      await click("Kostenart");
+      await click("Ausgabe");
+      expect(tags(container)).toEqual(["≈ 4,3×", "≈ 4,3×"]);
+    });
+
+    // Review 3: meter moved, but no list costs in the period (other use of the account).
+    it("zeigt für eine Periode mit Zählerbewegung, aber ohne Listenkosten kein Vielfaches", async () => {
+      const data = cells([4, 4]);
+      data.cells = [data.cells[0]];
+      const { container } = serve(data);
+      await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+      await click("Echt gegen Liste");
+      expect([...container.querySelectorAll("g[data-period]")]).toHaveLength(2);
+      expect([...container.querySelectorAll("[data-value]")].map((e) => e.textContent)).toEqual(["1,85 $", "1,85 $"]);
+      expect(tags(container)).toEqual(["≈ 4,3×"]);
+      expect(container.textContent).not.toContain("0,0×");
+    });
+
+    // Review 2: the span's average belongs to no bar when two plans priced it.
+    it("nennt in der Stundenauflösung den Preis je Punkt nicht, wenn zwei Tarife die Spanne bepreist haben", async () => {
+      const data = cells([2, 2]);
+      data.subscription![1] = { ...data.subscription![1], usd: 2 * 2 * PP };
+      const { container } = serve(data);
+      await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+      const note = container.querySelector("[data-hour-note]")!.textContent!;
+      expect(note).not.toMatch(/\d,\d\d \$/);
+      expect(note).toMatch(/Preis je Punkt des Tarifs wert, der bei der jeweiligen Ablesung galt/);
+      expect(note).toMatch(/seit der vorigen Ablesung abgelesen wurden/);
+      expect(note).toMatch(/Stunden ohne Ablesung zeigen 0/);
+      await click("Als Tabelle zeigen");
+      expect(realCol(container).rows).toEqual(["0,92 $", "1,85 $"]);
+    });
+
+    it("nennt den Preis je Punkt, wenn alle bepreisten Schritte ihn teilen", async () => {
+      const { container } = render([2, 3]);
+      await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+      expect(container.querySelector("[data-hour-note]")!.textContent).toMatch(/ein Punkt 0,46 \$ wert/);
+    });
+
+    // Review 4: the chip stays pressed where the comparison does not apply; the page says why.
+    it("sagt, warum „Echt gegen Liste“ nicht gezeichnet wird, wenn die echten Kosten fehlen", async () => {
+      const { container } = render([2, 2]);
+      await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+      expect(container.querySelector("[data-vs-absent]")).toBeNull();
+      await click("Echt gegen Liste");
+      expect(container.querySelector("[data-vs-absent]")).toBeNull();
+      expect(container.querySelector("[data-vs-note]")).not.toBeNull();
+      await act(async () => { await userEvent.click(within(chartSources()).getByRole("button", { name: /Echte Kosten/ })); });
+      expect(screen.getByRole("button", { name: "Echt gegen Liste" })).toHaveAttribute("aria-pressed", "true");
+      expect(container.querySelector("[data-vs-note]")).toBeNull();
+      expect(container.querySelector("[data-vs-absent]")!.textContent).toMatch(/„Echt gegen Liste“ wird hier nicht gezeichnet/);
+    });
+
+    // PR #80 review: an API key or a run without a known credential met the
+    // three listed conditions and still got no comparison; the first
+    // condition is a subscription credential.
+    it("nennt bei einem API-Schlüssel und ohne bekannte Zugangsdaten die Abo-Zugangsdaten als Bedingung", async () => {
+      const KEY = "anthropic_api_key";
+      const data = cells([2, 2]);
+      data.cells.push(
+        { period: "2026-11-17T18:00:00Z", agent_id: "a1", secret_key: KEY, secret_slot: 0, credential_kind: "api_key",
+          reported_usd: BOOKED, measured: { output: 4 }, engine_usd: 4, tokens: { output: 200_000 } },
+        { period: "2026-11-17T18:00:00Z", agent_id: "a1", secret_key: null, secret_slot: null, credential_kind: "",
+          reported_usd: BOOKED, measured: { output: 1 }, engine_usd: 1, tokens: { output: 50_000 } },
+      );
+      const { container } = serve(data);
+      const block = (id: string) => container.querySelector<HTMLElement>(`[data-credential="${id}"]`)!;
+      await waitFor(() => { if (!block(`${KEY}#0`) || !block("")) throw new Error("blocks not there yet"); });
+      await click("Echt gegen Liste");
+      for (const id of [`${KEY}#0`, ""]) {
+        const why = block(id).querySelector("[data-vs-absent]")!.textContent!;
+        expect(why).toMatch(/„Echt gegen Liste“ wird hier nicht gezeichnet: Dafür braucht es Abonnement-Zugangsdaten mit Zählerablesungen,/);
+      }
+      // the subscription draws it
+      expect(block(`${SEAT}#0`).querySelector("[data-vs-absent]")).toBeNull();
+    });
+
+    it("sagt es auch bei Punkten ohne Tarifpreis", async () => {
+      const data = cells([2, 2]);
+      data.subscription![1] = { ...data.subscription![1], usd: null, unpriced_points: 2 };
+      const { container } = serve(data);
+      await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+      await click("Echt gegen Liste");
+      expect(container.querySelector("[data-vs-absent]")).not.toBeNull();
+    });
+
+    it("behält beim Wechsel der Ansicht Quellen- und Agentenfilter", async () => {
+      const { container } = render([2, 2]);
+      await screen.findByRole("group", { name: MULTIPLE });
+      const chip = (name: string) => screen.getByRole("button", { name });
+      await act(async () => { await userEvent.click(within(chartSources()).getByRole("button", { name: "Von Claude Code gemeldet" })); });
+      await click(/^Coordinator/);
+      await click("Echt gegen Liste");
+      expect(within(chartSources()).getByRole("button", { name: "Von Claude Code gemeldet" })).toHaveAttribute("aria-pressed", "false");
+      expect(chip("Echt gegen Liste")).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByRole("button", { name: /^Coordinator/ })).toHaveAttribute("aria-pressed", "true");
+      // an agent filter has no real bar to set against the list
+      expect(container.querySelector("[data-tag]")).toBeNull();
+      await click("Beträge");
+      expect(within(chartSources()).getByRole("button", { name: "Von Claude Code gemeldet" })).toHaveAttribute("aria-pressed", "false");
+      expect(screen.getByRole("button", { name: /^Coordinator/ })).toHaveAttribute("aria-pressed", "true");
+    });
   });
 });

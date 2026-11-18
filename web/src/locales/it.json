@@ -206,7 +206,10 @@
       "layout_combined": "Insieme",
       "layout_agents": "Per agente",
       "billedHint": "Fatturato da Anthropic: quanto la API di utilizzo e costi riporta per la chiave API della credenziale, dopo gli sconti e prima dei crediti. Arriva con 4–24 h di ritardo; il segno indica fin dove è completo.",
-      "sourceHints": "Cosa significano i quattro valori"
+      "sourceHints": "Cosa significano i quattro valori",
+      "compare": "Confronto",
+      "view_amounts": "Importi",
+      "view_vs": "Reale e listino"
     },
     "stack": {
       "cache_read": "Cache letta",
@@ -268,7 +271,9 @@
       "keyBilled": "verde acqua: fatturato da Anthropic",
       "crossing": "{{from}} % → {{to}} %",
       "crossingReset": "nuova settimana → {{to}} %",
-      "hourRealNote": "Con risoluzione oraria il contatore è mostrato come passaggi di percentuale intera, non in dollari: un punto è troppo grossolano per un'ora.",
+      "hourRealNote": "Con risoluzione oraria un punto vale {{usd}}; una barra mostra i punti letti in quell’ora dalla lettura precedente — il lavoro di ore precedenti può comparire più tardi; le ore senza lettura mostrano 0. Le etichette lungo il bordo superiore del grafico sono il movimento del contatore letto in ogni ora.",
+      "hourRealNoteMixed": "Con risoluzione oraria un punto vale il prezzo per punto del piano valido a ogni lettura; una barra mostra i punti letti in quell’ora dalla lettura precedente — il lavoro di ore precedenti può comparire più tardi; le ore senza lettura mostrano 0. Le etichette lungo il bordo superiore del grafico sono il movimento del contatore letto in ogni ora.",
+      "vsAbsent": "«Reale e listino» non viene disegnato qui: richiede una credenziale in abbonamento con letture del contatore, il costo reale attivo sotto Fonte, nessun filtro agenti e un prezzo di piano per ogni punto. Il grafico mostra importi.",
       "filteredRealNote": "Il costo reale e la fattura appartengono all'intera credenziale: con un filtro agenti compaiono solo come quota stimata nella tabella.",
       "showAsTable": "Mostra come tabella",
       "period": "Periodo",
@@ -287,7 +292,8 @@
       "noMultipleUnpriced": "Nessun costo reale e nessun multiplo: nessun prezzo del piano per {{n}} di {{m}} punti.",
       "noMultipleNoPlan": "Nessun costo reale e nessun multiplo: per questa credenziale non è salvato alcun prezzo del piano.",
       "realSince": "reale dal {{from}} (lettura di base del contatore), ultima lettura {{to}}",
-      "shareOfRealSpan": "la quota reale si riferisce al costo reale dal {{from}} (lettura di base del contatore) al {{to}}, non al solo periodo"
+      "shareOfRealSpan": "la quota reale si riferisce al costo reale dal {{from}} (lettura di base del contatore) al {{to}}, non al solo periodo",
+      "vsNote": "× è il prezzo di listino di un periodo ÷ il suo costo reale. Il contatore avanza per punti interi, quindi il costo reale di un periodo è ±1 punto: un periodo mostra × solo da 3 punti di movimento, come la scheda, e il suo intervallo è nei dettagli del periodo."
     },
     "kpiAllCredentials": "tutte le credenziali, dalle righe",
     "tok": {

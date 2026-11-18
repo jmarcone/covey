@@ -170,6 +170,22 @@ export function stepUnpriced(st: Pick<MeterStep, "points" | "usd" | "unpriced_po
   return st.usd == null ? st.points : st.unpriced_points;
 }
 
+/** What the priced points of these steps were priced at: the one rate when
+ *  they all agree (within rounding), `mixed` when two plans priced the span,
+ *  null without a priced point. The server prices each reading at the plan
+ *  valid when it was read, so the span's average belongs to no bar. */
+export function stepRate(steps: readonly Pick<MeterStep, "points" | "usd" | "unpriced_points">[]): { rate: number | null; mixed: boolean } {
+  let rate: number | null = null;
+  for (const st of steps) {
+    const priced = st.points - stepUnpriced(st);
+    if (st.usd == null || priced <= 0) continue;
+    const r = st.usd / priced;
+    if (rate == null) rate = r;
+    else if (Math.abs(r - rate) > rate * 1e-3) return { rate: null, mixed: true };
+  }
+  return { rate, mixed: false };
+}
+
 /** The weeks of a coverage with their steps' dollars as the server priced
  *  them — each reading at the plan valid when it was read, never at the
  *  bucket's start. A step belongs to the last week that began before the
@@ -228,6 +244,29 @@ export function multipleOf(M: number, real: Pick<RealCost, "value" | "low" | "hi
   const high = real.low > 0 ? M / real.low : Infinity;
   if (real.points < 3) return { kind: "range", low, high };
   return { kind: "estimate", value: M / real.value, low, high };
+}
+
+/** The multiple of one period of the chart, by the tile's rule: a period is
+ *  only a few points (an hour 1–3), each step's points as the server priced
+ *  them, every run of readings ±1 point at the dearest rate in the period —
+ *  so below 3 points there is no figure, as the tile shows none. No figure
+ *  either where the list price is under a cent, or where the estimate would
+ *  read 0.0×: neither says anything about the period. */
+export function periodMultiple(list: number, steps: readonly Pick<MeterStep, "points" | "usd" | "unpriced_points" | "resets">[]): Multiple | null {
+  if (!(list >= 0.01)) return null;
+  let points = 0, value = 0, rate = 0, runs = 0;
+  for (const st of steps) {
+    // Points without a plan price: the period's real cost is not known.
+    if (st.points > 0 && (st.usd == null || stepUnpriced(st) > 0)) return null;
+    points += st.points;
+    value += st.usd ?? 0;
+    runs += 1 + Math.max(st.resets ?? 0, 0);
+    if (st.points > 0) rate = Math.max(rate, (st.usd ?? 0) / st.points);
+  }
+  if (points < 3) return null;
+  const m = multipleOf(list, { value, low: Math.max(value - runs * rate, 0), high: value + runs * rate, points });
+  if (!m || m.kind !== "estimate" || m.value < 0.05) return null;
+  return m;
 }
 
 // --- The bill --------------------------------------------------------------------

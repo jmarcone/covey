@@ -206,7 +206,10 @@
       "layout_combined": "Zusammen",
       "layout_agents": "Je Agent",
       "billedHint": "Von Anthropic berechnet: was die Usage-and-Cost-API für den API-Schlüssel hinter den Zugangsdaten meldet, nach Rabatten und vor Gutschriften. Sie kommt 4–24 h verspätet; die Markierung sagt, bis wann sie vollständig ist.",
-      "sourceHints": "Was die vier Zahlen bedeuten"
+      "sourceHints": "Was die vier Zahlen bedeuten",
+      "compare": "Vergleich",
+      "view_amounts": "Beträge",
+      "view_vs": "Echt gegen Liste"
     },
     "stack": {
       "cache_read": "Cache gelesen",
@@ -268,7 +271,9 @@
       "keyBilled": "petrol: von Anthropic berechnet",
       "crossing": "{{from}} % → {{to}} %",
       "crossingReset": "neue Woche → {{to}} %",
-      "hourRealNote": "In Stundenauflösung zeigt das Diagramm die ganzen Prozentschritte des Zählers statt Dollar: ein Punkt ist für eine Stunde zu grob.",
+      "hourRealNote": "In Stundenauflösung ist ein Punkt {{usd}} wert; ein Balken zeigt die Punkte, die in dieser Stunde seit der vorigen Ablesung abgelesen wurden — Arbeit aus früheren Stunden kann später erscheinen; Stunden ohne Ablesung zeigen 0. Die Beschriftungen am oberen Rand des Diagramms sind die je Stunde abgelesene Bewegung des Zählers.",
+      "hourRealNoteMixed": "In Stundenauflösung ist ein Punkt den Preis je Punkt des Tarifs wert, der bei der jeweiligen Ablesung galt; ein Balken zeigt die Punkte, die in dieser Stunde seit der vorigen Ablesung abgelesen wurden — Arbeit aus früheren Stunden kann später erscheinen; Stunden ohne Ablesung zeigen 0. Die Beschriftungen am oberen Rand des Diagramms sind die je Stunde abgelesene Bewegung des Zählers.",
+      "vsAbsent": "„Echt gegen Liste“ wird hier nicht gezeichnet: Dafür braucht es Abonnement-Zugangsdaten mit Zählerablesungen, eingeschaltete echte Kosten unter Quelle, keinen Agentenfilter und einen Tarifpreis für jeden Punkt. Das Diagramm zeigt Beträge.",
       "filteredRealNote": "Echte Kosten und Rechnung gehören zu den ganzen Zugangsdaten: Mit Agentenfilter stehen sie nur als geschätzter Anteil in der Tabelle.",
       "showAsTable": "Als Tabelle zeigen",
       "period": "Zeitraum",
@@ -287,7 +292,8 @@
       "noMultipleUnpriced": "Keine echten Kosten und kein Vielfaches: kein Tarifpreis für {{n}} von {{m}} Punkten.",
       "noMultipleNoPlan": "Keine echten Kosten und kein Vielfaches: Für diese Zugangsdaten ist kein Tarifpreis hinterlegt.",
       "realSince": "echt seit {{from}} (Ausgangsablesung des Zählers), letzte Ablesung {{to}}",
-      "shareOfRealSpan": "der echte Anteil bezieht sich auf die echten Kosten seit {{from}} (Ausgangsablesung des Zählers) bis {{to}}, nicht nur auf den Zeitraum"
+      "shareOfRealSpan": "der echte Anteil bezieht sich auf die echten Kosten seit {{from}} (Ausgangsablesung des Zählers) bis {{to}}, nicht nur auf den Zeitraum",
+      "vsNote": "× ist der Listenpreis eines Zeitraums ÷ seine echten Kosten. Der Zähler bewegt sich in ganzen Punkten, die echten Kosten eines Zeitraums sind also ±1 Punkt: Ein Zeitraum bekommt ein × erst ab 3 Punkten Bewegung, wie die Kachel, und seine Spanne steht in den Details des Zeitraums."
     },
     "kpiAllCredentials": "alle Zugangsdaten, aus den Zeilen",
     "tok": {

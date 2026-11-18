@@ -206,7 +206,10 @@
       "layout_combined": "Samen",
       "layout_agents": "Per agent",
       "billedHint": "Gefactureerd door Anthropic: wat de Usage-and-Cost-API meldt voor de API-sleutel achter de referentie, na kortingen en vóór tegoeden. Het komt 4–24 uur later binnen; de markering zegt tot wanneer het volledig is.",
-      "sourceHints": "Wat de vier cijfers betekenen"
+      "sourceHints": "Wat de vier cijfers betekenen",
+      "compare": "Vergelijken",
+      "view_amounts": "Bedragen",
+      "view_vs": "Echt en lijst"
     },
     "stack": {
       "cache_read": "Cache gelezen",
@@ -268,7 +271,9 @@
       "keyBilled": "petrol: gefactureerd door Anthropic",
       "crossing": "{{from}} % → {{to}} %",
       "crossingReset": "nieuwe week → {{to}} %",
-      "hourRealNote": "Per uur toont de grafiek de meter als zijn hele-procentstappen, niet in dollars: één punt is te grof voor een uur.",
+      "hourRealNote": "Per uur is een punt {{usd}} waard; een balk toont de punten die in dat uur sinds de vorige meting zijn afgelezen — werk uit eerdere uren kan later verschijnen; uren zonder meting tonen 0. De labels langs de bovenrand van de grafiek zijn de per uur afgelezen beweging van de meter.",
+      "hourRealNoteMixed": "Per uur is een punt de prijs per punt waard van het plan dat bij elke meting gold; een balk toont de punten die in dat uur sinds de vorige meting zijn afgelezen — werk uit eerdere uren kan later verschijnen; uren zonder meting tonen 0. De labels langs de bovenrand van de grafiek zijn de per uur afgelezen beweging van de meter.",
+      "vsAbsent": "„Echt en lijst” wordt hier niet getekend: daarvoor is een abonnementsreferentie met meterstanden nodig, moeten de echte kosten onder Bron aanstaan, mag er geen agentfilter zijn en moet elk punt een planprijs hebben. De grafiek toont bedragen.",
       "filteredRealNote": "Werkelijke kosten en de factuur horen bij de hele referentie: met een agentfilter staan ze alleen als geschat aandeel in de tabel.",
       "showAsTable": "Als tabel tonen",
       "period": "Periode",
@@ -287,7 +292,8 @@
       "noMultipleUnpriced": "Geen werkelijke kosten en geen veelvoud: geen abonnementsprijs voor {{n}} van {{m}} punten.",
       "noMultipleNoPlan": "Geen werkelijke kosten en geen veelvoud: voor deze inloggegevens is geen abonnementsprijs opgeslagen.",
       "realSince": "werkelijk sinds {{from}} (basisaflezing van de meter), laatste aflezing {{to}}",
-      "shareOfRealSpan": "het werkelijke aandeel is van de werkelijke kosten sinds {{from}} (basisaflezing van de meter) tot {{to}}, niet van alleen de periode"
+      "shareOfRealSpan": "het werkelijke aandeel is van de werkelijke kosten sinds {{from}} (basisaflezing van de meter) tot {{to}}, niet van alleen de periode",
+      "vsNote": "× is de lijstprijs van een periode ÷ de echte kosten ervan. De meter beweegt in hele punten, dus de echte kosten van een periode zijn ±1 punt: een periode krijgt pas een × vanaf 3 punten beweging, net als de tegel, en het bereik staat in de details van de periode."
     },
     "kpiAllCredentials": "alle referenties, uit de regels",
     "tok": {

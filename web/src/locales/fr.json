@@ -206,7 +206,10 @@
       "layout_combined": "Ensemble",
       "layout_agents": "Par agent",
       "billedHint": "Facturé par Anthropic : ce que l'API d'usage et de coût indique pour la clé API derrière l'identifiant, après remises et avant crédits. Les données arrivent avec 4 à 24 h de retard ; la marque indique jusqu'où elles sont complètes.",
-      "sourceHints": "Ce que signifient les quatre chiffres"
+      "sourceHints": "Ce que signifient les quatre chiffres",
+      "compare": "Comparer",
+      "view_amounts": "Montants",
+      "view_vs": "Réel et liste"
     },
     "stack": {
       "cache_read": "Cache lu",
@@ -268,7 +271,9 @@
       "keyBilled": "bleu canard : facturé par Anthropic",
       "crossing": "{{from}} % → {{to}} %",
       "crossingReset": "nouvelle semaine → {{to}} %",
-      "hourRealNote": "À la résolution horaire, le compteur est montré par ses franchissements de pourcentage entier, pas en dollars : un point est trop grossier pour une heure.",
+      "hourRealNote": "À la résolution horaire, un point vaut {{usd}} ; une barre montre les points relevés dans l’heure depuis le relevé précédent — du travail d’heures antérieures peut apparaître plus tard ; les heures sans relevé affichent 0. Les étiquettes en haut du graphique sont le mouvement du compteur relevé dans chaque heure.",
+      "hourRealNoteMixed": "À la résolution horaire, un point vaut le prix par point du forfait en vigueur à chaque relevé ; une barre montre les points relevés dans l’heure depuis le relevé précédent — du travail d’heures antérieures peut apparaître plus tard ; les heures sans relevé affichent 0. Les étiquettes en haut du graphique sont le mouvement du compteur relevé dans chaque heure.",
+      "vsAbsent": "« Réel et liste » n’est pas tracé ici : il faut un identifiant d’abonnement avec des relevés du compteur, le coût réel activé sous Source, aucun filtre d’agents et un prix de forfait pour chaque point. Le graphique montre des montants.",
       "filteredRealNote": "Le coût réel et la facture appartiennent à tout l'identifiant : avec un filtre d'agents, ils n'apparaissent que comme part estimée dans le tableau.",
       "showAsTable": "Afficher en tableau",
       "period": "Période",
@@ -287,7 +292,8 @@
       "noMultipleUnpriced": "Ni coût réel ni multiple : pas de prix de forfait pour {{n}} des {{m}} points.",
       "noMultipleNoPlan": "Ni coût réel ni multiple : aucun prix de forfait n'est enregistré pour cet identifiant.",
       "realSince": "réel depuis {{from}} (relevé de référence du compteur), dernier relevé {{to}}",
-      "shareOfRealSpan": "la part réelle porte sur le coût réel depuis {{from}} (relevé de référence du compteur) jusqu'à {{to}}, pas sur la seule période"
+      "shareOfRealSpan": "la part réelle porte sur le coût réel depuis {{from}} (relevé de référence du compteur) jusqu'à {{to}}, pas sur la seule période",
+      "vsNote": "× est le prix catalogue d’une période ÷ son coût réel. Le compteur avance par points entiers, le coût réel d’une période est donc à ±1 point : une période n’affiche un × qu’à partir de 3 points de mouvement, comme la tuile, et sa fourchette figure dans les détails de la période."
     },
     "kpiAllCredentials": "tous les identifiants, d'après les lignes",
     "tok": {

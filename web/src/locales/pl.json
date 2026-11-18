@@ -206,7 +206,10 @@
       "layout_combined": "Razem",
       "layout_agents": "Według agenta",
       "billedHint": "Zafakturowane przez Anthropic: to, co API użycia i kosztów podaje dla klucza API za poświadczeniem, po rabatach i przed kredytami. Dane spływają z opóźnieniem 4–24 h; znacznik mówi, do kiedy są kompletne.",
-      "sourceHints": "Co znaczą cztery liczby"
+      "sourceHints": "Co znaczą cztery liczby",
+      "compare": "Porównanie",
+      "view_amounts": "Kwoty",
+      "view_vs": "Rzeczywisty a cennikowy"
     },
     "stack": {
       "cache_read": "Cache odczyt",
@@ -268,7 +271,9 @@
       "keyBilled": "morski: zafakturowane przez Anthropic",
       "crossing": "{{from}} % → {{to}} %",
       "crossingReset": "nowy tydzień → {{to}} %",
-      "hourRealNote": "W rozdzielczości godzinowej licznik pokazany jest jako przejścia pełnych procentów, nie w dolarach: jeden punkt to za mało dokładnie na godzinę.",
+      "hourRealNote": "W rozdzielczości godzinowej punkt jest wart {{usd}}; słupek pokazuje punkty odczytane w danej godzinie od poprzedniego odczytu — praca z wcześniejszych godzin może pojawić się później; godziny bez odczytu pokazują 0. Etykiety wzdłuż górnej krawędzi wykresu to ruch licznika odczytany w każdej godzinie.",
+      "hourRealNoteMixed": "W rozdzielczości godzinowej punkt kosztuje tyle, ile cena za punkt planu obowiązującego przy każdym odczycie; słupek pokazuje punkty odczytane w danej godzinie od poprzedniego odczytu — praca z wcześniejszych godzin może pojawić się później; godziny bez odczytu pokazują 0. Etykiety wzdłuż górnej krawędzi wykresu to ruch licznika odczytany w każdej godzinie.",
+      "vsAbsent": "„Rzeczywisty a cennikowy” nie jest tu rysowany: wymaga poświadczenia subskrypcji z odczytami licznika, włączonego kosztu rzeczywistego w Źródle, braku filtra agentów i ceny planu dla każdego punktu. Wykres pokazuje kwoty.",
       "filteredRealNote": "Rzeczywisty koszt i faktura dotyczą całego poświadczenia: przy filtrze agentów pokazujemy je tylko jako szacowany udział w tabeli.",
       "showAsTable": "Pokaż jako tabelę",
       "period": "Okres",
@@ -287,7 +292,8 @@
       "noMultipleUnpriced": "Brak rzeczywistego kosztu i krotności: brak ceny planu dla {{n}} z {{m}} punktów.",
       "noMultipleNoPlan": "Brak rzeczywistego kosztu i krotności: dla tych danych uwierzytelniających nie zapisano ceny planu.",
       "realSince": "rzeczywisty od {{from}} (odczyt bazowy licznika), ostatni odczyt {{to}}",
-      "shareOfRealSpan": "rzeczywisty udział dotyczy rzeczywistego kosztu od {{from}} (odczyt bazowy licznika) do {{to}}, nie tylko okresu"
+      "shareOfRealSpan": "rzeczywisty udział dotyczy rzeczywistego kosztu od {{from}} (odczyt bazowy licznika) do {{to}}, nie tylko okresu",
+      "vsNote": "× to cena cennikowa okresu ÷ jego rzeczywisty koszt. Licznik rusza się o pełne punkty, więc rzeczywisty koszt okresu ma dokładność ±1 punktu: okres dostaje × dopiero od 3 punktów ruchu, jak kafelek, a jego zakres jest w szczegółach okresu."
     },
     "kpiAllCredentials": "wszystkie poświadczenia, z linii",
     "tok": {
