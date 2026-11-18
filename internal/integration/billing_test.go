@@ -46,6 +46,25 @@ type fakeAnalytics struct {
 	status    int // non-zero: every request answers this
 	requests  int
 	currency  string // of every cost row; empty: USD
+	// at, when set, is the sync's clock (the client's Now); else the wall
+	// clock.
+	at time.Time
+	// Per bucket width (1h, 1d): fail answers every request of that width
+	// with the status, empty answers it with no rows and no
+	// data_refreshed_at (a read that has not landed); widthRequests counts.
+	fail          map[string]int
+	empty         map[string]bool
+	widthRequests map[string]int
+}
+
+// now is the client's clock.
+func (f *fakeAnalytics) now() time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.at.IsZero() {
+		return f.at
+	}
+	return time.Now()
 }
 
 func (f *fakeAnalytics) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -62,6 +81,19 @@ func (f *fakeAnalytics) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
+	if f.widthRequests == nil {
+		f.widthRequests = map[string]int{}
+	}
+	f.widthRequests[q.Get("time_bucket_width")]++
+	if st := f.fail[q.Get("time_bucket_width")]; st != 0 {
+		w.WriteHeader(st)
+		io.WriteString(w, `{"type":"error","error":{"type":"api_error","message":"failed"}}`)
+		return
+	}
+	if f.empty[q.Get("time_bucket_width")] {
+		io.WriteString(w, `{"data":[],"has_more":false,"next_page":null,"data_refreshed_at":null}`)
+		return
+	}
 	from, _ := time.Parse(time.RFC3339, q.Get("starting_at"))
 	to, _ := time.Parse(time.RFC3339, q.Get("ending_at"))
 	width := map[string]time.Duration{"1h": time.Hour, "1d": 24 * time.Hour}[q.Get("time_bucket_width")]
@@ -116,7 +148,7 @@ func billingStack(t *testing.T, fake *fakeAnalytics) *stack {
 	t.Cleanup(srv.Close)
 	return newStackWith(t, stackOpts{afterOrch: func(o *orchestrator.Orchestrator) {
 		o.BillingClient = func(key string) *billing.Client {
-			return &billing.Client{BaseURL: srv.URL, Key: key,
+			return &billing.Client{BaseURL: srv.URL, Key: key, Now: fake.now,
 				Sleep: func(context.Context, time.Duration) error { return nil }}
 		}
 	}})

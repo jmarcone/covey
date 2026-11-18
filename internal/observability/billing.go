@@ -341,14 +341,20 @@ func (s *Store) BillingKeyMappings(ctx context.Context, orgID uuid.UUID) ([]Bill
 // chart at any bucket, the tile, the reconciliation, the key list — takes its
 // rows from here, so they agree on whose a bucket is and on what it cost.
 //
-// A key's day is read from its 1h rows where a mapping of that key begins or
-// ends inside the day (the lines split there, so the bill has to) and the
-// day's hours are complete. Everywhere else it is read from the width read
-// most recently (the 1h read of the last 48 h is fresher than the daily
-// re-read, the daily re-read is fresher than an old 1h read), 1d on a tie:
-// a revision the 35-day re-read brings reaches every reader. A hand-over day
-// keeps its hours instead, revised or not — the 1h rows are not read again
-// once the day has left the hourly reach.
+// A key's day is read from its 1h rows where the key changes hands inside
+// the day — its mappings overlapping the day belong to more than one
+// credential: the lines split there, so the bill has to — and the day's
+// hours are complete. A value re-saved on the same credential, a change of
+// workspace only, a key's first mapping or its last one ending without a
+// successor are no hand-over: a 1d row goes whole to the one holder, as the
+// hours would. Everywhere else the day is read from the width read most
+// recently, the hours on a tie: a sync stamps its hourly read and its daily
+// re-read with one instant, so inside the hourly reach the hours stay what
+// the hourly views show, whatever was written last; the daily re-read is
+// fresher than a 1h read of an earlier sync, so a revision it brings to a
+// day outside the reach reaches every reader. A hand-over day keeps its
+// hours instead, revised or not — the 1h rows are not read again once the
+// day has left the hourly reach.
 //
 // A day's 1h rows are complete when their data_refreshed_at is past the
 // day's end, or reaches at least the last whole hour its 1d rows know of (a
@@ -374,20 +380,21 @@ func chosenRows(table, pick, alias string) string {
 	WHERE org_id = $1 AND bucket_start >= ` + day("$2::timestamptz") + `
 	GROUP BY 1, 2),
 ` + pick + ` AS (
-	SELECT day, (array_agg(bucket_width ORDER BY fetched DESC, bucket_width = '1d' DESC))[1] AS fresh,
+	SELECT day, (array_agg(bucket_width ORDER BY fetched DESC, bucket_width = '1h' DESC))[1] AS fresh,
 		COALESCE(max(refreshed) FILTER (WHERE bucket_width = '1h') >= LEAST(day + interval '24 hours',
 			date_trunc('hour', max(refreshed) FILTER (WHERE bucket_width = '1d') AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'),
 			false) AS hours_whole
 	FROM ` + pick + `_w
 	GROUP BY day),
 ` + pick + `_k AS (
-	SELECT DISTINCT p.day, k.api_key_id
+	SELECT p.day, k.api_key_id
 	FROM ` + pick + ` p
 	JOIN credential_billing_keys k ON k.org_id = $1
 		AND COALESCE(k.valid_to, 'infinity'::timestamptz) > k.valid_from
-		AND ((k.valid_from > p.day AND k.valid_from < p.day + interval '24 hours')
-			OR (k.valid_to > p.day AND k.valid_to < p.day + interval '24 hours'))
-	WHERE p.hours_whole),
+		AND k.valid_from < p.day + interval '24 hours' AND COALESCE(k.valid_to, 'infinity'::timestamptz) > p.day
+	WHERE p.hours_whole
+	GROUP BY p.day, k.api_key_id
+	HAVING count(DISTINCT (k.secret_key, k.secret_slot)) > 1),
 ` + alias + ` AS (
 	SELECT t.*, p.day FROM ` + table + ` t
 	JOIN ` + pick + ` p ON p.day = ` + day("t.bucket_start") + `
@@ -826,7 +833,8 @@ func billedWindowStart(since, now time.Time) (time.Time, string) {
 // credential.
 //
 // An hourly window starts at a whole hour of its first day. Where that day is
-// read from its 1d rows (they are the freshest), the day cannot be cut there:
+// read from its 1d rows (they are the freshest: the hourly reads stopped or
+// failed after a daily re-read had landed), the day cannot be cut there:
 // its 1d row starts at midnight, before Start, and counts in neither the tile
 // nor the chart's points from Start on. The window then starts at the next
 // midnight instead, for the bill and the lines alike.
