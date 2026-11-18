@@ -4,7 +4,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { CellAgent } from "../api";
 import { useGerman } from "../test/render";
-import { AgentFilter, groupByDepartment } from "./StackedCostChart";
+import { AgentFilter, groupCellAgentsByDepartment } from "./StackedCostChart";
 
 // The agent filter of the cost page, grouped by department: the order of the
 // groups, what a heading selects, the group without a department, the fold.
@@ -35,20 +35,25 @@ function Harness({ agents, start = [] }: { agents: CellAgent[]; start?: string[]
 const picked = () => screen.getByTestId("sel").textContent;
 const heading = (name: string) => within(screen.getByRole("group", { name })).getAllByRole("button")[0];
 
-describe("groupByDepartment", () => {
+describe("groupCellAgentsByDepartment", () => {
   it("orders departments by cost, descending, agents by cost, no department last", () => {
-    const g = groupByDepartment(fleet);
+    const g = groupCellAgentsByDepartment(fleet);
     expect(g.map((x) => x.name)).toEqual(["Design", "Engineering", "Operations", null]);
     expect(g.map((x) => x.usd)).toEqual([20, 12, 6, 50]);
     expect(g[1].agents.map((a) => a.id)).toEqual(["dev", "qa"]);
   });
 
   it("groups by department id: two departments of one name stay two", () => {
-    const g = groupByDepartment([
+    const g = groupCellAgentsByDepartment([
       { ...agent("a", 1, "Ops"), department_id: "x" },
       { ...agent("b", 2, "Ops"), department_id: "y" },
     ]);
     expect(g.map((x) => x.key)).toEqual(["y", "x"]);
+  });
+
+  it("orders departments of equal cost by name", () => {
+    const g = groupCellAgentsByDepartment([agent("a", 4, "Sales"), agent("b", 4, "Legal"), agent("c", 4, "Marketing")]);
+    expect(g.map((x) => x.name)).toEqual(["Legal", "Marketing", "Sales"]);
   });
 });
 
@@ -97,11 +102,12 @@ describe("AgentFilter by department", () => {
     expect(heading("Keine Abteilung")).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("a selected agent stays selected when its department is gone from the data", () => {
+  it("the headings follow a selected agent that moves into another department", () => {
     const { rerender } = render(<Harness agents={fleet} start={["qa"]} />);
-    expect(picked()).toBe("qa");
+    expect(heading("Engineering")).toHaveAttribute("aria-pressed", "mixed");
+    expect(heading("Design")).toHaveAttribute("aria-pressed", "false");
     rerender(<Harness agents={fleet.map((a) => (a.id === "qa" ? agent("qa", 3, "Design") : a))} start={["qa"]} />);
-    expect(picked()).toBe("qa");
+    expect(heading("Engineering")).toHaveAttribute("aria-pressed", "false");
     expect(heading("Design")).toHaveAttribute("aria-pressed", "mixed");
   });
 
@@ -132,6 +138,63 @@ describe("AgentFilter by department", () => {
     it("does not fold five or fewer", () => {
       render(<Harness agents={many.slice(0, 5)} />);
       expect(screen.queryByRole("button", { name: /weitere/ })).toBeNull();
+    });
+
+    it("folds and unfolds with one button that keeps the keyboard focus", async () => {
+      const user = userEvent.setup();
+      render(<Harness agents={many} />);
+      const g = screen.getByRole("group", { name: "Big" });
+      const more = within(g).getByRole("button", { name: "+3 weitere" });
+      expect(more).toHaveAttribute("aria-expanded", "false");
+      expect(document.getElementById(more.getAttribute("aria-controls")!)).toContainElement(more);
+      more.focus();
+      await user.keyboard("{Enter}");
+      expect(document.activeElement).toBe(more);
+      expect(more).toHaveTextContent("Weniger anzeigen");
+      expect(more).toHaveAttribute("aria-expanded", "true");
+      expect(within(g).getAllByRole("button", { name: /^w\d/ })).toHaveLength(8);
+      await user.keyboard("{Enter}");
+      expect(document.activeElement).toBe(more);
+      expect(more).toHaveTextContent("+3 weitere");
+    });
+
+    it("offers no \"Show fewer\" once an unfolded group has shrunk to five", async () => {
+      const user = userEvent.setup();
+      const { rerender } = render(<Harness agents={many} />);
+      await user.click(screen.getByRole("button", { name: "+3 weitere" }));
+      expect(screen.getByRole("button", { name: "Weniger anzeigen" })).toBeInTheDocument();
+      rerender(<Harness agents={many.slice(0, 5)} />);
+      expect(screen.queryByRole("button", { name: "Weniger anzeigen" })).toBeNull();
+    });
+
+    it("a chip shown only because it is selected stays when Space deselects it", async () => {
+      const user = userEvent.setup();
+      render(<Harness agents={many} start={["w7"]} />);
+      const w7 = screen.getByRole("button", { name: /^w7/ });
+      w7.focus();
+      await user.keyboard(" ");
+      expect(picked()).toBe("");
+      expect(w7).toBeInTheDocument();
+      expect(document.activeElement).toBe(w7);
+      expect(screen.getByRole("button", { name: "+2 weitere" })).toBeInTheDocument();
+    });
+
+    it("a double click on such a chip leaves exactly that agent selected", async () => {
+      const user = userEvent.setup();
+      render(<Harness agents={many} start={["w0", "w7"]} />);
+      await user.dblClick(screen.getByRole("button", { name: /^w7/ }));
+      expect(picked()).toBe("w7");
+    });
+
+    it("folding again lets go of the chips pinned by an earlier selection", async () => {
+      const user = userEvent.setup();
+      render(<Harness agents={many} start={["w7"]} />);
+      await user.click(screen.getByRole("button", { name: /^w7/ }));
+      expect(screen.getAllByRole("button", { name: /^w\d/ })).toHaveLength(6);
+      await user.click(screen.getByRole("button", { name: "+2 weitere" }));
+      await user.click(screen.getByRole("button", { name: "Weniger anzeigen" }));
+      expect(screen.getAllByRole("button", { name: /^w\d/ })).toHaveLength(5);
+      expect(screen.getByRole("button", { name: "+3 weitere" })).toBeInTheDocument();
     });
   });
 });

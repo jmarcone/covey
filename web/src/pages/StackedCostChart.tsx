@@ -1,4 +1,4 @@
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -173,8 +173,9 @@ export type DepartmentGroup = {
 };
 
 /** The agents grouped by their current department: departments by their
- *  cost in the window, descending; the agents without one last. */
-export function groupByDepartment(agents: readonly CellAgent[]): DepartmentGroup[] {
+ *  cost in the window, descending, then by name; the agents without one
+ *  last. Not Dashboard's groupByDepartment, which orders the org chart's way. */
+export function groupCellAgentsByDepartment(agents: readonly CellAgent[]): DepartmentGroup[] {
   const groups = new Map<string, DepartmentGroup>();
   for (const a of rankAgents(agents)) {
     const key = a.department_id ?? "";
@@ -199,6 +200,8 @@ export function AgentFilter({ agents, selected, onChange }: {
   const { t } = useTranslation();
   const ranked = rankAgents(agents);
   const [open, setOpen] = useState<Set<string>>(new Set());
+  const [pinned, setPinned] = useState<Set<string>>(new Set());
+  const chipsId = useId().replace(/[^a-zA-Z0-9_-]/g, "");
   const toggle = (id: string) => {
     const n = new Set(selected);
     if (n.has(id)) n.delete(id);
@@ -215,7 +218,20 @@ export function AgentFilter({ agents, selected, onChange }: {
   const all = <Chip on={selected.size === 0} onClick={() => onChange(new Set())}>{t("costs.filter.all")}</Chip>;
 
   // Nobody has a department: headings would all say the same, keep the flat row.
-  if (!ranked.some((a) => a.department_id)) {
+  const flat = !ranked.some((a) => a.department_id);
+  const groups = flat ? [] : groupCellAgentsByDepartment(ranked);
+  // A folded group shows its first chips and the selected ones: a selection
+  // no chip shows would narrow the figures unseen. A chip on screen only
+  // because it is selected is pinned there until its group is folded or
+  // unfolded, so deselecting it does not pull it from under the pointer or
+  // the keyboard focus.
+  const toPin = groups.flatMap((g) => open.has(g.key) ? [] : g.agents
+    .filter((a, i) => i >= DEPT_CHIPS && selected.has(a.id) && !pinned.has(a.id)).map((a) => a.id));
+  useEffect(() => {
+    if (toPin.length) setPinned((p) => new Set([...p, ...toPin]));
+  }, [toPin.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (flat) {
     return (
       <Row label={t("costs.filter.agents")}>
         {all}
@@ -225,7 +241,6 @@ export function AgentFilter({ agents, selected, onChange }: {
     );
   }
 
-  const groups = groupByDepartment(ranked);
   const toggleGroup = (g: DepartmentGroup) => {
     const n = new Set(selected);
     const everyone = g.agents.every((a) => n.has(a.id));
@@ -234,6 +249,15 @@ export function AgentFilter({ agents, selected, onChange }: {
       else n.add(a.id);
     }
     onChange(n);
+  };
+  const fold = (g: DepartmentGroup, expand: boolean) => {
+    setOpen((s) => {
+      const n = new Set(s);
+      if (expand) n.add(g.key);
+      else n.delete(g.key);
+      return n;
+    });
+    setPinned((p) => new Set([...p].filter((id) => !g.agents.some((a) => a.id === id))));
   };
   return (
     <Row label={t("costs.filter.agents")}>
@@ -246,16 +270,16 @@ export function AgentFilter({ agents, selected, onChange }: {
           const name = g.name ?? t("costs.filter.noDepartment");
           const picked = g.agents.filter((a) => selected.has(a.id)).length;
           const expanded = open.has(g.key);
-          // A selected agent stays visible when the group is folded: a
-          // selection no chip shows would narrow the figures unseen.
-          const shown = expanded ? g.agents : g.agents.filter((a, i) => i < DEPT_CHIPS || selected.has(a.id));
+          const shown = expanded ? g.agents
+            : g.agents.filter((a, i) => i < DEPT_CHIPS || selected.has(a.id) || pinned.has(a.id));
           const hidden = g.agents.length - shown.length;
-          const fold = (on: boolean) => setOpen((s) => {
-            const n = new Set(s);
-            if (on) n.add(g.key);
-            else n.delete(g.key);
-            return n;
-          });
+          // One disclosure button, kept mounted across Enter so the focus
+          // stays on it: folded while chips are hidden, unfolded while
+          // folding would hide any (not after the group shrank to five).
+          const disclosure = expanded
+            ? g.agents.some((a, i) => i >= DEPT_CHIPS && !selected.has(a.id))
+            : hidden > 0;
+          const rowId = `${chipsId}-${g.key || "none"}`;
           return (
             <div key={g.key} role="group" aria-label={name} data-department={g.key || "none"} style={{ marginBottom: 8 }}>
               <button
@@ -272,18 +296,13 @@ export function AgentFilter({ agents, selected, onChange }: {
                 <span aria-hidden style={{ opacity: 0.7 }}>{picked === 0 ? "○" : picked === g.agents.length ? "●" : "◐"}</span>
                 {name} <span style={{ opacity: 0.7, fontWeight: 400, whiteSpace: "nowrap" }}>{fmtUSD(g.usd)}</span>
               </button>
-              <div className="flex flex-wrap items-center gap-2">
+              <div id={rowId} className="flex flex-wrap items-center gap-2">
                 {shown.map(chip)}
-                {hidden > 0 && (
-                  <button type="button" className="muted text-xs" aria-expanded={false} onClick={() => fold(true)}
+                {disclosure && (
+                  <button type="button" className="muted text-xs" aria-expanded={expanded} aria-controls={rowId}
+                    onClick={() => fold(g, !expanded)}
                     style={{ border: 0, background: "transparent", cursor: "pointer", padding: "4px 2px" }}>
-                    {t("costs.filter.more", { n: hidden })}
-                  </button>
-                )}
-                {expanded && g.agents.length > DEPT_CHIPS && (
-                  <button type="button" className="muted text-xs" aria-expanded onClick={() => fold(false)}
-                    style={{ border: 0, background: "transparent", cursor: "pointer", padding: "4px 2px" }}>
-                    {t("costs.filter.fewer")}
+                    {expanded ? t("costs.filter.fewer") : t("costs.filter.more", { n: hidden })}
                   </button>
                 )}
               </div>
