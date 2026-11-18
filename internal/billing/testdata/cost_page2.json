@@ -1,0 +1,17 @@
+{
+  "data": [
+    {
+      "starting_at": "2026-11-16T11:00:00Z",
+      "ending_at": "2026-11-16T12:00:00Z",
+      "group": {
+        "product": null, "model": null, "context_window": null, "inference_geo": null, "speed": null,
+        "workspace_id": "wrkspc_test", "service_tier": null, "actor": null, "actor_type": null,
+        "api_key_id": "apikey_test", "cost_type": "web_search", "token_type": null
+      },
+      "cost": {"currency": "USD", "amount": "1.000000", "list_amount": "1.000000", "requests": null}
+    }
+  ],
+  "has_more": false,
+  "next_page": null,
+  "data_refreshed_at": "2026-11-17T08:00:00Z"
+}

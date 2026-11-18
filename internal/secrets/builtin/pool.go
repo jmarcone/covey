@@ -39,6 +39,9 @@ func (s *Store) Value(ctx context.Context, orgID uuid.UUID, key string, slot int
 // internal position, and letting it be chosen from outside would only invite
 // collisions with values somebody else added in the meantime.
 func (s *Store) AddValue(ctx context.Context, orgID uuid.UUID, key, value string) (int, error) {
+	if err := secrets.CheckValue(key, value); err != nil {
+		return 0, err
+	}
 	var (
 		slot      int
 		sensitive bool

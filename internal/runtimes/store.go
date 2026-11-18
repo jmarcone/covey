@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"covey/internal/daemon"
+	"covey/internal/secrets"
 )
 
 type Store struct {
@@ -131,6 +132,11 @@ func (s *Store) credentials(ctx context.Context, runtimeID uuid.UUID) ([]Credent
 // kind has to be one the engine actually declares — otherwise the runtime would
 // carry a credential nothing knows how to deliver.
 func (s *Store) AddCredential(ctx context.Context, orgID, runtimeID uuid.UUID, kind, secretKey string, secretSlot int, label string) (int, error) {
+	// A runtime credential is injected into the sandbox; a reserved key never
+	// is (the one deny list, internal/secrets).
+	if err := secrets.CheckAgentUse(secretKey); err != nil {
+		return 0, err
+	}
 	rt, err := s.Get(ctx, orgID, runtimeID)
 	if err != nil {
 		return 0, err

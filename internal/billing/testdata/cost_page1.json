@@ -1,0 +1,27 @@
+{
+  "data": [
+    {
+      "starting_at": "2026-11-16T10:00:00Z",
+      "ending_at": "2026-11-16T11:00:00Z",
+      "group": {
+        "product": null, "model": "claude-opus-5-5", "context_window": null, "inference_geo": null, "speed": null,
+        "workspace_id": "wrkspc_test", "service_tier": "standard", "actor": null, "actor_type": null,
+        "api_key_id": "apikey_test", "cost_type": "tokens", "token_type": "output_tokens"
+      },
+      "cost": {"currency": "USD", "amount": "123.456789", "list_amount": "130.000000", "requests": null}
+    },
+    {
+      "starting_at": "2026-11-16T10:00:00Z",
+      "ending_at": "2026-11-16T11:00:00Z",
+      "group": {
+        "product": null, "model": "claude-opus-5-5", "context_window": null, "inference_geo": null, "speed": null,
+        "workspace_id": "wrkspc_test", "service_tier": "standard", "actor": null, "actor_type": null,
+        "api_key_id": "apikey_test", "cost_type": "tokens", "token_type": "cache_read_input_tokens"
+      },
+      "cost": {"currency": "USD", "amount": "20.000000", "list_amount": "20.000000", "requests": null}
+    }
+  ],
+  "has_more": true,
+  "next_page": "page_REDACTED_2",
+  "data_refreshed_at": "2026-11-17T08:00:00Z"
+}

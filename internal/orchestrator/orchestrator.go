@@ -28,6 +28,7 @@ import (
 
 	"covey/internal/agents"
 	"covey/internal/backlog"
+	"covey/internal/billing"
 	"covey/internal/buildinfo"
 	"covey/internal/chat"
 	"covey/internal/daemon"
@@ -70,8 +71,11 @@ type Options struct {
 	// Runtimes is the capacity layer: which contract an agent works on and
 	// which of its credentials this waking phase runs on (spec/18).
 	Runtimes *runtimes.Store
-	Identity identity.Provider
-	Memory   *memory.Store
+	// BillingClient builds the Usage and Cost Analytics client for an admin
+	// key (billing.go). nil = the Anthropic API; tests point it at a fake.
+	BillingClient func(key string) *billing.Client
+	Identity      identity.Provider
+	Memory        *memory.Store
 	// Skills are the agents' skills (library + agent-owned). nil = feature
 	// switched off; runs then get no skills materialized.
 	Skills *skills.Store
@@ -493,6 +497,7 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	o.nebenlaeufig(func() { o.boardJanitorLoop(ctx) })
 	o.nebenlaeufig(func() { o.homeJanitorLoop(ctx) })
 	o.nebenlaeufig(func() { o.credentialLoop(ctx) })
+	o.nebenlaeufig(func() { o.billingLoop(ctx) })
 	ticker := time.NewTicker(o.TickInterval)
 	defer ticker.Stop()
 	o.tick(ctx)

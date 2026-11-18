@@ -66,22 +66,38 @@ func (s *Store) open(key string, aad, nonce, ciphertext []byte) (string, error) 
 // key that already carries a pool, correcting its first value. Further values
 // come from AddValue; overwriting a whole pool from a single Put would silently
 // destroy values nobody named here.
+//
+// A reserved key (secrets.AdminKey) is sensitive from its first write, whatever
+// the caller asked for: its value is never shown, not even once. An Admin API
+// key under any other key is refused (secrets.CheckValue).
 func (s *Store) Put(ctx context.Context, orgID uuid.UUID, key, value string) error {
+	if err := secrets.CheckValue(key, value); err != nil {
+		return err
+	}
 	nonce, ct, err := s.seal(aad(orgID, nil, key, 0), value)
 	if err != nil {
 		return err
 	}
-	_, err = s.pool.Exec(ctx, `INSERT INTO secrets (org_id, key, slot, nonce, ciphertext)
-		VALUES ($1,$2,0,$3,$4)
+	_, err = s.pool.Exec(ctx, `INSERT INTO secrets (org_id, key, slot, nonce, ciphertext, sensitive)
+		VALUES ($1,$2,0,$3,$4,$5)
 		ON CONFLICT (org_id, key, slot) WHERE agent_id IS NULL
-		DO UPDATE SET nonce=$3, ciphertext=$4, updated_at=now(), `+lifetimeReset,
-		orgID, key, nonce, ct)
+		DO UPDATE SET nonce=$3, ciphertext=$4, updated_at=now(), sensitive = secrets.sensitive OR $5, `+lifetimeReset,
+		orgID, key, nonce, ct, secrets.Reserved(key))
 	return err
 }
 
 // PutAgent creates an agent's own secret. The agent must belong to the org —
 // otherwise ErrNotFound (no cross-org writing via guessed agent IDs).
+//
+// A reserved key is never an agent's (secrets.CheckAgentUse), and an Admin API
+// key is never one under another name (secrets.CheckValue).
 func (s *Store) PutAgent(ctx context.Context, orgID, agentID uuid.UUID, key, value string) error {
+	if err := secrets.CheckAgentUse(key); err != nil {
+		return err
+	}
+	if err := secrets.CheckValue(key, value); err != nil {
+		return err
+	}
 	nonce, ct, err := s.seal(aad(orgID, &agentID, key, 0), value)
 	if err != nil {
 		return err
@@ -323,8 +339,12 @@ func (s *Store) expose(key string, aad, nonce, ct []byte, sensitive bool) (value
 }
 
 // Assign explicitly assigns an org-wide secret to an agent. Secret and agent
-// must exist and belong to the org — otherwise ErrNotFound.
+// must exist and belong to the org — otherwise ErrNotFound. A reserved key is
+// refused before anything is looked up (secrets.CheckAgentUse).
 func (s *Store) Assign(ctx context.Context, orgID uuid.UUID, key string, agentID uuid.UUID) error {
+	if err := secrets.CheckAgentUse(key); err != nil {
+		return err
+	}
 	var secretOK, agentOK bool
 	if err := s.pool.QueryRow(ctx, `SELECT
 			EXISTS (SELECT 1 FROM secrets WHERE org_id=$1 AND key=$2 AND agent_id IS NULL),

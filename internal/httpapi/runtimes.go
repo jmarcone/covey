@@ -505,3 +505,34 @@ func (s *Server) handlePutCredentialPlan(w http.ResponseWriter, r *http.Request)
 	}
 	writeJSON(w, http.StatusOK, saved)
 }
+
+// handleSetBillingKey says which Anthropic API key the credential's value is
+// ({api_key_id, workspace_id}; the workspace is optional and narrows the bill
+// to it). The mapping follows the value, from when it was written until it is
+// replaced or removed (migration 0146). Only an API-key credential has one.
+func (s *Server) handleSetBillingKey(w http.ResponseWriter, r *http.Request) {
+	p := principalFrom(r)
+	id, ord, ok := credentialPlace(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		APIKeyID    string `json:"api_key_id"`
+		WorkspaceID string `json:"workspace_id"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	m, err := s.Obs.SetBillingKey(r.Context(), p.OrgID, id, ord, in.APIKeyID, in.WorkspaceID)
+	var invalid observability.ErrInvalidBillingKey
+	switch {
+	case errors.As(err, &invalid):
+		writeErr(w, http.StatusBadRequest, invalid.Error())
+		return
+	case err != nil:
+		mapErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, m)
+}

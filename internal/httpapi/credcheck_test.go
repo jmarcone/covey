@@ -69,3 +69,56 @@ func TestCheckCredentialLive(t *testing.T) {
 		t.Errorf("unknown key was checked: %+v", c)
 	}
 }
+
+// anthropic_admin_key takes an Admin API key, or a key the analytics API
+// accepts (read:analytics); a key of another kind is refused without the
+// network, and an admin key is refused under every other name.
+func TestCheckCredentialAdminKey(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct{ key, value, hint string }{
+		{"anthropic_admin_key", "sk-ant-api03-xxx", "anthropic_api_key"},
+		{"anthropic_admin_key", "sk-ant-oat01-xxx", "claude_code_oauth_token"},
+		{"anthropic_api_key", "sk-ant-admin01-xxx", "anthropic_admin_key"},
+		{"claude_code_oauth_token", "sk-ant-admin01-xxx", "anthropic_admin_key"},
+	} {
+		got := checkCredential(ctx, c.key, c.value)
+		if !got.Checked || got.Valid || !strings.Contains(got.Hint, c.hint) {
+			t.Errorf("%s = %s…: %+v, want refused pointing at %s", c.key, c.value[:10], got, c.hint)
+		}
+	}
+
+	var path, beta, apiKey string
+	status := http.StatusOK
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path, beta, apiKey = r.URL.Path, r.Header.Get("anthropic-beta"), r.Header.Get("x-api-key")
+		w.WriteHeader(status)
+	}))
+	defer srv.Close()
+	orig := anthropicBaseURL
+	anthropicBaseURL = srv.URL
+	defer func() { anthropicBaseURL = orig }()
+
+	// The probe is the poller's own call: one hour of /cost.
+	if got := checkCredential(ctx, "anthropic_admin_key", "sk-ant-admin01-live"); !got.Checked || !got.Valid {
+		t.Errorf("valid admin key: %+v", got)
+	}
+	if path != "/v1/organizations/analytics/cost" || beta != "analytics-usage-cost-2026-08-24" || apiKey != "sk-ant-admin01-live" {
+		t.Errorf("probe: path %q, beta %q, key %q", path, beta, apiKey)
+	}
+	// Another prefix counts only when the analytics API takes it.
+	if got := checkCredential(ctx, "anthropic_admin_key", "rak-analytics-live"); !got.Checked || !got.Valid {
+		t.Errorf("read:analytics key: %+v", got)
+	}
+	status = http.StatusForbidden
+	if got := checkCredential(ctx, "anthropic_admin_key", "rak-analytics-live"); !got.Checked || got.Valid || !strings.Contains(got.Hint, "read:analytics") {
+		t.Errorf("a key without read:analytics: %+v", got)
+	}
+	status = http.StatusUnauthorized
+	if got := checkCredential(ctx, "anthropic_admin_key", "sk-ant-admin01-dead"); !got.Checked || got.Valid {
+		t.Errorf("rejected admin key: %+v", got)
+	}
+	status = http.StatusBadGateway
+	if got := checkCredential(ctx, "anthropic_admin_key", "sk-ant-admin01-x"); got.Checked {
+		t.Errorf("5xx must not count as checked: %+v", got)
+	}
+}
