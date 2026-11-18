@@ -738,6 +738,8 @@ func (s *Server) Handler() http.Handler {
 	// rights of the billing sync; read through /cost/cells (its `external`).
 	mux.Handle("POST /api/v1/cost/external-usage", s.rbac(securityRoles, s.handlePostExternalUsage))
 	mux.Handle("DELETE /api/v1/cost/external-usage", s.rbac(securityRoles, s.handleDeleteExternalUsage))
+	// Read per model for the outside sessions' detailed view; anyRole like /cost/cells.
+	mux.Handle("GET /api/v1/cost/external-usage", s.rbac(anyRole, s.handleGetExternalUsage))
 	mux.Handle("GET /api/v1/agents/{id}/cost/runs", s.agentScoped(anyRole, s.handleAgentRunCosts))
 	// The price list: delivery next to the cost, same scope, same period
 	// (spec/17-kpis.md).
