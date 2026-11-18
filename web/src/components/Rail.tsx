@@ -78,7 +78,12 @@ export default function Rail({
 }) {
   const { t } = useTranslation();
   const team = !!me.TeamSurface;
-  const active = railPlace(useLocation().pathname, team);
+  const path = useLocation().pathname;
+  const active = railPlace(path, team);
+  /* On one of the two views the entry leads to the view on screen. The shell
+     remembers the view in an effect, after this render, so reading the
+     storage alone would leave the link one view behind. */
+  const agentsTo = !team ? "/agents" : path === "/" || path === "/agents" ? path : agentsEntryTarget(team);
   const threads = useQuery({
     queryKey: ["threads"],
     queryFn: myThreads,
@@ -145,7 +150,7 @@ export default function Rail({
       )}
       {/* Agents are a main view, not a setting: the office,
           the list and every agent's page sit behind this one entry. */}
-      {item("agents", agentsEntryTarget(team), "robot", t("nav.agents"), team ? pending : 0)}
+      {item("agents", agentsTo, "robot", t("nav.agents"), team ? pending : 0)}
       {team ? item("team", "/team", "chat", t("team.workspace"), unread) : item("inbox", "/inbox", "bell", t("nav.inbox"), pending)}
       {/* Workflows (#560) are their own place, not a setting: the live view
           is daily work, and a workflow crosses departments rather than
