@@ -115,7 +115,7 @@ export default function AgentPage({ me }: { me: Principal }) {
      session starts in the account's oldest seat — or after following a link
      into another organisation. A sentence with nothing to click is a dead end;
      the start page is not — the view the person came from, or the list. */
-  if (isNotFound(agent.error)) return <Navigate to={viewUrl(originOf(state, !!me.TeamSurface))} replace />;
+  if (isNotFound(agent.error)) return <Navigate to={viewUrl(originOf(id, state, !!me.TeamSurface))} replace />;
   if (agent.isError || !agent.data) return <p className="danger-text">{t("agent.notFound")}</p>;
   const a = agent.data;
 

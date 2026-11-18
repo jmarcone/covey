@@ -4130,6 +4130,10 @@ a.tm-file:hover { background: var(--tint); }
 .av-switch a[aria-current="page"] { font-weight: 550; }
 .av-switch a:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: -2px; }
 .av-crumb { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--text-secondary); }
+/* The settings column of an agent's page (Settings, Tooling) sticks below
+   the bar, not under it. Elsewhere — a runner's page — there is no bar, and
+   it keeps its 12 px. */
+.av-bar ~ .konsole-inhalt .settings-nav { top: 64px; }
 @media (max-width: 768px) { .av-crumb { display: none; } }
 
 /* Phone width (#463): the console's navigation leaves the row and becomes a
