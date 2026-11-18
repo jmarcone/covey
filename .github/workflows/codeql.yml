@@ -20,7 +20,8 @@ permissions:
   contents: read
   security-events: write
 
-# Same rule as ci.yml: a push to a PR branch cancels the run it supersedes.
+# Same rule as ci.yml: a push to a PR branch cancels the run it supersedes,
+# a push to main never does.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
