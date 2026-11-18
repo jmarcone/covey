@@ -37,9 +37,7 @@ function finde(file: string, source: string): Fund[] {
 
 // One entry per file that may keep a hit, each with the reason. Tests and
 // locales/ are not scanned at all, so they are not listed.
-const ERLAUBT: Record<string, string> = {
-  "src/pages/Costs.tsx": "parked until 'branch ready: feat/cost-insights'; its sites follow when the page is unparked",
-};
+const ERLAUBT: Record<string, string> = {};
 
 const quellen = import.meta.glob(["/src/**/*.{ts,tsx}", "!/src/**/*.test.*", "!/src/locales/**"], {
   query: "?raw",

@@ -171,7 +171,7 @@ export function fmtUSDAxis(v: number): string {
 // a local clock would shift every bar by the offset.
 export function fmtBucket(iso: string, bucket: string): string {
   const d = new Date(iso);
-  const lang = i18n.language || "en";
+  const lang = uiLocale();
   switch (bucket) {
     case "hour":
       return `${d.toLocaleString(lang, { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "UTC" })} UTC`;
@@ -186,5 +186,5 @@ export function fmtBucket(iso: string, bucket: string): string {
 // Anthropic's bill is complete.
 export function fmtClockUTC(iso: string | Date): string {
   const d = typeof iso === "string" ? new Date(iso) : iso;
-  return `${d.toLocaleTimeString(i18n.language || "en", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" })} UTC`;
+  return `${d.toLocaleTimeString(uiLocale(), { hour: "2-digit", minute: "2-digit", timeZone: "UTC" })} UTC`;
 }
