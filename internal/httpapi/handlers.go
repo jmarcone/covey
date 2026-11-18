@@ -674,7 +674,11 @@ func (s *Server) handleResumeAgent(w http.ResponseWriter, r *http.Request) {
 		mapErr(w, err)
 		return
 	}
-	s.Orch.EnsureRunning(id)
+	// A press, held on a session that is still registered (WakeNow): the
+	// successor of a killed session may have read the agent as killed just
+	// before this, and an ordinary wake would be dropped on it until the
+	// tick (#111).
+	s.Orch.WakeNow(id)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

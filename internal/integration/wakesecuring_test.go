@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -192,9 +193,16 @@ func wakeStack(t *testing.T) (*stack, *holdingProvider, *sessionEnds) {
 // it there.
 func securingWindow(t *testing.T, s *stack, hold *holdingProvider, slug string) agents.Agent {
 	t.Helper()
+	return securingAfter(t, s, hold, slug, "[mock:result done]", backlog.StateDone)
+}
+
+// securingAfter is securingWindow with a first task of the test's own, which
+// ends in the state given.
+func securingAfter(t *testing.T, s *stack, hold *holdingProvider, slug, body, ends string) agents.Agent {
+	t.Helper()
 	agent := s.newSupportAgent(slug)
 	hold.hold(agent.ID)
-	first := s.task(agent.ID, "First task", "[mock:result done]")
+	first := s.task(agent.ID, "First task", body)
 	select {
 	case <-hold.stopping:
 	case <-time.After(40 * time.Second):
@@ -203,8 +211,8 @@ func securingWindow(t *testing.T, s *stack, hold *holdingProvider, slug string) 
 	if st := s.agentStatus(agent.ID); st != "securing" {
 		t.Fatalf("status while the sandbox goes down: %q, expected securing", st)
 	}
-	if st := s.taskState(first.ID); st != backlog.StateDone {
-		t.Fatalf("first task: %q, expected done", st)
+	if st := s.taskState(first.ID); st != ends {
+		t.Fatalf("first task: %q, expected %s", st, ends)
 	}
 	return agent
 }
@@ -265,6 +273,90 @@ func TestADelegationDuringSecuringIsPickedUp(t *testing.T) {
 		t.Errorf("the end of the session started %q, expected the next one for open work", got)
 	}
 	pickedUp(t, s, hold, agent.ID, delegated.ID)
+}
+
+// cancelledMidRun starts the task, waits until it runs and cancels it: the
+// run's result is then refused by the store, and the session stops on that
+// error instead of going on to its last look at the backlog.
+func cancelledMidRun(t *testing.T, s *stack, taskID uuid.UUID) {
+	t.Helper()
+	waitFor(t, "the task does not start running", 20*time.Second, func() bool {
+		return s.taskState(taskID) == backlog.StateInProgress
+	})
+	if _, err := s.backlog.Cancel(context.Background(), taskID, "not needed after all"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A delegation during securing after the session stopped on its task's error
+// — the task was cancelled while it ran. The session never looked again, and
+// its end looks instead.
+func TestADelegationDuringSecuringAfterATaskErrorIsPickedUp(t *testing.T) {
+	s, hold, ends := wakeStack(t)
+	agent := s.newSupportAgent("error-securing")
+	hold.hold(agent.ID)
+	first := s.task(agent.ID, "First task", "[mock:sleep 2s][mock:result done]")
+	cancelledMidRun(t, s, first.ID)
+	select {
+	case <-hold.stopping:
+	case <-time.After(20 * time.Second):
+		t.Fatalf("the sandbox never went down; task %s", s.taskState(first.ID))
+	}
+
+	second := s.task(agent.ID, "Second task", "[mock:result also done]")
+	close(hold.release)
+
+	if got := ends.next(t, agent.ID); got != "open work" {
+		t.Errorf("the end of the session after a task error started %q, expected the next one for open work", got)
+	}
+	pickedUp(t, s, hold, agent.ID, second.ID)
+	if st := s.taskState(first.ID); st != backlog.StateCancelled {
+		t.Errorf("the first task is %q, expected cancelled", st)
+	}
+}
+
+// A warm agent parks its sandbox instead of stopping it, and the end of its
+// session is the same: after a task error it looks at the backlog, and the
+// next session takes the parked sandbox over rather than starting one.
+func TestAWarmAgentAfterATaskErrorPicksUpTheRest(t *testing.T) {
+	s, hold, ends := wakeStack(t)
+	agent := s.newSupportAgent("warm-error")
+	if err := s.registry.SetWarmSandbox(context.Background(), agent.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	// Both tasks open before any session, without a wake: the cancelled one
+	// first by priority, the second one left for after it.
+	var first, rest uuid.UUID
+	if err := s.pool.QueryRow(context.Background(), `INSERT INTO backlog_tasks
+		(id, org_id, agent_id, title, body, origin, priority)
+		VALUES (gen_random_uuid(), $1, $2, 'First task', '[mock:sleep 2s][mock:result done]', 'manual', 3) RETURNING id`,
+		s.orgID, agent.ID).Scan(&first); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.pool.QueryRow(context.Background(), `INSERT INTO backlog_tasks
+		(id, org_id, agent_id, title, body, origin, priority)
+		VALUES (gen_random_uuid(), $1, $2, 'Second task', '[mock:result done]', 'manual', 5) RETURNING id`,
+		s.orgID, agent.ID).Scan(&rest); err != nil {
+		t.Fatal(err)
+	}
+	s.orch.EnsureRunning(agent.ID)
+	cancelledMidRun(t, s, first)
+
+	if got := ends.next(t, agent.ID); got != "open work" {
+		t.Errorf("the end of the warm session after a task error started %q, expected the next one for open work", got)
+	}
+	if got := ends.next(t, agent.ID); got != "none" {
+		t.Errorf("the end of the second warm session started %q, expected none", got)
+	}
+	if st := s.taskState(rest); st != backlog.StateDone {
+		t.Errorf("the second task is %q, expected done", st)
+	}
+	if n := hold.starts(agent.ID); n != 1 {
+		t.Errorf("%d sandboxes started, expected 1 — the parked one taken over", n)
+	}
+	if st := s.agentStatus(agent.ID); st != "sleeping" {
+		t.Errorf("the parked agent shows %q, expected sleeping", st)
+	}
 }
 
 // Work that becomes open with no wake at all — a row written by hand, a
@@ -373,6 +465,11 @@ func TestAKilledAgentIsNotWokenAfterSecuring(t *testing.T) {
 	if st := s.taskState(second.ID); st != backlog.StateOpen {
 		t.Errorf("the task of a killed agent is %q, expected it to wait open", st)
 	}
+	// The status was decided before the sandbox went down, when the agent
+	// was not killed yet, and sleeping went over the kill.
+	if st := s.agentStatus(agent.ID); st != "killed" {
+		t.Errorf("the agent killed during securing shows %q, expected killed", st)
+	}
 }
 
 // A person resumes the agent while the sandbox of the killed session is still
@@ -386,16 +483,20 @@ func TestAResumeDuringSecuringIsAnswered(t *testing.T) {
 	if err := s.orch.Kill(context.Background(), agent.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.registry.SetKilled(context.Background(), agent.ID, false); err != nil {
-		t.Fatal(err)
-	}
-	s.orch.EnsureRunning(agent.ID) // what POST /agents/{id}/resume does
+	resume(t, s, agent.ID)
 	close(hold.release)
 
-	if got := ends.next(t, agent.ID); got != "open work" {
-		t.Errorf("the end of the session started %q, expected the next one for open work", got)
+	if got := ends.next(t, agent.ID); got != "wake pressed" {
+		t.Errorf("the end of the session started %q, expected the resume to be answered", got)
 	}
 	pickedUp(t, s, hold, agent.ID, second.ID)
+}
+
+// resume presses Resume on the agent's page.
+func resume(t *testing.T, s *stack, agentID uuid.UUID) {
+	t.Helper()
+	login(t, s, "admin@test.local", "admin-passwort").
+		expect(http.MethodPost, "/api/v1/agents/"+agentID.String()+"/resume", nil, http.StatusOK)
 }
 
 // killedMidTask kills an agent in the middle of a long task and holds its
@@ -431,20 +532,80 @@ func TestAResumeAfterAKillMidTaskIsAnswered(t *testing.T) {
 	s, hold, ends := wakeStack(t)
 	agent, task := killedMidTask(t, s, hold, "resume-mid-task")
 
-	if err := s.registry.SetKilled(context.Background(), agent.ID, false); err != nil {
-		t.Fatal(err)
-	}
-	s.orch.EnsureRunning(agent.ID) // what POST /agents/{id}/resume does
+	resume(t, s, agent.ID)
 	close(hold.release)
 
-	if got := ends.next(t, agent.ID); got != "open work" {
-		t.Errorf("the end of the killed session started %q, expected the next one for open work", got)
+	if got := ends.next(t, agent.ID); got != "wake pressed" {
+		t.Errorf("the end of the killed session started %q, expected the resume to be answered", got)
 	}
 	waitForOr(t, "the task put back by the kill is not picked up after the resume", 20*time.Second, func() bool {
 		return hold.starts(agent.ID) == 2 && s.taskState(task.ID) == backlog.StateInProgress
 	}, func() string { return s.recordingSummary(agent.ID) })
 	if st := s.agentStatus(agent.ID); st == "killed" {
 		t.Errorf("the resumed agent shows %q", st)
+	}
+}
+
+// The same resume, and the task is called off before the sandbox is down:
+// the next session finds nothing and never writes a status. The agent shows
+// what its row says — not the kill the session knew of before it went down.
+func TestAResumeAfterAKillMidTaskShowsTheAgentAsleep(t *testing.T) {
+	s, hold, ends := wakeStack(t)
+	agent, task := killedMidTask(t, s, hold, "resume-cancel")
+
+	resume(t, s, agent.ID)
+	if _, err := s.backlog.Cancel(context.Background(), task.ID, "not needed after all"); err != nil {
+		t.Fatal(err)
+	}
+	close(hold.release)
+
+	if got := ends.next(t, agent.ID); got != "wake pressed" {
+		t.Errorf("the end of the killed session started %q, expected the resume to be answered", got)
+	}
+	if got := ends.next(t, agent.ID); got != "none" {
+		t.Errorf("the session after the resume started %q, expected none", got)
+	}
+	if st := s.agentStatus(agent.ID); st != "sleeping" {
+		t.Errorf("the resumed agent shows %q, expected sleeping", st)
+	}
+	if n := hold.starts(agent.ID); n != 1 {
+		t.Errorf("%d sandboxes started, expected 1", n)
+	}
+}
+
+// A resume that finds a session about to end quietly — the successor of a
+// killed session that read the agent as killed just before the resume, here a
+// wake that is about to fail — is held on it like a press and answered at its
+// end. The same for the fleet's resume.
+func TestAResumeFindingASessionIsAnswered(t *testing.T) {
+	for name, path := range map[string]func(uuid.UUID) string{
+		"agent": func(id uuid.UUID) string { return "/api/v1/agents/" + id.String() + "/resume" },
+		"fleet": func(uuid.UUID) string { return "/api/v1/fleet/resume" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, hold, ends := wakeStack(t)
+			agent := s.newSupportAgent("resume-finds-" + name)
+			hold.mu.Lock()
+			hold.failStart = true
+			hold.mu.Unlock()
+
+			task := s.task(agent.ID, "First task", "[mock:result done]")
+			select {
+			case <-hold.startHeld:
+			case <-time.After(20 * time.Second):
+				t.Fatalf("no sandbox start; task %s", s.taskState(task.ID))
+			}
+			login(t, s, "admin@test.local", "admin-passwort").
+				expect(http.MethodPost, path(agent.ID), nil, http.StatusOK)
+			close(hold.release)
+
+			if got := ends.next(t, agent.ID); got != "wake pressed" {
+				t.Errorf("the end of the session the resume found started %q, expected the resume to be answered", got)
+			}
+			waitForOr(t, "the resume is lost on the session it found", 20*time.Second, func() bool {
+				return s.taskState(task.ID) == backlog.StateDone
+			}, func() string { return s.recordingSummary(agent.ID) })
+		})
 	}
 }
 

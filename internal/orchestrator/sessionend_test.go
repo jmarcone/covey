@@ -68,6 +68,19 @@ func TestAnIdleSessionLooksAgain(t *testing.T) {
 	}
 }
 
+// A session that stopped on its task's error looks again at its end: it
+// stopped without its last look, and whatever arrived while its sandbox went
+// down was dropped on it all the same.
+func TestASessionAfterATaskErrorLooksAgain(t *testing.T) {
+	o := New(Options{})
+	id, s := runningSession(o)
+	s.taskError = true
+
+	if got := o.endSession(id, s); got != endLook {
+		t.Errorf("a session after a task error answers %d at its end, expected a look (%d)", got, endLook)
+	}
+}
+
 // A session whose agent was stopped looks again at its end: the kill put the
 // task back, and a resume that came while the sandbox went down was dropped
 // on the running session. The successor's own kill check decides.
