@@ -1,6 +1,23 @@
-import { describe, expect, it, vi } from "vitest";
-import { erschaffeKamera } from "./kamera";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as THREE from "three";
+import { erschaffeKamera, erschaffeMaler } from "./kamera";
 import type { Plan } from "./typen";
+
+/* jsdom has no WebGL: the renderer is a stand-in that keeps what it was told. */
+const renderer = vi.hoisted(() => ({ gebaut: [] as Record<string, any>[] }));
+vi.mock("three", async (orig) => {
+  const echt = await orig<typeof import("three")>();
+  return {
+    ...echt,
+    WebGLRenderer: class {
+      domElement = document.createElement("canvas");
+      shadowMap: Record<string, unknown> = { enabled: false, autoUpdate: true, type: -1 };
+      pixelRatio = 0;
+      setPixelRatio(r: number) { this.pixelRatio = r; }
+      constructor() { renderer.gebaut.push(this as unknown as Record<string, any>); }
+    },
+  };
+});
 
 /* A stage whose size reads are counted: the camera must read the page when it
    is told to measure, and not whenever it fits itself. */
@@ -98,5 +115,27 @@ describe("the camera", () => {
     expect(aspekt()).toBeCloseTo(800 / 500); // not before it is measured
     s.messen();
     expect(aspekt()).toBeCloseTo(1600 / 500);
+  });
+});
+
+describe("the renderer's settings", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("caps the pixel ratio, draws the shadow map only on request and with the cheapest filter", () => {
+    vi.stubGlobal("devicePixelRatio", 3);
+    const { el } = buehne();
+    expect(erschaffeMaler(el)).not.toBeNull();
+    const m = renderer.gebaut.at(-1)!;
+    expect(m.pixelRatio).toBeLessThanOrEqual(1.5);
+    expect(m.shadowMap.enabled).toBe(true);
+    expect(m.shadowMap.autoUpdate).toBe(false);
+    expect(m.shadowMap.type).toBe(THREE.BasicShadowMap);
+    expect(el.contains(m.domElement)).toBe(true);
+  });
+
+  it("keeps the display's own ratio when it is below the cap", () => {
+    vi.stubGlobal("devicePixelRatio", 1);
+    erschaffeMaler(buehne().el);
+    expect(renderer.gebaut.at(-1)!.pixelRatio).toBe(1);
   });
 });

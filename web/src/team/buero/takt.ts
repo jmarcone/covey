@@ -51,6 +51,11 @@ const browserUhr: Uhr = {
 
 /** Ambient life alone is drawn at most this often. */
 export const LEBEN_FPS = 30;
+/** The timer is set this much short of the frame interval: it never fires
+ *  early, and the frame it asks for runs at the next vsync. Aimed at exactly
+ *  33.3 ms the timer lands just after a vsync and the frame a whole refresh
+ *  later — 20 fps on a 60 Hz display instead of 30. */
+export const VORLAUF_MS = 4;
 /** How often the life is advanced while nothing is drawn. */
 export const RUHE_MS = 250;
 /** The longest step the life is given at once, in seconds: after a pause the
@@ -119,7 +124,7 @@ export function erschaffeTakt(opt: {
       frist = uhr.frist(() => {
         frist = null;
         einreihen();
-      }, Math.max(0, 1000 / LEBEN_FPS - (uhr.jetzt() - anfang)));
+      }, Math.max(0, 1000 / LEBEN_FPS - (uhr.jetzt() - anfang) - VORLAUF_MS));
     } else ruhen();
   }
 

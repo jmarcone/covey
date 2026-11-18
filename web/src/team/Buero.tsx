@@ -14,6 +14,7 @@ import { erschaffeKamera, erschaffeMaler, groesse, type Steuerung } from "./buer
 import { laufFeldBauen, type LaufFelder } from "./buero/laufweg";
 import { erschaffeLeben, type Leben } from "./buero/leben";
 import { erschaffeMasse } from "./buero/masse";
+import { erschaffeRegung } from "./buero/regung";
 import { erschaffeTakt, sichtWaechter, type Bedarf } from "./buero/takt";
 import Riss from "./buero/risse";
 import type { Gruppe, Haus, Punkt, Zustand } from "./buero/typen";
@@ -234,10 +235,13 @@ export default function Buero({
   const karteRef = useCallback(
     (el: HTMLDivElement | null) => {
       karteHuelle.current = el;
-      masse.beobachten("karte", el);
+      /* The wrapper is a 0 × 0 box (the card inside it is absolute), so the
+         card is what is measured. */
+      masse.beobachten("karte", el?.firstElementChild ?? null);
     },
     [masse],
   );
+  const regung = useMemo(() => erschaffeRegung(), []);
   const lebenRuhig = useRef(ruhig);
   const mastPfad = useRef("");
   /* The stage exists only once there is somebody to show. The renderer is
@@ -266,12 +270,12 @@ export default function Buero({
     const loesen = s.anbinden(() => setGewaehlt(null));
     /* The only place the stage is read from the page: at the start, and when
        the browser says it was resized. The canvas was cleared by the resize
-       and has to be drawn again. */
+       and has to be drawn again: `s.messen()` fits the camera, and every
+       change of the camera wakes the takt. */
     const messen = () => {
       const g = s.messen();
       buehneMass.current = g;
       groesse(m, g);
-      wecken.current();
     };
     messen();
     const beobachter = new ResizeObserver(messen);
@@ -340,7 +344,9 @@ export default function Buero({
       leben.current.felderSetzen(etage, f);
     }
     setWechsel(false);
-    wecken.current();
+    /* No wake here: every input of a rebuild is also an input of the effect
+       below that wakes the takt, and the effect that builds runs first. One
+       path for one wake, so that a test can tell when it is gone. */
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plan, haus, etage, nacht, dichte, ruhig, kern, haken]);
   bauenRef.current = bauen;
@@ -366,15 +372,17 @@ export default function Buero({
      the information stays, only the movement goes.
 
      What it answers is what the takt (buero/takt.ts) asks: is anything still
-     moving? A turn of the camera wants the next frame at once; somebody
-     walking on the floor that is shown wants one in a thirtieth of a second;
-     otherwise none. */
+     moving? A turn of the camera wants the next frame at once; somebody who
+     moved on the floor that is shown (buero/regung.ts) wants one in a
+     thirtieth of a second; otherwise none. */
   const bild = (roh: number): Bedarf => {
     const m = maler.current, sz = szene.current, st = steuerung.current, l = leben.current;
     const { b: w, h } = buehneMass.current;
     if (!m || !sz || !st || !w) return "ruht";
     if (st.tick(roh)) bauen();
-    if (l && !ruhig) l.tick(roh);
+    /* Did the life move anyone on this floor? That, and nothing predicted
+       from the figures' flags, decides whether another frame follows. */
+    const bewegt = l && !ruhig ? regung.schritt(l, etage, roh) : false;
     if (l) {
       for (const f of l.figuren) {
         const kn = knoepfe.current.get(f.id);
@@ -402,7 +410,7 @@ export default function Buero({
           } else bl.style.transform = "";
         }
         if (f.id === gewaehlt && karteHuelle.current) {
-          const hoch = masse.mass("karte", { b: 0, h: 170 }).h;
+          const hoch = masse.mass("karte", { b: 0, h: 170 }).h || 170;
           const kx = Math.min(Math.max(x, 140), w - 140), ky = Math.min(Math.max(y - hoch - 34, 8), h - hoch - 8);
           karteHuelle.current.style.transform = `translate3d(${kx}px, ${ky}px, 0)`;
         }
@@ -421,26 +429,13 @@ export default function Buero({
     }
     schilderStellen(st, w, h);
     m.render(sz, st.kamera);
-    return st.faehrt ? "weiter" : !ruhig && regt() ? "leben" : "ruht";
+    return st.faehrt ? "weiter" : bewegt ? "leben" : "ruht";
   };
-  /* Does anything move on the floor that is shown? Figures walking, the cat
-     on her way, the paper plane. The bird and the cake only sit there; they
-     are drawn when they appear (the guest list tells React) and leave on the
-     life's own clock. */
-  const regt = () => {
-    const l = leben.current;
-    if (!l) return false;
-    return (
-      l.figuren.some((f) => f.hier === etage && (f.geht || f.route.length > 0)) ||
-      l.gaeste.some((g) => g.etage === etage && (g.art === "flieger" || (g.art === "katze" && g.route.length > 0)))
-    );
-  };
-  /* At rest the life is given its time without a frame (takt.ts `leise`). */
+  /* At rest the life is given its time without a frame (takt.ts `leise`);
+     true when somebody on the shown floor moved, arrived or left. */
   const leise = (dt: number) => {
     const l = leben.current;
-    if (!l) return false;
-    l.tick(dt);
-    return regt();
+    return l ? regung.schritt(l, etage, dt) : false;
   };
   const bildRef = useRef(bild), leiseRef = useRef(leise);
   bildRef.current = bild;

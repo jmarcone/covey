@@ -4,7 +4,7 @@ import { erschaffeTakt, LEBEN_FPS, RUHE_MS, sichtWaechter, type Bedarf, type Uhr
 /* The browser's clocks, held in the hand: what has been asked for (`rahmen`)
    and what waits for its time (`fristen`) are both visible, and time passes
    only when the test says so. */
-function falscheUhr() {
+function falscheUhr(spaet = 0) {
   let jetzt = 1000;
   let n = 0;
   const rahmen = new Map<number, () => void>();
@@ -13,7 +13,7 @@ function falscheUhr() {
     jetzt: () => jetzt,
     rahmen: (cb) => (rahmen.set(++n, cb), n),
     rahmenAbbrechen: (id) => void rahmen.delete(id),
-    frist: (cb, ms) => (fristen.set(++n, { an: jetzt + ms, cb }), n),
+    frist: (cb, ms) => (fristen.set(++n, { an: jetzt + ms + spaet, cb }), n),
     fristAbbrechen: (id) => void fristen.delete(id),
   };
   /** The display's next frame, if one was requested. */
@@ -25,7 +25,7 @@ function falscheUhr() {
     return true;
   };
   /** Lets `ms` pass; every timer that falls due runs, and every frame it asks for. */
-  const vergehen = (ms: number) => {
+  const vergehen = (ms: number, mitRahmen = true) => {
     const bis = jetzt + ms;
     for (;;) {
       const faellig = [...fristen].filter(([, f]) => f.an <= bis).sort((a, b) => a[1].an - b[1].an)[0];
@@ -33,7 +33,7 @@ function falscheUhr() {
       jetzt = Math.max(jetzt, faellig[1].an);
       fristen.delete(faellig[0]);
       faellig[1].cb();
-      while (naechsterRahmen());
+      while (mitRahmen && naechsterRahmen());
     }
     jetzt = bis;
   };
@@ -88,8 +88,25 @@ describe("the office's beat", () => {
     u.naechsterRahmen();
     // The display would offer sixty frames; the takt waits for its timer first.
     u.vergehen(1000);
-    expect(bild.mock.calls.length).toBeLessThanOrEqual(LEBEN_FPS + 1);
+    expect(bild.mock.calls.length).toBeLessThanOrEqual(LEBEN_FPS + 5);
     expect(bild.mock.calls.length).toBeGreaterThan(LEBEN_FPS / 2);
+  });
+
+  it("reaches 30 frames per second on a 60 Hz display, not 20", () => {
+    // Frames run only at the display's vsync, and a timer fires a millisecond
+    // late, as it does in a browser. A timer aimed at exactly 33.3 ms would
+    // land just after a vsync, and its frame a whole refresh later.
+    const u = falscheUhr(1);
+    const bild = vi.fn((): Bedarf => "leben");
+    erschaffeTakt({ bild, uhr: u.uhr });
+    u.naechsterRahmen();
+    const vsync = 1000 / 60;
+    for (let t = 0; t < 1000; t += vsync) {
+      u.vergehen(vsync, false);
+      u.naechsterRahmen();
+    }
+    expect(bild.mock.calls.length).toBeGreaterThanOrEqual(LEBEN_FPS - 2);
+    expect(bild.mock.calls.length).toBeLessThanOrEqual(LEBEN_FPS + 2);
   });
 
   it("gives the life its time without a frame and wakes one only when something starts to move", () => {
