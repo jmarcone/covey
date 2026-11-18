@@ -1,8 +1,11 @@
 import { describe, it, expect } from "vitest";
 import type { BilledReport, CostCell, CostCells, CredentialPlan, MeterCoverage, MeterStep, UsageReading } from "../api";
 import {
+  billedFetchBucket,
   billedFigure,
+  billedPerPeriod,
   billedStatus,
+  bucketStart,
   credentialFigures,
   meterCrossings,
   meterRange,
@@ -298,6 +301,28 @@ describe("per credential", () => {
     expect(key.billed?.status.completeTo?.toISOString()).toBe("2026-11-17T20:00:00.000Z");
     expect(billedStatus(new Date("2026-11-17T19:00:00Z"), "2026-11-17T20:00:00Z").state).toBe("complete");
     expect(billedStatus(new Date("2026-11-17T19:00:00Z"), null)).toEqual({ state: "pending", completeTo: null });
+  });
+
+  // Review C3: the bars took every point of the bill, back to the midnight
+  // before the page's start, and at month asked for weeks the chart has no
+  // period for; the table's billed total was not the tile's.
+  it("puts only the tile's window of the bill into the chart's buckets, summing to the tile", () => {
+    const hours = billedPerPeriod(report(), KEY, 1, "hour");
+    expect([...hours.entries()]).toEqual([[Date.parse("2026-11-17T18:00:00Z"), 80.5]]);
+    const tile = keyOf(report()).billed!;
+    expect([...hours.values()].reduce((a, b) => a + b, 0)).toBeCloseTo(tile.usd, 10);
+    // day points summed per month: two months, nothing before the window
+    const days = (d: string, usd: string) => ({ bucket: d, api_key_id: "apikey_01", workspace_id: "", model: "claude-opus-5-5",
+      secret_key: KEY, secret_slot: 1, billed_usd: usd, billed_list_usd: usd, complete: true });
+    const monthly = billedPerPeriod(report({ bucket: "day",
+      points: [days("2026-09-30T00:00:00Z", "7"), days("2026-10-30T00:00:00Z", "1"), days("2026-10-31T00:00:00Z", "2"), days("2026-11-01T00:00:00Z", "4")],
+      window: { start: "2026-10-01T00:00:00Z", end: "2026-11-17T23:00:00Z", width: "1d", totals: [] } }), KEY, 1, "month");
+    expect([...monthly.entries()]).toEqual([[Date.parse("2026-10-01T00:00:00Z"), 3], [Date.parse("2026-11-01T00:00:00Z"), 4]]);
+    // a week from Monday, as the server cuts it; the bill is never asked for per week
+    expect(new Date(bucketStart(Date.parse("2026-11-01T10:00:00Z"), "week")).toISOString()).toBe("2026-10-26T00:00:00.000Z");
+    expect(billedFetchBucket(90, "week")).toBe("day");
+    expect(billedFetchBucket(30, "month")).toBe("day");
+    expect(billedFetchBucket(1, "day")).toBe("hour");
   });
 
   it("gives no dollar figure where no bill could be read, and says why", () => {

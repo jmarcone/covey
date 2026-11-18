@@ -293,6 +293,51 @@ export function billedFigure(report: BilledReport | null | undefined, key: strin
   return fig;
 }
 
+/** The start of the UTC bucket an instant falls in, cut as the server cuts
+ *  its periods (date_trunc in UTC: hour, day, the week from Monday, month). */
+export function bucketStart(ms: number, bucket: string): number {
+  const d = new Date(ms);
+  const day = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  switch (bucket) {
+    case "hour":
+      return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), d.getUTCHours());
+    case "week":
+      return day - ((d.getUTCDay() + 6) % 7) * 86400_000;
+    case "month":
+      return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
+    default:
+      return day;
+  }
+}
+
+/** The bill's granularity to ask the server for: hours for an hourly chart
+ *  and for a window the bill knows per hour (within 48 h), else UTC days —
+ *  both cut cleanly at the billed window's start and add up into any
+ *  coarser chart bucket. Weeks are never asked for: a billed week can start
+ *  before the window. */
+export function billedFetchBucket(days: number, bucket: string): "hour" | "day" {
+  return bucket === "hour" || days <= 2 ? "hour" : "day";
+}
+
+/** The bill of one credential per chart period (keyed by the period's start
+ *  in ms): only the points inside the window the billed tile covers, summed
+ *  into the chart's buckets — so the bars cover the same window and buckets
+ *  as the rest of the chart, and their total is the tile's figure. */
+export function billedPerPeriod(report: BilledReport | null | undefined, key: string, slot: number, bucket: string): Map<number, number> {
+  const out = new Map<number, number>();
+  const w = report?.window;
+  if (!w) return out;
+  const start = Date.parse(w.start), end = Date.parse(w.end);
+  for (const p of report?.points ?? []) {
+    if (p.secret_key !== key || p.secret_slot !== slot) continue;
+    const at = Date.parse(p.bucket);
+    if (at < start || at >= end) continue;
+    const k = bucketStart(at, bucket);
+    out.set(k, (out.get(k) ?? 0) + (Number(p.billed_usd) || 0));
+  }
+  return out;
+}
+
 // --- Per credential --------------------------------------------------------------
 
 export type AgentFigure = {

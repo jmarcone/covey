@@ -122,6 +122,42 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     expect(within(block).queryByRole("group", { name: "Listenpreis laut Anthropic" })).toBeNull();
   });
 
+  // Review C3: the bill's bars reached back to the midnight before the
+  // window, so the table's billed total was not the tile's.
+  it("summiert die Rechnung in der Tabelle zu derselben Zahl wie die Kachel", async () => {
+    const KEY = "anthropic_api_key";
+    const data = cells([2, 2]);
+    data.cells.push({
+      period: "2026-11-17T18:00:00Z", agent_id: "a1", secret_key: KEY, secret_slot: 0, credential_kind: "api_key",
+      reported_usd: BOOKED, measured: { output: 4 }, engine_usd: 4, tokens: { output: 200_000 },
+    });
+    const point = (bucket: string, usd: string) => ({ bucket, api_key_id: "apikey_01", workspace_id: "", model: "claude-opus-5-5",
+      secret_key: KEY, secret_slot: 0, billed_usd: usd, billed_list_usd: usd, complete: true });
+    const { container } = serve(data, {
+      "/api/v1/cost/billed": { bucket: "hour",
+        points: [point("2026-11-17T00:00:00Z", "500.00"), point("2026-11-17T18:00:00Z", "3.50"), point("2026-11-17T19:00:00Z", "0.50")],
+        window: { start: "2026-11-17T18:00:00Z", end: "2026-11-17T23:00:00Z", width: "1h",
+          totals: [{ secret_key: KEY, secret_slot: 0, has_billed: true, billed_usd: "4.00", billed_list_usd: "4.00", reported_usd: 4, list_usd: 4 }] },
+        sync: { configured: true, last_attempt_at: null, last_success_at: null, last_daily_at: null,
+          data_refreshed_at: "2026-11-18T00:00:00Z", last_status: "ok", last_error: "" } },
+    });
+    const block = await waitFor(() => {
+      const b = container.querySelector<HTMLElement>(`[data-credential="${KEY}#0"]`);
+      if (!b) throw new Error("no block for the API key yet");
+      return b;
+    });
+    const tile = within(block).getByRole("group", { name: "Von Anthropic berechnet" });
+    expect(within(tile).getByText("4,00 $")).toBeInTheDocument();
+    await act(async () => {
+      await userEvent.click(screen.getByRole("button", { name: "Als Tabelle zeigen" }));
+    });
+    const totals = [...block.querySelectorAll("tr[data-totals] td[data-total]")].map((td) => td.textContent);
+    // reported, recomputed, billed
+    expect(totals).toEqual(["4,00 $", "4,00 $", "4,00 $"]);
+    // the periods 18:00 and 19:00 only: nothing from before the window
+    expect(block.querySelector("tr[data-totals]")!.closest("table")!.querySelectorAll("tbody tr")).toHaveLength(2);
+  });
+
   it("zeigt die gebuchte Zahl in keiner Kachel", async () => {
     const { container } = render([2, 2]);
     await screen.findByRole("group", { name: MULTIPLE });

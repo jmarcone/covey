@@ -4,6 +4,8 @@ import { useTranslation } from "react-i18next";
 import { api, type BilledReport, type CellAgent, type CostCell, type CostCells } from "../api";
 import { fmtBucket, fmtClockUTC, fmtCount, fmtUSD, fmtUSDAxis } from "../format";
 import {
+  billedFetchBucket,
+  billedPerPeriod,
   credentialFigures,
   credId,
   meterCrossings,
@@ -73,9 +75,11 @@ export function useCostCells(days: number, bucket: string) {
 /** What Anthropic billed, per bucket and API key; an organisation without an
  *  admin key gets an empty bill, not an error. */
 export function useBilled(days: number, bucket: string) {
+  // Hours or days, summed into the chart's bucket on the page (billedPerPeriod).
+  const fetchBucket = billedFetchBucket(days, bucket);
   return useQuery({
-    queryKey: ["cost", "billed", days, bucket],
-    queryFn: () => api<BilledReport>(`/cost/billed?days=${days}&bucket=${bucket === "month" ? "week" : bucket}`),
+    queryKey: ["cost", "billed", days, fetchBucket],
+    queryFn: () => api<BilledReport>(`/cost/billed?days=${days}&bucket=${fetchBucket}`),
     refetchInterval: 60000,
     retry: false,
   });
@@ -502,14 +506,16 @@ function CredentialBlock({ f, data, billed, bucket, fmtPeriod, selected, src, sp
   const own = useMemo(() => data.cells.filter((c) => credId(c.secret_key, c.secret_slot) === f.id), [data.cells, f.id]);
   const steps = useMemo(() => (f.meter ? (data.subscription ?? []).filter((s) => s.secret_key === f.meter!.secret_key
     && s.secret_slot === f.meter!.secret_slot && s.source === f.meter!.source && s.window_kind === f.meter!.window_kind) : []), [data.subscription, f.meter]);
-  const bill = useMemo(() => (f.kind === "api_key" ? (billed?.points ?? []).filter((p) => credId(p.secret_key, p.secret_slot) === f.id) : []), [billed, f.id, f.kind]);
+  // The bill inside the tile's window, in the chart's buckets.
+  const bill = useMemo(() => (f.kind === "api_key" && f.secretKey != null
+    ? billedPerPeriod(billed, f.secretKey, f.slot!, bucket) : new Map<number, number>()), [billed, f.kind, f.secretKey, f.slot, bucket]);
 
   // The periods: the cells', the meter's, the bill's — matched by instant.
   const periods = useMemo(() => {
     const m = new Map<number, string>();
     for (const c of own) m.set(Date.parse(c.period), c.period);
     for (const s of steps) if (!m.has(Date.parse(s.period))) m.set(Date.parse(s.period), s.period);
-    for (const p of bill) if (!m.has(Date.parse(p.bucket))) m.set(Date.parse(p.bucket), p.bucket);
+    for (const at of bill.keys()) if (!m.has(at)) m.set(at, new Date(at).toISOString());
     return [...m.entries()].sort((a, b) => a[0] - b[0]).map((e) => e[1]);
   }, [own, steps, bill]);
   const idx = useMemo(() => new Map(periods.map((p, i) => [Date.parse(p), i])), [periods]);
@@ -530,9 +536,9 @@ function CredentialBlock({ f, data, billed, bucket, fmtPeriod, selected, src, sp
   }, [steps, idx, periods.length]);
   const billedPer = useMemo(() => {
     const v = new Array<number>(periods.length).fill(0);
-    for (const p of bill) {
-      const i = idx.get(Date.parse(p.bucket));
-      if (i != null) v[i] += Number(p.billed_usd) || 0;
+    for (const [at, usd] of bill) {
+      const i = idx.get(at);
+      if (i != null) v[i] += usd;
     }
     return v;
   }, [bill, idx, periods.length]);
