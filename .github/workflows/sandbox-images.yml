@@ -37,6 +37,13 @@ jobs:
   # only comes to be in the manifest stage — otherwise the second architecture
   # would overwrite the first instead of joining it.
   base:
+    # Upstream only, and every job says so itself (as in release.yml) instead of
+    # relying on `needs: base` to skip the rest: a job added later without that
+    # chain would otherwise run on a fork. Without the guard a push to the
+    # fork's main would build multi-gigabyte images, push them to
+    # ghcr.io/<fork>-sandbox and force-push the fork's `catalog` branch with
+    # digests of its own.
+    if: github.repository == 'benjaminLedel/covey'
     strategy:
       fail-fast: false
       matrix:
@@ -101,6 +108,7 @@ jobs:
 
   base-manifest:
     needs: base
+    if: github.repository == 'benjaminLedel/covey'
     runs-on: ubuntu-latest
     outputs:
       ref: ${{ steps.push.outputs.ref }}
@@ -155,6 +163,7 @@ jobs:
   # catalogue in internal/sandbox states.
   layers:
     needs: base-manifest
+    if: github.repository == 'benjaminLedel/covey'
     strategy:
       fail-fast: false
       matrix:
@@ -210,6 +219,7 @@ jobs:
 
   layer-manifest:
     needs: layers
+    if: github.repository == 'benjaminLedel/covey'
     strategy:
       fail-fast: false
       matrix:
@@ -265,6 +275,7 @@ jobs:
   # compares the two.
   full:
     needs: layer-manifest
+    if: github.repository == 'benjaminLedel/covey'
     strategy:
       fail-fast: false
       matrix:
@@ -322,6 +333,7 @@ jobs:
 
   full-manifest:
     needs: full
+    if: github.repository == 'benjaminLedel/covey'
     strategy:
       fail-fast: false
       matrix:
@@ -385,6 +397,7 @@ jobs:
   # served over raw.githubusercontent.
   catalog:
     needs: [base-manifest, layer-manifest, full-manifest]
+    if: github.repository == 'benjaminLedel/covey'
     runs-on: ubuntu-latest
     permissions:
       contents: write
