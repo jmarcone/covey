@@ -77,6 +77,13 @@ const (
 	// one organisation (the installation's Teams app, #710).
 	TypeRequestPlatformAction = "request_platform_action"
 	TypeInjectPlatformAction  = "inject_platform_action"
+	// TypeRequestNote/TypeInjectNote: covey/add_note with a task_id that is
+	// not the running task — a note on, or an answer to, a colleague's task.
+	// A request with an answer rather than a fire-and-forget TypeNote,
+	// because only the control plane knows whose task the id names, and the
+	// agent has to hear a refusal while it can still act on it.
+	TypeRequestNote = "request_note"
+	TypeInjectNote  = "inject_note"
 	// #nosec G101 — the name of a message kind, not a secret.
 	TypeRequestSecret = "request_secret"
 	// TypeRequestTasks/TypeInjectTasks: the meta actions covey/list_tasks and
@@ -306,11 +313,47 @@ type SetStage struct {
 // Note is a proactive note the agent takes mid-run. Scope "task" attaches it to
 // the task (interim findings — task-specific), scope "memory" feeds it into the
 // memory right away (generally valid insights) — without waiting for the memory
-// field of task_done. Empty TaskID = current task.
+// field of task_done. Empty TaskID = current task; a note on any other task
+// travels as RequestNote.
 type Note struct {
 	TaskID  string `json:"task_id,omitempty"`
 	Scope   string `json:"scope"` // task | memory
 	Content string `json:"content"`
+}
+
+// RequestNote/InjectNote are covey/add_note on another task than the running
+// one: the agent adds to a colleague's open task, or answers a parked one,
+// instead of opening a new task beside it. The target has to belong to the
+// agent's organisation; it goes through the guard rails (subject
+// covey:add_note).
+//
+// Answer asks for the note to resume the target if it is parked on a
+// colleague's answer (a correlation key starting with "answer:") — the same
+// edge as a person's POST /tasks/{id}/reply. Any other target keeps the note
+// and is not woken.
+type RequestNote struct {
+	RequestID string `json:"request_id"`
+	TaskID    string `json:"task_id,omitempty"` // the running task
+	Target    string `json:"target"`            // the task the note is for
+	Content   string `json:"content"`
+	Answer    bool   `json:"answer,omitempty"`
+	// ApprovalID: as on RequestCreateTask (#703).
+	ApprovalID string `json:"approval_id,omitempty"`
+}
+
+type InjectNote struct {
+	RequestID string `json:"request_id"`
+	OK        bool   `json:"ok"`
+	// Denied tells a refusal (another organisation, a guard rail) from a
+	// failure, so the agent gets the same "denied" a guard rail gives
+	// everywhere else.
+	Denied bool   `json:"denied,omitempty"`
+	Error  string `json:"error,omitempty"`
+	// Woken: the target was blocked and the note resumed it. Reason says
+	// why an answer did not wake it (not parked, parked on a key an agent's
+	// answer may not end, its agent stopped).
+	Woken  bool   `json:"woken,omitempty"`
+	Reason string `json:"reason,omitempty"`
 }
 
 // Cost reports what one run spent: one message per run, after it ended.

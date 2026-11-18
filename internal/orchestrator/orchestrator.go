@@ -2914,6 +2914,13 @@ func (o *Orchestrator) handleDaemonMessage(ctx context.Context, agent agents.Age
 		resp := o.MessageHuman(ctx, agent, taskID, req)
 		return false, o.sendMsg(ctx, link, daemon.TypeInjectMessage, resp)
 
+	case daemon.TypeRequestNote:
+		req, err := daemon.DecodePayload[daemon.RequestNote](msg)
+		if err != nil {
+			return false, nil
+		}
+		return false, o.sendMsg(ctx, link, daemon.TypeInjectNote, o.NoteOnTask(ctx, agent, taskID, req))
+
 	case daemon.TypeRequestTool:
 		req, err := daemon.DecodePayload[daemon.RequestTool](msg)
 		if err != nil {
@@ -3104,6 +3111,17 @@ func (o *Orchestrator) handleDaemonMessage(ctx context.Context, agent agents.Age
 			if tid, err := uuid.Parse(n.TaskID); err == nil {
 				target = tid
 			}
+		}
+		if n.Scope != "memory" && target != taskID {
+			// A note on another task is RequestNote's: checked for the
+			// organisation and the guard rails, written under the agent's
+			// name. A daemon that still sends it this way gets the same
+			// checks; it only cannot hear the refusal.
+			if resp := o.NoteOnTask(ctx, agent, taskID, daemon.RequestNote{
+				Target: target.String(), Content: n.Content}); !resp.OK {
+				o.Log.Warn("note: refused", "agent", agent.Slug, "err", resp.Error)
+			}
+			return false, nil
 		}
 		if n.Scope == "memory" {
 			// Generally applicable insight: straight into memory, not only via

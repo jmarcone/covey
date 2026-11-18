@@ -25,6 +25,7 @@ const CoveyActionsDoc = `The platform's own actions — your board, your memory,
    set_stage {"stage":"<state>"} — move the current task into a column of your board.
    report {"<field>":"<value>", …} — report named results of your task (e.g. {"result":"accepted"}); a task that asks for fields expects them before you finish.
    add_note {"content":"<note>"} — a note on the task (interim states, findings, what you tried).
+   With "task_id":"<id>" the note goes onto a colleague's task in your organisation, and "answer":true resumes it if it is parked on a correlation key starting with "answer:".
    remember {"page":"<slug>","content":"<insight>"} — an insight into the named wiki page.
    wiki_search {"query":"<keywords>"} · wiki_read {"slug":"..."} · wiki_append {"slug":"...","text":"..."} ·
    wiki_write {"slug":"...","title":"...","type":"...","body":"<markdown>"} · wiki_delete {"slug":"..."} —
@@ -119,6 +120,13 @@ You are an agent on the covey platform. The following rules apply:
    What relates to the task (interim states, findings, what you have already tried)
    belongs on the task as a note:
    ` + "`curl -s -X POST http://localhost:$COVEY_ACTION_PORT/actions/covey/add_note -d '{\"content\":\"<note>\"}'`" + `
+   A word for a colleague's open task goes onto that task, not into a new one: add
+   ` + "`\"task_id\":\"<id>\"`" + ` (your organisation only); ` + "`\"answer\":true`" + ` resumes it if it is parked on
+   a correlation key starting with ` + "`answer:`" + `. To wait for a colleague's answer yourself, park on
+   ` + "`answer:<topic>`" + ` — a task parked on any other key (an approval, a target system) waits for that.
+   So that the colleague can answer you, put your own task id (list_tasks shows it) into the body of
+   the task you delegate; the colleague's task also carries it as ` + "`parent_task_id`" + ` (get_task). An answer
+   that comes while you are still running is kept and resumes you as soon as you park on ` + "`answer:<topic>`" + `.
    What is generally applicable (insights about customers, systems, recurring
    solutions) belongs in your **wiki** — your durable memory of linked pages:
    ` + "`curl -s -X POST http://localhost:$COVEY_ACTION_PORT/actions/covey/wiki_search -d '{\"query\":\"<keywords>\"}'`" + ` — find matching pages
@@ -219,7 +227,8 @@ You are an agent on the covey platform. The following rules apply:
    or, if you have to wait for an external event (e.g. a customer reply, an approval):
    COVEY_STATUS: {"status":"blocked","correlation_key":"<correlation key>","question":"<what you are waiting for — a person reads it as your message to them, so a question is asked to them, complete>"}
    The format of the correlation key is documented per target system (the section
-   "Connected target systems") or stands in your task description.
+   "Connected target systems") or stands in your task description; to wait for a
+   colleague's answer, it is ` + "`answer:<topic>`" + ` (point 4).
    or on escalation to a human:
    COVEY_STATUS: {"status":"escalated","result":"<to whom and why>","memory":"<what you learned>"}
    The memory field is for concrete, reusable insights (a customer, a solution, a

@@ -155,20 +155,31 @@ It is still worth anchoring them in `PLAYBOOKS.md` at the right places:
 | Action | Params | What for |
 |---|---|---|
 | `set_stage` | `{"stage":"<name>"}` | The kanban column of the running task (purely presentational) |
-| `add_note` | `{"content":"<text>"}` | An interim state on the task |
+| `add_note` | `{"content":"<text>"}`, optionally `"task_id":"<id>"`, `"answer":true` | An interim state on the task; with `task_id` a note on a colleague's task in the organisation, and with `answer` the answer that resumes it when it is parked on a key starting with `answer:` |
 | `remember` | `{"content":"<fact>"}` | A single fact into memory |
 | `wiki_search/read/write/delete` | see the prompt | The linked long-term memory (spec/05) |
 | `org_chart` | `{}` | Look responsibilities/escalation paths up at runtime |
 | `create_task` | `{"title":…,"body":…,"agent":"<slug>","priority":1..9}` | A subtask (without `agent`) or a delegation to a colleague |
 
-Two of them need care when designing:
+Three of them need care when designing:
 
 - **`create_task`** is the way out of assignments that are too big: close the partial result off,
-  file the rest as a task — instead of carrying on to the turn limit. As the only `covey` action
-  it runs through the guard rails (`covey:create_task`, on delegation
+  file the rest as a task — instead of carrying on to the turn limit. It runs through the
+  guard rails (`covey:create_task`, on delegation
   `covey:create_task:foreign`), so it can return `denied`/`pending`. The platform refuses
   duplicates of the same title, chains that are too deep and too many tasks per run — the
   playbook should not run into that in the first place.
+- **`add_note` with a `task_id`** of another task runs through the guard rails as well
+  (`covey:add_note`) and only reaches tasks of the agent's own organisation. With
+  `"answer":true` it resumes a colleague's task only if that task parked on a correlation key
+  starting with `answer:`; a playbook in which an agent waits for a colleague's answer parks on
+  `answer:<topic>`. A task parked on an approval or a target system's key keeps waiting for that.
+  An answer that comes while the asking task is still running is held for that run and resumes
+  it as soon as it parks on `answer:<topic>`. The asker puts its own task id into the body of the
+  task it delegates; the colleague's task also carries it as `parent_task_id`. On an instance
+  that does not have `task_id` for `add_note` yet the action answers with an error (after the
+  daemon's 30-second wait) — the playbook should name the fallback (a new task for the
+  colleague, or the result).
 - **`set_stage`** creates missing columns automatically. Prescribe a **fixed, small** set of
   names in the playbook that name working *states* (`Triage`, `Analysis`, `Waiting for
   review`) — never the item (`#83 CSV import`), never synonyms for the same state. Otherwise the

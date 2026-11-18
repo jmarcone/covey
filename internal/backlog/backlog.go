@@ -579,6 +579,17 @@ func (s *Store) transition(ctx context.Context, id uuid.UUID, to, note string, s
 // an answer meant for a parked task would restart a running one, and the run
 // that was already going would lose its result at `open → done`.
 func (s *Store) transitionFrom(ctx context.Context, id uuid.UUID, from, to, note string, set string, args ...any) (Task, error) {
+	return s.transitionIf(ctx, id, func(t Task) error {
+		if from != "" && t.State != from {
+			return fmt.Errorf("%w: %s → %s (expected %s)", ErrInvalidTransition, t.State, to, from)
+		}
+		return nil
+	}, to, note, set, args...)
+}
+
+// transitionIf is transition with a guard of the caller's own on the task as
+// it stands behind the lock; an error from guard ends it without a write.
+func (s *Store) transitionIf(ctx context.Context, id uuid.UUID, guard func(Task) error, to, note string, set string, args ...any) (Task, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Task{}, err
@@ -591,34 +602,11 @@ func (s *Store) transitionFrom(ctx context.Context, id uuid.UUID, from, to, note
 	}
 	// The guard is inside the transaction, behind the FOR UPDATE: checked
 	// outside, the state could change between the look and the write.
-	if from != "" && t.State != from {
-		return Task{}, fmt.Errorf("%w: %s → %s (expected %s)", ErrInvalidTransition, t.State, to, from)
-	}
-	if !transitionAllowed(t.State, to) {
-		return Task{}, fmt.Errorf("%w: %s → %s", ErrInvalidTransition, t.State, to)
-	}
-	query := "UPDATE backlog_tasks SET state=$1, updated_at=now()"
-	if set != "" {
-		query += ", " + set
-	}
-	query += " WHERE id=$2"
-	if _, err := tx.Exec(ctx, query, append([]any{to, id}, args...)...); err != nil {
+	if err := guard(t); err != nil {
 		return Task{}, err
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO task_transitions (task_id, from_state, to_state, note)
-		VALUES ($1,$2,$3,$4)`, id, t.State, to, note); err != nil {
+	if err := applyTransition(ctx, tx, t, to, note, set, args...); err != nil {
 		return Task{}, err
-	}
-	if err := syncStage(ctx, tx, id, to); err != nil {
-		return Task{}, err
-	}
-	// The task has just left an agent column — if that column now stands empty,
-	// it goes with it. This keeps the board on the working states that really
-	// exist.
-	if terminalState(to) {
-		if _, err := cleanupEmptyAgentStages(ctx, tx, t.AgentID); err != nil {
-			return Task{}, err
-		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Task{}, err
@@ -626,13 +614,85 @@ func (s *Store) transitionFrom(ctx context.Context, id uuid.UUID, from, to, note
 	return s.Get(ctx, id)
 }
 
+// applyTransition writes the edge from t's state to `to` inside tx, which
+// holds t's row FOR UPDATE: the state, the caller's set clause ($3 on), the
+// history entry and the board column.
+func applyTransition(ctx context.Context, tx pgx.Tx, t Task, to, note string, set string, args ...any) error {
+	if !transitionAllowed(t.State, to) {
+		return fmt.Errorf("%w: %s → %s", ErrInvalidTransition, t.State, to)
+	}
+	query := "UPDATE backlog_tasks SET state=$1, updated_at=now()"
+	if set != "" {
+		query += ", " + set
+	}
+	query += " WHERE id=$2"
+	if _, err := tx.Exec(ctx, query, append([]any{to, t.ID}, args...)...); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO task_transitions (task_id, from_state, to_state, note)
+		VALUES ($1,$2,$3,$4)`, t.ID, t.State, to, note); err != nil {
+		return err
+	}
+	if err := syncStage(ctx, tx, t.ID, to); err != nil {
+		return err
+	}
+	// The task has just left an agent column — if that column now stands empty,
+	// it goes with it. This keeps the board on the working states that really
+	// exist.
+	if terminalState(to) {
+		if _, err := cleanupEmptyAgentStages(ctx, tx, t.AgentID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Block parks the task: correlation key + runtime session for --resume (spec/12, spec/13).
 //
 // This clears daemon_retries: the run got far enough to ask a question, so
 // whatever connection losses came before it were not a series.
+//
+// A park on a key under AnswerKeyPrefix takes the answers colleagues gave
+// while the run was still going (AnswerAsAgent): the task resumes with them
+// at once, in the same transaction, instead of waiting for an answer that
+// has already come.
 func (s *Store) Block(ctx context.Context, id uuid.UUID, correlationKey, sessionID, question string) (Task, error) {
-	return s.transition(ctx, id, StateBlocked, "blocked: "+question,
-		"correlation_key=$3, runtime_session_id=$4, resume_input=NULL, daemon_retries=0", correlationKey, sessionID)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Task{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	t, err := scanTask(tx.QueryRow(ctx, "SELECT "+taskCols+" FROM backlog_tasks WHERE id=$1 FOR UPDATE", id))
+	if err != nil {
+		return Task{}, err
+	}
+	if err := applyTransition(ctx, tx, t, StateBlocked, "blocked: "+question,
+		"correlation_key=$3, runtime_session_id=$4, resume_input=NULL, daemon_retries=0", correlationKey, sessionID); err != nil {
+		return Task{}, err
+	}
+	resumed := false
+	if strings.HasPrefix(correlationKey, AnswerKeyPrefix) {
+		authors, input, err := takeHeldAnswers(ctx, tx, t.ID)
+		if err != nil {
+			return Task{}, err
+		}
+		if input != "" {
+			t.State = StateBlocked
+			if err := applyTransition(ctx, tx, t, StateOpen, "answered by "+authors,
+				"resume_input=$3, priority=1", input); err != nil {
+				return Task{}, err
+			}
+			resumed = true
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Task{}, err
+	}
+	if resumed {
+		s.notify(ctx, t.AgentID)
+	}
+	return s.Get(ctx, id)
 }
 
 // Complete finishes the task (done) or fails it (failed).
@@ -927,7 +987,9 @@ func (s *Store) CorrelateWake(ctx context.Context, orgID uuid.UUID, correlationK
 	return t, nil
 }
 
-// Answer is the blocked→open edge for a HUMAN reply. It is CorrelateWake
+// Answer is the blocked→open edge for a reply addressed to the task: a
+// person's (POST /tasks/{id}/reply), whatever the key; AnswerAsAgent is an
+// agent's (covey/add_note with answer). It is CorrelateWake
 // addressed by task instead of by correlation key: a person does not know the
 // key and does not have to — they answer the task they are looking at.
 //

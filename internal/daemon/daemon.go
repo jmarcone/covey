@@ -248,6 +248,7 @@ var routedInjectTypes = map[string]bool{
 	TypeInjectPlatformAction: true,
 	TypeInjectSecret:         true,
 	TypeInjectTasks:          true,
+	TypeInjectNote:           true,
 }
 
 // deliverIfResponse hands an answer to one of our own requests to its waiting
@@ -497,6 +498,19 @@ func (c *Client) createTask(ctx context.Context, req RequestCreateTask) (InjectC
 		return InjectCreateTask{}, err
 	}
 	return DecodePayload[InjectCreateTask](msg)
+}
+
+// note has the control plane put a note on another task than the running one
+// (covey/add_note with task_id), and resume it if asked to and it is blocked.
+func (c *Client) note(ctx context.Context, req RequestNote) (InjectNote, error) {
+	req.RequestID = uuid.NewString()
+	reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	msg, err := c.request(reqCtx, TypeRequestNote, req.RequestID, req)
+	if err != nil {
+		return InjectNote{}, err
+	}
+	return DecodePayload[InjectNote](msg)
 }
 
 // message has the control plane deliver a message to a person (covey/message,
