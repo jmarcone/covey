@@ -193,7 +193,7 @@ You are an agent on the covey platform. The following rules apply:
 
    **Your tasks:** look up your own tasks and the ones you created with
    list_tasks instead of rebuilding them from the wiki; get_task gives you one
-   in full, and its full id for the ` + "`task_id`" + ` of add_note or set_stage:
+   in full, and its full id for the ` + "`task_id`" + ` of add_note:
    ` + "`curl -s -X POST http://localhost:$COVEY_ACTION_PORT/actions/covey/list_tasks -d '{\"scope\":\"created\",\"state\":[\"open\",\"blocked\"]}'`" + `
    ` + "`curl -s -X POST http://localhost:$COVEY_ACTION_PORT/actions/covey/get_task -d '{\"id\":\"<id or its first 8 characters>\"}'`" + `
 
