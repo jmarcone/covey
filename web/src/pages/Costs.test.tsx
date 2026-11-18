@@ -459,8 +459,14 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
       fireEvent.focus(container.querySelectorAll("g[data-period]")[0]);
       expect(container.querySelector("[data-tag-detail]")!.textContent).toBe("≈ 4,3× · Spanne 3,5× – 5,8×");
       expect(container.querySelector("[data-vs-note]")).not.toBeNull();
+      // the table keeps the note: it is the only explanation of the comparison
+      await click("Als Tabelle zeigen");
+      expect(container.querySelector("tr[data-totals]")).not.toBeNull();
+      expect(container.querySelector("[data-vs-note]")).not.toBeNull();
+      await click("Als Tabelle zeigen");
       await click("Beträge");
       expect(container.querySelector("[data-tag]")).toBeNull();
+      expect(container.querySelector("[data-vs-note]")).toBeNull();
     });
 
     // PR #80 review: an hour is 1–3 points of ±1 each; the tile shows no

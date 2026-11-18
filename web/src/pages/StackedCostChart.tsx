@@ -732,7 +732,8 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
           {perAgent.length === 0 && <div className="muted text-sm">{t("costs.empty")}</div>}
         </div>
       )}
-      {vs && layout === "combined" && !asTable && <p className="muted text-xs mt-1 mb-0" data-vs-note>{t("costs.fig.vsNote")}</p>}
+      {/* In the table too: it is the only word on what the comparison means. */}
+      {vs && layout === "combined" && <p className="muted text-xs mt-1 mb-0" data-vs-note>{t("costs.fig.vsNote")}</p>}
       {subscription && bucket === "hour" && showReal && (rate.mixed || pointPrice != null) && <p className="muted text-xs mt-1 mb-0" data-hour-note>
         {rate.mixed ? t("costs.fig.hourRealNoteMixed") : t("costs.fig.hourRealNote", { usd: fmtUSD(pointPrice ?? 0) })}
       </p>}
