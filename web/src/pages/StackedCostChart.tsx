@@ -2,19 +2,25 @@ import { useId, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { api, type BilledReport, type CellAgent, type CostCell, type CostCells } from "../api";
+import { api, type BilledReport, type CellAgent, type CostCell, type CostCells, type UsageReading } from "../api";
 import { fmtBucket, fmtClockUTC, fmtCount, fmtCountAxis, fmtNumber, fmtUSD, fmtUSDAxis } from "../format";
+import { SOURCES, SOURCE_COLOR, sourceHint, sourceLabel, type Source } from "./costSources";
+
+export { SOURCE_COLOR };
+
 import {
   billedFetchBucket,
   billedPerPeriod,
   credentialFigures,
   credId,
+  isSeat,
   meterCrossings,
   pricePerPoint,
   recomputedOf,
   stepRate,
   type CredentialFigures,
 } from "./costFigures";
+import { PlanPrice } from "./PlanPrice";
 
 /* The cost explorer. The credential is the first level: what money means
  * depends on it, so every figure belongs to one credential and nothing is
@@ -35,18 +41,9 @@ import {
  * totals. */
 
 export type Split = "type" | "none";
-type Source = "reported" | "recomputed" | "real" | "billed";
 type Layout = "combined" | "agents";
 /** "amounts": every source's bar; "vs": the list bar and the real bar of each period side by side. */
 type View = "amounts" | "vs";
-
-/** One colour per source, everywhere on the page (styles.css). */
-export const SOURCE_COLOR: Record<Source, string> = {
-  reported: "var(--cost-reported)",
-  recomputed: "var(--cost-recomputed)",
-  real: "var(--cost-real)",
-  billed: "var(--cost-billed)",
-};
 
 /** Cost types: one blue family from light (cheap, plentiful) to dark (dear).
  *  Shared with the cost-types card and the token chart. */
@@ -77,6 +74,17 @@ export function useCostCells(days: number, bucket: string) {
   });
 }
 
+/** The provider's meter readings of the period: the cards below the chart
+ *  show them, and the plan form takes a credential's place and its weekly
+ *  reset from them. */
+export function useUsageReadings(days: number) {
+  return useQuery({
+    queryKey: ["cost", "usage-readings", days],
+    queryFn: () => api<UsageReading[] | null>(`/cost/usage-readings?days=${days}`),
+    refetchInterval: 30000,
+  });
+}
+
 /** What Anthropic billed, per bucket and API key; an organisation without an
  *  admin key gets an empty bill, not an error. */
 export function useBilled(days: number, bucket: string) {
@@ -101,8 +109,10 @@ export function agentColor(agents: readonly { id: string }[], id: string) {
   return AGENT_COLORS[(i < 0 ? 0 : i) % AGENT_COLORS.length];
 }
 
-function Chip({ on, color, hatched, children, onClick, onDoubleClick }: {
+export function Chip({ on, color, hatched, children, onClick, onDoubleClick, locked, title }: {
   on: boolean; color?: string; hatched?: boolean; children: React.ReactNode; onClick: () => void; onDoubleClick?: () => void;
+  /** The last chip that is on: it stays, and says so instead of ignoring the click. */
+  locked?: boolean; title?: string;
 }) {
   return (
     <button
@@ -110,13 +120,15 @@ function Chip({ on, color, hatched, children, onClick, onDoubleClick }: {
       onClick={onClick}
       onDoubleClick={onDoubleClick}
       aria-pressed={on}
+      aria-disabled={locked || undefined}
+      title={title}
       className="text-xs"
       style={{
         display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 6,
         border: `1px solid ${on ? "var(--border-strong)" : "var(--border)"}`,
         background: on ? "var(--surface-2)" : "transparent",
         color: on ? "var(--text-primary)" : "var(--text-muted)",
-        cursor: "pointer", lineHeight: 1.2,
+        cursor: locked ? "default" : "pointer", lineHeight: 1.2,
       }}
     >
       {color && <Swatch color={color} hatched={hatched} dim={!on} />}
@@ -459,7 +471,7 @@ function CredentialTiles({ f, filtered }: { f: CredentialFigures; filtered: bool
     <Tile key="rec" label={t("costs.fig.recomputed")} value={fmtUSD(f.recomputed)}
       sub={f.check != null ? t("costs.fig.priceTableCheck", { pct: pct(f.check) }) : undefined} color={SOURCE_COLOR.recomputed} />,
   ];
-  if (f.kind === "subscription" || (f.kind === "" && f.meter)) {
+  if (isSeat(f)) {
     const r = f.real;
     // The price per point the server priced the movement at, on average.
     const pp = r && r.points > 0 ? r.value / r.points : null;
@@ -542,8 +554,8 @@ function NoMultiple({ f }: { f: CredentialFigures }) {
 }
 
 /** One credential: its tiles, its chart, its agents. */
-function CredentialBlock({ f, data, billed, bucket, fmtPeriod, selected, src, split, types, layout, view, sharedScale, asTable }: {
-  f: CredentialFigures; data: CostCells; billed: BilledReport | undefined; bucket: string; fmtPeriod: (p: string) => string;
+function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPeriod, selected, src, split, types, layout, view, sharedScale, asTable }: {
+  f: CredentialFigures; data: CostCells; billed: BilledReport | undefined; readings: readonly UsageReading[]; canSetPlan: boolean; bucket: string; fmtPeriod: (p: string) => string;
   selected: Set<string>; src: Record<Source, boolean>; split: Split; types: Set<string>; layout: Layout; view: View; sharedScale: boolean; asTable: boolean;
 }) {
   const { t } = useTranslation();
@@ -655,7 +667,7 @@ function CredentialBlock({ f, data, billed, bucket, fmtPeriod, selected, src, sp
   const name = f.secretKey == null ? t("costs.fig.notAttributable") : `${f.secretKey} #${f.slot}`;
   const kind = t(`costs.fig.kind_${f.kind || "unknown"}`);
   const plan = planLabel(f);
-  const subscription = f.kind === "subscription" || (f.kind === "" && f.meter != null);
+  const subscription = isSeat(f);
   // What a point was priced at, for the hour note: named only when every
   // priced step has the same rate, since an average over two plans fits no
   // bar. Without movement, the plan's own price per point.
@@ -666,8 +678,9 @@ function CredentialBlock({ f, data, billed, bucket, fmtPeriod, selected, src, sp
     <section className="mb-5" aria-label={name} data-credential={f.id}>
       <div className="flex flex-wrap items-baseline gap-2 mb-2">
         <h3 style={{ fontSize: 15, fontWeight: 600 }}>{name}</h3>
-        <span className="muted text-xs">{kind}{plan ? ` · ${plan}` : ""}</span>
+        <span className="muted text-xs">{kind}{plan && !subscription ? ` · ${plan}` : ""}</span>
       </div>
+      {subscription && <PlanPrice f={f} name={name} readings={readings} editable={canSetPlan} />}
       <CredentialTiles f={f} filtered={filtered || layout === "agents"} />
       <NoMultiple f={f} />
       {f.bookingCheck.length > 0 && (
@@ -775,8 +788,9 @@ function ColourKey() {
   );
 }
 
-export function CostExplorer({ data, billed, selected, bucket, fmtPeriod }: {
-  data: CostCells | undefined; billed?: BilledReport; selected: Set<string>; bucket: string; fmtPeriod: (p: string) => string;
+export function CostExplorer({ data, billed, readings = [], canSetPlan = false, selected, bucket, fmtPeriod }: {
+  data: CostCells | undefined; billed?: BilledReport; readings?: readonly UsageReading[]; canSetPlan?: boolean;
+  selected: Set<string>; bucket: string; fmtPeriod: (p: string) => string;
 }) {
   const { t } = useTranslation();
   const [layout, setLayout] = useState<Layout>("combined");
@@ -796,23 +810,21 @@ export function CostExplorer({ data, billed, selected, bucket, fmtPeriod }: {
     const n = { ...v, [s]: !v[s] };
     return n.reported || n.recomputed || n.real || n.billed ? n : v; // keep at least one
   });
-  const hint = (s: Source) => t(s === "reported" ? "costs.filter.reportedHint" : s === "recomputed" ? "costs.filter.measuredHint"
-    : s === "real" ? "costs.filter.subscriptionHint" : "costs.filter.billedHint");
 
   return (
     <div>
       <ColourKey />
       <Row label={t("costs.filter.source")}>
-        {(["reported", "recomputed", "real", "billed"] as Source[]).map((s) => (
+        {SOURCES.map((s) => (
           <Chip key={s} on={src[s]} color={SOURCE_COLOR[s]} hatched={s === "real"} onClick={() => toggleSrc(s)}>
-            {t(s === "real" ? "costs.fig.realEstimate" : `costs.fig.${s}`)}
+            {sourceLabel(t, s)}
           </Chip>
         ))}
       </Row>
       <details className="text-xs muted mb-2" style={{ marginLeft: 92 }}>
         <summary style={{ cursor: "pointer" }}>{t("costs.filter.sourceHints")}</summary>
         <ul style={{ margin: "4px 0 0 0", paddingLeft: 16, maxWidth: 760 }}>
-          {(["reported", "recomputed", "real", "billed"] as Source[]).map((s) => <li key={s}>{hint(s)}</li>)}
+          {SOURCES.map((s) => <li key={s}>{sourceHint(t, s)}</li>)}
         </ul>
       </details>
       {layout === "combined" && (
@@ -850,7 +862,7 @@ export function CostExplorer({ data, billed, selected, bucket, fmtPeriod }: {
       {figures.length === 0 ? (
         <div className="muted text-sm" style={{ padding: "40px 0", textAlign: "center" }}>{t("costs.empty")}</div>
       ) : figures.map((f) => (
-        <CredentialBlock key={f.id} f={f} data={data!} billed={billed} bucket={bucket} fmtPeriod={fmtPeriod} selected={selected}
+        <CredentialBlock key={f.id} f={f} data={data!} billed={billed} readings={readings} canSetPlan={canSetPlan} bucket={bucket} fmtPeriod={fmtPeriod} selected={selected}
           src={src} split={split} types={types} layout={layout} view={view} sharedScale={sharedScale} asTable={asTable} />
       ))}
     </div>

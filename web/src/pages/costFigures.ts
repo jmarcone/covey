@@ -9,6 +9,7 @@ import type {
   MeterStep,
   UsageReading,
 } from "../api";
+import type { Source } from "./costSources";
 
 /* The figures of the Costs page, as pure functions — no React, no fetch.
  *
@@ -533,4 +534,80 @@ export function meterCrossings(cov: MeterCoverage, steps: readonly MeterStep[]):
     if (s.points > 0 || reset) out.set(s.period, { from, to, reset });
   }
   return out;
+}
+
+// --- The per-model table's totals ----------------------------------------------
+
+/** The sum of one money source over the credentials that have it: the real
+ *  cost and the bill are per credential, so the per-model table shows them in
+ *  rows of their own, each beside the list price of the same credentials over
+ *  the same span, never beside the models' totals. `of` counts the credentials
+ *  the source applies to, `with` those that have a figure; a sum over fewer is
+ *  not the total, and the table shows no number then. */
+export type SourceTotal = {
+  usd: number; low: number; high: number; below: boolean; with: number; of: number; pending: boolean;
+  /** The error of the last bill sync where one failed, so a bill that stops
+   *  short says why; null for the meter and for a sync that went through. */
+  syncError: string | null;
+  /** Claude Code's figure and covey's recomputed list over the span of this
+   *  source, summed over the credentials with a figure; null where one of
+   *  them has none, since a part is not the whole. The meter's real cost has
+   *  no reported counterpart: only the bill carries one. */
+  reported: number | null; recomputed: number | null;
+  /** The span each credential's figure covers: the meter's baseline to its
+   *  last reading, or the bill's window. */
+  spans: { id: string; from: Date; to: Date }[];
+};
+
+/** The figure of a per-model source over the span of a per-credential one:
+ *  Claude Code's own and covey's recomputed, null where not every credential
+ *  has one. */
+export function scopeFigure(total: SourceTotal, source: Source): number | null {
+  return source === "reported" ? total.reported : source === "recomputed" ? total.recomputed : null;
+}
+
+/** Whether a credential is a subscription seat: one whose tile offers a real
+ *  cost, whose card shows its meter and whose figure the seats' row sums. A
+ *  credential of a kind a newer daemon reports is none of these until covey
+ *  knows it; one of no reported kind counts where it has a meter. */
+export function isSeat(f: Pick<CredentialFigures, "kind" | "meter">): boolean {
+  return f.kind === "subscription" || (f.kind === "" && f.meter != null);
+}
+
+/** Real cost and bill over the whole organisation's credentials, as each tile
+ *  shows them: a source is offered (non-null) only when some credential has a
+ *  meter or a bill to read. */
+export function perCredentialTotals(figures: readonly CredentialFigures[]): { real: SourceTotal | null; billed: SourceTotal | null } {
+  // The credentials whose tile offers a real cost: a credential of another
+  // kind has none, so it is not one of the credentials the figure is "of".
+  const subs = figures.filter((f) => f.secretKey != null && isSeat(f));
+  const meters = subs.filter((f) => f.real != null);
+  let real: SourceTotal | null = null;
+  if (meters.length > 0) {
+    const priced = meters.filter((f) => f.real!.priced);
+    real = {
+      usd: priced.reduce((a, f) => a + f.real!.value, 0),
+      low: priced.reduce((a, f) => a + f.real!.low, 0),
+      high: priced.reduce((a, f) => a + f.real!.high, 0),
+      below: priced.length > 0 && priced.every((f) => f.real!.below),
+      with: priced.length, of: subs.length, pending: false, syncError: null,
+      reported: null,
+      recomputed: priced.length > 0 && priced.every((f) => f.aligned != null) ? priced.reduce((a, f) => a + f.aligned!, 0) : null,
+      spans: meters.filter((f) => f.meter != null).map((f) => ({ id: f.id, from: new Date(f.meter!.baseline_at), to: new Date(f.meter!.last_at) })),
+    };
+  }
+  const keys = figures.filter((f) => f.billed != null);
+  const measured = keys.filter((f) => f.billed!.state === "measured");
+  let billed: SourceTotal | null = null;
+  if (measured.length > 0) {
+    billed = {
+      usd: measured.reduce((a, f) => a + f.billed!.usd, 0), low: 0, high: 0, below: false,
+      with: measured.length, of: keys.length, pending: measured.some((f) => f.billed!.status.state === "pending"),
+      syncError: measured.find((f) => f.billed!.error)?.billed!.error || null,
+      reported: measured.reduce((a, f) => a + f.billed!.reported, 0),
+      recomputed: measured.reduce((a, f) => a + f.billed!.recomputed, 0),
+      spans: measured.filter((f) => f.billed!.window != null).map((f) => ({ id: f.id, from: f.billed!.window!.start, to: f.billed!.window!.end })),
+    };
+  }
+  return { real, billed };
 }

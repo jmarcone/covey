@@ -713,6 +713,9 @@ export type CellAgent = {
   reported_usd: number;
   /** Recomputed list price of its lines over the window. */
   measured_usd?: number;
+  /** The agent's current department; both null when it has none. */
+  department_id?: string | null;
+  department?: string | null;
 };
 
 /** One period × agent × credential (the secret value that paid; null: not attributable). */

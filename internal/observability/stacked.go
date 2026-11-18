@@ -52,6 +52,12 @@ type CellAgent struct {
 	// lines' tokens priced per type, unknown models at the engine's figure):
 	// the ranking and the legend. Bookings without lines are not in it.
 	Measured float64 `json:"measured_usd"`
+	// DepartmentID and Department name the department the agent belongs to
+	// now (both nil without one), so the filter can group the agents the way
+	// the org chart does. Its current department, not the one it had when
+	// the costs were booked: covey keeps no history of moves.
+	DepartmentID *uuid.UUID `json:"department_id"`
+	Department   *string    `json:"department"`
 }
 
 // CostCell is one bucket × agent × credential. The credential is the secret
@@ -101,6 +107,39 @@ type CostCells struct {
 	// some of the booked figures are an older daemon's running totals
 	// (legacy, cumulative) rather than a run's own spend.
 	Bookings []BookingBasis `json:"bookings"`
+}
+
+// cellDepartments fills in the department of every agent in the cells. A
+// department of another organisation is never named, even if a row pointed
+// at one.
+func (s *Store) cellDepartments(ctx context.Context, orgID uuid.UUID, agents map[uuid.UUID]*CellAgent) error {
+	if len(agents) == 0 {
+		return nil
+	}
+	ids := make([]uuid.UUID, 0, len(agents))
+	for id := range agents {
+		ids = append(ids, id)
+	}
+	rows, err := s.pool.Query(ctx, `SELECT a.id, d.id, d.name
+		FROM agents a JOIN departments d ON d.id = a.department_id AND d.org_id = a.org_id
+		WHERE a.org_id = $1 AND a.id = ANY($2)`, orgID, ids)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			id, dep uuid.UUID
+			name    string
+		)
+		if err := rows.Scan(&id, &dep, &name); err != nil {
+			return err
+		}
+		if ag, ok := agents[id]; ok {
+			ag.DepartmentID, ag.Department = &dep, &name
+		}
+	}
+	return rows.Err()
 }
 
 // BookingBasis counts the cost entries of one credential booked on one basis.
@@ -295,6 +334,9 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 		}
 		return credOrder(a) < credOrder(b)
 	})
+	if err := s.cellDepartments(ctx, orgID, agents); err != nil {
+		return out, err
+	}
 	for _, a := range agents {
 		out.Agents = append(out.Agents, *a)
 	}

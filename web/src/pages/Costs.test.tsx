@@ -72,6 +72,12 @@ function render(points: [number, number]) {
 
 const MULTIPLE = "Listen-$ je echtem $";
 
+
+// The chart's own source row. Since #79 the Usage per model card has a
+// "Quelle" row too (a labelled group); the chart's row is the one that isn't.
+const chartSources = () =>
+  screen.getAllByText("Quelle").map((e) => e.parentElement!).find((p) => p.getAttribute("role") !== "group")!;
+
 describe("Kosten — Zahlen je Zugangsdaten", () => {
   beforeEach(() => useGerman());
 
@@ -295,7 +301,7 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     expect(unpriced.textContent).toMatch(/davon Modelle ohne Listenpreis \(1\).*2,00 \$2,00 \$$/);
     const total = unpriced.parentElement!.querySelector("tr[data-total]")!;
     expect([...total.querySelectorAll("td")].map((td) => td.textContent)).toEqual([
-      "Summe (Liste, Modelle ohne Listenpreis zu Claude Codes Preis)", "12,00 $", "12,50 $",
+      "Summe (nachgerechnet, Modelle ohne Listenpreis zum gemeldeten Preis)", "12,00 $", "12,50 $",
     ]);
   });
 
@@ -339,11 +345,11 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     await act(async () => { await userEvent.click(screen.getByRole("button", { name: /^Coordinator/ })); });
     expect(screen.getByText(/^Verbrauch je Modell/)).toBeInTheDocument();
     expect(screen.getByText(/^Abo-Zähler je Zugangsdaten/)).toBeInTheDocument();
-    // one agent: the price list and the runs follow it, the two insight cards cannot
-    expect(container.querySelectorAll("[data-org-wide]")).toHaveLength(2);
+    // one agent: the price list, the runs and the model table follow it, the meter card cannot
+    expect(container.querySelectorAll("[data-org-wide]")).toHaveLength(1);
     await act(async () => { await userEvent.click(screen.getByRole("button", { name: /^QA/ })); });
     // two agents: the price list and the runs are the whole organisation's too
-    expect(container.querySelectorAll("[data-org-wide]")).toHaveLength(4);
+    expect(container.querySelectorAll("[data-org-wide]")).toHaveLength(3);
     expect(container.querySelector("[data-org-wide]")!.textContent).toBe("ganze Organisation: folgt dem Agentenfilter nicht");
   });
 
@@ -502,7 +508,7 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
       await click("Echt gegen Liste");
       expect(container.querySelector("[data-vs-absent]")).toBeNull();
       expect(container.querySelector("[data-vs-note]")).not.toBeNull();
-      await act(async () => { await userEvent.click(within(screen.getByText("Quelle").parentElement!).getByRole("button", { name: /Echte Kosten/ })); });
+      await act(async () => { await userEvent.click(within(chartSources()).getByRole("button", { name: /Echte Kosten/ })); });
       expect(screen.getByRole("button", { name: "Echt gegen Liste" })).toHaveAttribute("aria-pressed", "true");
       expect(container.querySelector("[data-vs-note]")).toBeNull();
       expect(container.querySelector("[data-vs-absent]")!.textContent).toMatch(/„Echt gegen Liste“ wird hier nicht gezeichnet/);
@@ -521,16 +527,16 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
       const { container } = render([2, 2]);
       await screen.findByRole("group", { name: MULTIPLE });
       const chip = (name: string) => screen.getByRole("button", { name });
-      await act(async () => { await userEvent.click(within(screen.getByText("Quelle").parentElement!).getByRole("button", { name: "Von Claude Code gemeldet" })); });
+      await act(async () => { await userEvent.click(within(chartSources()).getByRole("button", { name: "Von Claude Code gemeldet" })); });
       await click(/^Coordinator/);
       await click("Echt gegen Liste");
-      expect(within(screen.getByText("Quelle").parentElement!).getByRole("button", { name: "Von Claude Code gemeldet" })).toHaveAttribute("aria-pressed", "false");
+      expect(within(chartSources()).getByRole("button", { name: "Von Claude Code gemeldet" })).toHaveAttribute("aria-pressed", "false");
       expect(chip("Echt gegen Liste")).toHaveAttribute("aria-pressed", "true");
       expect(screen.getByRole("button", { name: /^Coordinator/ })).toHaveAttribute("aria-pressed", "true");
       // an agent filter has no real bar to set against the list
       expect(container.querySelector("[data-tag]")).toBeNull();
       await click("Beträge");
-      expect(within(screen.getByText("Quelle").parentElement!).getByRole("button", { name: "Von Claude Code gemeldet" })).toHaveAttribute("aria-pressed", "false");
+      expect(within(chartSources()).getByRole("button", { name: "Von Claude Code gemeldet" })).toHaveAttribute("aria-pressed", "false");
       expect(screen.getByRole("button", { name: /^Coordinator/ })).toHaveAttribute("aria-pressed", "true");
     });
   });

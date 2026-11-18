@@ -1,0 +1,519 @@
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import Costs from "./Costs";
+import { canSetPlan, defaultValidFrom, planPlace, presetValidFrom } from "./PlanPrice";
+import type { CostCells, CredentialPlan, Principal, RuntimeInstance, UsageReading } from "../api";
+import type { CredentialFigures } from "./costFigures";
+import { renderWithProviders, testPrincipal, useGerman } from "../test/render";
+
+// The plan price is what turns the meter's points into dollars. The form that
+// stores it is for the roles the endpoint lets through, posts exactly what
+// the endpoint reads, presets the start of the current meter week from the
+// credential's own readings, and says what the server said when it refuses.
+
+const SEAT = "claude_code_oauth_token";
+const RT = "0b0e0000-0000-4000-8000-000000000001";
+const RESET = "2026-11-20T16:00:00Z"; // the weekly reset the readings name
+const WEEK_START = "2026-11-13T16:00:00.000Z"; // RESET − 7 days
+const FORM = `Tarifpreis für ${SEAT} #0 setzen`; // the form's accessible name
+// The page's clock in the integration tests: inside the week RESET ends. The
+// preset steps an old reset forward to the week that contains now, so on the
+// real clock these tests would fail once RESET has passed.
+const NOW = "2026-11-18T12:00:00Z";
+
+/** Pins Date (and only Date: react-query's and userEvent's timers stay real)
+ *  to `at` for the test. */
+function pinClock(at: string = NOW) {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(at);
+}
+
+const reading = (over: Partial<UsageReading> = {}): UsageReading => ({
+  runtime_id: RT, credential_ord: 1, secret_key: SEAT, secret_slot: 0, credential_kind: "subscription", source: "usage_cmd",
+  window_kind: "seven_day", supported: true, window_percent: null, week_percent: 12, resets_at: RESET, status: "", reason: "",
+  stale: false, fetched_at: "2026-11-18T10:00:00Z", received_at: "2026-11-18T10:00:00Z", cost_usd: null, ...over,
+});
+
+const cells = (plans: CredentialPlan[] = []): CostCells => ({
+  periods: ["2026-11-18T10:00:00Z"],
+  agents: [{ id: "a1", label: "Coordinator", reported_usd: 1, measured_usd: 1 }],
+  types: ["output"],
+  cells: [{
+    period: "2026-11-18T10:00:00Z", agent_id: "a1", secret_key: SEAT, secret_slot: 0, credential_kind: "subscription",
+    reported_usd: 1, measured: { output: 1 }, engine_usd: 1, tokens: { output: 1000 },
+  }],
+  subscription: [],
+  meter: [],
+  plans,
+  bookings: [],
+});
+
+const NO_BILL = { bucket: "hour", points: [], sync: { configured: false, last_attempt_at: null, last_success_at: null,
+  last_daily_at: null, data_refreshed_at: null, last_status: "", last_error: "" } };
+
+/** An instance as /runtime-instances lists it, with credentials at the given
+ *  places: [secret_key, secret_slot] per ord. */
+const instance = (id: string, creds: [string, number][]): RuntimeInstance => ({
+  id, engine: "claude", display_name: "Claude", model: "", bindings: [], can_carry_blocking: false,
+  creds: creds.map(([secret_key, secret_slot], ord) => ({ ord, kind: "subscription", secret_key, secret_slot, label: "" })),
+}) as unknown as RuntimeInstance;
+
+// the seat sits at ord 1 of the instance the readings name
+const HOME = [instance(RT, [["other_key", 0], [SEAT, 0]])];
+
+type Put = { url: string; body: Record<string, unknown> };
+
+/** The page's endpoints, with the plan endpoint answered by `plan` and its
+ *  requests recorded. Cells are served from `state`, so a saved plan can show
+ *  up in the refetch. The instances are served from `srv`: a test reorders
+ *  the credentials there, or holds the answer back with a gate. Without
+ *  `plan`, the plan endpoint answers like the server: it resolves the place
+ *  when the request arrives and names the secret it found there. */
+function serve(opts: { readings?: UsageReading[]; instances?: RuntimeInstance[]; plan?: (body: Record<string, unknown>) => Response; state?: { cells: CostCells } } = {}) {
+  const puts: Put[] = [];
+  const state = opts.state ?? { cells: cells() };
+  const srv = { instances: opts.instances ?? HOME, gate: null as Promise<void> | null };
+  let cellFetches = 0;
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = (init?.method ?? "GET").toUpperCase();
+    const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { "Content-Type": "application/json" } });
+    if (method === "PUT" && url.includes("/plan")) {
+      const body = JSON.parse(String(init?.body));
+      puts.push({ url, body });
+      if (opts.plan) return opts.plan(body);
+      const [, rt, ord] = url.match(/\/runtime-instances\/([^/]+)\/credentials\/(\d+)\/plan$/) ?? [];
+      const c = srv.instances.find((r) => r.id === rt)?.creds.find((x) => x.ord === Number(ord));
+      if (!c) return json({ error: "not found" }, 404);
+      return json({ ...body, runtime_id: rt, ord: Number(ord), secret_key: c.secret_key, secret_slot: c.secret_slot, valid_to: null });
+    }
+    const path = url.split("?")[0];
+    if (path.endsWith("/runtime-instances")) {
+      if (srv.gate) await srv.gate;
+      return json(srv.instances);
+    }
+    if (path.endsWith("/cost/cells")) { cellFetches++; return json(state.cells); }
+    if (path.endsWith("/cost/billed")) return json(NO_BILL);
+    if (path.endsWith("/cost/runs")) return json([]);
+    if (path.endsWith("/cost/models")) return json({ rows: [], runs_without_breakdown: 0, usd_without_breakdown: 0 });
+    if (path.endsWith("/cost/usage-readings")) return json(opts.readings ?? []);
+    return new Response(JSON.stringify({ error: "not mocked" }), { status: 404 });
+  }));
+  return { puts, state, srv, cellFetches: () => cellFetches };
+}
+
+// the seat moved to ord 0 by a reorder
+const REORDERED = [instance(RT, [[SEAT, 0], ["other_key", 0]])];
+
+const page = (me: Principal) => renderWithProviders(<Costs me={me} />);
+const block = async (c: HTMLElement) => waitFor(() => {
+  const b = c.querySelector<HTMLElement>(`[data-credential="${SEAT}#0"]`);
+  if (!b) throw new Error("no credential block yet");
+  return b;
+});
+
+describe("Kosten — Tarifpreis setzen", () => {
+  beforeEach(() => {
+    useGerman();
+    pinClock();
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("läuft auf der festgehaltenen Uhr, in Tokio (vite.config.ts: test.env.TZ)", () => {
+    expect(new Date().toISOString()).toBe("2026-11-18T12:00:00.000Z");
+    // UTC+9 all year: the reader's clock and UTC differ, so a mix-up shows
+    expect(new Date().getTimezoneOffset()).toBe(-540);
+    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe("Asia/Tokyo");
+  });
+
+  it("schickt den Tarifpreis mit dem Wochenbeginn aus resets_at der Ablesung als valid_from", async () => {
+    const s = serve({ readings: [reading()] });
+    const { container } = page(testPrincipal("org_admin"));
+    const b = await block(container);
+    await userEvent.click(await within(b).findByRole("button", { name: "Tarifpreis setzen" }));
+
+    const form = within(b).getByRole("form", { name: FORM });
+    // preset: the reset minus seven days, not "now" — 13 Nov 16:00 UTC is
+    // 14 Nov 01:00 on the reader's clock in Tokyo
+    expect(within(form).getByLabelText("Gültig ab")).toHaveValue("2026-11-14T01:00");
+    await userEvent.type(within(form).getByLabelText("Betrag (USD)"), "200");
+    await userEvent.click(within(form).getByRole("button", { name: "Speichern" }));
+
+    await waitFor(() => expect(s.puts).toHaveLength(1));
+    expect(s.puts[0].url).toBe(`/api/v1/runtime-instances/${RT}/credentials/1/plan`);
+    expect(s.puts[0].body).toEqual({ amount: 200, currency: "USD", period: "month", valid_from: WEEK_START });
+  });
+
+  it("schickt Jahr und einen geänderten Beginn", async () => {
+    const s = serve({ readings: [reading()] });
+    const { container } = page(testPrincipal("security"));
+    const b = await block(container);
+    await userEvent.click(await within(b).findByRole("button", { name: "Tarifpreis setzen" }));
+    const form = within(b).getByRole("form", { name: FORM });
+    await userEvent.type(within(form).getByLabelText("Betrag (USD)"), "2000.5");
+    await userEvent.selectOptions(within(form).getByLabelText("Zeitraum"), "year");
+    fireEvent.change(within(form).getByLabelText("Gültig ab"), { target: { value: "2026-11-15T08:30" } });
+    await userEvent.click(within(form).getByRole("button", { name: "Speichern" }));
+
+    await waitFor(() => expect(s.puts).toHaveLength(1));
+    // typed on the reader's clock (Tokyo, UTC+9), sent as the instant
+    expect(s.puts[0].body).toEqual({ amount: 2000.5, currency: "USD", period: "year", valid_from: "2026-11-14T23:30:00.000Z" });
+  });
+
+  it("holt nach dem Speichern die Kostendaten neu und schließt das Formular", async () => {
+    const s = serve({ readings: [reading()] });
+    const { container } = page(testPrincipal("org_admin"));
+    const b = await block(container);
+    expect(within(b).getByText("Kein Tarifpreis")).toBeInTheDocument();
+    const before = s.cellFetches();
+    await userEvent.click(await within(b).findByRole("button", { name: "Tarifpreis setzen" }));
+    await userEvent.type(within(b).getByLabelText("Betrag (USD)"), "200");
+    // what the server answers on the refetch: the plan is there now
+    s.state.cells = cells([{
+      runtime_id: RT, ord: 1, secret_key: SEAT, secret_slot: 0, plan_name: "", amount: 200, currency: "USD", period: "month",
+      tax_basis: "net", fx_to_usd: 1, fx_date: null, valid_from: WEEK_START, valid_to: null, weekly_usd: 46.15, usd_per_point: 0.4615,
+    }]);
+    await userEvent.click(within(b).getByRole("button", { name: "Speichern" }));
+
+    await waitFor(() => expect(s.cellFetches()).toBeGreaterThan(before));
+    await waitFor(() => expect(within(b).queryByRole("form")).toBeNull());
+    expect(within(b).getByText(/^Tarif: .*200.*\/Monat seit /)).toBeInTheDocument();
+    // focus is back on the button that opened the form
+    expect(within(b).getByRole("button", { name: "Tarifpreis setzen" })).toHaveFocus();
+  });
+
+  it("setzt beim Öffnen den Fokus auf den Betrag und nennt die Zugangsdaten im Namen des Formulars", async () => {
+    serve({ readings: [reading()] });
+    const { container } = page(testPrincipal("org_admin"));
+    const b = await block(container);
+    await userEvent.click(await within(b).findByRole("button", { name: "Tarifpreis setzen" }));
+    expect(within(b).getByRole("form", { name: `Tarifpreis für ${SEAT} #0 setzen` })).toBeInTheDocument();
+    expect(within(b).getByLabelText("Betrag (USD)")).toHaveFocus();
+    // the start field is described by the UTC echo and the hint
+    const hint = within(b).getByText(/Vorbelegt: Beginn der aktuellen Zählerwoche\.$/);
+    expect(within(b).getByLabelText("Gültig ab").getAttribute("aria-describedby")).toBe(hint.id);
+  });
+
+  it("bricht mit Escape ab und gibt den Fokus an die Schaltfläche zurück", async () => {
+    const s = serve({ readings: [reading()] });
+    const { container } = page(testPrincipal("org_admin"));
+    const b = await block(container);
+    await userEvent.click(await within(b).findByRole("button", { name: "Tarifpreis setzen" }));
+    await userEvent.type(within(b).getByLabelText("Betrag (USD)"), "200");
+    await userEvent.keyboard("{Escape}");
+    expect(within(b).queryByRole("form")).toBeNull();
+    expect(within(b).getByRole("button", { name: "Tarifpreis setzen" })).toHaveFocus();
+    expect(s.puts).toHaveLength(0);
+  });
+
+  it("gibt nach Abbrechen den Fokus an die Schaltfläche zurück", async () => {
+    serve({ readings: [reading()] });
+    const { container } = page(testPrincipal("org_admin"));
+    const b = await block(container);
+    await userEvent.click(await within(b).findByRole("button", { name: "Tarifpreis setzen" }));
+    await userEvent.click(within(b).getByRole("button", { name: "Abbrechen" }));
+    expect(within(b).queryByRole("form")).toBeNull();
+    expect(within(b).getByRole("button", { name: "Tarifpreis setzen" })).toHaveFocus();
+  });
+
+  /** Opens the form, types 200 and saves against a plan endpoint that refuses
+   *  with `status` and `error`; returns the danger line. */
+  async function refused(status: number, error: string) {
+    const s = serve({
+      readings: [reading()],
+      plan: () => new Response(JSON.stringify({ error }), { status, headers: { "Content-Type": "application/json" } }),
+    });
+    const { container } = page(testPrincipal("org_admin"));
+    const b = await block(container);
+    await userEvent.click(await within(b).findByRole("button", { name: "Tarifpreis setzen" }));
+    await userEvent.type(within(b).getByLabelText("Betrag (USD)"), "200");
+    await userEvent.click(within(b).getByRole("button", { name: "Speichern" }));
+    const alert = await within(b).findByRole("alert");
+    // the form stays, with what was typed
+    expect(within(b).getByLabelText("Betrag (USD)")).toHaveValue(200);
+    expect(s.puts).toHaveLength(1);
+    return { alert, amount: within(b).getByLabelText("Betrag (USD)"), from: within(b).getByLabelText("Gültig ab") };
+  }
+
+  it("zeigt bei einem 400 den Text des Servers in Klammern als Gefahrenzeile und behält das Formular", async () => {
+    const { alert, amount, from } = await refused(400, 'invalid plan: period must be "month" or "year"');
+    expect(alert).toHaveTextContent('Der Server hat den Preis abgelehnt (invalid plan: period must be "month" or "year").');
+    expect(alert.getAttribute("style")).toContain("var(--text-danger)");
+    // the line belongs to the fields, and they say they are in error
+    expect(alert.id).not.toBe("");
+    for (const el of [amount, from]) {
+      expect(el.getAttribute("aria-describedby")?.split(" ")).toContain(alert.id);
+      expect(el).toHaveAttribute("aria-invalid", "true");
+    }
+  });
+
+  it("sagt bei einem 403, dass die Rolle es nicht darf", async () => {
+    const { alert } = await refused(403, "forbidden");
+    expect(alert).toHaveTextContent("Deine Rolle darf keinen Tarifpreis setzen (forbidden).");
+  });
+
+  it("sagt bei einem 409, dass zu dem Zeitpunkt schon ein Tarif beginnt", async () => {
+    const { alert, amount, from } = await refused(409, "runtimes: a plan already starts at that moment");
+    expect(alert).toHaveTextContent("Zu diesem Zeitpunkt beginnt schon ein Tarif — wähle einen späteren Beginn.");
+    // only the start is at fault
+    expect(from).toHaveAttribute("aria-invalid", "true");
+    expect(amount).not.toHaveAttribute("aria-invalid");
+  });
+
+  it("belegt beim Korrigieren eines Preises dieser Woche jetzt vor, auf die Minute", async () => {
+    // the price set at the week start was wrong; another one there is a 409
+    pinClock("2026-11-18T12:34:56Z");
+    const s = serve({ readings: [reading()], state: { cells: cells([{
+      runtime_id: RT, ord: 1, secret_key: SEAT, secret_slot: 0, plan_name: "", amount: 20, currency: "USD", period: "month",
+      tax_basis: "net", fx_to_usd: 1, fx_date: null, valid_from: WEEK_START, valid_to: null, weekly_usd: 4.6, usd_per_point: 0.046,
+    }]) } });
+    const { container } = page(testPrincipal("org_admin"));
+    const b = await block(container);
+    await userEvent.click(await within(b).findByRole("button", { name: "Tarifpreis setzen" }));
+    // 12:34 UTC is 21:34 in Tokyo
+    expect(within(b).getByLabelText("Gültig ab")).toHaveValue("2026-11-18T21:34");
+    expect(within(b).getByText(/In dieser Zählerwoche beginnt schon ein Preis, vorbelegt: jetzt\.$/)).toBeInTheDocument();
+    await userEvent.type(within(b).getByLabelText("Betrag (USD)"), "200");
+    await userEvent.click(within(b).getByRole("button", { name: "Speichern" }));
+    await waitFor(() => expect(s.puts).toHaveLength(1));
+    expect(s.puts[0].body.valid_from).toBe("2026-11-18T12:34:00.000Z");
+  });
+
+  it("zeigt einem Betrachter den Tarif, aber keine Schaltfläche", async () => {
+    serve({ readings: [reading()] });
+    const { container } = page(testPrincipal("viewer"));
+    const b = await block(container);
+    expect(within(b).getByText("Kein Tarifpreis")).toBeInTheDocument();
+    expect(within(b).queryByRole("button", { name: "Tarifpreis setzen" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Tarifpreis setzen" })).toBeNull();
+  });
+
+  it("ohne Ablesung gibt es die Schaltfläche, wenn die Zugangsdaten irgendwo sitzen, mit Vorbelegung jetzt", async () => {
+    const s = serve();
+    const { container } = page(testPrincipal("org_admin"));
+    const b = await block(container);
+    await userEvent.click(await within(b).findByRole("button", { name: "Tarifpreis setzen" }));
+    expect(within(b).getByText(/Noch kein Wochen-Reset bekannt, vorbelegt: jetzt\.$/)).toBeInTheDocument();
+    await userEvent.type(within(b).getByLabelText("Betrag (USD)"), "200");
+    await userEvent.click(within(b).getByRole("button", { name: "Speichern" }));
+    await waitFor(() => expect(s.puts).toHaveLength(1));
+    expect(s.puts[0].url).toBe(`/api/v1/runtime-instances/${RT}/credentials/1/plan`);
+  });
+
+  it("ohne Stelle in den Laufzeit-Instanzen gibt es keine Schaltfläche", async () => {
+    serve({ readings: [reading()], instances: [instance(RT, [["other_key", 0]])] });
+    const { container } = page(testPrincipal("org_admin"));
+    const b = await block(container);
+    expect(within(b).getByText("Kein Tarifpreis")).toBeInTheDocument();
+    expect(within(b).queryByRole("button", { name: "Tarifpreis setzen" })).toBeNull();
+  });
+
+  it("schickt den Preis an die Stelle, an der die Zugangsdaten jetzt sitzen, nicht an die der Ablesung", async () => {
+    // the reading is from before a reorder and still says ord 1; the seat sits at ord 0 now
+    const s = serve({ readings: [reading({ credential_ord: 1 })], instances: [instance(RT, [[SEAT, 0], ["other_key", 0]])] });
+    const { container } = page(testPrincipal("org_admin"));
+    const b = await block(container);
+    await userEvent.click(await within(b).findByRole("button", { name: "Tarifpreis setzen" }));
+    await userEvent.type(within(b).getByLabelText("Betrag (USD)"), "200");
+    await userEvent.click(within(b).getByRole("button", { name: "Speichern" }));
+    await waitFor(() => expect(s.puts).toHaveLength(1));
+    expect(s.puts[0].url).toBe(`/api/v1/runtime-instances/${RT}/credentials/0/plan`);
+  });
+
+  it("sperrt Speichern, bis die Instanzen neu geladen sind, und schickt dann an die neue Stelle", async () => {
+    const s = serve({ readings: [reading()] });
+    const { container } = page(testPrincipal("org_admin"));
+    const b = await block(container);
+    const setBtn = await within(b).findByRole("button", { name: "Tarifpreis setzen" });
+    // the credentials were reordered since the page loaded; the look the form
+    // takes on opening is still under way
+    let release: () => void = () => {};
+    s.srv.gate = new Promise<void>((r) => { release = r; });
+    s.srv.instances = REORDERED;
+    await userEvent.click(setBtn);
+    await userEvent.type(within(b).getByLabelText("Betrag (USD)"), "200");
+    // the cached place (ord 1) is the other secret's now: no saving on it
+    expect(within(b).getByRole("button", { name: "Speichern" })).toBeDisabled();
+    fireEvent.submit(within(b).getByRole("form"));
+    expect(s.puts).toHaveLength(0);
+
+    release();
+    await waitFor(() => expect(within(b).getByRole("button", { name: "Speichern" })).toBeEnabled());
+    await userEvent.click(within(b).getByRole("button", { name: "Speichern" }));
+    await waitFor(() => expect(s.puts).toHaveLength(1));
+    expect(s.puts[0].url).toBe(`/api/v1/runtime-instances/${RT}/credentials/0/plan`);
+    await waitFor(() => expect(within(b).queryByRole("form")).toBeNull());
+  });
+
+  it("meldet, wenn der Server den Preis bei anderen Zugangsdaten gespeichert hat, und behält das Formular", async () => {
+    const s = serve({ readings: [reading()] });
+    const { container } = page(testPrincipal("org_admin"));
+    const b = await block(container);
+    await userEvent.click(await within(b).findByRole("button", { name: "Tarifpreis setzen" }));
+    await userEvent.type(within(b).getByLabelText("Betrag (USD)"), "200");
+    await waitFor(() => expect(within(b).getByRole("button", { name: "Speichern" })).toBeEnabled());
+    // reordered after the form looked: the PUT to ord 1 lands at other_key
+    s.srv.instances = REORDERED;
+    await userEvent.click(within(b).getByRole("button", { name: "Speichern" }));
+
+    const alert = await within(b).findByRole("alert");
+    expect(alert).toHaveTextContent("Bei anderen Zugangsdaten gespeichert — die Zugangsdaten wurden umsortiert; prüfe beide Tarife.");
+    expect(within(b).getByLabelText("Betrag (USD)")).toHaveValue(200);
+    expect(s.puts[0].url).toBe(`/api/v1/runtime-instances/${RT}/credentials/1/plan`);
+
+    // the form looked again: the next save goes to where the seat sits now
+    await waitFor(() => expect(within(b).getByRole("button", { name: "Speichern" })).toBeEnabled());
+    await userEvent.click(within(b).getByRole("button", { name: "Speichern" }));
+    await waitFor(() => expect(s.puts).toHaveLength(2));
+    expect(s.puts[1].url).toBe(`/api/v1/runtime-instances/${RT}/credentials/0/plan`);
+    await waitFor(() => expect(within(b).queryByRole("form")).toBeNull());
+  });
+
+  it("zeigt den gewählten Beginn in UTC unter dem Feld", async () => {
+    serve({ readings: [reading()] });
+    const { container } = page(testPrincipal("org_admin"));
+    const b = await block(container);
+    await userEvent.click(await within(b).findByRole("button", { name: "Tarifpreis setzen" }));
+    // the week start, 13 Nov 16:00 UTC, in the page's notation with the year
+    expect(within(b).getByText(/^13\.11\.2026,? 16:00 UTC · /)).toBeInTheDocument();
+  });
+
+  it("sperrt Speichern bei einem Betrag von 0", async () => {
+    serve({ readings: [reading()] });
+    const { container } = page(testPrincipal("org_admin"));
+    const b = await block(container);
+    await userEvent.click(await within(b).findByRole("button", { name: "Tarifpreis setzen" }));
+    await userEvent.type(within(b).getByLabelText("Betrag (USD)"), "0");
+    await waitFor(() => expect(within(b).queryByRole("alert")).toBeNull());
+    expect(within(b).getByRole("button", { name: "Speichern" })).toBeDisabled();
+    await userEvent.type(within(b).getByLabelText("Betrag (USD)"), ".5");
+    await waitFor(() => expect(within(b).getByRole("button", { name: "Speichern" })).toBeEnabled());
+  });
+
+  it("behält das Formular, wenn die Zugangsdaten verschwinden, und sagt, dass es keinen Ort gibt", async () => {
+    const s = serve({ readings: [reading()] });
+    const { container, qc } = page(testPrincipal("org_admin"));
+    const b = await block(container);
+    await userEvent.click(await within(b).findByRole("button", { name: "Tarifpreis setzen" }));
+    await userEvent.type(within(b).getByLabelText("Betrag (USD)"), "200");
+    // the seat was removed from the instance meanwhile
+    s.srv.instances = [instance(RT, [["other_key", 0]])];
+    await qc.invalidateQueries({ queryKey: ["runtime-instances"] });
+
+    const alert = await within(b).findByRole("alert");
+    expect(alert).toHaveTextContent("Diese Zugangsdaten sitzen auf keinem Platz mehr — es gibt keinen Ort für den Preis.");
+    expect(within(b).getByLabelText("Betrag (USD)")).toHaveValue(200);
+    expect(within(b).getByRole("button", { name: "Speichern" })).toBeDisabled();
+    // Enter submits past the disabled button: still no request, no TypeError
+    fireEvent.submit(within(b).getByRole("form"));
+    await act(() => new Promise((r) => setTimeout(r, 50))); // let the save settle
+    expect(within(b).getByRole("alert")).toHaveTextContent(/^Diese Zugangsdaten sitzen auf keinem Platz mehr — es gibt keinen Ort für den Preis\.$/);
+    expect(s.puts).toHaveLength(0);
+  });
+
+  it("nur Fünf-Stunden-Ablesungen: Vorbelegung jetzt und der Hinweis dazu, nicht der Wochenhinweis", async () => {
+    serve({ readings: [reading({ window_kind: "five_hour", resets_at: "2026-11-18T15:00:00Z" })] });
+    const { container } = page(testPrincipal("org_admin"));
+    const b = await block(container);
+    await userEvent.click(await within(b).findByRole("button", { name: "Tarifpreis setzen" }));
+    expect(within(b).getByText(/Noch kein Wochen-Reset bekannt, vorbelegt: jetzt\.$/)).toBeInTheDocument();
+    expect(within(b).queryByText(/Beginn der aktuellen Zählerwoche/)).toBeNull();
+  });
+
+  it("sperrt Abbrechen, solange gespeichert wird", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    const s = serve({ readings: [reading()] });
+    const base = globalThis.fetch;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if ((init?.method ?? "GET").toUpperCase() === "PUT") await gate;
+      return base(input, init);
+    }));
+    const { container } = page(testPrincipal("org_admin"));
+    const b = await block(container);
+    await userEvent.click(await within(b).findByRole("button", { name: "Tarifpreis setzen" }));
+    await userEvent.type(within(b).getByLabelText("Betrag (USD)"), "200");
+    await userEvent.click(within(b).getByRole("button", { name: "Speichern" }));
+    expect(await within(b).findByRole("button", { name: "Speichern …" })).toBeDisabled();
+    expect(within(b).getByRole("button", { name: "Abbrechen" })).toBeDisabled();
+    release();
+    await waitFor(() => expect(within(b).queryByRole("form")).toBeNull());
+    expect(s.puts).toHaveLength(1);
+  });
+});
+
+describe("Tarifpreis — Rollen, Ort und Vorbelegung", () => {
+  const fig = (over: Partial<CredentialFigures> = {}) => ({ id: `${SEAT}#0`, secretKey: SEAT, slot: 0, kind: "subscription", plan: null, ...over }) as CredentialFigures;
+
+  it("lässt nur die Rollen durch, die der Endpunkt durchlässt", () => {
+    expect(["org_admin", "security"].every(canSetPlan)).toBe(true);
+    for (const r of ["auditor", "viewer", "agent_owner", "controlling", ""]) expect(canSetPlan(r)).toBe(false);
+  });
+
+  it("nimmt den Ort aus den Instanzen, an dem Schlüssel und Slot der Zugangsdaten jetzt sitzen", () => {
+    const rts = [
+      instance("a", [["other_key", 0], [SEAT, 1]]), // same key, other slot
+      instance("b", [["other_key", 0], ["x", 0], [SEAT, 0]]),
+    ];
+    expect(planPlace(fig(), rts)).toEqual({ runtimeId: "b", ord: 2 });
+    expect(planPlace(fig({ slot: 1 }), rts)).toEqual({ runtimeId: "a", ord: 1 });
+    expect(planPlace(fig({ secretKey: "gone" }), rts)).toBeNull();
+    expect(planPlace(fig(), [])).toBeNull();
+    expect(planPlace(fig(), undefined)).toBeNull();
+    // a stored plan's place is not trusted: a reorder may have given it away
+    expect(planPlace(fig({ plan: { runtime_id: "p", ord: 3 } as CredentialPlan }), [])).toBeNull();
+  });
+
+  it("nimmt den Reset aus der Quelle des Zählers, andere Quellen nur ersatzweise", () => {
+    const now = new Date("2026-11-18T12:00:00Z");
+    const meter = (source: string) => fig({ meter: { source } as CredentialFigures["meter"] });
+    const rs = [
+      reading({ source: "usage_cmd" }), // resets 20 Nov 16:00
+      reading({ source: "inband", resets_at: "2026-11-21T10:00:00Z" }), // later, but not the meter's
+    ];
+    expect(defaultValidFrom(meter("usage_cmd"), rs, now).toISOString()).toBe(WEEK_START);
+    expect(defaultValidFrom(meter("inband"), rs, now).toISOString()).toBe("2026-11-14T10:00:00.000Z");
+    // the meter's source names no reset: the others stand in
+    expect(defaultValidFrom(meter("manual"), rs, now).toISOString()).toBe("2026-11-14T10:00:00.000Z");
+    // and only weekly windows count, an unnamed one included in none
+    expect(defaultValidFrom(fig(), [reading({ window_kind: "" })], now)).toEqual(now);
+  });
+
+  it("beginnt die aktuelle Zählerwoche sieben Tage vor dem jüngsten Wochen-Reset", () => {
+    const now = new Date("2026-11-18T12:00:00Z");
+    const rs = [
+      reading({ resets_at: "2026-11-19T16:00:00Z", fetched_at: "2026-11-17T10:00:00Z" }),
+      reading({ resets_at: RESET }),
+      // the five-hour window and another credential do not say when the week began
+      reading({ window_kind: "five_hour", resets_at: "2026-11-18T15:00:00Z" }),
+      reading({ secret_key: "other_key", resets_at: "2026-11-30T00:00:00Z" }),
+    ];
+    expect(defaultValidFrom(fig(), rs, now).toISOString()).toBe(WEEK_START);
+  });
+
+  it("steigt bei einer alten Ablesung auf die Woche, die jetzt läuft", () => {
+    // reset on 20 Nov, read long ago; it is 29 Nov now: the week began 27 Nov 16:00
+    const now = new Date("2026-11-29T12:00:00Z");
+    expect(defaultValidFrom(fig(), [reading()], now).toISOString()).toBe("2026-11-27T16:00:00.000Z");
+  });
+
+  it("nimmt ohne Ablesung jetzt", () => {
+    const now = new Date("2026-11-18T12:00:00Z");
+    expect(defaultValidFrom(fig(), [], now)).toEqual(now);
+  });
+
+  it("belegt jetzt auf die Minute vor, wenn der Tarif schon am Wochenbeginn oder später beginnt", () => {
+    const now = new Date("2026-11-18T12:34:56.789Z");
+    const plan = (valid_from: string) => fig({ plan: { valid_from } as CredentialPlan });
+    const at = (f: CredentialFigures) => presetValidFrom(f, [reading()], now);
+    // no plan, or one from before the week: the week start
+    expect(at(fig())).toEqual({ at: new Date(WEEK_START), why: "week" });
+    expect(at(plan("2026-11-01T00:00:00Z"))).toEqual({ at: new Date(WEEK_START), why: "week" });
+    // one at the week start or later: a correction, from now on
+    expect(at(plan(WEEK_START))).toEqual({ at: new Date("2026-11-18T12:34:00.000Z"), why: "correct" });
+    expect(at(plan("2026-11-16T09:00:00Z"))).toEqual({ at: new Date("2026-11-18T12:34:00.000Z"), why: "correct" });
+    // no reset known: now, as before
+    expect(presetValidFrom(fig(), [], now)).toEqual({ at: now, why: "now" });
+  });
+});

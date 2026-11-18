@@ -57,5 +57,9 @@ export default defineConfig({
     // furniture take a few seconds when thirty files run at once. The default
     // five seconds made them fail under load and pass alone.
     testTimeout: 30_000,
+    // One time zone for every run, and not UTC: a form that turns the
+    // reader's clock into an instant is only tested where the two differ.
+    // Tokyo has no daylight saving, so the offset is the same all year.
+    env: { TZ: "Asia/Tokyo" },
   },
 });
