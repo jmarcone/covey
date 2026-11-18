@@ -181,6 +181,13 @@ picture { display: contents; }
   --cost-outside: light-dark(#1e1b4b, #6d28d9);
   --cost-unsplit: light-dark(#c3c8cd, #50565e);
   --cost-unsplit-edge: light-dark(#5b6168, #aab1b8);
+  /* The outside sessions per origin (#120, their detailed view): the
+     indigo of --cost-outside from dark to light, main session to
+     workflows; a grey where the uploader did not say. */
+  --cost-origin-main: light-dark(#312e81, #c4b5fd);
+  --cost-origin-subagent: light-dark(#6366f1, #8b5cf6);
+  --cost-origin-workflow: light-dark(#a5b4fc, #5b21b6);
+  --cost-origin-unknown: light-dark(#9ca3af, #6b7280);
   /* Cost and token types: one blue family, light (cheap, plentiful) to dark
      (dear). Only for types — never for a source or an agent. */
   --cost-type-input: light-dark(#7d9fd0, #9dbbe8);
