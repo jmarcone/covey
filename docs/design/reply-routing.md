@@ -48,7 +48,8 @@ Both surfaces: `team/Thread.tsx` (direct, plain message under the agent's last t
 | pending | ↳ Added to *title* · Making a new task … | disabled, `aria-busy` | stays on button |
 | done | ↳ New task: *new title* (link to the new task) | gone | focus moves to the new link; line in `role="status"` |
 | error | idle line + below: "No new task was made: *server error*" (`--text-danger`, `role="alert"`) | enabled again | stays on button |
-| 409 not routed | no error: refetch the thread; the server's state shows (done line) | — | — |
+| 409 not routed (body has `task_id`) | no error: refetch the thread; the server's state shows (done line) | — | — |
+| 409 agent stopped (body has no `task_id`) | idle line + below: the server's text (`--text-danger`, `role="alert"`); no silent refetch | disabled | stays on button |
 
 The done line persists after a reload: it is drawn from meta `split_from` (below), not local state.
 Untitled task (redacted, or no title): "Added to an open task", linked where the id is known.
@@ -115,6 +116,8 @@ Gespraech already receives `meta`.
 
 1. 404 unless the message is in conversation `{id}`; 403 unless its author is the caller
    ("only who wrote the message makes it a task"); 409 via `gestoppt` if the task's agent is stopped.
+   The two 409s differ by body: "not routed" carries `task_id`, `gestoppt` does not; the UI tells them
+   apart by that field (§2).
 2. **Exactly once:** clear the marking with a conditional update — remove `routed`, `answer_to`,
    `question`, `answer_agent`, set `split_from` = the old task id — `WHERE id = $1 AND meta ? 'routed'`.
    No row → **409** `{"error":"the message is not routed (any more)","task_id":"<its current task>"}`.
@@ -122,8 +125,15 @@ Gespraech already receives `meta`.
    — the task a message gets without triage; `LinkTask` moves the message's `task_id` to it. No triage:
    the person asked for a task.
 4. A note on the **old** task, author `human:<email>`: "Not an answer to this task: <email> made this
-   message a new task, <title> (<id>). Do not act on it here." The first note and the resume stay (non-goal);
-   this note is what lets the run decide.
+   message a new task, <title> (<id>). Do not act on it here." The first note and the resume stay (non-goal).
+   **Depends on #22 item 3.** On main a run never sees task notes (no read-notes action, notes are not in
+   the prompt), so this note reaches the run only once item 3 ("a note added while a task runs causes
+   exactly one resume") is built. With item 3 this note triggers one resume that only says "ignore this";
+   that extra run is accepted. Until item 3 lands, the note is a record for humans only.
+   **Known limitation, `offeneFrage` path:** when #638 routed the message to a blocked question, the task
+   was already resumed with it as the answer. Splitting does not re-ask the question. The button is
+   therefore **not offered** on messages routed by `offeneFrage` (meta `question` set); they show the
+   line only.
 5. `chatEreignis(org, agent, conv, "task", {"task_id": new})`.
 
 Steps 2–3 in one transaction, or 3 failing puts the marking back: a failed call leaves the button.
@@ -133,7 +143,8 @@ Steps 2–3 in one transaction, or 3 failing puts the marking back: a failed cal
 
 1. A message routed by item 1 (reply-to and plain-last) shows "Added to *title*" under it in Thread
    and Gespraech; the title links to `/agents/{agent}?task={task}`. An *Answer*-button reply shows no line.
-2. Only the author sees the button; a stopped agent or a reader without write access sees the line only.
+2. Only the author sees the button; a stopped agent, a reader without write access or a message routed to a
+   blocked question (`offeneFrage`) shows the line only. A 409 for a stopped agent shows its text (§2).
 3. One click creates exactly one task with the message text (double-click, two tabs: still one; the
    second call gets 409 and the UI shows the done line, no error). The message moves to the new task.
 4. After success the button is gone, the line reads "New task: *title*" with a link, also after a
