@@ -146,7 +146,9 @@ const deTopics: HelpTopic[] = [
         <p>Die Tabs im Überblick:</p>
         <ul>
           <li>
-            <b>Backlog</b> — Aufgaben anlegen und verfolgen. „Wecken" startet die Abarbeitung sofort.
+            <b>Backlog</b> — Aufgaben anlegen und verfolgen. „Neue Aufgabe" öffnet das Formular, ebenso
+            die Taste <kbd>N</kbd>, solange kein Feld den Fokus hat; <kbd>Esc</kbd> schließt es und behält den
+            Entwurf. „Wecken" startet die Abarbeitung sofort.
           </li>
           <li>
             <b>Recording</b> — lückenlose Aufzeichnung: Runtime-Events, Aktionen, Guard-Rail- und
@@ -531,7 +533,9 @@ const enTopics: HelpTopic[] = [
         <p>Overview of tabs:</p>
         <ul>
           <li>
-            <b>Backlog</b> — Create and track tasks. "Wake" starts processing immediately.
+            <b>Backlog</b> — Create and track tasks. "New task" opens the form, and so does the
+            <kbd>N</kbd> key while no field has the focus; <kbd>Esc</kbd> closes it and keeps the
+            draft. "Wake" starts processing immediately.
           </li>
           <li>
             <b>Recording</b> — Complete audit trail: runtime events, actions, guard-rail and

@@ -685,9 +685,12 @@
     },
     "backlog": {
       "newTask": "Nova tarefa",
+      "newTaskShortcut": "{{label}} (N)",
       "titlePlaceholder": "Título",
       "descPlaceholder": "Descrição / contexto",
       "addToBacklog": "Adicionar ao backlog",
+      "cancelNewTask": "Cancelar",
+      "addFailed": "Não foi possível adicionar a tarefa: {{error}}",
       "noStages": "Ainda sem fases — o agente cria-as enquanto trabalha, ou pode acrescentá-las aqui.",
       "stagesInfo": "O distintivo de estado vem do agente; as colunas são a sua organização — arraste as tarefas à vontade.",
       "stagesReadonly": "As fases são mantidas pelo agente e pelos responsáveis.",

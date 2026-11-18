@@ -685,9 +685,12 @@
     },
     "backlog": {
       "newTask": "Nuovo compito",
+      "newTaskShortcut": "{{label}} (N)",
       "titlePlaceholder": "Titolo",
       "descPlaceholder": "Descrizione / contesto",
       "addToBacklog": "Aggiungi al backlog",
+      "cancelNewTask": "Annulla",
+      "addFailed": "Impossibile aggiungere il compito: {{error}}",
       "noStages": "Ancora nessuna fase — l'agente le crea lavorando, oppure puoi aggiungerle qui.",
       "stagesInfo": "Il badge di stato viene dall'agente; le colonne sono la tua organizzazione — trascina i compiti liberamente.",
       "stagesReadonly": "Le fasi sono curate dall'agente e dai responsabili.",

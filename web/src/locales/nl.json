@@ -685,9 +685,12 @@
     },
     "backlog": {
       "newTask": "Nieuwe taak",
+      "newTaskShortcut": "{{label}} (N)",
       "titlePlaceholder": "Titel",
       "descPlaceholder": "Beschrijving / context",
       "addToBacklog": "Aan de backlog toevoegen",
+      "cancelNewTask": "Annuleren",
+      "addFailed": "De taak kon niet worden toegevoegd: {{error}}",
       "noStages": "Nog geen fasen — de agent maakt ze tijdens het werk, of u voegt ze hier toe.",
       "stagesInfo": "De statusbadge komt van de agent; de kolommen zijn uw ordening — sleep taken vrij.",
       "stagesReadonly": "De fasen worden door de agent en de verantwoordelijken bijgehouden.",

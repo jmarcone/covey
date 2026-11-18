@@ -685,9 +685,12 @@
     },
     "backlog": {
       "newTask": "New task",
+      "newTaskShortcut": "{{label}} (N)",
       "titlePlaceholder": "Title",
       "descPlaceholder": "Description / context",
       "addToBacklog": "Add to backlog",
+      "cancelNewTask": "Cancel",
+      "addFailed": "Could not add the task: {{error}}",
       "noStages": "No stages yet — the agent creates them while working, or you can add them here.",
       "stagesInfo": "The status badge comes from the agent; the columns are your organization — drag tasks freely.",
       "stagesReadonly": "Stages are maintained by the agent and managers.",

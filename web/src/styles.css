@@ -134,6 +134,14 @@ picture { display: contents; }
   --accent-solid: light-dark(#1a1d22, #2c3038);
   --on-accent: #fff;
 
+  /* Creating something is the one action with a colour of its own: blue, which
+     no state of an agent wears (clay is the working badge, red the stop, green
+     done, the grey-blue of waiting is too quiet to be an action). White on it
+     measures 6.0:1 light and 4.65:1 dark; as a fill it stands 4.8:1 to 6.0:1
+     against the three grounds in light and 3.5:1 to 4.2:1 in dark. The numbers
+     are pinned in theme.test.ts. */
+  --action-create: light-dark(#2a5bd0, #3f6fdc);
+
   /* Schatten tragen auf Papier; im Dunkeln ist der Grund schon schwarz. Sie
      bleiben, werden aber tiefer und leiser — die Trennung übernimmt dort die
      hellere Kante (--border). */

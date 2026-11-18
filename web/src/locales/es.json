@@ -685,9 +685,12 @@
     },
     "backlog": {
       "newTask": "Nueva tarea",
+      "newTaskShortcut": "{{label}} (N)",
       "titlePlaceholder": "Título",
       "descPlaceholder": "Descripción / contexto",
       "addToBacklog": "Añadir al backlog",
+      "cancelNewTask": "Cancelar",
+      "addFailed": "No se pudo añadir la tarea: {{error}}",
       "noStages": "Aún no hay fases: el agente las crea mientras trabaja, o puedes añadirlas aquí.",
       "stagesInfo": "La insignia de estado viene del agente; las columnas son tu organización: arrastra las tareas libremente.",
       "stagesReadonly": "Las fases las mantienen el agente y los responsables.",
