@@ -21,11 +21,9 @@ import {
   buildInfo,
   inbox,
   istSystemAdmin,
-  setupIsOpen,
   type Agent,
   type Department,
   type Principal,
-  type SetupState,
 } from "./api";
 import i18n, { initialLang, ladeSprache, uiLocale } from "./i18n";
 import HelpDrawer from "./components/HelpDrawer";
@@ -69,16 +67,12 @@ function NavItem({
   to,
   icon,
   label,
-  end,
-  count,
   except,
   also,
 }: {
   to: string;
   icon: string;
   label: string;
-  end?: boolean;
-  count?: number;
   /** A sub-path with an entry of its own: there this one stays unmarked. */
   except?: string;
   /** Marked as well, where the address alone does not say so. */
@@ -87,10 +81,9 @@ function NavItem({
   const { pathname } = useLocation();
   const elsewhere = except != null && (pathname === except || pathname.startsWith(except + "/"));
   return (
-    <NavLink to={to} end={end} className={({ isActive }) => `nav-item ${(isActive && !elsewhere) || also ? "active" : ""}`}>
+    <NavLink to={to} className={({ isActive }) => `nav-item ${(isActive && !elsewhere) || also ? "active" : ""}`}>
       <NavIcon name={icon} />
       {label}
-      {count != null && count > 0 && <span className="count">{count}</span>}
     </NavLink>
   );
 }
@@ -227,20 +220,13 @@ export default function AppShell({ me, onLogout }: { me: Principal; onLogout: ()
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  /* One counter for both. Approvals and open points are different
-     things (there an agent waits, here nobody does) — but they need
-     the same person, and two numbers side by side are one more question that
-     someone would have to answer while walking past. The separation stands on the
-     page, where it belongs. */
-  /* Einhundert statt einer: Die Zahl an der Navigation kommt aus `pending`
-     und hinge auch an einer einzigen Zeile, aber die Suche will wissen, WER
-     wartet — und dafür braucht sie die Liste. Eine Abfrage für beides. */
+  /* The search wants to know WHO waits, so it needs the list of open
+     decisions. The number beside Agents and Inbox is the rail's own. */
   const inboxCount = useQuery({
     queryKey: ["inbox", "count"],
     queryFn: () => inbox({ status: "open", limit: 100 }),
     refetchInterval: 15000,
   });
-  const pending = inboxCount.data?.pending ?? 0;
 
   /* Dieselbe Suche wie im Team, nur führt sie hier auf die Agentenseite.
      Die beiden Abfragen teilen sich den Cache mit den Seiten, die sie
@@ -266,22 +252,6 @@ export default function AppShell({ me, onLogout }: { me: Principal; onLogout: ()
     staleTime: 300_000,
   });
   const wartetBei = new Set((inboxCount.data?.items ?? []).map((e) => e.agent_id));
-
-  /* Setup stands in the menu only as long as it has something to do.
-     A point that stays permanently and is permanently done turns into
-     furniture — the same reasoning as with the checklist on the
-     agent overview, which disappears on its own. Nothing is lost:
-     the organisation description then lies in the org chart, the access under
-     Secrets and Runtimes, and /setup stays reachable for whoever types it.
-     Whoever may not set up gets a 403 from the endpoint — and so
-     does not see the point in the first place. */
-  const setup = useQuery({
-    queryKey: ["setup"],
-    queryFn: () => api<SetupState>("/setup/state"),
-    retry: false,
-    staleTime: 60_000,
-  });
-  const setupOpen = setupIsOpen(setup.data);
 
   /* Setup runs without the shell: no side menu, no help shelf,
      nothing that calls on the side. That is no cosmetics — the three cards are
@@ -333,19 +303,14 @@ export default function AppShell({ me, onLogout }: { me: Principal; onLogout: ()
           <div className="tm-spalte-kopf">
             <h1 className="tm-spalte-titel">{t("team.verwaltung")}</h1>
           </div>
-          {/* Four groups, in the order they are needed (#743): the daily
-              work on top; the workforce's tools; what keeps it safe; the
-              organisation itself. The last group used to sit behind a toggle
-              that was closed by default — the member list three clicks deep. */}
+          {/* Four groups, in the order they are needed (#743): the org chart
+              on top; the workforce's tools; what keeps it safe; the
+              organisation itself. The daily work — agents, the inbox and
+              the setup shortcut — has its place in the rail, not here. */}
           <div className="nav-group">
-            {/* Setup first while it is not finished (#391): whoever just
-                installed covey starts there. */}
-            {setupOpen && <NavItem to="/setup" icon="checklist" label={t("nav.setupPage")} />}
-            <NavItem to="/agents" end icon="robot" label={t("nav.agents")} />
-            {/* With the team surface, decisions are made in the conversation
-                with the agent (#391); the inbox is for installations without it. */}
-            {!me.TeamSurface && <NavItem to="/inbox" icon="bell" label={t("nav.inbox")} count={pending} />}
             <NavItem to="/org" icon="sitemap" label={t("nav.org")} />
+            {/* Until costs have their own rail entry, /costs is a page of
+                this column; the entry leaves with it. */}
             <NavItem to="/costs" icon="chart" label={t("nav.costs")} />
           </div>
           <div className="nav-sec">{t("nav.setup")}</div>
