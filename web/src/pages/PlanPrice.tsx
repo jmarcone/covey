@@ -2,7 +2,7 @@ import { useId, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { api, put, type CredentialPlan, type RuntimeInstance, type UsageReading } from "../api";
+import { ApiError, api, put, type CredentialPlan, type RuntimeInstance, type UsageReading } from "../api";
 import { fmtBucket, fmtNumber, fmtUSD } from "../format";
 import type { CredentialFigures } from "./costFigures";
 
@@ -60,6 +60,22 @@ export function defaultValidFrom(f: CredentialFigures, readings: readonly UsageR
   return new Date(start);
 }
 
+/** Why the form starts where it does: the meter week, now for want of a
+ *  weekly reset, or now because a price is being corrected. */
+export type PresetWhy = "week" | "now" | "correct";
+
+/** Where the form starts: the start of the current meter week. When the
+ *  credential's plan already starts there or later, the form corrects a
+ *  price, and a second plan at the same instant is a conflict (the server
+ *  never overwrites): then now, to the minute, so the correction holds from
+ *  here on. */
+export function presetValidFrom(f: CredentialFigures, readings: readonly UsageReading[], now: Date): { at: Date; why: PresetWhy } {
+  const week = defaultValidFrom(f, readings, now);
+  const planFrom = f.plan ? Date.parse(f.plan.valid_from) : NaN;
+  if (planFrom >= week.getTime()) return { at: new Date(Math.floor(now.getTime() / 60_000) * 60_000), why: "correct" };
+  return { at: week, why: Number.isNaN(weeklyReset(f, readings)) ? "now" : "week" };
+}
+
 /** An instant as the value of a datetime-local input: the reader's clock,
  *  to the minute. */
 export function toLocalInput(d: Date): string {
@@ -78,9 +94,16 @@ function currentPlan(t: TFunction, p: CredentialPlan): string {
 /** The server stored the price at another credential than the form's. */
 class PlanMoved extends Error {}
 
-/** What a failed save says, in the reader's language. */
+/** What a failed save says, in the reader's language; the server's own text
+ *  in parentheses where it says more than the status. */
 function saveError(t: TFunction, err: Error): string {
   if (err instanceof PlanMoved) return t("costs.plan.errMoved");
+  if (err instanceof ApiError) {
+    // A plan starting at that very instant: the server does not overwrite.
+    if (err.status === 409) return t("costs.plan.errConflict");
+    if (err.status === 400) return t("costs.plan.errInvalid", { msg: err.message });
+    if (err.status === 403) return t("costs.plan.errForbidden", { msg: err.message });
+  }
   return err.message;
 }
 
@@ -97,6 +120,7 @@ export function PlanPrice({ f, readings, editable }: { f: CredentialFigures; rea
   // The default as an instant: sent as it is while the field is untouched, so
   // the minute the input shows does not round a reset that has seconds.
   const [fallback, setFallback] = useState<Date>(() => new Date());
+  const [why, setWhy] = useState<PresetWhy>("now");
 
   // Only the roles that see the form need the place. The list is the one the
   // instances page keeps, so it is fetched once for all credentials.
@@ -131,9 +155,10 @@ export function PlanPrice({ f, readings, editable }: { f: CredentialFigures; rea
     // form is filled in, the place is read when it is saved. Save waits for
     // the answer.
     void instances.refetch();
-    const d = defaultValidFrom(f, readings, new Date());
-    setFallback(d);
-    setFrom(toLocalInput(d));
+    const preset = presetValidFrom(f, readings, new Date());
+    setFallback(preset.at);
+    setWhy(preset.why);
+    setFrom(toLocalInput(preset.at));
     setAmount("");
     setPeriod("month");
     save.reset();
@@ -143,7 +168,7 @@ export function PlanPrice({ f, readings, editable }: { f: CredentialFigures; rea
   const amountNum = amount.trim() === "" ? NaN : Number(amount);
   const whenMs = from === toLocalInput(fallback) ? fallback.getTime() : new Date(from).getTime();
   const valid = Number.isFinite(amountNum) && amountNum >= 0 && Number.isFinite(whenMs);
-  const hasReset = !Number.isNaN(weeklyReset(f, readings));
+  const hint = { week: "costs.plan.fromHintWeek", now: "costs.plan.fromHintNow", correct: "costs.plan.fromHintCorrect" }[why];
 
   return (
     <div className="mb-2" data-plan-price={f.id}>
@@ -190,7 +215,7 @@ export function PlanPrice({ f, readings, editable }: { f: CredentialFigures; rea
           <p className="muted text-xs mt-1 mb-0">
             {/* The input is the reader's clock; the cost page is UTC. */}
             {Number.isFinite(whenMs) && <>{fmtBucket(new Date(whenMs).toISOString(), "hour")} · </>}
-            {t(hasReset ? "costs.plan.fromHintWeek" : "costs.plan.fromHintNow")}
+            {t(hint)}
           </p>
           {save.error && (
             <p className="text-xs mt-1 mb-0" role="alert" style={{ color: "var(--text-danger)" }}>{saveError(t, save.error)}</p>

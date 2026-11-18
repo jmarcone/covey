@@ -306,7 +306,11 @@
       "cancel": "Annuler",
       "fromHintWeek": "Valeur par défaut : le début de la semaine actuelle du compteur.",
       "fromHintNow": "Pas encore de réinitialisation hebdomadaire connue, valeur par défaut : maintenant.",
-      "errMoved": "Enregistré sur un autre identifiant — les identifiants ont été réordonnés ; vérifiez les deux forfaits."
+      "errMoved": "Enregistré sur un autre identifiant — les identifiants ont été réordonnés ; vérifiez les deux forfaits.",
+      "fromHintCorrect": "Un prix commence déjà dans cette semaine du compteur, valeur par défaut : maintenant.",
+      "errConflict": "Un forfait commence déjà à ce moment — choisissez un début plus tardif.",
+      "errInvalid": "Le serveur a refusé le prix ({{msg}}).",
+      "errForbidden": "Votre rôle ne permet pas de définir un prix de forfait ({{msg}})."
     }
   },
   "lang": {

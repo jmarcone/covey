@@ -306,7 +306,11 @@
       "cancel": "Cancelar",
       "fromHintWeek": "Predefinido: o início da semana atual do contador.",
       "fromHintNow": "Ainda sem reinício semanal conhecido, predefinido: agora.",
-      "errMoved": "Guardado noutra credencial — as credenciais foram reordenadas; verifique ambos os planos."
+      "errMoved": "Guardado noutra credencial — as credenciais foram reordenadas; verifique ambos os planos.",
+      "fromHintCorrect": "Já começa um preço nesta semana do contador, predefinido: agora.",
+      "errConflict": "Já há um plano que começa nesse momento — escolha um início posterior.",
+      "errInvalid": "O servidor rejeitou o preço ({{msg}}).",
+      "errForbidden": "O seu papel não pode definir um preço de plano ({{msg}})."
     }
   },
   "lang": {

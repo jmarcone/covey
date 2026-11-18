@@ -306,7 +306,11 @@
       "cancel": "Annulla",
       "fromHintWeek": "Preimpostato: l'inizio della settimana corrente del contatore.",
       "fromHintNow": "Ancora nessun reset settimanale noto, preimpostato: adesso.",
-      "errMoved": "Salvato su un'altra credenziale — le credenziali sono state riordinate; controlla entrambi i piani."
+      "errMoved": "Salvato su un'altra credenziale — le credenziali sono state riordinate; controlla entrambi i piani.",
+      "fromHintCorrect": "In questa settimana del contatore inizia già un prezzo, preimpostato: adesso.",
+      "errConflict": "Un piano inizia già in quel momento — scegli un inizio successivo.",
+      "errInvalid": "Il server ha rifiutato il prezzo ({{msg}}).",
+      "errForbidden": "Il tuo ruolo non può impostare un prezzo del piano ({{msg}})."
     }
   },
   "lang": {

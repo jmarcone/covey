@@ -306,7 +306,11 @@
       "cancel": "Anuluj",
       "fromHintWeek": "Domyślnie: początek bieżącego tygodnia licznika.",
       "fromHintNow": "Nie znamy jeszcze tygodniowego resetu, domyślnie: teraz.",
-      "errMoved": "Zapisano przy innym poświadczeniu — kolejność poświadczeń się zmieniła; sprawdź oba plany."
+      "errMoved": "Zapisano przy innym poświadczeniu — kolejność poświadczeń się zmieniła; sprawdź oba plany.",
+      "fromHintCorrect": "W tym tygodniu licznika zaczyna się już cena, domyślnie: teraz.",
+      "errConflict": "W tym momencie zaczyna się już plan — wybierz późniejszy początek.",
+      "errInvalid": "Serwer odrzucił cenę ({{msg}}).",
+      "errForbidden": "Twoja rola nie może ustawić ceny planu ({{msg}})."
     }
   },
   "lang": {

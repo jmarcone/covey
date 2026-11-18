@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Costs from "./Costs";
-import { canSetPlan, defaultValidFrom, planPlace } from "./PlanPrice";
+import { canSetPlan, defaultValidFrom, planPlace, presetValidFrom } from "./PlanPrice";
 import type { CostCells, CredentialPlan, Principal, RuntimeInstance, UsageReading } from "../api";
 import type { CredentialFigures } from "./costFigures";
 import { renderWithProviders, testPrincipal, useGerman } from "../test/render";
@@ -180,25 +180,58 @@ describe("Kosten — Tarifpreis setzen", () => {
     expect(within(b).getByText(/^Tarif: .*200.*\/Monat seit /)).toBeInTheDocument();
   });
 
-  it("zeigt bei einem 400 den Text des Servers als Gefahrenzeile und behält das Formular", async () => {
+  /** Opens the form, types 200 and saves against a plan endpoint that refuses
+   *  with `status` and `error`; returns the danger line. */
+  async function refused(status: number, error: string) {
     const s = serve({
       readings: [reading()],
-      plan: () => new Response(JSON.stringify({ error: 'invalid plan: period must be "month" or "year"' }), {
-        status: 400, headers: { "Content-Type": "application/json" },
-      }),
+      plan: () => new Response(JSON.stringify({ error }), { status, headers: { "Content-Type": "application/json" } }),
     });
     const { container } = page(testPrincipal("org_admin"));
     const b = await block(container);
     await userEvent.click(await within(b).findByRole("button", { name: "Tarifpreis setzen" }));
     await userEvent.type(within(b).getByLabelText("Betrag (USD)"), "200");
     await userEvent.click(within(b).getByRole("button", { name: "Speichern" }));
-
     const alert = await within(b).findByRole("alert");
-    expect(alert).toHaveTextContent('invalid plan: period must be "month" or "year"');
-    expect(alert.getAttribute("style")).toContain("var(--text-danger)");
     // the form stays, with what was typed
     expect(within(b).getByLabelText("Betrag (USD)")).toHaveValue(200);
     expect(s.puts).toHaveLength(1);
+    return alert;
+  }
+
+  it("zeigt bei einem 400 den Text des Servers in Klammern als Gefahrenzeile und behält das Formular", async () => {
+    const alert = await refused(400, 'invalid plan: period must be "month" or "year"');
+    expect(alert).toHaveTextContent('Der Server hat den Preis abgelehnt (invalid plan: period must be "month" or "year").');
+    expect(alert.getAttribute("style")).toContain("var(--text-danger)");
+  });
+
+  it("sagt bei einem 403, dass die Rolle es nicht darf", async () => {
+    const alert = await refused(403, "forbidden");
+    expect(alert).toHaveTextContent("Deine Rolle darf keinen Tarifpreis setzen (forbidden).");
+  });
+
+  it("sagt bei einem 409, dass zu dem Zeitpunkt schon ein Tarif beginnt", async () => {
+    const alert = await refused(409, "runtimes: a plan already starts at that moment");
+    expect(alert).toHaveTextContent("Zu diesem Zeitpunkt beginnt schon ein Tarif — wähle einen späteren Beginn.");
+  });
+
+  it("belegt beim Korrigieren eines Preises dieser Woche jetzt vor, auf die Minute", async () => {
+    // the price set at the week start was wrong; another one there is a 409
+    pinClock("2026-11-18T12:34:56Z");
+    const s = serve({ readings: [reading()], state: { cells: cells([{
+      runtime_id: RT, ord: 1, secret_key: SEAT, secret_slot: 0, plan_name: "", amount: 20, currency: "USD", period: "month",
+      tax_basis: "net", fx_to_usd: 1, fx_date: null, valid_from: WEEK_START, valid_to: null, weekly_usd: 4.6, usd_per_point: 0.046,
+    }]) } });
+    const { container } = page(testPrincipal("org_admin"));
+    const b = await block(container);
+    await userEvent.click(await within(b).findByRole("button", { name: "Tarifpreis setzen" }));
+    // 12:34 UTC is 21:34 in Tokyo
+    expect(within(b).getByLabelText("Gültig ab")).toHaveValue("2026-11-18T21:34");
+    expect(within(b).getByText(/In dieser Zählerwoche beginnt schon ein Preis, vorbelegt: jetzt\.$/)).toBeInTheDocument();
+    await userEvent.type(within(b).getByLabelText("Betrag (USD)"), "200");
+    await userEvent.click(within(b).getByRole("button", { name: "Speichern" }));
+    await waitFor(() => expect(s.puts).toHaveLength(1));
+    expect(s.puts[0].body.valid_from).toBe("2026-11-18T12:34:00.000Z");
   });
 
   it("zeigt einem Betrachter den Tarif, aber keine Schaltfläche", async () => {
@@ -374,5 +407,19 @@ describe("Tarifpreis — Rollen, Ort und Vorbelegung", () => {
   it("nimmt ohne Ablesung jetzt", () => {
     const now = new Date("2026-11-18T12:00:00Z");
     expect(defaultValidFrom(fig(), [], now)).toEqual(now);
+  });
+
+  it("belegt jetzt auf die Minute vor, wenn der Tarif schon am Wochenbeginn oder später beginnt", () => {
+    const now = new Date("2026-11-18T12:34:56.789Z");
+    const plan = (valid_from: string) => fig({ plan: { valid_from } as CredentialPlan });
+    const at = (f: CredentialFigures) => presetValidFrom(f, [reading()], now);
+    // no plan, or one from before the week: the week start
+    expect(at(fig())).toEqual({ at: new Date(WEEK_START), why: "week" });
+    expect(at(plan("2026-11-01T00:00:00Z"))).toEqual({ at: new Date(WEEK_START), why: "week" });
+    // one at the week start or later: a correction, from now on
+    expect(at(plan(WEEK_START))).toEqual({ at: new Date("2026-11-18T12:34:00.000Z"), why: "correct" });
+    expect(at(plan("2026-11-16T09:00:00Z"))).toEqual({ at: new Date("2026-11-18T12:34:00.000Z"), why: "correct" });
+    // no reset known: now, as before
+    expect(presetValidFrom(fig(), [], now)).toEqual({ at: now, why: "now" });
   });
 });

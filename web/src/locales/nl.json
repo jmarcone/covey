@@ -306,7 +306,11 @@
       "cancel": "Annuleren",
       "fromHintWeek": "Vooringevuld: het begin van de huidige meterweek.",
       "fromHintNow": "Nog geen wekelijkse reset bekend, vooringevuld: nu.",
-      "errMoved": "Opgeslagen bij een andere referentie — de referenties zijn opnieuw geordend; controleer beide abonnementen."
+      "errMoved": "Opgeslagen bij een andere referentie — de referenties zijn opnieuw geordend; controleer beide abonnementen.",
+      "fromHintCorrect": "In deze meterweek begint al een prijs, vooringevuld: nu.",
+      "errConflict": "Op dat moment begint al een abonnement — kies een later begin.",
+      "errInvalid": "De server heeft de prijs geweigerd ({{msg}}).",
+      "errForbidden": "Uw rol mag geen abonnementsprijs instellen ({{msg}})."
     }
   },
   "lang": {
