@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Costs from "./Costs";
-import { canSetPlan, defaultValidFrom, planPlace, toLocalInput } from "./PlanPrice";
+import { canSetPlan, defaultValidFrom, planPlace } from "./PlanPrice";
 import type { CostCells, CredentialPlan, Principal, RuntimeInstance, UsageReading } from "../api";
 import type { CredentialFigures } from "./costFigures";
 import { renderWithProviders, testPrincipal, useGerman } from "../test/render";
@@ -105,8 +105,11 @@ describe("Kosten — Tarifpreis setzen", () => {
   });
   afterEach(() => vi.useRealTimers());
 
-  it("läuft auf der festgehaltenen Uhr", () => {
+  it("läuft auf der festgehaltenen Uhr, in Tokio (vite.config.ts: test.env.TZ)", () => {
     expect(new Date().toISOString()).toBe("2026-11-18T12:00:00.000Z");
+    // UTC+9 all year: the reader's clock and UTC differ, so a mix-up shows
+    expect(new Date().getTimezoneOffset()).toBe(-540);
+    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe("Asia/Tokyo");
   });
 
   it("schickt den Tarifpreis mit dem Wochenbeginn aus resets_at der Ablesung als valid_from", async () => {
@@ -116,8 +119,9 @@ describe("Kosten — Tarifpreis setzen", () => {
     await userEvent.click(await within(b).findByRole("button", { name: "Tarifpreis setzen" }));
 
     const form = within(b).getByRole("form", { name: "Tarifpreis setzen" });
-    // preset: the reset minus seven days, not "now"
-    expect(within(form).getByLabelText("Gültig ab")).toHaveValue(toLocalInput(new Date(WEEK_START)));
+    // preset: the reset minus seven days, not "now" — 13 Nov 16:00 UTC is
+    // 14 Nov 01:00 on the reader's clock in Tokyo
+    expect(within(form).getByLabelText("Gültig ab")).toHaveValue("2026-11-14T01:00");
     await userEvent.type(within(form).getByLabelText("Betrag (USD)"), "200");
     await userEvent.click(within(form).getByRole("button", { name: "Speichern" }));
 
@@ -138,7 +142,8 @@ describe("Kosten — Tarifpreis setzen", () => {
     await userEvent.click(within(form).getByRole("button", { name: "Speichern" }));
 
     await waitFor(() => expect(s.puts).toHaveLength(1));
-    expect(s.puts[0].body).toEqual({ amount: 2000.5, currency: "USD", period: "year", valid_from: new Date("2026-11-15T08:30").toISOString() });
+    // typed on the reader's clock (Tokyo, UTC+9), sent as the instant
+    expect(s.puts[0].body).toEqual({ amount: 2000.5, currency: "USD", period: "year", valid_from: "2026-11-14T23:30:00.000Z" });
   });
 
   it("holt nach dem Speichern die Kostendaten neu und schließt das Formular", async () => {
