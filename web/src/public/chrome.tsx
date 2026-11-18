@@ -38,7 +38,27 @@ export function Bird({
 
 /* Living swarm (boids) on canvas: cohesion, alignment, distance —
    and soft yielding to the mouse pointer. Does not run at
-   prefers-reduced-motion. */
+   prefers-reduced-motion.
+
+   Since #134 it is cheap on purpose, because the sign-in page ran at
+   single-digit fps on a large screen: the canvas is drawn at device-pixel
+   ratio 1 (a faint stroke does not need more), at most 30 times a second, and
+   the loop stops altogether while the tab is hidden, the window has lost
+   focus, or a field of the sign-in card has focus — that is the moment the
+   user types and the main thread belongs to them. A stopped swarm stays on
+   the canvas as it was. */
+export const BOIDS_FPS = 30;
+// The sign-in card; a field inside it holding focus stops the swarm.
+const BOIDS_QUIET_AREA = ".login-card";
+
+function inQuietArea(el: EventTarget | Element | null): boolean {
+  return (
+    el instanceof HTMLElement &&
+    /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) &&
+    el.closest(BOIDS_QUIET_AREA) !== null
+  );
+}
+
 // Since React 19 the ref type carries the null from useRef(null) — the body
 // checks it anyway before it goes to the canvas.
 export function useBoids(ref: React.RefObject<HTMLCanvasElement | null>) {
@@ -49,27 +69,27 @@ export function useBoids(ref: React.RefObject<HTMLCanvasElement | null>) {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const DPR = Math.min(window.devicePixelRatio || 1, 2);
     let w = 0;
     let h = 0;
     const resize = () => {
-      w = canvas.width = window.innerWidth * DPR;
-      h = canvas.height = window.innerHeight * DPR;
+      w = canvas.width = window.innerWidth;
+      h = canvas.height = window.innerHeight;
+      // Setting the size clears the canvas; a stopped swarm has to be drawn
+      // again, or it would vanish on a window resize.
+      if (!raf) frame(0);
     };
-    resize();
-    window.addEventListener("resize", resize);
 
     const N = window.innerWidth < 700 ? 55 : 110;
     const boids = Array.from({ length: N }, () => ({
-      x: Math.random() * window.innerWidth * DPR,
-      y: Math.random() * window.innerHeight * DPR,
-      vx: (Math.random() - 0.5) * 2 * DPR,
-      vy: (Math.random() - 0.5) * 2 * DPR,
+      x: Math.random() * window.innerWidth,
+      y: Math.random() * window.innerHeight,
+      vx: (Math.random() - 0.5) * 2,
+      vy: (Math.random() - 0.5) * 2,
     }));
     const mouse = { x: -1e9, y: -1e9 };
     const onMove = (e: PointerEvent) => {
-      mouse.x = e.clientX * DPR;
-      mouse.y = e.clientY * DPR;
+      mouse.x = e.clientX;
+      mouse.y = e.clientY;
     };
     const onLeave = () => {
       mouse.x = -1e9;
@@ -78,11 +98,16 @@ export function useBoids(ref: React.RefObject<HTMLCanvasElement | null>) {
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerleave", onLeave);
 
-    const SEE = (85 * DPR) ** 2;
-    const NEAR = (24 * DPR) ** 2;
-    let raf = 0;
-    const step = () => {
+    const SEE = 85 ** 2;
+    const NEAR = 24 ** 2;
+    // k: how many 60 Hz frames this frame stands for, so that the swarm moves
+    // as fast as it did before the frame rate was capped.
+    const frame = (k: number) => {
       ctx.clearRect(0, 0, w, h);
+      ctx.strokeStyle = "rgba(178, 95, 65, 0.30)";
+      ctx.lineWidth = 1.1;
+      ctx.lineCap = "round";
+      ctx.beginPath();
       for (const b of boids) {
         let cx = 0, cy = 0, ax = 0, ay = 0, sx = 0, sy = 0, n = 0;
         for (const o of boids) {
@@ -102,48 +127,90 @@ export function useBoids(ref: React.RefObject<HTMLCanvasElement | null>) {
         const mdx = b.x - mouse.x;
         const mdy = b.y - mouse.y;
         const md2 = mdx * mdx + mdy * mdy;
-        if (md2 < (150 * DPR) ** 2) {
+        if (md2 < 150 ** 2) {
           const md = Math.sqrt(md2) || 1;
-          b.vx += (mdx / md) * 0.5 * DPR;
-          b.vy += (mdy / md) * 0.5 * DPR;
+          b.vx += (mdx / md) * 0.5;
+          b.vy += (mdy / md) * 0.5;
         }
         const sp = Math.hypot(b.vx, b.vy) || 1;
-        const max = 1.7 * DPR;
-        const min = 0.6 * DPR;
+        const max = 1.7;
+        const min = 0.6;
         if (sp > max) { b.vx = (b.vx / sp) * max; b.vy = (b.vy / sp) * max; }
         else if (sp < min) { b.vx = (b.vx / sp) * min; b.vy = (b.vy / sp) * min; }
-        b.x += b.vx;
-        b.y += b.vy;
-        const m = 24 * DPR;
+        b.x += b.vx * k;
+        b.y += b.vy * k;
+        const m = 24;
         if (b.x < -m) b.x = w + m;
         if (b.x > w + m) b.x = -m;
         if (b.y < -m) b.y = h + m;
         if (b.y > h + m) b.y = -m;
 
-        const ang = Math.atan2(b.vy, b.vx);
-        const s = 3.4 * DPR;
-        ctx.save();
-        ctx.translate(b.x, b.y);
-        ctx.rotate(ang);
-        ctx.strokeStyle = "rgba(178, 95, 65, 0.30)";
-        ctx.lineWidth = 1.1 * DPR;
-        ctx.lineCap = "round";
-        ctx.beginPath();
-        ctx.moveTo(-s, -s * 0.65);
-        ctx.lineTo(0, 0);
-        ctx.lineTo(-s, s * 0.65);
-        ctx.stroke();
-        ctx.restore();
+        // One chevron per boid, turned to its heading and added to a single
+        // path that is stroked once below.
+        const sp2 = Math.hypot(b.vx, b.vy) || 1;
+        const ux = b.vx / sp2;
+        const uy = b.vy / sp2;
+        const s = 3.4;
+        ctx.moveTo(b.x + -s * ux + 0.65 * s * uy, b.y + -s * uy - 0.65 * s * ux);
+        ctx.lineTo(b.x, b.y);
+        ctx.lineTo(b.x + -s * ux - 0.65 * s * uy, b.y + -s * uy + 0.65 * s * ux);
       }
-      raf = requestAnimationFrame(step);
+      ctx.stroke();
     };
-    raf = requestAnimationFrame(step);
+
+    let raf = 0;
+    let last = 0;
+    const minGap = 1000 / BOIDS_FPS - 2; // slack for a 60 Hz clock's jitter
+    const tick = (t: number) => {
+      raf = requestAnimationFrame(tick);
+      if (last && t - last < minGap) return;
+      // The first frame after a start moves one step; a long gap never
+      // teleports the swarm.
+      const k = last ? Math.min((t - last) / (1000 / 60), 4) : 1;
+      last = t;
+      frame(k);
+    };
+
+    // The swarm runs only while nothing asks it to stop.
+    let hidden = document.hidden;
+    let unfocused = !document.hasFocus();
+    let typing = inQuietArea(document.activeElement);
+    const sync = () => {
+      const run = !hidden && !unfocused && !typing;
+      if (run && !raf) {
+        last = 0;
+        raf = requestAnimationFrame(tick);
+      } else if (!run && raf) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+      }
+    };
+    const onVisibility = () => { hidden = document.hidden; sync(); };
+    const onBlur = () => { unfocused = true; sync(); };
+    const onFocus = () => { unfocused = false; sync(); };
+    const onFocusIn = (e: FocusEvent) => { typing = inQuietArea(e.target); sync(); };
+    const onFocusOut = (e: FocusEvent) => { typing = inQuietArea(e.relatedTarget); sync(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("focusout", onFocusOut);
+
+    resize();
+    window.addEventListener("resize", resize);
+    sync();
 
     return () => {
       cancelAnimationFrame(raf);
+      raf = 0;
       window.removeEventListener("resize", resize);
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerleave", onLeave);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("focusout", onFocusOut);
     };
   }, [ref]);
 }
