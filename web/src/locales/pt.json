@@ -273,7 +273,10 @@
       "share": "Parte do $ de tabela",
       "scale": "Escala",
       "scaleShared": "Partilhada",
-      "scaleOwn": "Própria por agente"
+      "scaleOwn": "Própria por agente",
+      "noPlanPricePoints": "sem preço de plano para {{n}} de {{m}} pontos",
+      "noMultipleUnpriced": "Sem custo real nem múltiplo: sem preço de plano para {{n}} de {{m}} pontos.",
+      "noMultipleNoPlan": "Sem custo real nem múltiplo: não há preço de plano guardado para esta credencial."
     },
     "kpiAllCredentials": "todas as credenciais, a partir das linhas",
     "tok": {

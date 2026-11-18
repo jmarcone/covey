@@ -7,8 +7,6 @@ import {
   credentialFigures,
   credId,
   meterCrossings,
-  planAt,
-  pricePerPoint,
   recomputedOf,
   type CredentialFigures,
 } from "./costFigures";
@@ -414,8 +412,14 @@ function CredentialTiles({ f, filtered }: { f: CredentialFigures; filtered: bool
   ];
   if (f.kind === "subscription" || (f.kind === "" && f.meter)) {
     const r = f.real;
-    const pp = f.plan ? pricePerPoint(f.plan) : null;
-    if (filtered && r) {
+    // The price per point the server priced the movement at, on average.
+    const pp = r && r.points > 0 ? r.value / r.points : null;
+    if (r && !r.priced) {
+      // Points without a plan price: no figure, never "≈ $0.00".
+      tiles.push(<Tile key="real" label={t("costs.fig.realEstimate")} value="–"
+        sub={r.unpricedPoints > 0 ? t("costs.fig.noPlanPricePoints", { n: r.unpricedPoints, m: r.points }) : t("costs.fig.noPlan")}
+        color={SOURCE_COLOR.real} hatched />);
+    } else if (filtered && r) {
       const share = f.agents.reduce((a, x) => a + (x.realShare ?? 0), 0);
       tiles.push(<Tile key="real" label={t("costs.fig.shareOfReal")} value={`≈ ${fmtUSD(share)}`}
         sub={t("costs.fig.shareOfRealSub", { usd: fmtUSD(r.value) })} note={t("costs.fig.accountWideCaveat")} color={SOURCE_COLOR.real} hatched />);
@@ -474,7 +478,11 @@ function NoMultiple({ f }: { f: CredentialFigures }) {
   if (f.kind === "api_key" || f.noMultiple == null || f.noMultiple === "meter") return null;
   let text: string;
   if (f.noMultiple === "agents") text = t("costs.fig.noMultipleAgents");
-  else if (f.real && f.real.points >= 1 && f.aligned) {
+  else if (f.noMultiple === "unpriced") {
+    text = f.real && f.real.unpricedPoints > 0
+      ? t("costs.fig.noMultipleUnpriced", { n: f.real.unpricedPoints, m: f.real.points })
+      : t("costs.fig.noMultipleNoPlan");
+  } else if (f.real && f.real.points >= 1 && f.aligned) {
     const low = f.aligned / f.real.high, high = f.real.low > 0 ? f.aligned / f.real.low : Infinity;
     text = t("costs.fig.notEnoughMovement", { pts: f.real.points, low: times(low), high: times(high) });
   } else text = t("costs.fig.notEnoughMovementNone");
@@ -507,19 +515,19 @@ function CredentialBlock({ f, data, billed, bucket, fmtPeriod, selected, src, sp
   const idx = useMemo(() => new Map(periods.map((p, i) => [Date.parse(p), i])), [periods]);
 
   const typeList = COST_TYPES.filter((k) => types.has(k));
-  const showReal = src.real && !filtered && f.kind !== "api_key" && f.meter != null && bucket !== "hour";
+  // Real bars only where every point has a plan price: a bar of the priced
+  // part alone would read as the whole.
+  const showReal = src.real && !filtered && f.kind !== "api_key" && f.meter != null && bucket !== "hour" && f.real?.priced === true;
   const showBilled = src.billed && !filtered && f.kind === "api_key";
   const realPer = useMemo(() => {
     const v = new Array<number>(periods.length).fill(0);
-    if (!f.meter || f.secretKey == null) return v;
+    // The server priced each reading at the plan valid when it was read.
     for (const s of steps) {
       const i = idx.get(Date.parse(s.period));
-      const p = planAt(data.plans ?? [], f.secretKey, f.slot!, new Date(s.period));
-      const pp = p ? pricePerPoint(p) : null;
-      if (i != null && pp != null) v[i] += s.points * pp;
+      if (i != null) v[i] += s.usd ?? 0;
     }
     return v;
-  }, [steps, idx, periods.length, data.plans, f]);
+  }, [steps, idx, periods.length]);
   const billedPer = useMemo(() => {
     const v = new Array<number>(periods.length).fill(0);
     for (const p of bill) {

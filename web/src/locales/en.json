@@ -273,7 +273,10 @@
       "share": "Share of list $",
       "scale": "Scale",
       "scaleShared": "Shared",
-      "scaleOwn": "Own per agent"
+      "scaleOwn": "Own per agent",
+      "noPlanPricePoints": "no plan price for {{n}} of {{m}} points",
+      "noMultipleUnpriced": "No real figure and no multiple: no plan price for {{n}} of {{m}} points.",
+      "noMultipleNoPlan": "No real figure and no multiple: no plan price is stored for this credential."
     },
     "kpiAllCredentials": "all credentials, from the lines",
     "tok": {

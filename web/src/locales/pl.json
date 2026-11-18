@@ -273,7 +273,10 @@
       "share": "Udział w $ katalogowych",
       "scale": "Skala",
       "scaleShared": "Wspólna",
-      "scaleOwn": "Własna dla agenta"
+      "scaleOwn": "Własna dla agenta",
+      "noPlanPricePoints": "brak ceny planu dla {{n}} z {{m}} punktów",
+      "noMultipleUnpriced": "Brak rzeczywistego kosztu i krotności: brak ceny planu dla {{n}} z {{m}} punktów.",
+      "noMultipleNoPlan": "Brak rzeczywistego kosztu i krotności: dla tych danych uwierzytelniających nie zapisano ceny planu."
     },
     "kpiAllCredentials": "wszystkie poświadczenia, z linii",
     "tok": {

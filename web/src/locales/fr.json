@@ -273,7 +273,10 @@
       "share": "Part du $ catalogue",
       "scale": "Échelle",
       "scaleShared": "Commune",
-      "scaleOwn": "Propre à chaque agent"
+      "scaleOwn": "Propre à chaque agent",
+      "noPlanPricePoints": "pas de prix de forfait pour {{n}} des {{m}} points",
+      "noMultipleUnpriced": "Ni coût réel ni multiple : pas de prix de forfait pour {{n}} des {{m}} points.",
+      "noMultipleNoPlan": "Ni coût réel ni multiple : aucun prix de forfait n'est enregistré pour cet identifiant."
     },
     "kpiAllCredentials": "tous les identifiants, d'après les lignes",
     "tok": {

@@ -108,40 +108,48 @@ export function planAt(plans: readonly CredentialPlan[], key: string, slot: numb
   return null;
 }
 
-/** Points read while one plan was valid. */
-export type MeterPart = { points: number; pricePerPoint: number | null };
-/** One week of the meter (a reset starts a new one) and its parts by plan. */
-export type MeterWeek = { points: number; parts: MeterPart[] };
+/** One week of the meter (a reset starts a new one). The dollars are the
+ *  server's: each reading priced at the plan valid when it was read. */
+export type MeterWeek = {
+  points: number;
+  /** The priced points' dollars, as the server priced them. */
+  usd: number;
+  /** Points read while no plan was valid: not in usd. */
+  unpricedPoints: number;
+  /** The price of one point in this week, for its ±1 point: the dearest
+   *  rate the server priced a step at, else the plan valid at the week's
+   *  last reading. Null when no plan was valid at all. */
+  rate: number | null;
+};
 
 export type RealFigure = RealCost & {
   /** Points read while no plan was valid: not in the value. */
   unpricedPoints: number;
   /** The weeks the window spans: each leaves ±1 point. */
   weeks: number;
+  /** Every point and every week's ±1 point has a plan price. Otherwise the
+   *  value is only part of the movement, and no real figure (and no
+   *  multiple) may be shown — "no plan price for N of M points" instead. */
+  priced: boolean;
 };
 
-/** Real cost over the weeks of a window: every part at its own plan's rate,
- *  every week ±1 point (whole percents) priced at the dearest rate of that
+/** Real cost over the weeks of a window: every point as the server priced
+ *  it, every week ±1 point (whole percents) at the dearest rate of that
  *  week, so the range is never narrower than the truth. */
 export function realFromWeeks(weeks: readonly MeterWeek[]): RealFigure {
-  let value = 0, low = 0, high = 0, points = 0, unpriced = 0;
+  let value = 0, low = 0, high = 0, points = 0, unpriced = 0, priced = true;
   for (const w of weeks) {
-    let v = 0, top = 0;
-    for (const p of w.parts) {
-      if (p.pricePerPoint == null) {
-        unpriced += p.points;
-        continue;
-      }
-      v += p.points * p.pricePerPoint;
-      top = Math.max(top, p.pricePerPoint);
-    }
-    value += v;
+    const top = w.rate ?? 0;
+    if (w.rate == null) priced = false;
+    value += w.usd;
     points += w.points;
+    unpriced += w.unpricedPoints;
     // A week without movement still leaves "less than one point".
-    low += w.points >= 1 ? Math.max(v - top, 0) : 0;
-    high += v + top;
+    low += w.points >= 1 ? Math.max(w.usd - top, 0) : 0;
+    high += w.usd + top;
   }
-  return { value, low, high, points, below: points === 0, unpricedPoints: unpriced, weeks: weeks.length };
+  if (unpriced > 0) priced = false;
+  return { value, low, high, points, below: points === 0, unpricedPoints: unpriced, weeks: weeks.length, priced };
 }
 
 /** The coverage a credential's real cost is read from: the weekly all-models
@@ -155,34 +163,47 @@ export function pickMeter(meter: readonly MeterCoverage[], key: string, slot: nu
   return own[0] ?? null;
 }
 
-/** The weeks of a coverage with their steps priced by the plan valid in each
- *  step's period. A step belongs to the last week that began before the
- *  step's period ended. Without steps, a week is priced at the plan of its end. */
+/** A step's points that have no plan price: what the server says, and all of
+ *  them when it priced none (usd null). */
+export function stepUnpriced(st: Pick<MeterStep, "points" | "usd" | "unpriced_points">): number {
+  return st.usd == null ? st.points : st.unpriced_points;
+}
+
+/** The weeks of a coverage with their steps' dollars as the server priced
+ *  them — each reading at the plan valid when it was read, never at the
+ *  bucket's start. A step belongs to the last week that began before the
+ *  step's period ended. Movement no step accounts for has no price. */
 export function meterWeeks(cov: MeterCoverage, steps: readonly MeterStep[], plans: readonly CredentialPlan[], bucketMs: number): MeterWeek[] {
   const segs = cov.segments && cov.segments.length > 0
     ? cov.segments
     : [{ start_at: cov.baseline_at, end_at: cov.last_at, from_percent: cov.baseline_percent, to_percent: cov.last_percent, reset: false, points: cov.points }];
   const own = steps.filter((s) => s.secret_key === cov.secret_key && s.secret_slot === cov.secret_slot
     && s.source === cov.source && s.window_kind === cov.window_kind);
-  const pp = (t: Date) => {
-    const p = planAt(plans, cov.secret_key, cov.secret_slot, t);
-    return p ? pricePerPoint(p) : null;
-  };
-  const weeks: MeterWeek[] = segs.map((s) => ({ points: s.points, parts: [] }));
-  if (own.length === 0) {
-    segs.forEach((s, i) => weeks[i].parts.push({ points: s.points, pricePerPoint: pp(new Date(s.end_at)) }));
-    return weeks;
-  }
+  const weeks: MeterWeek[] = segs.map((s) => ({ points: s.points, usd: 0, unpricedPoints: 0, rate: null }));
+  let stepped = 0;
   for (const st of own) {
     if (st.points === 0) continue;
     const start = Date.parse(st.period), end = start + bucketMs;
     let wi = 0;
     segs.forEach((s, i) => { if (Date.parse(s.start_at) < end) wi = i; });
-    weeks[wi].parts.push({ points: st.points, pricePerPoint: pp(new Date(start)) });
+    const w = weeks[wi];
+    const unpriced = stepUnpriced(st);
+    stepped += st.points;
+    w.unpricedPoints += unpriced;
+    w.usd += st.usd ?? 0;
+    if (st.points - unpriced > 0 && st.usd != null) w.rate = Math.max(w.rate ?? 0, st.usd / (st.points - unpriced));
   }
-  // A week without a priced step still leaves its ±1 point, at its own rate.
+  // Movement that no step carries is movement without a price.
+  const missing = segs.reduce((a, s) => a + s.points, 0) - stepped;
+  if (missing > 0) weeks[weeks.length - 1].unpricedPoints += missing;
   segs.forEach((s, i) => {
-    if (weeks[i].parts.length === 0) weeks[i].parts.push({ points: 0, pricePerPoint: pp(new Date(s.end_at)) });
+    const w = weeks[i];
+    // A week without a priced step still leaves its ±1 point, at the plan
+    // valid at its last reading.
+    if (w.rate == null) {
+      const p = planAt(plans, cov.secret_key, cov.secret_slot, new Date(s.end_at));
+      w.rate = p ? pricePerPoint(p) : null;
+    }
   });
   return weeks;
 }
@@ -309,8 +330,9 @@ export type CredentialFigures = {
    *  baseline can lie before it). Null without one. */
   aligned: number | null;
   multiple: Multiple | null;
-  /** Why there is no multiple: "agents" (filtered or per agent), "movement" (< 3 points), "meter" (no reading). */
-  noMultiple: "agents" | "movement" | "meter" | null;
+  /** Why there is no multiple: "agents" (filtered or per agent), "movement" (< 3 points), "meter" (no reading),
+   *  "unpriced" (points without a plan price). */
+  noMultiple: "agents" | "movement" | "meter" | "unpriced" | null;
   billed: BilledFigure | null;
   /** Bookings of an older daemon's running totals (legacy, cumulative). */
   bookingCheck: BookingBasis[];
@@ -392,6 +414,7 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
       }
       if (sel.size > 0 || input.layout === "agents") noMultiple = "agents";
       else if (!cov || !real || aligned == null) noMultiple = "meter";
+      else if (!real.priced) noMultiple = "unpriced";
       else if (real.points < 3) noMultiple = "movement";
       else mult = multipleOf(aligned, real);
     }
@@ -407,7 +430,7 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
         recomputed: p.recomputed,
         gapPct: p.reported > 0 ? ((p.recomputed - p.reported) / p.reported) * 100 : null,
         share,
-        realShare: share != null && real ? share * real.value : null,
+        realShare: share != null && real?.priced ? share * real.value : null,
       };
     }).sort((x, y) => y.recomputed - x.recomputed);
 

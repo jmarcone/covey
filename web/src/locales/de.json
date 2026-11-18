@@ -273,7 +273,10 @@
       "share": "Anteil an Listen-$",
       "scale": "Skala",
       "scaleShared": "Gemeinsam",
-      "scaleOwn": "Eigene je Agent"
+      "scaleOwn": "Eigene je Agent",
+      "noPlanPricePoints": "kein Tarifpreis für {{n}} von {{m}} Punkten",
+      "noMultipleUnpriced": "Keine echten Kosten und kein Vielfaches: kein Tarifpreis für {{n}} von {{m}} Punkten.",
+      "noMultipleNoPlan": "Keine echten Kosten und kein Vielfaches: Für diese Zugangsdaten ist kein Tarifpreis hinterlegt."
     },
     "kpiAllCredentials": "alle Zugangsdaten, aus den Zeilen",
     "tok": {

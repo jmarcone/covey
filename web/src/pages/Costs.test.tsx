@@ -12,6 +12,7 @@ import { mockFetch, renderWithProviders, useGerman } from "../test/render";
 
 const SEAT = "claude_code_oauth_token";
 const BOOKED = 77.77; // what covey booked per cell: never a figure on the page
+const PP = 200 * 12 / 52 / 100; // $200 a month: $0.4615 per point
 
 function cells(points: [number, number]): CostCells {
   const cell = (period: string, output: number, cacheRead: number) => ({
@@ -27,9 +28,9 @@ function cells(points: [number, number]): CostCells {
     cells: [cell("2026-11-17T18:00:00Z", 6, 2), cell("2026-11-17T19:00:00Z", 5, 3)],
     subscription: [
       { period: "2026-11-17T18:00:00Z", secret_key: SEAT, secret_slot: 0, credential_kind: "subscription", source: "usage_cmd",
-        window_kind: "seven_day", points: points[0], readings: 2, resets: 0, longest_gap_secs: 900, usd: null, unpriced_points: 0 },
+        window_kind: "seven_day", points: points[0], readings: 2, resets: 0, longest_gap_secs: 900, usd: points[0] * PP, unpriced_points: 0 },
       { period: "2026-11-17T19:00:00Z", secret_key: SEAT, secret_slot: 0, credential_kind: "subscription", source: "usage_cmd",
-        window_kind: "seven_day", points: points[1], readings: 2, resets: 0, longest_gap_secs: 900, usd: null, unpriced_points: 0 },
+        window_kind: "seven_day", points: points[1], readings: 2, resets: 0, longest_gap_secs: 900, usd: points[1] * PP, unpriced_points: 0 },
     ],
     meter: [{
       secret_key: SEAT, secret_slot: 0, credential_kind: "subscription", source: "usage_cmd", window_kind: "seven_day",
@@ -148,6 +149,30 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
     fireEvent.keyDown(period, { key: "Enter" });
     expect(await screen.findByRole("tooltip")).toBeInTheDocument();
+  });
+
+  // Review C2: points without a plan price were left out of the real cost
+  // and the multiple divided by the rest; a seat without a plan read "≈ $0.00".
+  it("zeigt ohne Tarifpreis für einen Teil der Punkte weder echte Kosten noch ein Vielfaches", async () => {
+    const data = cells([2, 2]);
+    data.subscription![1] = { ...data.subscription![1], usd: null, unpriced_points: 2 };
+    serve(data);
+    const tile = await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+    expect(within(tile).getByText("–")).toBeInTheDocument();
+    expect(within(tile).getByText("kein Tarifpreis für 2 von 4 Punkten")).toBeInTheDocument();
+    expect(tile.textContent).not.toMatch(/≈/);
+    expect(screen.queryByRole("group", { name: MULTIPLE })).toBeNull();
+    expect(screen.getByText(/kein Vielfaches: kein Tarifpreis für 2 von 4 Punkten/)).toBeInTheDocument();
+  });
+
+  it("zeigt bei Zugangsdaten ohne Tarif „kein Tarifpreis“, nie ≈ 0", async () => {
+    const data = cells([0, 0]);
+    data.plans = [];
+    for (const s of data.subscription!) s.usd = null;
+    serve(data);
+    const tile = await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
+    expect(within(tile).getByText("kein Tarifpreis hinterlegt")).toBeInTheDocument();
+    expect(tile.textContent).not.toMatch(/≈|0,00|< /);
   });
 
   // Review C1: cache writes were counted as hits, so 94 % read the cache

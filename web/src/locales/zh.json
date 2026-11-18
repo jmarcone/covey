@@ -273,7 +273,10 @@
       "share": "标价份额",
       "scale": "刻度",
       "scaleShared": "共用",
-      "scaleOwn": "每个代理独立"
+      "scaleOwn": "每个代理独立",
+      "noPlanPricePoints": "{{m}} 个点中有 {{n}} 个没有套餐价格",
+      "noMultipleUnpriced": "无实际成本，也无倍数：{{m}} 个点中有 {{n}} 个没有套餐价格。",
+      "noMultipleNoPlan": "无实际成本，也无倍数：此凭据未保存套餐价格。"
     },
     "kpiAllCredentials": "所有凭据，按各行汇总",
     "tok": {

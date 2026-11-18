@@ -273,7 +273,10 @@
       "share": "Aandeel in lijst-$",
       "scale": "Schaal",
       "scaleShared": "Gedeeld",
-      "scaleOwn": "Eigen per agent"
+      "scaleOwn": "Eigen per agent",
+      "noPlanPricePoints": "geen abonnementsprijs voor {{n}} van {{m}} punten",
+      "noMultipleUnpriced": "Geen werkelijke kosten en geen veelvoud: geen abonnementsprijs voor {{n}} van {{m}} punten.",
+      "noMultipleNoPlan": "Geen werkelijke kosten en geen veelvoud: voor deze inloggegevens is geen abonnementsprijs opgeslagen."
     },
     "kpiAllCredentials": "alle referenties, uit de regels",
     "tok": {

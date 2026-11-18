@@ -273,7 +273,10 @@
       "share": "Quota del $ di listino",
       "scale": "Scala",
       "scaleShared": "Condivisa",
-      "scaleOwn": "Propria per agente"
+      "scaleOwn": "Propria per agente",
+      "noPlanPricePoints": "nessun prezzo del piano per {{n}} di {{m}} punti",
+      "noMultipleUnpriced": "Nessun costo reale e nessun multiplo: nessun prezzo del piano per {{n}} di {{m}} punti.",
+      "noMultipleNoPlan": "Nessun costo reale e nessun multiplo: per questa credenziale non è salvato alcun prezzo del piano."
     },
     "kpiAllCredentials": "tutte le credenziali, dalle righe",
     "tok": {

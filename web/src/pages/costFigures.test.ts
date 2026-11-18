@@ -47,7 +47,8 @@ const coverage = (over: Partial<MeterCoverage> = {}): MeterCoverage => ({
 
 const step = (period: string, points: number, over: Partial<MeterStep> = {}): MeterStep => ({
   period, secret_key: SEAT, secret_slot: 0, credential_kind: "subscription", source: "usage_cmd",
-  window_kind: "seven_day", points, readings: 1, resets: 0, longest_gap_secs: 600, usd: null, unpriced_points: 0, ...over,
+  // The server prices each reading at the plan valid when it was read.
+  window_kind: "seven_day", points, readings: 1, resets: 0, longest_gap_secs: 600, usd: points * PP, unpriced_points: 0, ...over,
 });
 
 const cells = (over: Partial<CostCells> = {}): CostCells => ({
@@ -101,13 +102,48 @@ describe("the meter and the multiple", () => {
   it("prices each part of a window at the plan valid then", () => {
     const change = "2026-11-17T20:00:00Z";
     const plans = [plan({ amount: 100, valid_to: change }), plan({ amount: 200, valid_from: change })];
-    const cov = coverage({ points: 5 });
-    const steps = [step("2026-11-17T18:00:00Z", 2), step("2026-11-17T20:00:00Z", 3)];
-    const real = realFromWeeks(meterWeeks(cov, steps, plans, HOUR));
     const pp100 = pricePerPoint(plans[0])!, pp200 = pricePerPoint(plans[1])!;
+    const cov = coverage({ points: 5 });
+    const steps = [step("2026-11-17T18:00:00Z", 2, { usd: 2 * pp100 }), step("2026-11-17T20:00:00Z", 3, { usd: 3 * pp200 })];
+    const real = realFromWeeks(meterWeeks(cov, steps, plans, HOUR));
+    expect(real.priced).toBe(true);
     expect(real.value).toBeCloseTo(2 * pp100 + 3 * pp200, 10);
     // the ±1 point of the week at its dearest rate
     expect(real.high).toBeCloseTo(2 * pp100 + 3 * pp200 + pp200, 10);
+  });
+
+  // Review C2: the client re-priced a step at its bucket's START. A day
+  // bucket that begins under the old plan but whose readings came after the
+  // change was priced at the old rate; the server prices each reading when
+  // it was read, and that figure is the one to show.
+  it("takes each step's dollars as the server priced them, not at the bucket's start", () => {
+    const change = "2026-11-17T20:00:00Z";
+    const plans = [plan({ amount: 100, valid_to: change }), plan({ amount: 200, valid_from: change })];
+    const pp200 = pricePerPoint(plans[1])!;
+    const cov = coverage({ points: 4 });
+    // one day bucket from midnight (old plan), the 4 points read after 20:00 (new plan)
+    const steps = [step("2026-11-17T00:00:00Z", 4, { usd: 4 * pp200 })];
+    const real = realFromWeeks(meterWeeks(cov, steps, plans, 24 * HOUR));
+    expect(real.value).toBeCloseTo(4 * pp200, 10);
+  });
+
+  it("shows no real figure and no multiple while any point has no plan price", () => {
+    const cov = coverage({ points: 4 });
+    const steps = [step("2026-11-17T18:00:00Z", 2), step("2026-11-17T19:00:00Z", 2, { usd: null, unpriced_points: 2 })];
+    const real = realFromWeeks(meterWeeks(cov, steps, [plan()], HOUR));
+    expect(real.priced).toBe(false);
+    expect(real.unpricedPoints).toBe(2);
+    expect(real.points).toBe(4);
+    const [seat] = credentialFigures({
+      cells: cells({ cells: [cell("2026-11-17T18:00:00Z", { output: 30 })], meter: [cov], subscription: steps }),
+      bucketMs: HOUR, windowEnd: new Date("2026-11-17T23:00:00Z"),
+    });
+    expect(seat.multiple).toBeNull();
+    expect(seat.noMultiple).toBe("unpriced");
+    expect(seat.agents[0].realShare).toBeNull();
+    // a credential without any plan, and a meter that did not move: no price either
+    const none = realFromWeeks(meterWeeks(coverage({ points: 0 }), [], [], HOUR));
+    expect(none.priced).toBe(false);
   });
 
   it("converts a yearly plan with the stored fx rate", () => {

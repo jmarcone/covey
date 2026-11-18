@@ -273,7 +273,10 @@
       "share": "定価のシェア",
       "scale": "目盛り",
       "scaleShared": "共通",
-      "scaleOwn": "エージェントごと"
+      "scaleOwn": "エージェントごと",
+      "noPlanPricePoints": "{{m}} ポイント中 {{n}} ポイントにプラン価格がありません",
+      "noMultipleUnpriced": "実コストも倍率もありません：{{m}} ポイント中 {{n}} ポイントにプラン価格がありません。",
+      "noMultipleNoPlan": "実コストも倍率もありません：この認証情報にはプラン価格が登録されていません。"
     },
     "kpiAllCredentials": "全認証情報、行から集計",
     "tok": {
