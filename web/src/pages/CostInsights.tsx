@@ -4,9 +4,11 @@ import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import { api, type ModelUsageReport, type ModelUsageRow, type UsageReading } from "../api";
 import { fmtBucket, fmtCount, fmtNumber, fmtUSD } from "../format";
-import { perCredentialTotals, usableReadings, type CredentialFigures, type SourceTotal } from "./costFigures";
-import { SOURCES, SOURCE_COLOR, sourceHint, sourceLabel, type Source } from "./costSources";
-import { Chip, OrgWide, Swatch, useUsageReadings } from "./StackedCostChart";
+import { SOURCES, sourceHint, sourceLabel, type Source } from "./costSources";
+import { perCredentialTotals, type SourceTotal } from "./costFigures";
+import { Chip } from "./StackedCostChart";
+import { usableReadings, type CredentialFigures } from "./costFigures";
+import { OrgWide, SOURCE_COLOR, Swatch, useUsageReadings } from "./StackedCostChart";
 
 /* Cost insights.
  *

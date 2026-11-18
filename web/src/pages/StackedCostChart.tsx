@@ -4,6 +4,10 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { api, type BilledReport, type CellAgent, type CostCell, type CostCells, type UsageReading } from "../api";
 import { fmtBucket, fmtClockUTC, fmtCount, fmtCountAxis, fmtNumber, fmtUSD, fmtUSDAxis } from "../format";
+import { SOURCES, SOURCE_COLOR, sourceHint, sourceLabel, type Source } from "./costSources";
+
+export { SOURCE_COLOR };
+
 import {
   billedFetchBucket,
   billedPerPeriod,
@@ -14,9 +18,6 @@ import {
   type CredentialFigures,
 } from "./costFigures";
 import { PlanPrice } from "./PlanPrice";
-import { SOURCES, SOURCE_COLOR, sourceHint, sourceLabel, type Source } from "./costSources";
-
-export { SOURCE_COLOR };
 
 /* The cost explorer. The credential is the first level: what money means
  * depends on it, so every figure belongs to one credential and nothing is
