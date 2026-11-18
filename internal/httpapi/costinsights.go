@@ -80,7 +80,7 @@ func (s *Server) handleUsageReadings(w http.ResponseWriter, r *http.Request) {
 // billingKeysDays: how far back the key list sums the bill.
 const billingKeysDays = 30
 
-// handleBilled: the bill per bucket (hour | day | week), API key and model,
+// handleBilled: the bill per bucket (hour | 10hour | day | week), API key and model,
 // each point with the credential the key is mapped to (none: other use of
 // the account) — the chart's bars. And `window`: per mapped credential the
 // bill over whole billed buckets with the reported and recomputed figures of
@@ -105,7 +105,11 @@ func (s *Server) handleBilled(w http.ResponseWriter, r *http.Request) {
 		mapErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"bucket": series.Bucket, "points": series.Points, "window": window, "sync": sync})
+	out := map[string]any{"bucket": series.Bucket, "points": series.Points, "window": window, "sync": sync}
+	if series.Reason != "" {
+		out["reason"] = series.Reason
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // handleReconcile: per UTC day × mapped credential × model, what Claude Code

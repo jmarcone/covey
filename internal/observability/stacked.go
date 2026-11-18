@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -107,6 +108,9 @@ type CostCells struct {
 	// some of the booked figures are an older daemon's running totals
 	// (legacy, cumulative) rather than a run's own spend.
 	Bookings []BookingBasis `json:"bookings"`
+	// External is the usage outside covey (#120, external.go): its own
+	// series beside the agents, in none of the fields above.
+	External ExternalUsage `json:"external"`
 }
 
 // cellDepartments fills in the department of every agent in the cells. A
@@ -192,12 +196,12 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 	}
 
 	// Reported: what was booked per bucket, agent and credential.
-	rows, err := s.pool.Query(ctx, `SELECT date_trunc($2, ce.created_at, 'UTC'), a.id, a.display_name,
+	rows, err := s.pool.Query(ctx, `SELECT `+periodSQL(bucket, "ce.created_at")+`, a.id, a.display_name,
 		ce.secret_key, ce.secret_slot, COALESCE(MAX(rc.kind),''), COALESCE(SUM(ce.usd),0)::float8
 		FROM cost_entries ce JOIN agents a ON a.id = ce.agent_id
 		LEFT JOIN runtime_credentials rc ON rc.runtime_id = ce.runtime_id AND rc.ord = ce.credential_ord
-		WHERE a.org_id = $1 AND ce.created_at >= $3
-		GROUP BY 1,2,3,4,5`, orgID, bucket, since)
+		WHERE a.org_id = $1 AND ce.created_at >= $2
+		GROUP BY 1,2,3,4,5`, orgID, since)
 	if err != nil {
 		return out, err
 	}
@@ -225,14 +229,14 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 
 	// Measured: the per-line deltas per bucket, agent, credential and model,
 	// priced per type. model_usage carries the org, so this is a range scan.
-	rows, err = s.pool.Query(ctx, `SELECT date_trunc($2, mu.created_at, 'UTC'), mu.agent_id, a.display_name,
+	rows, err = s.pool.Query(ctx, `SELECT `+periodSQL(bucket, "mu.created_at")+`, mu.agent_id, a.display_name,
 		mu.secret_key, mu.secret_slot, mu.credential_kind, mu.model,
 		SUM(mu.input_tokens), SUM(mu.output_tokens), SUM(mu.cache_read_tokens),
 		SUM(mu.cache_write_5m_tokens), SUM(mu.cache_write_1h_tokens), SUM(mu.web_search_requests),
 		SUM(mu.engine_usd)::float8
 		FROM model_usage mu JOIN agents a ON a.id = mu.agent_id
-		WHERE mu.org_id = $1 AND mu.created_at >= $3
-		GROUP BY 1,2,3,4,5,6,7`, orgID, bucket, since)
+		WHERE mu.org_id = $1 AND mu.created_at >= $2
+		GROUP BY 1,2,3,4,5,6,7`, orgID, since)
 	if err != nil {
 		return out, err
 	}
@@ -283,13 +287,13 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 
 	// Bookings no line was linked to keep their booked cost, visible as its
 	// own part: there is nothing to measure them by.
-	rows, err = s.pool.Query(ctx, `SELECT date_trunc($2, ce.created_at, 'UTC'), ce.agent_id,
+	rows, err = s.pool.Query(ctx, `SELECT `+periodSQL(bucket, "ce.created_at")+`, ce.agent_id,
 		ce.secret_key, ce.secret_slot, COALESCE(MAX(rc.kind),''), COALESCE(SUM(ce.usd),0)::float8
 		FROM cost_entries ce JOIN agents a ON a.id = ce.agent_id
 		LEFT JOIN runtime_credentials rc ON rc.runtime_id = ce.runtime_id AND rc.ord = ce.credential_ord
-		WHERE a.org_id = $1 AND ce.created_at >= $3
+		WHERE a.org_id = $1 AND ce.created_at >= $2
 		  AND NOT EXISTS (SELECT 1 FROM model_usage m WHERE m.cost_entry_id = ce.id)
-		GROUP BY 1,2,3,4`, orgID, bucket, since)
+		GROUP BY 1,2,3,4`, orgID, since)
 	if err != nil {
 		return out, err
 	}
@@ -382,6 +386,17 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 		return out, err
 	}
 	out.Subscription, out.Meter = steps, coverage
+
+	// The meter share is split per UTC hour whatever the chart's bucket.
+	hourly := func() ([]MeterStep, []MeterCoverage, error) {
+		if bucket == "hour" {
+			return steps, coverage, nil
+		}
+		return s.meterSteps(ctx, orgID, "hour", since, plans)
+	}
+	if out.External, err = s.externalFor(ctx, orgID, bucket, since, hourly); err != nil {
+		return out, err
+	}
 	return out, nil
 }
 
@@ -578,8 +593,9 @@ func planAt(plans []CredentialPlan, key string, slot int, t time.Time) (Credenti
 //     0); the first reading of a credential is its baseline and counts 0.
 //
 // Partitioned by the secret, not the runtime: the same value on two runtimes
-// is one meter, and its history survives a Reorder.
-const meterQuery = `
+// is one meter, and its history survives a Reorder. The period column comes
+// from periodSQL (meterQuery).
+const meterQueryTemplate = `
 WITH r0 AS (
 	SELECT id, secret_key, secret_slot, source, window_kind, credential_kind, fetched_at,
 		week_percent AS pct, resets_at,
@@ -587,7 +603,7 @@ WITH r0 AS (
 			ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS seen_resets
 	FROM usage_readings
 	WHERE org_id = $1 AND supported AND NOT stale AND week_percent IS NOT NULL AND secret_key IS NOT NULL
-	  AND fetched_at >= $3::timestamptz - interval '8 days'),
+	  AND fetched_at >= $2::timestamptz - interval '8 days'),
 r AS (
 	SELECT id, secret_key, secret_slot, source, window_kind, credential_kind, fetched_at, pct, resets_at
 	FROM r0
@@ -615,7 +631,7 @@ m AS (
 		ORDER BY fetched_at, id) AS top
 	FROM g)
 SELECT secret_key, secret_slot, MAX(credential_kind) OVER (PARTITION BY secret_key, secret_slot),
-	source, window_kind, fetched_at, date_trunc($2, fetched_at, 'UTC'),
+	source, window_kind, fetched_at, {{period}},
 	pct, top, week::bigint, reset = 1,
 	CASE WHEN prev_pct IS NULL THEN 0
 	     WHEN reset = 1 THEN top
@@ -623,6 +639,11 @@ SELECT secret_key, secret_slot, MAX(credential_kind) OVER (PARTITION BY secret_k
 	COALESCE(EXTRACT(EPOCH FROM fetched_at - prev_at)::float8, 0)
 FROM m
 ORDER BY secret_key, secret_slot, source, window_kind, fetched_at, id`
+
+// meterQuery is meterQueryTemplate with the bucket's period: $1 org, $2 since.
+func meterQuery(bucket string) string {
+	return strings.Replace(meterQueryTemplate, "{{period}}", periodSQL(bucket, "fetched_at"), 1)
+}
 
 // meterRow is one reading with its step.
 type meterRow struct {
@@ -641,7 +662,7 @@ type meterRow struct {
 // source, and says how well each was covered. Points of the weekly all-models
 // window are priced with the plan valid when they were read.
 func (s *Store) meterSteps(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time, plans []CredentialPlan) ([]MeterStep, []MeterCoverage, error) {
-	rows, err := s.pool.Query(ctx, meterQuery, orgID, bucket, since)
+	rows, err := s.pool.Query(ctx, meterQuery(bucket), orgID, since)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -644,7 +644,15 @@ type BilledPoint struct {
 type BilledSeries struct {
 	Bucket string        `json:"bucket"`
 	Points []BilledPoint `json:"points"`
+	// Reason says why Points is empty although the bill may hold rows:
+	// ReasonBucketBelowSource when the bucket is finer than the bill, which
+	// Anthropic reports per hour at the finest.
+	Reason string `json:"reason,omitempty"`
 }
+
+// ReasonBucketBelowSource: the asked bucket is finer than what the source
+// reports, so the series is empty rather than spread over invented buckets.
+const ReasonBucketBelowSource = "bucket_below_source"
 
 // billedMapping joins a bill row c to the ONE mapping it belongs to (mk, NULL
 // columns when none): the API key's mapping valid during the row's bucket, the
@@ -658,15 +666,19 @@ const billedMapping = `LEFT JOIN LATERAL (SELECT k.secret_key, k.secret_slot::in
 			  AND k.valid_from < c.bucket_end AND COALESCE(k.valid_to, 'infinity'::timestamptz) > c.bucket_start
 			ORDER BY k.valid_from DESC LIMIT 1) mk ON true`
 
-// BilledSeries sums the billed rows per bucket (hour | day | week, UTC; day
-// by default), API key and model. Hours come from the 1h reads only; days and
-// weeks from one width per day (chosenRows).
+// BilledSeries sums the billed rows per bucket (hour | 10hour | day | week,
+// UTC; day by default), API key and model. Hours and 10-hour buckets come
+// from the 1h reads only; days and weeks from one width per day (chosenRows).
+// 10min is finer than any bill row: no points, with ReasonBucketBelowSource.
 func (s *Store) BilledSeries(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time) (BilledSeries, error) {
 	out := BilledSeries{Bucket: bucket, Points: []BilledPoint{}}
 	since = since.UTC().Truncate(24 * time.Hour)
 	var src string
 	switch bucket {
-	case "hour":
+	case "10min":
+		out.Reason = ReasonBucketBelowSource
+		return out, nil
+	case "hour", "10hour":
 		src = `bcost AS (SELECT t.*, NULL::timestamptz AS day FROM billed_cost t
 			WHERE t.org_id = $1 AND t.bucket_width = '1h' AND t.bucket_start >= $2)`
 	case "week":
@@ -675,8 +687,12 @@ func (s *Store) BilledSeries(ctx context.Context, orgID uuid.UUID, bucket string
 		out.Bucket, bucket = "day", "day"
 		src = chosenRows("billed_cost", "cpick", "bcost")
 	}
+	period := `date_trunc('` + bucket + `', c.bucket_start AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`
+	if bucket == "10hour" {
+		period = periodSQL(bucket, "c.bucket_start")
+	}
 	rows, err := s.pool.Query(ctx, `WITH `+src+`
-		SELECT date_trunc('`+bucket+`', c.bucket_start AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS b,
+		SELECT `+period+` AS b,
 			c.api_key_id, c.workspace_id, c.model, mk.secret_key, mk.secret_slot,
 			round(SUM(c.amount_cents) / 100, 8)::text, round(SUM(c.list_amount_cents) / 100, 8)::text,
 			bool_and(c.data_refreshed_at IS NOT NULL AND c.bucket_end <= c.data_refreshed_at)

@@ -733,6 +733,11 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/cost/billing-sync", s.rbac(anyRole, s.handleGetBillingSync))
 	mux.Handle("POST /api/v1/cost/billing-sync", s.rbac(securityRoles, s.handlePostBillingSync))
 	mux.Handle("GET /api/v1/cost/billing-keys", s.rbac(anyRole, s.handleBillingKeys))
+	// Usage outside covey (0150): token counts of sessions that run on an
+	// operator's machine, uploaded by `covey usage push`. Written with the
+	// rights of the billing sync; read through /cost/cells (its `external`).
+	mux.Handle("POST /api/v1/cost/external-usage", s.rbac(securityRoles, s.handlePostExternalUsage))
+	mux.Handle("DELETE /api/v1/cost/external-usage", s.rbac(securityRoles, s.handleDeleteExternalUsage))
 	mux.Handle("GET /api/v1/agents/{id}/cost/runs", s.agentScoped(anyRole, s.handleAgentRunCosts))
 	// The price list: delivery next to the cost, same scope, same period
 	// (spec/17-kpis.md).
