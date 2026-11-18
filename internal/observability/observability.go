@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -215,10 +216,17 @@ type RunCost struct {
 	Origin   string    `json:"origin"`
 	TotalUSD float64   `json:"total_usd"`
 	Tokens
-	Entries   int64     `json:"entries"`
-	Actions   int64     `json:"actions"`
-	StartedAt time.Time `json:"started_at"`
-	EndedAt   time.Time `json:"ended_at"`
+	// MeasuredUSD is the run's lines in the window priced with covey's list
+	// (unknown models at the engine's figure), EngineUSD what Claude Code
+	// priced the same lines at. Nil for a run without lines (another engine,
+	// cut off before its result). The ranking follows MeasuredUSD; the booked
+	// TotalUSD only where there is none.
+	MeasuredUSD *float64  `json:"measured_usd"`
+	EngineUSD   *float64  `json:"engine_usd"`
+	Entries     int64     `json:"entries"`
+	Actions     int64     `json:"actions"`
+	StartedAt   time.Time `json:"started_at"`
+	EndedAt     time.Time `json:"ended_at"`
 }
 
 // Indicator is a counting rule as the evaluation needs it (spec/17-kpis.md).
@@ -1083,18 +1091,28 @@ func (s *Store) RunCosts(ctx context.Context, orgID uuid.UUID, agentID *uuid.UUI
 	if limit <= 0 || limit > 500 {
 		limit = 50
 	}
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.pool.Query(ctx, `WITH `+priceValues()+`,
+		lines AS (
+			SELECT mu.task_id, SUM(COALESCE((mu.input_tokens*p.input + mu.output_tokens*p.output
+				+ mu.cache_read_tokens*p.cache_read + mu.cache_write_5m_tokens*p.w5m
+				+ mu.cache_write_1h_tokens*p.w1h) / 1000000
+				+ mu.web_search_requests * `+strconv.FormatFloat(WebSearchUSD, 'f', -1, 64)+`::numeric, mu.engine_usd))::float8 AS measured,
+				SUM(mu.engine_usd)::float8 AS engine
+			FROM model_usage mu LEFT JOIN prices p ON p.id = `+normModel("mu.model")+`
+			WHERE mu.org_id = $1 AND mu.created_at >= $2 AND mu.task_id IS NOT NULL
+			GROUP BY mu.task_id)
 		SELECT t.id, t.agent_id, a.slug, t.title, t.state, t.origin,
 		       COALESCE(SUM(ce.usd),0), `+tokenSums("ce.")+`, COUNT(ce.id),
 		       COALESCE((SELECT COUNT(*) FROM recording_events re
 		                 WHERE re.task_id = t.id AND re.kind = 'action'), 0),
-		       t.created_at, t.updated_at
+		       t.created_at, t.updated_at, l.measured, l.engine
 		FROM cost_entries ce
 		JOIN backlog_tasks t ON t.id = ce.task_id
 		JOIN agents a ON a.id = t.agent_id
+		LEFT JOIN lines l ON l.task_id = t.id
 		WHERE a.org_id = $1 AND ce.created_at >= $2 AND ($3::uuid IS NULL OR t.agent_id = $3)
-		GROUP BY t.id, t.agent_id, a.slug, t.title, t.state, t.origin, t.created_at, t.updated_at
-		ORDER BY SUM(ce.usd) DESC
+		GROUP BY t.id, t.agent_id, a.slug, t.title, t.state, t.origin, t.created_at, t.updated_at, l.measured, l.engine
+		ORDER BY COALESCE(l.measured, SUM(ce.usd)::float8) DESC
 		LIMIT $4`, orgID, since, agentID, limit)
 	if err != nil {
 		return nil, err
@@ -1105,7 +1123,7 @@ func (s *Store) RunCosts(ctx context.Context, orgID uuid.UUID, agentID *uuid.UUI
 		var r RunCost
 		if err := rows.Scan(&r.TaskID, &r.AgentID, &r.Slug, &r.Title, &r.State, &r.Origin,
 			&r.TotalUSD, &r.Input, &r.Output, &r.CacheRead, &r.CacheCreation,
-			&r.Entries, &r.Actions, &r.StartedAt, &r.EndedAt); err != nil {
+			&r.Entries, &r.Actions, &r.StartedAt, &r.EndedAt, &r.MeasuredUSD, &r.EngineUSD); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

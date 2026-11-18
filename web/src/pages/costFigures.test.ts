@@ -1,0 +1,259 @@
+import { describe, it, expect } from "vitest";
+import type { CostCell, CostCells, CredentialPlan, MeterCoverage, MeterStep, UsageReading } from "../api";
+import {
+  alignedMeasured,
+  billedStatus,
+  credentialFigures,
+  meterCrossings,
+  meterRange,
+  meterRatio,
+  meterWeeks,
+  multiple,
+  multipleOf,
+  pricePerPoint,
+  realCost,
+  realFromWeeks,
+} from "./costFigures";
+
+// The figures the Costs page shows are argued with, so every rule that turns
+// tokens, meter points and plan prices into a number is pinned here: the
+// range the whole percents leave, when a multiple may be shown at all, that
+// nothing crosses from one credential to another, and that each part of a
+// window is priced at the plan valid then.
+
+const HOUR = 3600_000;
+const PP = 200 * 12 / 52 / 100; // $200 a month: $0.4615 per point
+
+const SEAT = "claude_code_oauth_token";
+const KEY = "anthropic_api_key";
+
+const plan = (over: Partial<CredentialPlan> = {}): CredentialPlan => ({
+  runtime_id: null, ord: null, secret_key: SEAT, secret_slot: 0, plan_name: "Max", amount: 200, currency: "USD",
+  period: "month", tax_basis: "net", fx_to_usd: 1, fx_date: null, valid_from: "2026-11-01T00:00:00Z", valid_to: null,
+  weekly_usd: 200 * 12 / 52, usd_per_point: PP, ...over,
+});
+
+const cell = (period: string, measured: Record<string, number>, over: Partial<CostCell> = {}): CostCell => ({
+  period, agent_id: "a1", secret_key: SEAT, secret_slot: 0, credential_kind: "subscription",
+  reported_usd: 99, measured, engine_usd: Object.values(measured).reduce((a, b) => a + b, 0), ...over,
+});
+
+const coverage = (over: Partial<MeterCoverage> = {}): MeterCoverage => ({
+  secret_key: SEAT, secret_slot: 0, credential_kind: "subscription", source: "usage_cmd", window_kind: "seven_day",
+  baseline_at: "2026-11-17T18:00:00Z", baseline_percent: 9, baseline_before_window: false,
+  last_at: "2026-11-17T21:00:00Z", last_percent: 13, readings: 8, points: 4, points_low: 3, points_high: 5,
+  longest_gap_secs: 1800, segments: null, ...over,
+});
+
+const step = (period: string, points: number, over: Partial<MeterStep> = {}): MeterStep => ({
+  period, secret_key: SEAT, secret_slot: 0, credential_kind: "subscription", source: "usage_cmd",
+  window_kind: "seven_day", points, readings: 1, resets: 0, longest_gap_secs: 600, usd: null, unpriced_points: 0, ...over,
+});
+
+const cells = (over: Partial<CostCells> = {}): CostCells => ({
+  periods: [], agents: [{ id: "a1", label: "Coordinator", reported_usd: 0 }, { id: "a2", label: "QA", reported_usd: 0 }],
+  types: ["cache_read", "cache_write", "input", "output", "web_search", "unpriced", "unattributed"],
+  cells: [], subscription: [], meter: [], plans: [plan()], bookings: [], ...over,
+});
+
+describe("the meter and the multiple", () => {
+  it("gives the live-shaped case ≈28.6× with the range 22.9–38.1×", () => {
+    const m = multiple(52.77, 4, 0.4615);
+    expect(m?.kind).toBe("estimate");
+    if (m?.kind !== "estimate") throw new Error("no estimate");
+    expect(m.value.toFixed(1)).toBe("28.6");
+    expect(m.low.toFixed(1)).toBe("22.9");
+    expect(m.high.toFixed(1)).toBe("38.1");
+  });
+
+  it("gives only a range for 2 points and no figure for none, where the real cost is below one point", () => {
+    const two = multiple(52.77, 2, 0.4615);
+    expect(two).toEqual({ kind: "range", low: 52.77 / (3 * 0.4615), high: 52.77 / 0.4615 });
+    expect(multiple(52.77, 1, 0.4615)).toMatchObject({ kind: "range", high: Infinity });
+    expect(multiple(52.77, 0, 0.4615)).toBeNull();
+    expect(meterRange(0)).toEqual({ low: 0, high: 1 });
+    const none = realCost(0, 0.4615);
+    expect(none.below).toBe(true);
+    expect(none.high).toBeCloseTo(0.4615, 10); // "< $0.46"
+  });
+
+  it("sums a week reset across two weeks, each leaving ±1 point", () => {
+    const cov = coverage({
+      points: 7,
+      segments: [
+        { start_at: "2026-11-17T10:00:00Z", end_at: "2026-11-17T16:00:00Z", from_percent: 95, to_percent: 98, reset: false, points: 3 },
+        { start_at: "2026-11-17T17:00:00Z", end_at: "2026-11-17T21:00:00Z", from_percent: 0, to_percent: 4, reset: true, points: 4 },
+      ],
+    });
+    const steps = [step("2026-11-17T12:00:00Z", 3), step("2026-11-17T17:00:00Z", 4, { resets: 1 })];
+    const real = realFromWeeks(meterWeeks(cov, steps, [plan()], HOUR));
+    expect(real.points).toBe(7);
+    expect(real.weeks).toBe(2);
+    expect(real.value).toBeCloseTo(7 * PP, 10);
+    expect(real.low).toBeCloseTo(5 * PP, 10);
+    expect(real.high).toBeCloseTo(9 * PP, 10);
+    // and the crossings restart at the reset
+    const x = meterCrossings(coverage({ baseline_percent: 95 }), steps);
+    expect(x.get("2026-11-17T12:00:00Z")).toEqual({ from: 95, to: 98, reset: false });
+    expect(x.get("2026-11-17T17:00:00Z")).toEqual({ from: 0, to: 4, reset: true });
+  });
+
+  it("prices each part of a window at the plan valid then", () => {
+    const change = "2026-11-17T20:00:00Z";
+    const plans = [plan({ amount: 100, valid_to: change }), plan({ amount: 200, valid_from: change })];
+    const cov = coverage({ points: 5 });
+    const steps = [step("2026-11-17T18:00:00Z", 2), step("2026-11-17T20:00:00Z", 3)];
+    const real = realFromWeeks(meterWeeks(cov, steps, plans, HOUR));
+    const pp100 = pricePerPoint(plans[0])!, pp200 = pricePerPoint(plans[1])!;
+    expect(real.value).toBeCloseTo(2 * pp100 + 3 * pp200, 10);
+    // the ±1 point of the week at its dearest rate
+    expect(real.high).toBeCloseTo(2 * pp100 + 3 * pp200 + pp200, 10);
+  });
+
+  it("converts a yearly plan with the stored fx rate", () => {
+    expect(pricePerPoint({ amount: 2000, period: "year", fx_to_usd: 1.08, currency: "EUR" })).toBeCloseTo((2000 * 1.08) / 52 / 100, 12);
+    expect(pricePerPoint({ amount: 200, period: "month", fx_to_usd: 1, currency: "USD" })).toBeCloseTo(PP, 12);
+    // a foreign plan without a rate is not priced as if it were dollars
+    expect(pricePerPoint({ amount: 200, period: "month", fx_to_usd: 0, currency: "EUR" })).toBeNull();
+  });
+});
+
+describe("window alignment", () => {
+  const hourly = ["17", "18", "19", "20", "21", "22"].map((h) => cell(`2026-11-17T${h}:00:00Z`, { output: 10 }));
+
+  it("counts only the cost inside [baseline_at, last_at]", () => {
+    const m = alignedMeasured(hourly, `${SEAT}#0`, new Date("2026-11-17T18:00:00Z"), new Date("2026-11-17T21:00:00Z"), HOUR);
+    expect(m).toBeCloseTo(30, 10); // 18, 19, 20 — not 17, not 21 or 22
+  });
+
+  it("counts the share of a bucket the window covers", () => {
+    const m = alignedMeasured(hourly, `${SEAT}#0`, new Date("2026-11-17T18:30:00Z"), new Date("2026-11-17T21:15:00Z"), HOUR);
+    expect(m).toBeCloseTo(5 + 10 + 10 + 2.5, 10);
+  });
+
+  it("feeds the multiple with the aligned figure, not the whole window", () => {
+    const data = cells({
+      cells: hourly,
+      meter: [coverage()],
+      subscription: [step("2026-11-17T18:00:00Z", 1), step("2026-11-17T19:00:00Z", 2), step("2026-11-17T20:00:00Z", 1)],
+    });
+    const [seat] = credentialFigures({ cells: data, bucketMs: HOUR, windowEnd: new Date("2026-11-17T23:00:00Z") });
+    expect(seat.recomputed).toBeCloseTo(60, 10);
+    expect(seat.aligned).toBeCloseTo(30, 10);
+    const want = multipleOf(30, realCost(4, PP));
+    if (seat.multiple?.kind !== "estimate" || want?.kind !== "estimate") throw new Error("no estimate");
+    expect(seat.multiple.value).toBeCloseTo(want.value, 9);
+    expect(seat.multiple.low).toBeCloseTo(want.low, 9);
+    expect(seat.multiple.high).toBeCloseTo(want.high, 9);
+  });
+});
+
+describe("per credential", () => {
+  const mixed = cells({
+    cells: [
+      cell("2026-11-17T18:00:00Z", { output: 30, cache_read: 10, unattributed: 7 }),
+      cell("2026-11-17T18:00:00Z", { output: 5 }, { agent_id: "a2" }),
+      cell("2026-11-17T18:00:00Z", { output: 100 }, { secret_key: KEY, secret_slot: 1, credential_kind: "api_key" }),
+      cell("2026-11-17T18:00:00Z", { output: 1 }, { secret_key: null, secret_slot: null, credential_kind: "" }),
+    ],
+    meter: [coverage()],
+    subscription: [step("2026-11-17T18:00:00Z", 4)],
+    bookings: [
+      { secret_key: SEAT, secret_slot: 0, basis: "invocation", entries: 3, usd: 40 },
+      { secret_key: KEY, secret_slot: 1, basis: "legacy", entries: 1, usd: 200 },
+    ],
+  });
+
+  it("never mixes two credentials", () => {
+    const figs = credentialFigures({ cells: mixed, bucketMs: HOUR, windowEnd: new Date("2026-11-17T23:00:00Z") });
+    expect(figs.map((f) => f.id)).toEqual([`${KEY}#1`, `${SEAT}#0`, ""]);
+    const [key, seat, none] = figs;
+    expect(seat.recomputed).toBe(45); // the booking without lines (7) is not measured
+    expect(seat.unattributed).toBe(7);
+    expect(seat.real?.points).toBe(4);
+    expect(seat.multiple?.kind).toBe("estimate");
+    expect(key.recomputed).toBe(100);
+    expect(key.real).toBeNull();
+    expect(key.multiple).toBeNull();
+    expect(none.recomputed).toBe(1);
+    expect(none.real).toBeNull();
+    // the booking-check names only the key's legacy booking
+    expect(seat.bookingCheck).toEqual([]);
+    expect(key.bookingCheck.map((b) => b.basis)).toEqual(["legacy"]);
+    // and no figure is the booked one (99 per cell)
+    for (const f of figs) expect([f.reported, f.recomputed]).not.toContain(99);
+  });
+
+  it("shares a credential's list $ among its agents, the real share an estimate of the same", () => {
+    const [, seat] = credentialFigures({ cells: mixed, bucketMs: HOUR, windowEnd: new Date("2026-11-17T23:00:00Z") });
+    expect(seat.agents.map((a) => a.id)).toEqual(["a1", "a2"]);
+    expect(seat.agents[0].share).toBeCloseTo(40 / 45, 10);
+    expect(seat.agents[1].realShare).toBeCloseTo((5 / 45) * 4 * PP, 10);
+  });
+
+  it("shows no multiple under an agent filter or in the per-agent layout", () => {
+    const filtered = credentialFigures({ cells: mixed, bucketMs: HOUR, windowEnd: new Date("2026-11-17T23:00:00Z"), agents: new Set(["a1"]) });
+    const seat = filtered.find((f) => f.id === `${SEAT}#0`)!;
+    expect(seat.multiple).toBeNull();
+    expect(seat.noMultiple).toBe("agents");
+    expect(seat.recomputed).toBe(40);
+    const perAgent = credentialFigures({ cells: mixed, bucketMs: HOUR, windowEnd: new Date("2026-11-17T23:00:00Z"), layout: "agents" });
+    expect(perAgent.find((f) => f.id === `${SEAT}#0`)!.multiple).toBeNull();
+  });
+
+  it("marks an API key's bill pending while the window ends after data_refreshed_at", () => {
+    const refreshed = "2026-11-17T20:00:00Z";
+    const billed = {
+      bucket: "hour",
+      sync: { configured: true, last_attempt_at: null, last_success_at: null, last_daily_at: null, data_refreshed_at: refreshed, last_status: "ok", last_error: "" },
+      points: [{ bucket: "2026-11-17T18:00:00Z", api_key_id: "apikey_01", workspace_id: "", model: "claude-opus-5-5",
+        secret_key: KEY, secret_slot: 1, billed_usd: "80.50", billed_list_usd: "100.00", complete: true }],
+    };
+    const figs = credentialFigures({ cells: mixed, billed, bucketMs: HOUR, windowEnd: new Date("2026-11-17T23:00:00Z") });
+    const key = figs.find((f) => f.id === `${KEY}#1`)!;
+    expect(key.billed).toMatchObject({ usd: 80.5, listUsd: 100, ratio: 0.805 });
+    expect(key.billed?.status.state).toBe("pending");
+    expect(key.billed?.status.completeTo?.toISOString()).toBe("2026-11-17T20:00:00.000Z");
+    expect(billedStatus(new Date("2026-11-17T19:00:00Z"), refreshed).state).toBe("complete");
+    expect(billedStatus(new Date("2026-11-17T19:00:00Z"), null)).toEqual({ state: "pending", completeTo: null });
+  });
+
+  it("says why there is no multiple below 3 points", () => {
+    const figs = credentialFigures({
+      cells: cells({ cells: mixed.cells, meter: [coverage({ points: 2 })], subscription: [step("2026-11-17T18:00:00Z", 2)] }),
+      bucketMs: HOUR, windowEnd: new Date("2026-11-17T23:00:00Z"),
+    });
+    const seat = figs.find((f) => f.id === `${SEAT}#0`)!;
+    expect(seat.multiple).toBeNull();
+    expect(seat.noMultiple).toBe("movement");
+  });
+});
+
+describe("the meter card's ratio", () => {
+  const r = (at: string, pct: number, cost: number, over: Partial<UsageReading> = {}): UsageReading => ({
+    runtime_id: "rt", credential_ord: 0, secret_key: SEAT, secret_slot: 0, credential_kind: "subscription",
+    source: "usage_cmd", window_kind: "seven_day", supported: true, window_percent: null, week_percent: pct,
+    resets_at: null, status: "", reason: "", stale: false, fetched_at: at, received_at: at, cost_usd: cost, ...over,
+  });
+
+  it("divides the list $ by the points per week, split at a reset", () => {
+    const rs = [
+      r("2026-11-17T10:00:00Z", 90, 0), r("2026-11-17T12:00:00Z", 93, 30),
+      r("2026-11-17T14:00:00Z", 2, 40), r("2026-11-17T16:00:00Z", 6, 80),
+    ];
+    const m = meterRatio(rs)!;
+    // week 1: $30 over 3 points; week 2: $40 over 4 points
+    expect(m.usd).toBe(70);
+    expect(m.points).toBe(7);
+    expect(m.weeks).toBe(2);
+    expect(m.perPoint).toBeCloseTo(10, 10);
+    expect(m.low).toBeCloseTo(70 / 9, 10);
+    expect(m.high).toBeCloseTo(70 / 5, 10);
+  });
+
+  it("does not read a lagging reading as a new week", () => {
+    const m = meterRatio([r("2026-11-17T10:00:00Z", 10, 0), r("2026-11-17T11:00:00Z", 9, 5), r("2026-11-17T12:00:00Z", 13, 20)])!;
+    expect(m.weeks).toBe(1);
+    expect(m.points).toBe(3);
+  });
+});

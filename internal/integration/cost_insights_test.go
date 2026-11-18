@@ -340,7 +340,38 @@ func TestCostCellsReportedAndMeasured(t *testing.T) {
 	if sc.Measured[observability.TypeCacheWrite] <= sc.Measured[observability.TypeCacheRead] {
 		t.Errorf("for this run the 1-hour cache writes cost more than the cache reads: %v", sc.Measured)
 	}
-	admin.expect(http.MethodGet, "/api/v1/cost/cells?days=1&bucket=hour", nil, http.StatusOK)
+
+	// What Claude Code priced the same lines at, and their tokens: the
+	// figures of the same calls, never the booking.
+	var engine float64
+	var output, write1h int64
+	if err := s.pool.QueryRow(ctx, `SELECT SUM(engine_usd)::float8, SUM(output_tokens), SUM(cache_write_1h_tokens)
+		FROM model_usage WHERE task_id = $1`, task).Scan(&engine, &output, &write1h); err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(sc.EngineUSD-engine) > 1e-9 || sc.Tokens["output"] != output || sc.Tokens["cache_write_1h"] != write1h {
+		t.Errorf("seat cell engine %v tokens %v, want engine %v, output %d, 1h writes %d", sc.EngineUSD, sc.Tokens, engine, output, write1h)
+	}
+	if math.Abs(cells.Agents[0].Measured-(priced(sc)+priced(kc))) > 1e-9 {
+		t.Errorf("agent measured = %v, want the priced lines of both cells (%v)", cells.Agents[0].Measured, priced(sc)+priced(kc))
+	}
+	// The booking-check: per credential and basis, the line-less booking
+	// under the empty basis of an older daemon.
+	bases := map[string]int64{}
+	for _, b := range cells.Bookings {
+		if b.SecretKey == nil {
+			t.Fatalf("an attributed booking without a credential: %+v", b)
+		}
+		bases[*b.SecretKey+"/"+b.Basis] += b.Entries
+	}
+	if bases[seat.SecretKey+"/"+observability.BasisInvocation] != 1 || bases[seat.SecretKey+"/"] != 1 ||
+		bases[key.SecretKey+"/"+observability.BasisInvocation] != 1 {
+		t.Errorf("bookings per credential and basis = %v", bases)
+	}
+	cg := admin.expect(http.MethodGet, "/api/v1/cost/cells?days=1&bucket=hour", nil, http.StatusOK)
+	if _, ok := cg["bookings"].([]any); !ok {
+		t.Errorf("GET /cost/cells lacks bookings: %v", cg["bookings"])
+	}
 
 	// Narrowed to the key: its line, and nothing of the seat.
 	rep, err := s.obs.ModelUsage(ctx, agent.OrgID, time.Now().Add(-time.Hour),
@@ -354,6 +385,58 @@ func TestCostCellsReportedAndMeasured(t *testing.T) {
 	got := admin.expect(http.MethodGet, "/api/v1/cost/models?days=1&secret_key=anthropic_api_key&secret_slot=1", nil, http.StatusOK)
 	if rows, _ := got["rows"].([]any); len(rows) != 1 {
 		t.Errorf("GET /cost/models for the key: rows = %v, want 1", got["rows"])
+	}
+}
+
+// The priciest runs are ranked by what their lines cost at the list, not by
+// what was booked: a booking can be an older daemon's running total. A run
+// without lines keeps only its booking and has no recomputed figure.
+func TestRunCostsRankedByRecomputedCost(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	agent := s.newSupportAgent("kosten-rang")
+	seat := observability.CredentialRef{RuntimeID: uuid.New(), Ord: 0,
+		SecretKey: "claude_code_oauth_token", SecretSlot: 0, Kind: "subscription"}
+	lined, err := s.backlog.Create(ctx, agent.OrgID, agent.ID, "Mit Zeilen", "", "heartbeat", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bare, err := s.backlog.Create(ctx, agent.OrgID, agent.ID, "Ohne Zeilen", "", "heartbeat", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.obs.RecordRuntime(ctx, agent.OrgID, agent.ID, &lined.ID, seat, json.RawMessage(resultLine)); err != nil {
+		t.Fatal(err)
+	}
+	// Booked low on purpose: the ranking must not follow the booking.
+	if _, err := s.obs.BookRun(ctx, observability.CostEntry{AgentID: agent.ID, TaskID: &lined.ID, USD: 0.01,
+		Model: opus, Credential: seat, Basis: observability.BasisInvocation}, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.obs.BookCost(ctx, observability.CostEntry{AgentID: agent.ID, TaskID: &bare.ID, USD: 1.0,
+		Model: opus, Credential: seat}); err != nil {
+		t.Fatal(err)
+	}
+	var engine float64
+	if err := s.pool.QueryRow(ctx, `SELECT SUM(engine_usd)::float8 FROM model_usage WHERE task_id = $1`, lined.ID).Scan(&engine); err != nil {
+		t.Fatal(err)
+	}
+	if engine <= 1.0 {
+		t.Fatalf("the fixture's lines cost %v; the test needs more than the bare run's booking", engine)
+	}
+	runs, err := s.obs.RunCosts(ctx, agent.OrgID, nil, time.Now().Add(-time.Hour), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 2 || runs[0].TaskID != lined.ID {
+		t.Fatalf("runs = %+v, want the run with lines first", runs)
+	}
+	if r := runs[0]; r.MeasuredUSD == nil || r.EngineUSD == nil || math.Abs(*r.EngineUSD-engine) > 1e-6 ||
+		math.Abs(*r.MeasuredUSD-engine) > 1e-4 {
+		t.Errorf("recomputed %v, Claude Code %v, want both ≈ %v", r.MeasuredUSD, r.EngineUSD, engine)
+	}
+	if runs[1].MeasuredUSD != nil || runs[1].TotalUSD != 1.0 {
+		t.Errorf("the run without lines: %+v", runs[1])
 	}
 }
 

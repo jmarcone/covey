@@ -2,55 +2,23 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
-import { api } from "../api";
-import { fmtCount, fmtUSD } from "../format";
+import { api, type ModelUsageReport, type UsageReading } from "../api";
+import { fmtBucket, fmtCount, fmtUSD, fmtUSDAxis } from "../format";
+import { credId, meterRatio, usableReadings } from "./costFigures";
+import { SOURCE_COLOR, Swatch } from "./StackedCostChart";
 
-/* Cost insights (migration 0142).
+/* Cost insights.
  *
  * Two questions the totals above cannot answer:
- *  1. What did each MODEL consume? Claude Code reports usage per model in its
- *     final line — an Opus run also makes small Haiku calls — with the cache
- *     writes split by lifetime. The table sets the engine's own price next to
- *     the same tokens priced with covey's list, so a drift shows up.
- *  2. What did it cost the SUBSCRIPTION? On a flat-rate seat the dollar figure
- *     is what the same work would have cost through the API. The provider's own
- *     meter (the weekly share, asked on every wake) is read against it here. */
-
-interface ModelUsageRow {
-  agent_id: string;
-  agent_slug: string;
-  agent_name: string;
-  model: string;
-  /** api_key | subscription, empty when the runs were not attributable. */
-  credential_kind: string;
-  runs: number;
-  input_tokens: number;
-  output_tokens: number;
-  thinking_tokens: number;
-  cache_read_tokens: number;
-  cache_write_5m_tokens: number;
-  cache_write_1h_tokens: number;
-  web_search_requests: number;
-  engine_usd: number;
-  list_usd: number | null;
-}
-
-interface ModelUsageReport {
-  rows: ModelUsageRow[];
-  runs_without_breakdown: number;
-  usd_without_breakdown: number;
-}
-
-interface UsageReading {
-  runtime_id: string;
-  credential_ord: number;
-  window_percent: number | null;
-  week_percent: number | null;
-  week_resets?: string;
-  stale: boolean;
-  fetched_at: string;
-  cost_usd: number;
-}
+ *  1. What did each MODEL consume? Claude Code reports usage per model on
+ *     every result line — an Opus run also makes small Haiku calls — with the
+ *     cache writes split by lifetime. The table sets Claude Code's own price
+ *     next to the same tokens priced with covey's list: a price-table check.
+ *  2. What does a point of the subscription meter buy? Per credential and
+ *     source, the provider's weekly meter against the list price of the work
+ *     on that credential — one axis each, the meter as the whole-percent
+ *     steps it moves in. The meter is account-wide: other use of the account
+ *     moves it too. */
 
 const th: React.CSSProperties = { padding: "4px 8px 8px 0", fontWeight: 500, whiteSpace: "nowrap" };
 const td: React.CSSProperties = { padding: "4px 8px 4px 0", whiteSpace: "nowrap" };
@@ -62,12 +30,13 @@ function shortModel(m: string) {
 
 function ModelTable({ rep }: { rep: ModelUsageReport }) {
   const { t } = useTranslation();
-  const rows = rep.rows;
+  const rows = [...(rep.rows ?? [])].sort((a, b) => (b.list_usd ?? b.engine_usd) - (a.list_usd ?? a.engine_usd));
   const engine = rows.reduce((a, r) => a + r.engine_usd, 0);
   const list = rows.reduce((a, r) => a + (r.list_usd ?? 0), 0);
+  const priced = rows.filter((r) => r.list_usd !== null).reduce((a, r) => a + r.engine_usd, 0);
   const unpriced = rows.filter((r) => r.list_usd === null).length;
   if (rows.length === 0) return <div className="muted text-sm">{t("costs.empty")}</div>;
-  const drift = engine > 0 ? ((list - engine) / engine) * 100 : 0;
+  const check = priced > 0 ? ((list - priced) / priced) * 100 : 0;
   return (
     <div>
       <div style={{ overflowX: "auto" }}>
@@ -80,7 +49,7 @@ function ModelTable({ rep }: { rep: ModelUsageReport }) {
               <th style={{ ...th, textAlign: "right" }}>{t("costs.insights.output")}</th>
               <th style={{ ...th, textAlign: "right" }}>{t("costs.insights.cacheRead")}</th>
               <th style={{ ...th, textAlign: "right" }}>{t("costs.insights.cacheWrite")}</th>
-              <th style={{ ...th, textAlign: "right" }}>{t("costs.insights.engine")}</th>
+              <th style={{ ...th, textAlign: "right" }}>{t("costs.insights.claudeCode")}</th>
               <th style={{ ...th, textAlign: "right" }}>{t("costs.insights.list")}</th>
             </tr>
           </thead>
@@ -112,7 +81,7 @@ function ModelTable({ rep }: { rep: ModelUsageReport }) {
         </table>
       </div>
       <p className="muted text-xs mt-2 mb-0">
-        {t("costs.insights.drift", { pct: drift.toFixed(2) })}
+        {t("costs.insights.priceTableCheck", { pct: `${check >= 0 ? "+" : ""}${check.toFixed(2)}` })}
         {unpriced > 0 && <> · {t("costs.insights.unpriced", { count: unpriced })}</>}
         {rep.runs_without_breakdown > 0 && (
           <> · {t("costs.insights.without", { count: rep.runs_without_breakdown, usd: fmtUSD(rep.usd_without_breakdown) })}</>
@@ -122,46 +91,55 @@ function ModelTable({ rep }: { rep: ModelUsageReport }) {
   );
 }
 
-/** Meter (weekly %) and booked list-price cost over the same hours, two lines on
- *  their own scales; the ratio is taken over the whole window, because the
- *  provider reports whole percents and a single step says little. */
-function MeterChart({ readings, locale }: { readings: UsageReading[]; locale: string }) {
+/** The meter of one credential and source: week % (y) against the list $ of
+ *  the work on the credential (x), one axis each. A dashed step line — the
+ *  meter moves in whole percents, so it stays level until the next reading
+ *  says otherwise — broken at every new week, labelled at its end. */
+function MeterSteps({ readings, label }: { readings: UsageReading[]; label: string }) {
   const { t } = useTranslation();
-  const pts = readings.filter((r) => r.week_percent !== null);
-  if (pts.length === 0) return <div className="muted text-sm">{t("costs.insights.noReadings")}</div>;
-  const W = 560, H = 160, P = 28;
-  const t0 = new Date(pts[0].fetched_at).getTime();
-  const t1 = Math.max(t0 + 1, new Date(pts[pts.length - 1].fetched_at).getTime());
-  const pMin = Math.min(...pts.map((r) => r.week_percent!));
-  const pMax = Math.max(pMin + 1, ...pts.map((r) => r.week_percent!));
-  const cMax = Math.max(1, ...pts.map((r) => r.cost_usd));
-  const x = (r: UsageReading) => P + ((new Date(r.fetched_at).getTime() - t0) / (t1 - t0)) * (W - 2 * P);
-  const yp = (v: number) => H - P - ((v - pMin) / (pMax - pMin)) * (H - 2 * P);
-  const yc = (v: number) => H - P - (v / cMax) * (H - 2 * P);
-  const meterLine = pts.map((r, i) => `${i ? "L" : "M"}${x(r).toFixed(1)},${yp(r.week_percent!).toFixed(1)}`).join(" ");
-  const costLine = pts.map((r, i) => `${i ? "L" : "M"}${x(r).toFixed(1)},${yc(r.cost_usd).toFixed(1)}`).join(" ");
-  const fmtT = (s: string) => new Date(s).toLocaleString(locale, { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const W = 560, H = 170, L = 44, R = 96, T = 12, B = 30;
+  const xs = readings.map((r) => r.cost_usd ?? 0);
+  const ps = readings.map((r) => r.week_percent ?? 0);
+  const xMax = Math.max(1e-9, ...xs), pMin = Math.min(...ps), pMax = Math.max(pMin + 1, ...ps);
+  const x = (v: number) => L + (v / xMax) * (W - L - R);
+  const y = (v: number) => T + (1 - (v - pMin) / (pMax - pMin)) * (H - T - B);
+  // A new week begins where the meter collapsed: the line breaks there.
+  const paths: string[] = [];
+  let d = "";
+  readings.forEach((r, i) => {
+    const px = x(xs[i]), py = y(ps[i]);
+    if (i === 0 || ps[i] < ps[i - 1] / 2 && ps[i] <= ps[i - 1] - 5) {
+      if (d) paths.push(d);
+      d = `M${px.toFixed(1)},${py.toFixed(1)}`;
+    } else {
+      d += ` H${px.toFixed(1)} V${py.toFixed(1)}`;
+    }
+  });
+  if (d) paths.push(d);
+  const last = readings[readings.length - 1];
   return (
-    <div>
-      <div className="flex items-center gap-3 text-xs muted mb-2">
-        <span><span style={{ color: "var(--clay)" }}>■</span> {t("costs.insights.meter")}</span>
-        <span><span style={{ color: "var(--text-accent)" }}>■</span> {t("costs.insights.listCost")}</span>
-      </div>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }} role="img" aria-label={t("costs.insights.meterTitle")}>
-        <line x1={P} y1={H - P} x2={W - P} y2={H - P} stroke="var(--border)" />
-        <path d={costLine} fill="none" stroke="var(--text-accent)" strokeWidth={2} />
-        <path d={meterLine} fill="none" stroke="var(--clay)" strokeWidth={2} />
-        <text x={P} y={H - 8} fontSize={10} fill="currentColor" opacity={0.6}>{fmtT(pts[0].fetched_at)}</text>
-        <text x={W - P} y={H - 8} fontSize={10} fill="currentColor" opacity={0.6} textAnchor="end">{fmtT(pts[pts.length - 1].fetched_at)}</text>
-        <text x={4} y={yp(pMax) + 4} fontSize={10} fill="var(--clay)">{pMax}%</text>
-        <text x={4} y={yp(pMin) + 4} fontSize={10} fill="var(--clay)">{pMin}%</text>
-        <text x={W - 4} y={yc(cMax) + 4} fontSize={10} fill="var(--text-accent)" textAnchor="end">{fmtUSD(cMax)}</text>
-      </svg>
-    </div>
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }} role="img"
+      aria-label={t("costs.insights.meterAria", { label, from: pMin, to: pMax, usd: fmtUSD(xMax) })}>
+      <title>{label}</title>
+      <line x1={L} y1={H - B} x2={W - R} y2={H - B} stroke="var(--border-strong)" />
+      <line x1={L} y1={T} x2={L} y2={H - B} stroke="var(--border-strong)" />
+      {paths.map((p, i) => <path key={i} d={p} fill="none" stroke={SOURCE_COLOR.real} strokeWidth={2} strokeDasharray="5 3" />)}
+      {readings.map((r, i) => <circle key={i} cx={x(xs[i])} cy={y(ps[i])} r={2.5} fill={SOURCE_COLOR.real} />)}
+      <text x={x(xs[xs.length - 1]) + 6} y={y(ps[ps.length - 1]) + 4} fontSize={10.5} fill="var(--text-primary)">
+        {label} · {last.week_percent} %
+      </text>
+      <text x={L - 6} y={y(pMax) + 4} fontSize={10} fill="var(--text-muted)" textAnchor="end">{pMax} %</text>
+      <text x={L - 6} y={y(pMin) + 4} fontSize={10} fill="var(--text-muted)" textAnchor="end">{pMin} %</text>
+      <text x={L} y={H - B + 14} fontSize={10} fill="var(--text-muted)">{fmtUSDAxis(0)}</text>
+      <text x={W - R} y={H - B + 14} fontSize={10} fill="var(--text-muted)" textAnchor="end">{fmtUSD(xMax)}</text>
+      <text x={(L + W - R) / 2} y={H - 4} fontSize={10} fill="var(--text-muted)" textAnchor="middle">{t("costs.insights.meterAxisX")}</text>
+    </svg>
   );
 }
 
-export function CostInsights({ days, locale }: { days: number; locale: string }) {
+type MeterGroup = { key: string; secretKey: string; slot: number; source: string; usable: UsageReading[]; dropped: number };
+
+export function CostInsights({ days }: { days: number }) {
   const { t } = useTranslation();
   const models = useQuery({
     queryKey: ["cost", "models", days],
@@ -169,18 +147,33 @@ export function CostInsights({ days, locale }: { days: number; locale: string })
     refetchInterval: 30000,
   });
   const readings = useQuery({
-    queryKey: ["cost", "subscription", days],
-    queryFn: () => api<UsageReading[] | null>(`/cost/subscription?days=${days}`),
+    queryKey: ["cost", "usage-readings", days],
+    queryFn: () => api<UsageReading[] | null>(`/cost/usage-readings?days=${days}`),
     refetchInterval: 30000,
   });
-  const rs = readings.data ?? [];
-  const ratio = useMemo(() => {
-    const w = rs.filter((r) => r.week_percent !== null);
-    if (w.length < 2) return null;
-    const dp = w[w.length - 1].week_percent! - w[0].week_percent!;
-    const dc = w[w.length - 1].cost_usd - w[0].cost_usd;
-    return { dp, dc, perPct: dp > 0 ? dc / dp : null, last: w[w.length - 1] };
+  const rs = useMemo(() => readings.data ?? [], [readings.data]);
+
+  // Per credential and source: the usable readings, and how many were dropped.
+  const groups = useMemo(() => {
+    const m = new Map<string, MeterGroup>();
+    for (const r of rs) {
+      if (r.secret_key == null || r.secret_slot == null) continue;
+      if (r.window_kind !== "seven_day" && r.window_kind !== "") continue;
+      const key = `${credId(r.secret_key, r.secret_slot)}/${r.source}`;
+      if (!m.has(key)) m.set(key, { key, secretKey: r.secret_key, slot: r.secret_slot, source: r.source, usable: [], dropped: 0 });
+    }
+    for (const g of m.values()) {
+      g.usable = usableReadings(rs, g.secretKey, g.slot, g.source);
+      g.dropped = rs.filter((r) => r.secret_key === g.secretKey && r.secret_slot === g.slot && r.source === g.source
+        && (r.window_kind === "seven_day" || r.window_kind === "")).length - g.usable.length;
+    }
+    return [...m.values()];
   }, [rs]);
+  // The five-hour window of a credential, when any reading reported it.
+  const fiveHour = (key: string, slot: number) => {
+    const w = rs.filter((r) => r.secret_key === key && r.secret_slot === slot && r.supported && !r.stale && r.window_percent != null);
+    return w.length ? w[w.length - 1] : null;
+  };
 
   return (
     <div className="grid gap-4 mt-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(420px, 100%), 1fr))" }}>
@@ -192,14 +185,38 @@ export function CostInsights({ days, locale }: { days: number; locale: string })
       <div className="card">
         <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.insights.meterTitle")}</div>
         <p className="muted text-xs mb-3">{t("costs.insights.meterHint")}</p>
-        <MeterChart readings={rs} locale={locale} />
-        {ratio && (
-          <p className="text-sm mt-2 mb-0">
-            {ratio.perPct !== null
-              ? t("costs.insights.ratio", { usd: fmtUSD(ratio.perPct), dp: ratio.dp, dc: fmtUSD(ratio.dc) })
-              : t("costs.insights.ratioFlat", { dc: fmtUSD(ratio.dc), pct: ratio.last.week_percent })}
-          </p>
-        )}
+        {groups.length === 0 && <div className="muted text-sm">{t("costs.insights.noReadings")}</div>}
+        {groups.map((g) => {
+          const ratio = meterRatio(g.usable);
+          const five = fiveHour(g.secretKey, g.slot);
+          const label = `${g.secretKey} #${g.slot} · ${t(`costs.insights.source_${g.source}`, { defaultValue: g.source })}`;
+          return (
+            <div key={g.key} className="mb-4">
+              <div className="text-xs" style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600 }}>
+                <Swatch color={SOURCE_COLOR.real} /> {label}
+              </div>
+              {g.usable.length >= 2 ? <MeterSteps readings={g.usable} label={t(`costs.insights.source_${g.source}`, { defaultValue: g.source })} />
+                : <p className="muted text-xs">{t("costs.insights.noUsable")}</p>}
+              {ratio && (
+                <p className="text-sm mt-1 mb-0">
+                  {ratio.perPoint !== null
+                    ? t("costs.insights.ratioPer", {
+                      usd: fmtUSD(ratio.perPoint), low: fmtUSD(ratio.low),
+                      high: Number.isFinite(ratio.high) ? fmtUSD(ratio.high) : "∞", n: ratio.readings,
+                    })
+                    : t("costs.insights.ratioFlat", { dc: fmtUSD(ratio.usd), pct: g.usable[g.usable.length - 1].week_percent })}
+                </p>
+              )}
+              <p className="muted text-xs mt-1 mb-0">
+                {five
+                  ? t("costs.insights.fiveHour", { pct: five.window_percent, at: fmtBucket(five.fetched_at, "hour") })
+                  : t("costs.insights.fiveHourNotReported")}
+                {g.dropped > 0 && <> · {t("costs.insights.dropped", { count: g.dropped })}</>}
+              </p>
+            </div>
+          );
+        })}
+        <p className="muted text-xs mt-2 mb-0">{t("costs.fig.accountWideCaveat")}</p>
       </div>
     </div>
   );

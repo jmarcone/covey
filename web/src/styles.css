@@ -161,6 +161,35 @@ picture { display: contents; }
   --wait-ring: color-mix(in srgb, var(--text-wait) 34%, transparent);
   --success-ring: color-mix(in srgb, var(--text-success) 30%, transparent);
 
+  /* The Costs page's colour code, explained once in its key: one hue per
+     source of a figure, everywhere on the page, each at least 3:1 against the
+     card in both themes (#ffffff / #1f1f22). Grey = what Claude Code reported,
+     blue = recomputed from tokens with the list, green = real money of a
+     subscription (an estimate, drawn hatched), teal = billed by Anthropic. */
+  --cost-reported: light-dark(#6e6e76, #a1a1a8);
+  --cost-recomputed: light-dark(#2f6db5, #6fa8e8);
+  --cost-real: light-dark(#2e7d3e, #4fbf6a);
+  --cost-billed: light-dark(#0e7a7e, #3fc1c0);
+  /* Cost and token types: one blue family, light (cheap, plentiful) to dark
+     (dear). Only for types — never for a source or an agent. */
+  --cost-type-input: light-dark(#7d9fd0, #9dbbe8);
+  --cost-type-cache-read: light-dark(#5582c4, #7aa3dc);
+  --cost-type-cache-write: light-dark(#36639f, #5b8fd6);
+  --cost-type-cache-write-1h: light-dark(#2a5390, #4a7fc8);
+  --cost-type-output: light-dark(#1d4580, #b3cdf2);
+  --cost-type-web-search: light-dark(#6a5fb0, #9c90e0);
+  --cost-type-unpriced: light-dark(#7c828c, #8d939c);
+  /* Agents: a qualitative palette that never reuses a source hue (no grey,
+     blue, green or teal) and has one orange only. */
+  --agent-1: light-dark(#d9711c, #e8913f);
+  --agent-2: light-dark(#8e5cc0, #b28be0);
+  --agent-3: light-dark(#cc3d5a, #ea7088);
+  --agent-4: light-dark(#a88600, #d6b23a);
+  --agent-5: light-dark(#b8418f, #dc77b8);
+  --agent-6: light-dark(#8a5a3b, #c49470);
+  --agent-7: light-dark(#5c5c8a, #9a9ad0);
+  --agent-8: light-dark(#c26d8e, #e8a0bb);
+
   --radius: 8px;
   --sans: "Inter", ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;

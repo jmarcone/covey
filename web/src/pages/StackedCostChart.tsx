@@ -1,81 +1,67 @@
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api } from "../api";
-import { fmtUSD } from "../format";
+import { api, type BilledReport, type CellAgent, type CostCell, type CostCells } from "../api";
+import { fmtClockUTC, fmtCount, fmtUSD, fmtUSDAxis } from "../format";
+import {
+  credentialFigures,
+  credId,
+  meterCrossings,
+  planAt,
+  pricePerPoint,
+  recomputedOf,
+  type CredentialFigures,
+} from "./costFigures";
 
-/* The cost explorer: one chart, combinable filters instead of tabs.
+/* The cost explorer. The credential is the first level: what money means
+ * depends on it, so every figure belongs to one credential and nothing is
+ * added up across two. Per credential four figures (costFigures.ts):
  *
- * Three sources, and the difference between them is the point of the page:
- *   reported      — the list price Claude Code states per run, as covey books it;
- *   recalculated  — the same runs' raw tokens priced per type with the list:
- *                   the check on the first (they should match);
- *   real          — what the work really used of a flat-rate seat: the
- *                   provider's weekly meter movement × the plan's weekly price.
- *                   The meter is account-wide: per agent it is allocated by each
- *                   agent's share of the period's list price, and labelled so.
+ *   reported    — what Claude Code priced its own lines at (grey);
+ *   recomputed  — the same lines' tokens priced with the list (blue): a
+ *                 check of the price table, not of the tokens;
+ *   real        — a subscription's meter movement × the plan's price per
+ *                 point, an estimate with a range (green, hatched); or what
+ *                 Anthropic billed an API key, complete up to its mark (teal);
+ *   multiple    — list $ per real $, only from 3 points of movement, with its
+ *                 range, labelled a floor.
  *
- * Two layouts: combined (one group of bars per period, optionally split by
- * agent or cost type) and per agent (a row per agent on the same time axis,
- * the three sources side by side in every period). */
+ * The booked figure (cost_entries) is not shown as a figure anywhere: a
+ * booking-check row says when some bookings are an older daemon's running
+ * totals. */
 
-interface CellAgent {
-  id: string;
-  label: string;
-  reported_usd: number;
-}
-/** One period × agent × credential (the secret value that paid; null: not attributable). */
-interface CostCell {
-  period: string;
-  agent_id: string;
-  secret_key?: string | null;
-  secret_slot?: number | null;
-  credential_kind?: string;
-  reported_usd: number;
-  measured: Record<string, number>;
-}
-interface MeterStep {
-  period: string;
-  points: number;
-}
-export interface CostCells {
-  periods: string[];
-  agents: CellAgent[];
-  types: string[];
-  cells: CostCell[];
-  subscription: MeterStep[] | null;
-}
-
-export type Split = "agent" | "type" | "none";
-type Source = "reported" | "measured" | "subscription";
+export type Split = "type" | "none";
+type Source = "reported" | "recomputed" | "real" | "billed";
 type Layout = "combined" | "agents";
 
-/** Cost types: one blue family from light (cheap, plentiful) to dark (dear). Shared
- *  with the cost-types card and the token chart. Fixed values: the theme's accent
- *  and clay were both orange and could not be told apart. */
-export const TYPE_COLOR: Record<string, string> = {
-  cache_read: "#9db8de",
-  cache_write: "#5f8fd1",
-  input: "#b9bec7",
-  output: "#2c5aa0",
-  web_search: "#8c7cc8",
-  unpriced: "#a3a8b0",
-  unattributed: "#80858d",
+/** One colour per source, everywhere on the page (styles.css). */
+export const SOURCE_COLOR: Record<Source, string> = {
+  reported: "var(--cost-reported)",
+  recomputed: "var(--cost-recomputed)",
+  real: "var(--cost-real)",
+  billed: "var(--cost-billed)",
 };
-/** Agents: a qualitative palette (Tableau 10): distinct, calm, colour-blind tolerant. */
-const AGENT_PALETTE = ["#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#76b7b2", "#edc948", "#b07aa1", "#ff9da7", "#9c755f", "#bab0ac"];
-/** Sources: grey = list price as reported, blue = list price recalculated, green = real money. */
-const SOURCE_COLOR: Record<Source, string> = { reported: "#8a8f98", measured: "#4e79a7", subscription: "#3aa76d" };
 
-const PRICE_KEY = "covey.costs.planPriceMonthly";
-function loadPrice(): number {
-  try {
-    const v = Number(localStorage.getItem(PRICE_KEY));
-    return v > 0 ? v : 200;
-  } catch {
-    return 200;
-  }
-}
+/** Cost types: one blue family from light (cheap, plentiful) to dark (dear).
+ *  Shared with the cost-types card and the token chart. */
+export const TYPE_COLOR: Record<string, string> = {
+  input: "var(--cost-type-input)",
+  cache_read: "var(--cost-type-cache-read)",
+  cache_write: "var(--cost-type-cache-write)",
+  cache_write_5m: "var(--cost-type-cache-write)",
+  cache_write_1h: "var(--cost-type-cache-write-1h)",
+  output: "var(--cost-type-output)",
+  web_search: "var(--cost-type-web-search)",
+  unpriced: "var(--cost-type-unpriced)",
+};
+/** The cost types of the recomputed figure, bottom of a bar first. */
+const COST_TYPES = ["cache_read", "cache_write", "input", "output", "web_search", "unpriced"];
+/** Token types, bottom of a bar first. */
+export const TOKEN_TYPES = ["cache_read", "cache_write_5m", "cache_write_1h", "input", "output"];
+
+const AGENT_COLORS = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => `var(--agent-${i})`);
+
+export const BUCKET_MS: Record<string, number> = { hour: 3600_000, day: 86400_000, week: 7 * 86400_000, month: 30 * 86400_000 };
 
 export function useCostCells(days: number, bucket: string) {
   return useQuery({
@@ -85,14 +71,30 @@ export function useCostCells(days: number, bucket: string) {
   });
 }
 
-/** Agent colour by rank (the server ranks costliest first). */
-export function agentColor(agents: { id: string }[], id: string) {
-  const i = agents.findIndex((a) => a.id === id);
-  return AGENT_PALETTE[(i < 0 ? 0 : i) % AGENT_PALETTE.length];
+/** What Anthropic billed, per bucket and API key; an organisation without an
+ *  admin key gets an empty bill, not an error. */
+export function useBilled(days: number, bucket: string) {
+  return useQuery({
+    queryKey: ["cost", "billed", days, bucket],
+    queryFn: () => api<BilledReport>(`/cost/billed?days=${days}&bucket=${bucket === "month" ? "week" : bucket}`),
+    refetchInterval: 60000,
+    retry: false,
+  });
 }
 
-function Chip({ on, color, children, onClick, onDoubleClick, title }: {
-  on: boolean; color?: string; children: React.ReactNode; onClick: () => void; onDoubleClick?: () => void; title?: string;
+/** Agents ranked by their recomputed list price. */
+export function rankAgents(agents: readonly CellAgent[]): CellAgent[] {
+  return [...agents].sort((a, b) => (b.measured_usd ?? 0) - (a.measured_usd ?? 0));
+}
+
+/** Agent colour by rank; the agent palette never reuses a source hue. */
+export function agentColor(agents: readonly { id: string }[], id: string) {
+  const i = agents.findIndex((a) => a.id === id);
+  return AGENT_COLORS[(i < 0 ? 0 : i) % AGENT_COLORS.length];
+}
+
+function Chip({ on, color, hatched, children, onClick, onDoubleClick }: {
+  on: boolean; color?: string; hatched?: boolean; children: React.ReactNode; onClick: () => void; onDoubleClick?: () => void;
 }) {
   return (
     <button
@@ -100,7 +102,6 @@ function Chip({ on, color, children, onClick, onDoubleClick, title }: {
       onClick={onClick}
       onDoubleClick={onDoubleClick}
       aria-pressed={on}
-      title={title}
       className="text-xs"
       style={{
         display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 6,
@@ -110,9 +111,19 @@ function Chip({ on, color, children, onClick, onDoubleClick, title }: {
         cursor: "pointer", lineHeight: 1.2,
       }}
     >
-      {color && <span style={{ width: 8, height: 8, borderRadius: 2, background: color, opacity: on ? 1 : 0.4, display: "inline-block" }} />}
+      {color && <Swatch color={color} hatched={hatched} dim={!on} />}
       {children}
     </button>
+  );
+}
+
+export function Swatch({ color, hatched, dim }: { color: string; hatched?: boolean; dim?: boolean }) {
+  return (
+    <span aria-hidden style={{
+      width: 10, height: 10, borderRadius: 2, display: "inline-block", flexShrink: 0, opacity: dim ? 0.4 : 1,
+      background: hatched ? `repeating-linear-gradient(45deg, ${color} 0 2px, transparent 2px 4px)` : color,
+      border: hatched ? `1px solid ${color}` : undefined,
+    }} />
   );
 }
 
@@ -130,6 +141,7 @@ export function AgentFilter({ agents, selected, onChange }: {
   agents: CellAgent[]; selected: Set<string>; onChange: (s: Set<string>) => void;
 }) {
   const { t } = useTranslation();
+  const ranked = rankAgents(agents);
   const toggle = (id: string) => {
     const n = new Set(selected);
     if (n.has(id)) n.delete(id);
@@ -139,320 +151,636 @@ export function AgentFilter({ agents, selected, onChange }: {
   return (
     <Row label={t("costs.filter.agents")}>
       <Chip on={selected.size === 0} onClick={() => onChange(new Set())}>{t("costs.filter.all")}</Chip>
-      {agents.map((a) => (
-        <Chip key={a.id} on={selected.has(a.id)} color={agentColor(agents, a.id)}
-          onClick={() => toggle(a.id)} onDoubleClick={() => onChange(new Set([a.id]))} title={t("costs.filter.toggleHint")}>
-          {a.label} <span style={{ opacity: 0.6 }}>{fmtUSD(a.reported_usd)}</span>
+      {ranked.map((a) => (
+        <Chip key={a.id} on={selected.has(a.id)} color={agentColor(ranked, a.id)}
+          onClick={() => toggle(a.id)} onDoubleClick={() => onChange(new Set([a.id]))}>
+          {a.label} <span style={{ opacity: 0.7 }}>{fmtUSD(a.measured_usd ?? 0)}</span>
         </Chip>
       ))}
+      {ranked.length > 1 && <span className="muted text-xs">{t("costs.filter.toggleHint")}</span>}
     </Row>
   );
 }
 
-function Tile({ label, value, sub, color }: { label: string; value: string; sub?: string; color?: string }) {
+function Tile({ label, value, sub, note, color, hatched }: {
+  label: string; value: string; sub?: string; note?: string; color?: string; hatched?: boolean;
+}) {
   return (
-    <div style={{ padding: "10px 14px", borderRadius: 8, border: "1px solid var(--border)", minWidth: 170, flex: "1 1 170px" }}>
+    <div role="group" aria-label={label} data-tile
+      style={{ padding: "10px 14px", borderRadius: 8, border: "1px solid var(--border)", minWidth: 170, flex: "1 1 170px" }}>
       <div className="muted text-xs" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        {color && <span style={{ width: 8, height: 8, borderRadius: 2, background: color }} />}
+        {color && <Swatch color={color} hatched={hatched} />}
         {label}
       </div>
       <div style={{ fontSize: 20, fontWeight: 600, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>{value}</div>
       {sub && <div className="muted text-xs" style={{ marginTop: 2 }}>{sub}</div>}
+      {note && <div className="muted text-xs" style={{ marginTop: 2, fontStyle: "italic" }}>{note}</div>}
     </div>
   );
 }
 
-/** A "nice" axis: the top and a step that read as round numbers. */
+/** A "nice" axis: a top and a step that read as round numbers. */
 function niceAxis(max: number) {
   const raw = Math.max(1e-9, max) / 4;
   const mag = Math.pow(10, Math.floor(Math.log10(raw)));
   const n = raw / mag;
   const step = (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * mag;
   const top = Math.ceil(Math.max(1e-9, max) / step) * step;
-  const decimals = step >= 1 ? (Number.isInteger(step) ? 0 : 1) : Math.min(4, Math.ceil(-Math.log10(step)) + (step * Math.pow(10, Math.ceil(-Math.log10(step))) % 1 ? 1 : 0));
   const ticks: number[] = [];
-  for (let v = 0; v <= top + step / 2; v += step) ticks.push(v);
-  return { top, ticks, fmt: (v: number) => `$${v.toFixed(decimals)}` };
+  for (let i = 0; i * step <= top + step / 2; i++) ticks.push(i * step);
+  return { top, ticks };
 }
-const short = (v: number) => (v >= 100 ? `$${v.toFixed(0)}` : v >= 10 ? `$${v.toFixed(1)}` : v >= 0.1 ? `$${v.toFixed(2)}` : `$${v.toFixed(3)}`);
 
-type Seg = { key: string; label: string; color: string; usd: number };
-type Bar = { src: Source; segs: Seg[] };
+export type Seg = { key: string; label: string; color: string; value: number };
+export type Bar = { key: string; label: string; color: string; hatched?: boolean; segs: Seg[] };
 
-/** One chart: groups of bars over the periods. Used once (combined) or once per agent. */
-function Bars({ periods, groups, height, fmtPeriod, showX, allocatedNote }: {
-  periods: string[]; groups: Bar[][]; height: number; fmtPeriod: (p: string) => string; showX: boolean; allocatedNote?: boolean;
+const sum = (s: Seg[]) => s.reduce((a, x) => a + x.value, 0);
+
+/** Groups of bars over the periods. Every period is focusable: focus or hover
+ *  opens its details, Enter/Space (or a tap) pins them, Escape closes them.
+ *  "Show as table" renders the same numbers as a table. */
+export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis, height = 280, max, notes, showX = true, asTable }: {
+  title: string;
+  periods: string[];
+  groups: Bar[][];
+  fmtPeriod: (p: string) => string;
+  fmtValue: (v: number) => string;
+  fmtAxis: (v: number) => string;
+  height?: number;
+  /** A shared top for several charts (small multiples). */
+  max?: number;
+  /** A line per period, e.g. the meter's crossings. */
+  notes?: Map<number, string>;
+  showX?: boolean;
+  asTable?: boolean;
 }) {
   const { t } = useTranslation();
+  const uid = useId().replace(/[^a-zA-Z0-9_-]/g, "");
   const [hover, setHover] = useState<number | null>(null);
+  const [pinned, setPinned] = useState<number | null>(null);
+  const open = pinned ?? hover;
+
+  // The series and their totals: the <desc>, the table's last row.
+  const series = useMemo(() => {
+    const m = new Map<string, { key: string; label: string; total: number }>();
+    for (const g of groups) for (const b of g) {
+      const s = m.get(b.key) ?? { key: b.key, label: b.label, total: 0 };
+      s.total += sum(b.segs);
+      m.set(b.key, s);
+    }
+    return [...m.values()];
+  }, [groups]);
+  const desc = t("costs.fig.chartDesc", { totals: series.map((s) => `${s.label} ${fmtValue(s.total)}`).join(", ") });
+
+  if (asTable) {
+    return (
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <caption className="muted text-xs" style={{ textAlign: "left", paddingBottom: 4 }}>{title}</caption>
+          <thead>
+            <tr className="muted" style={{ textAlign: "right" }}>
+              <th scope="col" style={{ textAlign: "left", padding: "2px 8px 4px 0", fontWeight: 500 }}>{t("costs.fig.period")}</th>
+              {series.map((s) => <th key={s.key} scope="col" style={{ padding: "2px 8px 4px 0", fontWeight: 500 }}>{s.label}</th>)}
+              {notes && <th scope="col" style={{ padding: "2px 0 4px 0", fontWeight: 500, textAlign: "left" }}>{t("costs.fig.meterCol")}</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {periods.map((p, i) => (
+              <tr key={p} style={{ borderTop: "1px solid var(--border)" }}>
+                <th scope="row" style={{ textAlign: "left", padding: "2px 8px 2px 0", fontWeight: 400 }}>{fmtPeriod(p)}</th>
+                {series.map((s) => {
+                  const b = groups[i]?.find((x) => x.key === s.key);
+                  return <td key={s.key} style={{ textAlign: "right", padding: "2px 8px 2px 0", fontVariantNumeric: "tabular-nums" }}>{b ? fmtValue(sum(b.segs)) : "–"}</td>;
+                })}
+                {notes && <td style={{ padding: "2px 0" }}>{notes.get(i) ?? ""}</td>}
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr data-totals style={{ borderTop: "1px solid var(--border-strong)", fontWeight: 600 }}>
+              <th scope="row" style={{ textAlign: "left", padding: "4px 8px 2px 0" }}>{t("costs.fig.total")}</th>
+              {series.map((s) => <td key={s.key} data-total style={{ textAlign: "right", padding: "4px 8px 2px 0", fontVariantNumeric: "tabular-nums" }}>{fmtValue(s.total)}</td>)}
+              {notes && <td />}
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    );
+  }
+
   const padL = 64, padR = 16, padT = 18, padB = showX ? 34 : 8;
   const plotH = height - padT - padB;
   const n = periods.length;
-  const nb = Math.max(1, groups[0]?.length ?? 1);
+  const nb = Math.max(1, ...groups.map((g) => g.length));
   const barW = nb === 1 ? 28 : nb === 2 ? 20 : 16, gap = 3;
   const slot = Math.max(nb * (barW + gap) + 24, n <= 1 ? 160 : Math.min(120, Math.round(900 / Math.max(1, n))));
   const W = Math.max(560, padL + padR + Math.max(1, n) * slot);
-  const sum = (s: Seg[]) => s.reduce((a, x) => a + x.usd, 0);
-  const ax = niceAxis(Math.max(0, ...groups.flatMap((g) => g.map((b) => sum(b.segs)))));
+  const ax = niceAxis(max ?? Math.max(0, ...groups.flatMap((g) => g.map((b) => sum(b.segs)))));
   const y = (v: number) => padT + plotH - (v / ax.top) * plotH;
   const every = Math.ceil(n / Math.max(1, Math.floor((W - padL - padR) / 84)));
-  const tipW = 240;
-  const hx = hover != null ? padL + hover * slot + slot / 2 : 0;
-  const tipLeft = hover == null ? 0 : Math.max(0, Math.min(hx + 16 + tipW > W ? hx - 16 - tipW : hx + 16, W - tipW));
+  const tipW = 250;
+  const hx = open != null ? padL + open * slot + slot / 2 : 0;
+  const tipLeft = open == null ? 0 : Math.max(0, Math.min(hx + 16 + tipW > W ? hx - 16 - tipW : hx + 16, W - tipW));
+  const tipId = `${uid}-tip`;
+  const hatches = [...new Set(groups.flatMap((g) => g.filter((b) => b.hatched).map((b) => b.color)))];
+  const hatchId = (c: string) => `${uid}-h${hatches.indexOf(c)}`;
+  const summary = (i: number) => (groups[i] ?? []).filter((b) => sum(b.segs) > 0).map((b) => `${b.label} ${fmtValue(sum(b.segs))}`).join(", ");
+  const close = () => { setPinned(null); setHover(null); };
+
   return (
     <div style={{ position: "relative", overflowX: "auto" }}>
-      <svg width={W} height={height} style={{ display: "block", maxWidth: "none" }} role="img" aria-label={t("costs.chartCost")}>
+      <svg width={W} height={height} style={{ display: "block", maxWidth: "none" }} role="group"
+        aria-labelledby={`${uid}-title`} aria-describedby={`${uid}-desc`}>
+        <title id={`${uid}-title`}>{title}</title>
+        <desc id={`${uid}-desc`} data-desc>{desc}</desc>
+        <defs>
+          {hatches.map((c) => (
+            <pattern key={c} id={hatchId(c)} patternUnits="userSpaceOnUse" width={5} height={5} patternTransform="rotate(45)">
+              <rect width={5} height={5} fill={c} opacity={0.3} />
+              <line x1={0} y1={0} x2={0} y2={5} stroke={c} strokeWidth={3} />
+            </pattern>
+          ))}
+        </defs>
         {ax.ticks.map((v, i) => (
-          <g key={i}>
+          <g key={i} aria-hidden>
             <line x1={padL} x2={W - padR} y1={y(v)} y2={y(v)} stroke="var(--border)" strokeDasharray={i === 0 ? undefined : "2 4"} />
-            <text x={padL - 8} y={y(v) + 4} textAnchor="end" fontSize={11} fill="var(--text-muted)">{ax.fmt(v)}</text>
+            <text x={padL - 8} y={y(v) + 4} textAnchor="end" fontSize={11} fill="var(--text-muted)">{fmtAxis(v)}</text>
           </g>
         ))}
         {groups.map((bars, i) => {
           const groupW = bars.length * barW + (bars.length - 1) * gap;
           const x0 = padL + i * slot + slot / 2 - groupW / 2;
+          const isOpen = open === i;
+          const label = `${fmtPeriod(periods[i] ?? "")}: ${summary(i) || t("costs.fig.nothing")}${notes?.get(i) ? ` · ${notes.get(i)}` : ""}`;
           return (
-            <g key={periods.at(i)} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
-              <rect x={padL + i * slot} y={padT} width={slot} height={plotH} fill={hover === i ? "var(--surface-2)" : "transparent"} opacity={0.6} />
+            <g key={periods.at(i)} tabIndex={0} role="button" aria-label={label} aria-pressed={pinned === i}
+              aria-describedby={isOpen ? tipId : undefined} data-period={periods[i]}
+              style={{ outline: "none", cursor: "pointer" }}
+              onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}
+              onFocus={() => setHover(i)} onBlur={() => { setHover(null); setPinned((p) => (p === i ? null : p)); }}
+              onClick={() => setPinned((p) => (p === i ? null : i))}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setPinned((p) => (p === i ? null : i));
+                } else if (e.key === "Escape") {
+                  close();
+                }
+              }}>
+              <rect x={padL + i * slot} y={padT} width={slot} height={plotH} fill={isOpen ? "var(--surface-1)" : "transparent"}
+                stroke={isOpen ? "var(--border-strong)" : "none"} />
               {bars.map((b, bi) => {
                 const bx = x0 + bi * (barW + gap);
                 let acc = 0;
                 const total = sum(b.segs);
                 return (
-                  <g key={b.src}>
+                  <g key={b.key}>
                     {b.segs.map((g) => {
-                      if (g.usd <= 0) return null;
-                      const top = y(acc + g.usd), h = Math.max(1, y(acc) - top);
-                      acc += g.usd;
-                      return <rect key={g.key} x={bx} y={top} width={barW} height={h} rx={1.5} fill={g.color} />;
+                      if (g.value <= 0) return null;
+                      const top = y(acc + g.value), h = Math.max(1, y(acc) - top);
+                      acc += g.value;
+                      return <rect key={g.key} x={bx} y={top} width={barW} height={h} rx={1.5}
+                        fill={b.hatched ? `url(#${hatchId(b.color)})` : g.color} stroke={b.hatched ? b.color : undefined} />;
                     })}
-                    {total > 0 && (
-                      <text x={bx + barW / 2} y={Math.max(10, y(total) - 4)} textAnchor="middle" fontSize={9.5} fill="var(--text-muted)">{short(total)}</text>
+                    {isOpen && total > 0 && (
+                      <text x={bx + barW / 2} y={Math.max(10, y(total) - 4)} textAnchor="middle" fontSize={9.5} fill="var(--text-primary)">{fmtValue(total)}</text>
                     )}
                   </g>
                 );
               })}
+              {notes?.get(i) && (
+                <text x={padL + i * slot + slot / 2} y={padT - 6} textAnchor="middle" fontSize={9.5} fill="var(--cost-real)">{notes.get(i)}</text>
+              )}
             </g>
           );
         })}
         {showX && periods.map((p, i) =>
           i % every !== 0 && i !== n - 1 ? null : (
-            <text key={p} x={padL + i * slot + slot / 2} y={height - padB + 18} textAnchor="middle" fontSize={11} fill="var(--text-muted)">{fmtPeriod(p)}</text>
+            <text key={p} aria-hidden x={padL + i * slot + slot / 2} y={height - padB + 18} textAnchor="middle" fontSize={11} fill="var(--text-muted)">{fmtPeriod(p)}</text>
           ),
         )}
       </svg>
-      {hover != null && groups.at(hover) && (
-        <div style={{
+      {open != null && groups.at(open) && (
+        <div id={tipId} role="tooltip" style={{
           position: "absolute", left: tipLeft, top: 4, width: tipW, pointerEvents: "none", zIndex: 5,
-          background: "var(--surface-1)", border: "1px solid var(--border-strong)", borderRadius: 8,
+          background: "var(--surface-2)", border: "1px solid var(--border-strong)", borderRadius: 8,
           padding: "8px 10px", fontSize: 12, boxShadow: "0 6px 20px var(--shadow-md)",
         }}>
-          <div className="muted" style={{ fontSize: 11, marginBottom: 6 }}>{fmtPeriod(periods.at(hover) ?? "")}</div>
-          {groups.at(hover)!.map((b) => (
-            <div key={b.src} style={{ marginBottom: 6 }}>
+          <div className="muted" style={{ fontSize: 11, marginBottom: 6 }}>{fmtPeriod(periods.at(open) ?? "")}</div>
+          {groups.at(open)!.filter((b) => sum(b.segs) > 0).map((b) => (
+            <div key={b.key} style={{ marginBottom: 6 }}>
               <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 600, gap: 8 }}>
-                <span><span style={{ color: SOURCE_COLOR[b.src] }}>■</span> {t(`costs.filter.${b.src}`)}{b.src === "subscription" && allocatedNote ? " *" : ""}</span>
-                <span>{fmtUSD(sum(b.segs))}</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Swatch color={b.color} hatched={b.hatched} /> {b.label}</span>
+                <span>{fmtValue(sum(b.segs))}</span>
               </div>
-              {b.segs.filter((x) => x.usd > 0).length > 1 && b.segs.filter((x) => x.usd > 0).map((x) => (
-                <div key={x.key} className="muted" style={{ display: "flex", justifyContent: "space-between", gap: 12, paddingLeft: 12 }}>
-                  <span><span style={{ color: x.color }}>■</span> {x.label}</span>
-                  <span>{fmtUSD(x.usd)}</span>
+              {b.segs.filter((x) => x.value > 0).length > 1 && b.segs.filter((x) => x.value > 0).map((x) => (
+                <div key={x.key} className="muted" style={{ display: "flex", justifyContent: "space-between", gap: 12, paddingLeft: 16 }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Swatch color={x.color} /> {x.label}</span>
+                  <span>{fmtValue(x.value)}</span>
                 </div>
               ))}
             </div>
           ))}
-          {(() => {
-            const g = groups.at(hover)!;
-            const rep = g.find((b) => b.src === "reported"), sub = g.find((b) => b.src === "subscription");
-            const r = rep ? sum(rep.segs) : 0, s = sub ? sum(sub.segs) : 0;
-            return r > 0 && s > 0 ? <div className="muted" style={{ fontSize: 11 }}>{t("costs.filter.hourMultiple", { x: (r / s).toFixed(0) })}</div> : null;
-          })()}
+          {notes?.get(open) && <div className="muted" style={{ fontSize: 11 }}>{t("costs.fig.meterCol")}: {notes.get(open)}</div>}
+          {groups.at(open)!.every((b) => sum(b.segs) <= 0) && !notes?.get(open) && <div className="muted">{t("costs.fig.nothing")}</div>}
         </div>
       )}
     </div>
   );
 }
 
-export function CostExplorer({ data, selected, fmtPeriod }: {
-  data: CostCells | undefined; selected: Set<string>; fmtPeriod: (p: string) => string;
+const pct = (v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(2)} %`;
+const times = (v: number) => (Number.isFinite(v) ? `${v.toFixed(1)}×` : "∞");
+
+/** "$200/mo plan" — the plan as the server stores it. */
+function usePlanLabel() {
+  const { t } = useTranslation();
+  return (f: CredentialFigures) => {
+    if (!f.plan) return f.kind === "subscription" ? t("costs.fig.noPlan") : "";
+    const p = f.plan;
+    const price = p.currency.toUpperCase() === "USD" ? `$${p.amount}` : `${p.amount} ${p.currency}`;
+    return t("costs.fig.planLabel", { price, per: t(p.period === "year" ? "costs.fig.perYear" : "costs.fig.perMonth") });
+  };
+}
+
+/** The tiles of one credential. */
+function CredentialTiles({ f, filtered }: { f: CredentialFigures; filtered: boolean }) {
+  const { t } = useTranslation();
+  const tiles: React.ReactNode[] = [
+    <Tile key="rep" label={t("costs.fig.reported")} value={fmtUSD(f.reported)} sub={t("costs.fig.reportedSub")} color={SOURCE_COLOR.reported} />,
+    <Tile key="rec" label={t("costs.fig.recomputed")} value={fmtUSD(f.recomputed)}
+      sub={f.check != null ? t("costs.fig.priceTableCheck", { pct: pct(f.check) }) : undefined} color={SOURCE_COLOR.recomputed} />,
+  ];
+  if (f.kind === "subscription" || (f.kind === "" && f.meter)) {
+    const r = f.real;
+    const pp = f.plan ? pricePerPoint(f.plan) : null;
+    if (filtered && r) {
+      const share = f.agents.reduce((a, x) => a + (x.realShare ?? 0), 0);
+      tiles.push(<Tile key="real" label={t("costs.fig.shareOfReal")} value={`≈ ${fmtUSD(share)}`}
+        sub={t("costs.fig.shareOfRealSub", { usd: fmtUSD(r.value) })} note={t("costs.fig.accountWideCaveat")} color={SOURCE_COLOR.real} hatched />);
+    } else if (r && r.below) {
+      tiles.push(<Tile key="real" label={t("costs.fig.realEstimate")} value={`< ${fmtUSD(r.high)}`}
+        sub={t("costs.fig.realBelow")} note={t("costs.fig.accountWideCaveat")} color={SOURCE_COLOR.real} hatched />);
+    } else if (r) {
+      tiles.push(<Tile key="real" label={t("costs.fig.realEstimate")} value={`≈ ${fmtUSD(r.value)}`}
+        sub={t("costs.fig.realRange", { low: fmtUSD(r.low), high: fmtUSD(r.high), pts: r.points, pp: pp != null ? fmtUSD(pp) : "–" })}
+        note={t("costs.fig.accountWideCaveat")} color={SOURCE_COLOR.real} hatched />);
+    } else {
+      tiles.push(<Tile key="real" label={t("costs.fig.realEstimate")} value="–" sub={t("costs.fig.noMeter")} color={SOURCE_COLOR.real} hatched />);
+    }
+    if (f.multiple?.kind === "estimate") {
+      tiles.push(<Tile key="mult" label={t("costs.fig.multipleFloor")} value={`≈ ${times(f.multiple.value)}`}
+        sub={t("costs.fig.multipleRange", { low: times(f.multiple.low), high: times(f.multiple.high) })}
+        note={t("costs.fig.multipleFloorHint")} />);
+    }
+  }
+  if (f.kind === "api_key" && f.billed) {
+    const b = f.billed;
+    const status = b.status.state === "complete" ? t("costs.fig.billedComplete")
+      : b.status.completeTo ? t("costs.fig.billedCompleteTo", { time: fmtClockUTC(b.status.completeTo) }) : t("costs.fig.billedPending");
+    if (filtered) {
+      tiles.push(<Tile key="billed" label={t("costs.fig.billed")} value="–" sub={t("costs.fig.filteredRealNote")} color={SOURCE_COLOR.billed} />);
+    } else {
+      tiles.push(<Tile key="billed" label={t("costs.fig.billed")} value={fmtUSD(b.usd)} sub={status} color={SOURCE_COLOR.billed} />);
+      tiles.push(<Tile key="list" label={t("costs.fig.listPerAnthropic")} value={fmtUSD(b.listUsd)} sub={status} />);
+      tiles.push(<Tile key="ratio" label={t("costs.fig.billedPerList")} value={b.ratio != null ? `${(b.ratio * 100).toFixed(1)} %` : "–"}
+        sub={t("costs.fig.billedPerListSub")} />);
+    }
+  }
+  return <div className="flex flex-wrap gap-3 mb-2">{tiles}</div>;
+}
+
+/** Why there is no multiple, in words. */
+function NoMultiple({ f }: { f: CredentialFigures }) {
+  const { t } = useTranslation();
+  if (f.kind === "api_key" || f.noMultiple == null || f.noMultiple === "meter") return null;
+  let text: string;
+  if (f.noMultiple === "agents") text = t("costs.fig.noMultipleAgents");
+  else if (f.real && f.real.points >= 1 && f.aligned) {
+    const low = f.aligned / f.real.high, high = f.real.low > 0 ? f.aligned / f.real.low : Infinity;
+    text = t("costs.fig.notEnoughMovement", { pts: f.real.points, low: times(low), high: times(high) });
+  } else text = t("costs.fig.notEnoughMovementNone");
+  return <p className="muted text-xs mb-2 mt-0" data-no-multiple>{text}</p>;
+}
+
+/** One credential: its tiles, its chart, its agents. */
+function CredentialBlock({ f, data, billed, bucket, fmtPeriod, selected, src, split, types, layout, sharedScale, asTable }: {
+  f: CredentialFigures; data: CostCells; billed: BilledReport | undefined; bucket: string; fmtPeriod: (p: string) => string;
+  selected: Set<string>; src: Record<Source, boolean>; split: Split; types: Set<string>; layout: Layout; sharedScale: boolean; asTable: boolean;
 }) {
   const { t } = useTranslation();
-  const [layout, setLayout] = useState<Layout>("combined");
-  const [split, setSplit] = useState<Split>("none");
-  const [src, setSrc] = useState<Record<Source, boolean>>({ reported: true, measured: true, subscription: true });
-  const [types, setTypes] = useState<Set<string>>(new Set(["cache_read", "cache_write", "input", "output", "web_search", "unpriced", "unattributed"]));
-  const [price, setPriceState] = useState<number>(loadPrice);
-  const setPrice = (v: number) => {
-    setPriceState(v);
-    try { localStorage.setItem(PRICE_KEY, String(v)); } catch { /* private window */ }
-  };
-  const perPoint = (price * 12) / 52 / 100; // $ per percentage point of the weekly limit
+  const planLabel = usePlanLabel();
+  const filtered = selected.size > 0;
+  const inScope = (id: string) => !filtered || selected.has(id);
+  const agents = useMemo(() => rankAgents(data.agents), [data.agents]);
+  const own = useMemo(() => data.cells.filter((c) => credId(c.secret_key, c.secret_slot) === f.id), [data.cells, f.id]);
+  const steps = useMemo(() => (f.meter ? (data.subscription ?? []).filter((s) => s.secret_key === f.meter!.secret_key
+    && s.secret_slot === f.meter!.secret_slot && s.source === f.meter!.source && s.window_kind === f.meter!.window_kind) : []), [data.subscription, f.meter]);
+  const bill = useMemo(() => (f.kind === "api_key" ? (billed?.points ?? []).filter((p) => credId(p.secret_key, p.secret_slot) === f.id) : []), [billed, f.id, f.kind]);
 
-  const agents = data?.agents ?? [];
-  const inScope = (id: string) => selected.size === 0 || selected.has(id);
-  const typeList = (data?.types ?? []).filter((k) => types.has(k));
-  const subByPeriod = useMemo(() => new Map((data?.subscription ?? []).map((s) => [s.period, s.points])), [data]);
+  // The periods: the cells', the meter's, the bill's — matched by instant.
   const periods = useMemo(() => {
-    const s = new Set([...(data?.periods ?? []), ...(data?.subscription ?? []).map((x) => x.period)]);
-    return [...s].sort();
-  }, [data]);
-  /** Cells per period, one per agent: the API splits an agent's period by credential,
-   *  this chart does not, so those parts are added back together. */
-  const cellsBy = useMemo(() => {
-    const m = new Map<string, CostCell[]>();
-    for (const c of data?.cells ?? []) {
-      const l = m.get(c.period) ?? [];
-      const same = l.find((x) => x.agent_id === c.agent_id);
-      if (!same) {
-        l.push({ ...c, measured: { ...c.measured } });
-      } else {
-        same.reported_usd += c.reported_usd;
-        for (const [k, v] of Object.entries(c.measured)) same.measured[k] = (same.measured[k] ?? 0) + v;
-      }
-      m.set(c.period, l);
+    const m = new Map<number, string>();
+    for (const c of own) m.set(Date.parse(c.period), c.period);
+    for (const s of steps) if (!m.has(Date.parse(s.period))) m.set(Date.parse(s.period), s.period);
+    for (const p of bill) if (!m.has(Date.parse(p.bucket))) m.set(Date.parse(p.bucket), p.bucket);
+    return [...m.entries()].sort((a, b) => a[0] - b[0]).map((e) => e[1]);
+  }, [own, steps, bill]);
+  const idx = useMemo(() => new Map(periods.map((p, i) => [Date.parse(p), i])), [periods]);
+
+  const typeList = COST_TYPES.filter((k) => types.has(k));
+  const showReal = src.real && !filtered && f.kind !== "api_key" && f.meter != null && bucket !== "hour";
+  const showBilled = src.billed && !filtered && f.kind === "api_key";
+  const realPer = useMemo(() => {
+    const v = new Array<number>(periods.length).fill(0);
+    if (!f.meter || f.secretKey == null) return v;
+    for (const s of steps) {
+      const i = idx.get(Date.parse(s.period));
+      const p = planAt(data.plans ?? [], f.secretKey, f.slot!, new Date(s.period));
+      const pp = p ? pricePerPoint(p) : null;
+      if (i != null && pp != null) v[i] += s.points * pp;
+    }
+    return v;
+  }, [steps, idx, periods.length, data.plans, f]);
+  const billedPer = useMemo(() => {
+    const v = new Array<number>(periods.length).fill(0);
+    for (const p of bill) {
+      const i = idx.get(Date.parse(p.bucket));
+      if (i != null) v[i] += Number(p.billed_usd) || 0;
+    }
+    return v;
+  }, [bill, idx, periods.length]);
+  const notes = useMemo(() => {
+    if (!f.meter || bucket !== "hour" || f.kind === "api_key") return undefined;
+    const m = new Map<number, string>();
+    for (const [p, x] of meterCrossings(f.meter, steps)) {
+      const i = idx.get(Date.parse(p));
+      if (i != null) m.set(i, x.reset ? t("costs.fig.crossingReset", { to: x.to }) : t("costs.fig.crossing", { from: x.from, to: x.to }));
     }
     return m;
-  }, [data]);
-  const measuredOf = (c: CostCell) => typeList.reduce((a, k) => a + (c.measured[k] ?? 0), 0);
-  /** Real cost of one period, allocated to one agent by its share of the period's reported cost. */
-  const realOf = (p: string, agentId?: string) => {
-    const real = (subByPeriod.get(p) ?? 0) * perPoint;
-    if (!agentId) return real;
-    const cs = cellsBy.get(p) ?? [];
-    const all = cs.reduce((a, c) => a + c.reported_usd, 0);
-    const mine = cs.find((c) => c.agent_id === agentId)?.reported_usd ?? 0;
-    return all > 0 ? (real * mine) / all : 0;
-  };
+  }, [f.meter, f.kind, bucket, steps, idx, t]);
 
-  const scoped = agents.filter((a) => inScope(a.id));
-  const combined: Bar[][] = useMemo(() => periods.map((p) => {
-    const cs = (cellsBy.get(p) ?? []).filter((c) => inScope(c.agent_id));
-    const list = (s: "reported" | "measured"): Seg[] => {
-      if (split === "agent" || (split === "type" && s === "reported")) {
-        return scoped.map((a) => {
-          const c = cs.find((x) => x.agent_id === a.id);
-          return { key: a.id, label: a.label, color: agentColor(agents, a.id), usd: !c ? 0 : s === "reported" ? c.reported_usd : measuredOf(c) };
-        });
-      }
-      if (split === "type") {
-        return typeList.map((k) => ({ key: k, label: t(`costs.stack.${k}`), color: TYPE_COLOR[k] ?? "#888", usd: cs.reduce((a, c) => a + (c.measured[k] ?? 0), 0) }));
-      }
-      return [{ key: s, label: t(`costs.filter.${s}`), color: SOURCE_COLOR[s], usd: cs.reduce((a, c) => a + (s === "reported" ? c.reported_usd : measuredOf(c)), 0) }];
-    };
-    const real = selected.size === 0 ? realOf(p) : scoped.reduce((a, ag) => a + realOf(p, ag.id), 0);
-    return [
-      src.reported ? { src: "reported" as Source, segs: list("reported") } : null,
-      src.measured ? { src: "measured" as Source, segs: list("measured") } : null,
-      src.subscription ? { src: "subscription" as Source, segs: [{ key: "real", label: t("costs.filter.subscription"), color: SOURCE_COLOR.subscription, usd: real }] } : null,
-    ].filter(Boolean) as Bar[];
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [periods, cellsBy, selected, split, src, types, perPoint, agents, t]);
-
-  const perAgent = useMemo(() => scoped.map((a) => ({
-    agent: a,
-    groups: periods.map((p) => {
-      const c = (cellsBy.get(p) ?? []).find((x) => x.agent_id === a.id);
-      return [
-        src.reported ? { src: "reported" as Source, segs: [{ key: "r", label: "", color: SOURCE_COLOR.reported, usd: c?.reported_usd ?? 0 }] } : null,
-        src.measured ? { src: "measured" as Source, segs: typeList.map((k) => ({ key: k, label: t(`costs.stack.${k}`), color: TYPE_COLOR[k] ?? "#888", usd: c?.measured[k] ?? 0 })) } : null,
-        src.subscription ? { src: "subscription" as Source, segs: [{ key: "s", label: "", color: SOURCE_COLOR.subscription, usd: realOf(p, a.id) }] } : null,
-      ].filter(Boolean) as Bar[];
-    }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  })).filter((r) => r.groups.some((g) => g.some((b) => b.segs.some((s) => s.usd > 0)))), [scoped, periods, cellsBy, src, types, perPoint, t]);
-
-  const totals = useMemo(() => {
-    const out: Record<Source, number> = { reported: 0, measured: 0, subscription: 0 };
-    for (const c of data?.cells ?? []) {
-      if (!inScope(c.agent_id)) continue;
-      out.reported += c.reported_usd;
-      out.measured += measuredOf(c);
+  const barsFor = (cs: CostCell[], i: number, withMoney: boolean): Bar[] => {
+    const out: Bar[] = [];
+    if (src.reported) {
+      out.push({ key: "reported", label: t("costs.fig.reported"), color: SOURCE_COLOR.reported,
+        segs: [{ key: "r", label: t("costs.fig.reported"), color: SOURCE_COLOR.reported, value: cs.reduce((a, c) => a + (c.engine_usd ?? 0), 0) }] });
     }
-    out.subscription = selected.size === 0 ? periods.reduce((a, p) => a + realOf(p), 0)
-      : periods.reduce((a, p) => a + scoped.reduce((b, ag) => b + realOf(p, ag.id), 0), 0);
+    if (src.recomputed) {
+      const segs = split === "type"
+        ? typeList.map((k) => ({ key: k, label: t(`costs.stack.${k}`), color: TYPE_COLOR[k], value: cs.reduce((a, c) => a + (c.measured[k] ?? 0), 0) }))
+        : [{ key: "m", label: t("costs.fig.recomputed"), color: SOURCE_COLOR.recomputed, value: cs.reduce((a, c) => a + recomputedOf(c, typeList), 0) }];
+      out.push({ key: "recomputed", label: t("costs.fig.recomputed"), color: SOURCE_COLOR.recomputed, segs });
+    }
+    if (withMoney && showReal) {
+      out.push({ key: "real", label: t("costs.fig.realEstimate"), color: SOURCE_COLOR.real, hatched: true,
+        segs: [{ key: "real", label: t("costs.fig.realEstimate"), color: SOURCE_COLOR.real, value: realPer[i] }] });
+    }
+    if (withMoney && showBilled) {
+      out.push({ key: "billed", label: t("costs.fig.billed"), color: SOURCE_COLOR.billed,
+        segs: [{ key: "billed", label: t("costs.fig.billed"), color: SOURCE_COLOR.billed, value: billedPer[i] }] });
+    }
     return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, selected, types, perPoint, periods]);
-  const points = (data?.subscription ?? []).reduce((a, s) => a + s.points, 0);
-  const allTypes = types.size === (data?.types ?? []).length;
-  const allocated = selected.size > 0 || layout === "agents";
-
-  const toggleType = (k: string) => setTypes((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
-  const toggleSrc = (s: Source) => setSrc((v) => {
-    const n = { ...v, [s]: !v[s] };
-    return n.reported || n.measured || n.subscription ? n : v; // keep at least one
-  });
+  };
+  const cellsAt = (i: number, agent?: string) => own.filter((c) => Date.parse(c.period) === Date.parse(periods[i])
+    && (agent ? c.agent_id === agent : inScope(c.agent_id)));
+  const combined = periods.map((_, i) => barsFor(cellsAt(i), i, true));
+  const perAgent = f.agents.filter((a) => a.recomputed > 0 || a.reported > 0).map((a) => ({
+    a, groups: periods.map((_, i) => barsFor(cellsAt(i, a.id), i, false)),
+  }));
+  const sharedMax = Math.max(0, ...perAgent.flatMap((r) => r.groups.flatMap((g) => g.map((b) => sum(b.segs)))));
+  const name = f.secretKey == null ? t("costs.fig.notAttributable") : `${f.secretKey} #${f.slot}`;
+  const kind = t(`costs.fig.kind_${f.kind || "unknown"}`);
+  const plan = planLabel(f);
+  const subscription = f.kind === "subscription" || (f.kind === "" && f.meter != null);
 
   return (
-    <div>
-      {/* The three figures and the multiple: the finding first */}
-      <div className="flex flex-wrap gap-3 mb-4">
-        <Tile label={t("costs.filter.reported")} value={fmtUSD(totals.reported)} sub={t("costs.filter.listPrice")} color={SOURCE_COLOR.reported} />
-        <Tile label={t("costs.filter.measured")} value={fmtUSD(totals.measured)}
-          sub={allTypes && totals.reported > 0 ? t("costs.filter.diff", { pct: (((totals.measured - totals.reported) / totals.reported) * 100).toFixed(2) }) : t("costs.filter.listPrice")}
-          color={SOURCE_COLOR.measured} />
-        <Tile label={t("costs.filter.subscription") + (allocated ? " *" : "")} value={fmtUSD(totals.subscription)}
-          sub={t("costs.filter.subSub", { pts: points.toFixed(0), per: fmtUSD(perPoint) })} color={SOURCE_COLOR.subscription} />
-        {totals.subscription > 0 && (
-          <Tile label={t("costs.filter.multiple")} value={`${(totals.reported / totals.subscription).toFixed(0)}×`} sub={t("costs.filter.multipleSub")} />
-        )}
+    <section className="mb-5" aria-label={name} data-credential={f.id}>
+      <div className="flex flex-wrap items-baseline gap-2 mb-2">
+        <h3 style={{ fontSize: 15, fontWeight: 600 }}>{name}</h3>
+        <span className="muted text-xs">{kind}{plan ? ` · ${plan}` : ""}</span>
       </div>
-
-      <Row label={t("costs.filter.layout")}>
-        <Chip on={layout === "combined"} onClick={() => setLayout("combined")}>{t("costs.filter.layout_combined")}</Chip>
-        <Chip on={layout === "agents"} onClick={() => setLayout("agents")}>{t("costs.filter.layout_agents")}</Chip>
-      </Row>
-      <Row label={t("costs.filter.source")}>
-        {(["reported", "measured", "subscription"] as Source[]).map((s) => (
-          <Chip key={s} on={src[s]} color={SOURCE_COLOR[s]} onClick={() => toggleSrc(s)} title={t(`costs.filter.${s}Hint`)}>{t(`costs.filter.${s}`)}</Chip>
-        ))}
-        <label className="text-xs muted" style={{ marginLeft: 8, display: "inline-flex", alignItems: "center", gap: 6 }}>
-          {t("costs.filter.planPrice")}
-          <input type="number" min={1} step={1} value={price} onChange={(e) => setPrice(Math.max(1, Number(e.target.value) || 1))}
-            style={{ width: 72, padding: "3px 6px", borderRadius: 6, border: "1px solid var(--border)", background: "transparent", color: "inherit" }} />
-        </label>
-      </Row>
-      {layout === "combined" && (
-        <Row label={t("costs.filter.split")}>
-          {(["none", "agent", "type"] as Split[]).map((s) => (
-            <Chip key={s} on={split === s} onClick={() => setSplit(s)}>{t(`costs.filter.split_${s}`)}</Chip>
-          ))}
-        </Row>
+      <CredentialTiles f={f} filtered={filtered || layout === "agents"} />
+      <NoMultiple f={f} />
+      {f.bookingCheck.length > 0 && (
+        <p className="text-xs mb-2 mt-0" role="note" style={{ color: "var(--text-warning)" }}>
+          {t("costs.fig.bookingCheck", {
+            count: f.bookingCheck.reduce((a, b) => a + b.entries, 0),
+            usd: fmtUSD(f.bookingCheck.reduce((a, b) => a + b.usd, 0)),
+            bases: [...new Set(f.bookingCheck.map((b) => b.basis))].join(", "),
+          })}
+        </p>
       )}
-      {src.measured && (layout === "agents" || split === "type") && (
-        <Row label={t("costs.filter.types")}>
-          {(data?.types ?? []).map((k) => (
-            <Chip key={k} on={types.has(k)} color={TYPE_COLOR[k]} onClick={() => toggleType(k)}>{t(`costs.stack.${k}`)}</Chip>
-          ))}
-        </Row>
-      )}
+      {f.unattributed > 0.0005 && <p className="muted text-xs mb-2 mt-0">{t("costs.fig.unattributed", { usd: fmtUSD(f.unattributed) })}</p>}
 
       {periods.length === 0 ? (
-        <div className="muted text-sm" style={{ padding: "40px 0", textAlign: "center" }}>{t("costs.empty")}</div>
+        <div className="muted text-sm" style={{ padding: "20px 0", textAlign: "center" }}>{t("costs.empty")}</div>
       ) : layout === "combined" ? (
-        <Bars periods={periods} groups={combined} height={300} fmtPeriod={fmtPeriod} showX allocatedNote={allocated} />
+        <BarChart title={`${t("costs.chartCost")} · ${name}`} periods={periods} groups={combined} fmtPeriod={fmtPeriod}
+          fmtValue={fmtUSD} fmtAxis={fmtUSDAxis} notes={notes} asTable={asTable} />
       ) : (
-        <div style={{ display: "grid", gap: 10, marginTop: 4 }}>
+        <div style={{ display: "grid", gap: 6 }}>
           {perAgent.map((r, i) => (
-            <div key={r.agent.id}>
-              <div className="text-xs" style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
-                <span style={{ width: 8, height: 8, borderRadius: 2, background: agentColor(agents, r.agent.id) }} />
-                <b>{r.agent.label}</b>
+            <div key={r.a.id}>
+              <div className="text-xs" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <Swatch color={agentColor(agents, r.a.id)} /> <b>{r.a.label}</b>
               </div>
-              <Bars periods={periods} groups={r.groups} height={i === perAgent.length - 1 ? 150 : 118} fmtPeriod={fmtPeriod}
-                showX={i === perAgent.length - 1} allocatedNote />
+              <BarChart title={`${t("costs.chartCost")} · ${name} · ${r.a.label}`} periods={periods} groups={r.groups} fmtPeriod={fmtPeriod}
+                fmtValue={fmtUSD} fmtAxis={fmtUSDAxis} height={i === perAgent.length - 1 ? 120 : 92}
+                showX={i === perAgent.length - 1} max={sharedScale ? sharedMax : undefined} asTable={asTable} />
             </div>
           ))}
           {perAgent.length === 0 && <div className="muted text-sm">{t("costs.empty")}</div>}
         </div>
       )}
-      <p className="muted text-xs mt-2 mb-0" style={{ maxWidth: 760 }}>
-        {t("costs.filter.legendNote")}
-        {allocated && <> {t("costs.filter.allocatedNote")}</>}
-        {layout === "combined" && split === "type" && src.reported && <> {t("costs.filter.reportedNoTypes")}</>}
-        {layout === "agents" && <> {t("costs.filter.agentsScaleNote")}</>}
-      </p>
+      {subscription && bucket === "hour" && src.real && !filtered && <p className="muted text-xs mt-1 mb-0">{t("costs.fig.hourRealNote")}</p>}
+      {filtered && (subscription || f.kind === "api_key") && <p className="muted text-xs mt-1 mb-0">{t("costs.fig.filteredRealNote")}</p>}
+
+      {f.agents.length > 0 && <AgentTable f={f} agents={agents} subscription={subscription} />}
+    </section>
+  );
+}
+
+/** The agents of one credential side by side, by recomputed list price. */
+function AgentTable({ f, agents, subscription }: { f: CredentialFigures; agents: CellAgent[]; subscription: boolean }) {
+  const { t } = useTranslation();
+  const th: React.CSSProperties = { padding: "4px 8px 6px 0", fontWeight: 500, whiteSpace: "nowrap", textAlign: "right" };
+  const td: React.CSSProperties = { padding: "3px 8px 3px 0", textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" };
+  return (
+    <div style={{ overflowX: "auto", marginTop: 8 }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+        <caption className="muted text-xs" style={{ textAlign: "left", paddingBottom: 4 }}>{t("costs.fig.agentsTitle")}</caption>
+        <thead>
+          <tr className="muted">
+            <th scope="col" style={{ ...th, textAlign: "left" }}>{t("costs.fig.agent")}</th>
+            <th scope="col" style={th}>{t("costs.fig.reported")}</th>
+            <th scope="col" style={th}>{t("costs.fig.recomputed")}</th>
+            <th scope="col" style={th}>{t("costs.fig.gap")}</th>
+            <th scope="col" style={th}>{t("costs.fig.share")}</th>
+            {subscription && <th scope="col" style={th}>{t("costs.fig.shareOfReal")}</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {f.agents.map((a) => (
+            <tr key={a.id} style={{ borderTop: "1px solid var(--border)" }}>
+              <th scope="row" style={{ ...td, textAlign: "left", fontWeight: 400 }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Swatch color={agentColor(agents, a.id)} /> {a.label}</span>
+              </th>
+              <td style={td}>{fmtUSD(a.reported)}</td>
+              <td style={td}>{fmtUSD(a.recomputed)}</td>
+              <td style={td}>{a.gapPct != null ? pct(a.gapPct) : "–"}</td>
+              <td style={td}>{a.share != null ? `${(a.share * 100).toFixed(1)} %` : "–"}</td>
+              {subscription && <td style={td}>{a.realShare != null ? `≈ ${fmtUSD(a.realShare)}` : "–"}</td>}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
+}
+
+/** The colour code of the page, explained once. */
+function ColourKey() {
+  const { t } = useTranslation();
+  const items: [Source, string, boolean?][] = [
+    ["reported", t("costs.fig.keyReported")],
+    ["recomputed", t("costs.fig.keyRecomputed")],
+    ["real", t("costs.fig.keyReal"), true],
+    ["billed", t("costs.fig.keyBilled")],
+  ];
+  return (
+    <div className="flex flex-wrap items-center gap-3 text-xs muted mb-3" role="note" aria-label={t("costs.fig.key")}>
+      {items.map(([s, label, h]) => (
+        <span key={s} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Swatch color={SOURCE_COLOR[s]} hatched={h} /> {label}</span>
+      ))}
+    </div>
+  );
+}
+
+export function CostExplorer({ data, billed, selected, bucket, fmtPeriod }: {
+  data: CostCells | undefined; billed?: BilledReport; selected: Set<string>; bucket: string; fmtPeriod: (p: string) => string;
+}) {
+  const { t } = useTranslation();
+  const [layout, setLayout] = useState<Layout>("combined");
+  const [split, setSplit] = useState<Split>("none");
+  const [sharedScale, setSharedScale] = useState(true);
+  const [asTable, setAsTable] = useState(false);
+  const [src, setSrc] = useState<Record<Source, boolean>>({ reported: true, recomputed: true, real: true, billed: true });
+  const [types, setTypes] = useState<Set<string>>(new Set(COST_TYPES));
+
+  const figures = useMemo(() => (data ? credentialFigures({
+    cells: data, billed, bucketMs: BUCKET_MS[bucket] ?? BUCKET_MS.day, windowEnd: new Date(), agents: selected, layout,
+  }) : []), [data, billed, bucket, selected, layout]);
+
+  const toggleType = (k: string) => setTypes((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+  const toggleSrc = (s: Source) => setSrc((v) => {
+    const n = { ...v, [s]: !v[s] };
+    return n.reported || n.recomputed || n.real || n.billed ? n : v; // keep at least one
+  });
+  const hint = (s: Source) => t(s === "reported" ? "costs.filter.reportedHint" : s === "recomputed" ? "costs.filter.measuredHint"
+    : s === "real" ? "costs.filter.subscriptionHint" : "costs.filter.billedHint");
+
+  return (
+    <div>
+      <ColourKey />
+      <Row label={t("costs.filter.source")}>
+        {(["reported", "recomputed", "real", "billed"] as Source[]).map((s) => (
+          <Chip key={s} on={src[s]} color={SOURCE_COLOR[s]} hatched={s === "real"} onClick={() => toggleSrc(s)}>
+            {t(s === "real" ? "costs.fig.realEstimate" : `costs.fig.${s}`)}
+          </Chip>
+        ))}
+      </Row>
+      <details className="text-xs muted mb-2" style={{ marginLeft: 92 }}>
+        <summary style={{ cursor: "pointer" }}>{t("costs.filter.sourceHints")}</summary>
+        <ul style={{ margin: "4px 0 0 0", paddingLeft: 16, maxWidth: 760 }}>
+          {(["reported", "recomputed", "real", "billed"] as Source[]).map((s) => <li key={s}>{hint(s)}</li>)}
+        </ul>
+      </details>
+      <Row label={t("costs.filter.layout")}>
+        <Chip on={layout === "combined"} onClick={() => setLayout("combined")}>{t("costs.filter.layout_combined")}</Chip>
+        <Chip on={layout === "agents"} onClick={() => setLayout("agents")}>{t("costs.filter.layout_agents")}</Chip>
+        {layout === "agents" && <>
+          <span className="muted text-xs" style={{ marginLeft: 8 }}>{t("costs.fig.scale")}</span>
+          <Chip on={sharedScale} onClick={() => setSharedScale(true)}>{t("costs.fig.scaleShared")}</Chip>
+          <Chip on={!sharedScale} onClick={() => setSharedScale(false)}>{t("costs.fig.scaleOwn")}</Chip>
+        </>}
+        <span style={{ flex: 1 }} />
+        <Chip on={asTable} onClick={() => setAsTable((v) => !v)}>{t("costs.fig.showAsTable")}</Chip>
+      </Row>
+      {layout === "combined" && (
+        <Row label={t("costs.filter.split")}>
+          {(["none", "type"] as Split[]).map((s) => (
+            <Chip key={s} on={split === s} onClick={() => setSplit(s)}>{t(`costs.filter.split_${s}`)}</Chip>
+          ))}
+        </Row>
+      )}
+      {src.recomputed && layout === "combined" && split === "type" && (
+        <Row label={t("costs.filter.types")}>
+          {COST_TYPES.map((k) => (
+            <Chip key={k} on={types.has(k)} color={TYPE_COLOR[k]} onClick={() => toggleType(k)}>{t(`costs.stack.${k}`)}</Chip>
+          ))}
+        </Row>
+      )}
+
+      {figures.length === 0 ? (
+        <div className="muted text-sm" style={{ padding: "40px 0", textAlign: "center" }}>{t("costs.empty")}</div>
+      ) : figures.map((f) => (
+        <CredentialBlock key={f.id} f={f} data={data!} billed={billed} bucket={bucket} fmtPeriod={fmtPeriod} selected={selected}
+          src={src} split={split} types={types} layout={layout} sharedScale={sharedScale} asTable={asTable} />
+      ))}
+    </div>
+  );
+}
+
+/** Tokens per type over time, from the same lines as the dollars above, over
+ *  every credential, narrowed by the agent filter. */
+export function TokenExplorer({ data, selected, fmtPeriod }: {
+  data: CostCells | undefined; selected: Set<string>; fmtPeriod: (p: string) => string;
+}) {
+  const { t } = useTranslation();
+  const [asTable, setAsTable] = useState(false);
+  const { periods, groups } = useMemo(() => {
+    const by = new Map<number, { p: string; tok: Record<string, number> }>();
+    for (const c of data?.cells ?? []) {
+      if (selected.size > 0 && !selected.has(c.agent_id)) continue;
+      const k = Date.parse(c.period);
+      const e = by.get(k) ?? { p: c.period, tok: {} };
+      for (const [ty, v] of Object.entries(c.tokens ?? {})) e.tok[ty] = (e.tok[ty] ?? 0) + v;
+      by.set(k, e);
+    }
+    const rows = [...by.entries()].sort((a, b) => a[0] - b[0]).map((e) => e[1]);
+    return {
+      periods: rows.map((r) => r.p),
+      groups: rows.map((r) => [{
+        key: "tokens", label: t("costs.mTokens"), color: TYPE_COLOR.output,
+        segs: TOKEN_TYPES.map((ty) => ({ key: ty, label: t(`costs.tok.${ty}`), color: TYPE_COLOR[ty], value: r.tok[ty] ?? 0 })),
+      }] as Bar[]),
+    };
+  }, [data, selected, t]);
+  if (periods.length === 0) return <div className="muted text-sm" style={{ padding: "40px 0", textAlign: "center" }}>{t("costs.empty")}</div>;
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-3 text-xs muted mb-2">
+        {TOKEN_TYPES.map((ty) => (
+          <span key={ty} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Swatch color={TYPE_COLOR[ty]} /> {t(`costs.tok.${ty}`)}</span>
+        ))}
+        <span style={{ flex: 1 }} />
+        <Chip on={asTable} onClick={() => setAsTable((v) => !v)}>{t("costs.fig.showAsTable")}</Chip>
+      </div>
+      <BarChart title={t("costs.chartTokens")} periods={periods} groups={groups} fmtPeriod={fmtPeriod}
+        fmtValue={(v) => `${fmtCount(v)} ${t("costs.tok.unit")}`} fmtAxis={fmtCount} asTable={asTable} />
+    </div>
+  );
+}
+
+/** Totals over the cells for the KPI row: dollars and tokens of the same lines. */
+export function cellTotals(data: CostCells | undefined, selected: Set<string>) {
+  const out = { reported: 0, recomputed: 0, tokens: {} as Record<string, number> };
+  for (const c of data?.cells ?? []) {
+    if (selected.size > 0 && !selected.has(c.agent_id)) continue;
+    out.reported += c.engine_usd ?? 0;
+    out.recomputed += recomputedOf(c);
+    for (const [k, v] of Object.entries(c.tokens ?? {})) out.tokens[k] = (out.tokens[k] ?? 0) + v;
+  }
+  return out;
 }

@@ -153,3 +153,38 @@ export function fmtDelta(ms: number): string {
   const d = Math.floor(h / 24);
   return h % 24 ? `${d} d ${h % 24} h` : `${d} d`;
 }
+
+// fmtUSDAxis is fmtUSD for an axis tick: as short as the round steps allow —
+// `0 $`, `0,25 $`, `12 $`, `1,5 k $`. An axis with `12,00 $` next to
+// `0,2500 $` reads as two scales.
+export function fmtUSDAxis(v: number): string {
+  if (v === 0) return "0 $";
+  if (Math.abs(v) >= 1000) return `${trim(v / 1000)} k $`;
+  const digits = Math.abs(v) >= 10 ? 0 : Math.abs(v) >= 1 ? 1 : Math.abs(v) >= 0.1 ? 2 : 3;
+  let s = v.toFixed(digits);
+  if (s.includes(".")) s = s.replace(/0+$/, "").replace(/\.$/, "");
+  return `${s.replace(".", komma())} $`;
+}
+
+// fmtBucket labels a cost bucket in the UI's language. Buckets are UTC (the
+// server truncates in UTC), so they are shown in UTC and an hour says so —
+// a local clock would shift every bar by the offset.
+export function fmtBucket(iso: string, bucket: string): string {
+  const d = new Date(iso);
+  const lang = i18n.language || "en";
+  switch (bucket) {
+    case "hour":
+      return `${d.toLocaleString(lang, { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "UTC" })} UTC`;
+    case "month":
+      return d.toLocaleDateString(lang, { month: "short", year: "numeric", timeZone: "UTC" });
+    default:
+      return d.toLocaleDateString(lang, { day: "2-digit", month: "2-digit", timeZone: "UTC" });
+  }
+}
+
+// fmtClockUTC is an instant as HH:MM UTC in the UI's language — how far
+// Anthropic's bill is complete.
+export function fmtClockUTC(iso: string | Date): string {
+  const d = typeof iso === "string" ? new Date(iso) : iso;
+  return `${d.toLocaleTimeString(i18n.language || "en", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" })} UTC`;
+}

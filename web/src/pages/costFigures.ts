@@ -1,0 +1,466 @@
+import type {
+  BilledReport,
+  BookingBasis,
+  CellAgent,
+  CostCell,
+  CostCells,
+  CredentialPlan,
+  MeterCoverage,
+  MeterStep,
+  UsageReading,
+} from "../api";
+
+/* The figures of the Costs page, as pure functions — no React, no fetch.
+ *
+ * Per credential (the secret value that paid) four figures, never mixed
+ * across credentials:
+ *
+ *   reported    — what Claude Code priced its own lines at (engine_usd);
+ *   recomputed  — the same lines' tokens priced per type with covey's list.
+ *                 It checks the price table, not the tokens: both come from
+ *                 the same lines;
+ *   real        — the money. On a subscription seat the weekly meter's
+ *                 movement × the plan's price per point, an ESTIMATE with a
+ *                 range (the meter shows whole percents, it is account-wide,
+ *                 and a point only costs its price if the week's allowance is
+ *                 used up). On an API key what Anthropic billed, complete only
+ *                 up to its data_refreshed_at;
+ *   multiple    — recomputed list $ per real $, only from 3 points of
+ *                 movement, always with its range, and a FLOOR: other use of
+ *                 the account moves the meter too.
+ *
+ * Nothing here reads the booked figure (cost_entries) except the
+ * booking-check, which says when bookings are an older daemon's running
+ * totals. */
+
+/** A credential's id on the page: the secret value, or "" for runs no credential is known for. */
+export function credId(key?: string | null, slot?: number | null): string {
+  return key == null || slot == null ? "" : `${key}#${slot}`;
+}
+
+/** Cost types that are recomputed from tokens (or, for an unknown model, the
+ *  engine's own figure for its lines). "unattributed" is a booking without
+ *  lines: booked, not measured, so it is not part of the figure. */
+export const RECOMPUTED_TYPES = ["cache_read", "cache_write", "input", "output", "web_search", "unpriced"];
+
+export function recomputedOf(c: Pick<CostCell, "measured">, types: readonly string[] = RECOMPUTED_TYPES): number {
+  let s = 0;
+  for (const k of types) if (k !== "unattributed") s += c.measured[k] ?? 0;
+  return s;
+}
+
+// --- The meter -----------------------------------------------------------------
+
+export type Range = { low: number; high: number };
+
+/** The meter shows whole percents: n points of reported movement are a true
+ *  movement somewhere in (n−1, n+1), never below 0. n = 0 gives [0, 1). */
+export function meterRange(n: number): Range {
+  return { low: Math.max(n - 1, 0), high: n + 1 };
+}
+
+export type RealCost = {
+  value: number;
+  low: number;
+  high: number;
+  points: number;
+  /** No movement at all: the real cost is below one point's price. */
+  below: boolean;
+};
+
+/** Real cost of n points at one price per point, with the range the whole
+ *  percents leave. */
+export function realCost(points: number, pricePerPoint: number): RealCost {
+  const r = meterRange(points);
+  return { value: points * pricePerPoint, low: r.low * pricePerPoint, high: r.high * pricePerPoint, points, below: points === 0 };
+}
+
+/** The price of one point of the weekly meter: the plan's price per week
+ *  (a month is 52/12 weeks) over 100 points, converted with the fx rate stored
+ *  with the plan. Null when a foreign-currency plan has no rate. */
+export function pricePerPoint(plan: Pick<CredentialPlan, "amount" | "fx_to_usd" | "period"> & { currency?: string }): number | null {
+  let fx = plan.fx_to_usd;
+  if (!(fx > 0)) {
+    if (plan.currency && plan.currency.toUpperCase() !== "USD") return null;
+    fx = 1;
+  }
+  const usd = plan.amount * fx;
+  const weekly = plan.period === "year" ? usd / 52 : (usd * 12) / 52;
+  return weekly / 100;
+}
+
+/** The plan of a credential valid at t. */
+export function planAt(plans: readonly CredentialPlan[], key: string, slot: number, t: Date): CredentialPlan | null {
+  const ms = t.getTime();
+  for (const p of plans) {
+    if (p.secret_key !== key || p.secret_slot !== slot) continue;
+    if (ms < Date.parse(p.valid_from)) continue;
+    if (p.valid_to && ms >= Date.parse(p.valid_to)) continue;
+    return p;
+  }
+  return null;
+}
+
+/** Points read while one plan was valid. */
+export type MeterPart = { points: number; pricePerPoint: number | null };
+/** One week of the meter (a reset starts a new one) and its parts by plan. */
+export type MeterWeek = { points: number; parts: MeterPart[] };
+
+export type RealFigure = RealCost & {
+  /** Points read while no plan was valid: not in the value. */
+  unpricedPoints: number;
+  /** The weeks the window spans: each leaves ±1 point. */
+  weeks: number;
+};
+
+/** Real cost over the weeks of a window: every part at its own plan's rate,
+ *  every week ±1 point (whole percents) priced at the dearest rate of that
+ *  week, so the range is never narrower than the truth. */
+export function realFromWeeks(weeks: readonly MeterWeek[]): RealFigure {
+  let value = 0, low = 0, high = 0, points = 0, unpriced = 0;
+  for (const w of weeks) {
+    let v = 0, top = 0;
+    for (const p of w.parts) {
+      if (p.pricePerPoint == null) {
+        unpriced += p.points;
+        continue;
+      }
+      v += p.points * p.pricePerPoint;
+      top = Math.max(top, p.pricePerPoint);
+    }
+    value += v;
+    points += w.points;
+    // A week without movement still leaves "less than one point".
+    low += w.points >= 1 ? Math.max(v - top, 0) : 0;
+    high += v + top;
+  }
+  return { value, low, high, points, below: points === 0, unpricedPoints: unpriced, weeks: weeks.length };
+}
+
+/** The coverage a credential's real cost is read from: the weekly all-models
+ *  window, the source with the most readings (usage_cmd before manual before
+ *  inband on a tie). Two sources read the same meter: never both. */
+export function pickMeter(meter: readonly MeterCoverage[], key: string, slot: number): MeterCoverage | null {
+  const order = ["usage_cmd", "manual", "inband"];
+  const rank = (s: string) => (order.indexOf(s) < 0 ? order.length : order.indexOf(s));
+  const own = meter.filter((m) => m.secret_key === key && m.secret_slot === slot && m.window_kind === "seven_day");
+  own.sort((a, b) => b.readings - a.readings || rank(a.source) - rank(b.source));
+  return own[0] ?? null;
+}
+
+/** The weeks of a coverage with their steps priced by the plan valid in each
+ *  step's period. A step belongs to the last week that began before the
+ *  step's period ended. Without steps, a week is priced at the plan of its end. */
+export function meterWeeks(cov: MeterCoverage, steps: readonly MeterStep[], plans: readonly CredentialPlan[], bucketMs: number): MeterWeek[] {
+  const segs = cov.segments && cov.segments.length > 0
+    ? cov.segments
+    : [{ start_at: cov.baseline_at, end_at: cov.last_at, from_percent: cov.baseline_percent, to_percent: cov.last_percent, reset: false, points: cov.points }];
+  const own = steps.filter((s) => s.secret_key === cov.secret_key && s.secret_slot === cov.secret_slot
+    && s.source === cov.source && s.window_kind === cov.window_kind);
+  const pp = (t: Date) => {
+    const p = planAt(plans, cov.secret_key, cov.secret_slot, t);
+    return p ? pricePerPoint(p) : null;
+  };
+  const weeks: MeterWeek[] = segs.map((s) => ({ points: s.points, parts: [] }));
+  if (own.length === 0) {
+    segs.forEach((s, i) => weeks[i].parts.push({ points: s.points, pricePerPoint: pp(new Date(s.end_at)) }));
+    return weeks;
+  }
+  for (const st of own) {
+    if (st.points === 0) continue;
+    const start = Date.parse(st.period), end = start + bucketMs;
+    let wi = 0;
+    segs.forEach((s, i) => { if (Date.parse(s.start_at) < end) wi = i; });
+    weeks[wi].parts.push({ points: st.points, pricePerPoint: pp(new Date(start)) });
+  }
+  // A week without a priced step still leaves its ±1 point, at its own rate.
+  segs.forEach((s, i) => {
+    if (weeks[i].parts.length === 0) weeks[i].parts.push({ points: 0, pricePerPoint: pp(new Date(s.end_at)) });
+  });
+  return weeks;
+}
+
+/** list $ per real $: M/(Δ·pp), range M/((Δ+1)·pp) to M/((Δ−1)·pp).
+ *  Δ ≥ 3: an estimate with its range. 1 ≤ Δ ≤ 2: the range only (at Δ = 1
+ *  without an upper bound). Δ = 0: no figure — the real cost is only known to
+ *  be below one point's price. */
+export type Multiple =
+  | { kind: "estimate"; value: number; low: number; high: number }
+  | { kind: "range"; low: number; high: number };
+
+export function multiple(M: number, delta: number, pp: number): Multiple | null {
+  return multipleOf(M, realCost(delta, pp));
+}
+
+/** The multiple from a real-cost figure (several weeks, several plans). */
+export function multipleOf(M: number, real: Pick<RealCost, "value" | "low" | "high" | "points">): Multiple | null {
+  if (!(M > 0) || real.points < 1 || !(real.high > 0)) return null;
+  const low = M / real.high;
+  const high = real.low > 0 ? M / real.low : Infinity;
+  if (real.points < 3) return { kind: "range", low, high };
+  return { kind: "estimate", value: M / real.value, low, high };
+}
+
+// --- Window alignment ------------------------------------------------------------
+
+/** The recomputed list $ of one credential inside [from, to]. A cell covers
+ *  [period, period + bucket); one that straddles an edge counts with the
+ *  share of its time inside (spend assumed even within the bucket). */
+export function alignedMeasured(cells: readonly CostCell[], cred: string, from: Date, to: Date, bucketMs: number): number {
+  const a = from.getTime(), b = to.getTime();
+  if (!(b > a)) return 0;
+  let s = 0;
+  for (const c of cells) {
+    if (credId(c.secret_key, c.secret_slot) !== cred) continue;
+    const p0 = Date.parse(c.period), p1 = p0 + bucketMs;
+    const overlap = Math.min(p1, b) - Math.max(p0, a);
+    if (overlap <= 0) continue;
+    s += recomputedOf(c) * Math.min(1, overlap / bucketMs);
+  }
+  return s;
+}
+
+// --- The bill --------------------------------------------------------------------
+
+export type BilledStatus = { state: "complete" | "pending"; completeTo: Date | null };
+
+/** Anthropic's data lands 4–24 h late; data_refreshed_at marks how far it is
+ *  complete. A window ending after it is pending (complete up to that mark). */
+export function billedStatus(windowEnd: Date, dataRefreshedAt: string | null | undefined): BilledStatus {
+  if (!dataRefreshedAt) return { state: "pending", completeTo: null };
+  const r = new Date(dataRefreshedAt);
+  return r.getTime() >= windowEnd.getTime() ? { state: "complete", completeTo: r } : { state: "pending", completeTo: r };
+}
+
+// --- Per credential --------------------------------------------------------------
+
+export type AgentFigure = {
+  id: string;
+  label: string;
+  reported: number;
+  recomputed: number;
+  /** (recomputed − reported) / reported, in %. */
+  gapPct: number | null;
+  /** The agent's share of the credential's recomputed list $. */
+  share: number | null;
+  /** share × the credential's real cost: an ESTIMATE (the meter is account-wide). */
+  realShare: number | null;
+};
+
+export type CredentialFigures = {
+  id: string;
+  secretKey: string | null;
+  slot: number | null;
+  /** subscription | api_key | "" (unknown) */
+  kind: string;
+  /** The plan valid at the window's end (else the last one in it). */
+  plan: CredentialPlan | null;
+  reported: number;
+  recomputed: number;
+  /** Price-table check: (recomputed − reported) / reported, in %. */
+  check: number | null;
+  /** Booked without any line: not in reported or recomputed. */
+  unattributed: number;
+  meter: MeterCoverage | null;
+  real: RealFigure | null;
+  /** Recomputed list $ inside [baseline_at, last_at] of the meter. */
+  aligned: number | null;
+  multiple: Multiple | null;
+  /** Why there is no multiple: "agents" (filtered or per agent), "movement" (< 3 points), "meter" (no reading). */
+  noMultiple: "agents" | "movement" | "meter" | null;
+  billed: { usd: number; listUsd: number; ratio: number | null; status: BilledStatus } | null;
+  /** Bookings of an older daemon's running totals (legacy, cumulative). */
+  bookingCheck: BookingBasis[];
+  agents: AgentFigure[];
+};
+
+export type FigureInput = {
+  cells: CostCells;
+  billed?: BilledReport | null;
+  /** The bucket width of the cells, in ms. */
+  bucketMs: number;
+  /** The end of the window (now). */
+  windowEnd: Date;
+  /** Selected agents; empty: all. */
+  agents?: ReadonlySet<string>;
+  /** "agents": the per-agent layout, no multiple. */
+  layout?: "combined" | "agents";
+};
+
+export const SUSPECT_BASES = ["legacy", "cumulative"];
+
+/** The figures per credential: one block each, costliest (recomputed) first,
+ *  the not-attributable runs last. */
+export function credentialFigures(input: FigureInput): CredentialFigures[] {
+  const { cells: data, bucketMs, windowEnd } = input;
+  const sel = input.agents ?? new Set<string>();
+  const inScope = (id: string) => sel.size === 0 || sel.has(id);
+  const meter = data.meter ?? [];
+  const steps = data.subscription ?? [];
+  const plans = data.plans ?? [];
+  const labels = new Map<string, CellAgent>(data.agents.map((a) => [a.id, a]));
+
+  type Acc = { key: string | null; slot: number | null; kind: string; cells: CostCell[] };
+  const by = new Map<string, Acc>();
+  const touch = (key: string | null | undefined, slot: number | null | undefined, kind?: string) => {
+    const id = credId(key, slot);
+    let a = by.get(id);
+    if (!a) {
+      a = { key: id ? key! : null, slot: id ? slot! : null, kind: "", cells: [] };
+      by.set(id, a);
+    }
+    if (!a.kind && kind) a.kind = kind;
+    return a;
+  };
+  for (const c of data.cells) touch(c.secret_key, c.secret_slot, c.credential_kind).cells.push(c);
+  for (const m of meter) touch(m.secret_key, m.secret_slot, m.credential_kind);
+  for (const p of input.billed?.points ?? []) if (p.secret_key != null) touch(p.secret_key, p.secret_slot, "api_key");
+
+  const out: CredentialFigures[] = [];
+  for (const [id, a] of by) {
+    let reported = 0, recomputed = 0, unattributed = 0, all = 0;
+    const per = new Map<string, { reported: number; recomputed: number }>();
+    for (const c of a.cells) {
+      const rec = recomputedOf(c);
+      all += rec;
+      if (!inScope(c.agent_id)) continue;
+      reported += c.engine_usd ?? 0;
+      recomputed += rec;
+      unattributed += c.measured.unattributed ?? 0;
+      const p = per.get(c.agent_id) ?? { reported: 0, recomputed: 0 };
+      p.reported += c.engine_usd ?? 0;
+      p.recomputed += rec;
+      per.set(c.agent_id, p);
+    }
+
+    const ownPlans = a.key == null ? [] : plans.filter((p) => p.secret_key === a.key && p.secret_slot === a.slot);
+    const plan = a.key == null ? null : planAt(plans, a.key, a.slot!, windowEnd) ?? ownPlans.at(-1) ?? null;
+    const kind = a.kind || (plan ? "subscription" : "");
+
+    let cov: MeterCoverage | null = null, real: RealFigure | null = null, aligned: number | null = null;
+    let mult: Multiple | null = null;
+    let noMultiple: CredentialFigures["noMultiple"] = null;
+    if (a.key != null && kind !== "api_key") {
+      cov = pickMeter(meter, a.key, a.slot!);
+      if (cov) {
+        real = realFromWeeks(meterWeeks(cov, steps, plans, bucketMs));
+        aligned = alignedMeasured(a.cells, id, new Date(cov.baseline_at), new Date(cov.last_at), bucketMs);
+      }
+      if (sel.size > 0 || input.layout === "agents") noMultiple = "agents";
+      else if (!cov || !real) noMultiple = "meter";
+      else if (real.points < 3) noMultiple = "movement";
+      else mult = multipleOf(aligned ?? 0, real);
+    }
+
+    let billed: CredentialFigures["billed"] = null;
+    if (a.key != null && kind === "api_key") {
+      let usd = 0, list = 0;
+      for (const p of input.billed?.points ?? []) {
+        if (p.secret_key !== a.key || p.secret_slot !== a.slot) continue;
+        usd += Number(p.billed_usd) || 0;
+        list += Number(p.billed_list_usd) || 0;
+      }
+      billed = { usd, listUsd: list, ratio: list > 0 ? usd / list : null,
+        status: billedStatus(windowEnd, input.billed?.sync?.data_refreshed_at) };
+    }
+
+    const agents: AgentFigure[] = [...per.entries()].map(([aid, p]) => {
+      const share = all > 0 ? p.recomputed / all : null;
+      return {
+        id: aid,
+        label: labels.get(aid)?.label ?? aid,
+        reported: p.reported,
+        recomputed: p.recomputed,
+        gapPct: p.reported > 0 ? ((p.recomputed - p.reported) / p.reported) * 100 : null,
+        share,
+        realShare: share != null && real ? share * real.value : null,
+      };
+    }).sort((x, y) => y.recomputed - x.recomputed);
+
+    const bookingCheck = (data.bookings ?? []).filter((b) => credId(b.secret_key, b.secret_slot) === id && SUSPECT_BASES.includes(b.basis));
+    out.push({
+      id, secretKey: a.key, slot: a.slot, kind, plan,
+      reported, recomputed,
+      check: reported > 0 ? ((recomputed - reported) / reported) * 100 : null,
+      unattributed, meter: cov, real, aligned, multiple: mult, noMultiple, billed, bookingCheck, agents,
+    });
+  }
+  out.sort((x, y) => (x.id === "" ? 1 : 0) - (y.id === "" ? 1 : 0) || y.recomputed - x.recomputed);
+  return out;
+}
+
+// --- The meter card ------------------------------------------------------------
+
+export type MeterRatio = {
+  /** $ of list price per 1 % of the week, and its range. Null without movement. */
+  perPoint: number | null;
+  low: number;
+  high: number;
+  /** The list $ and the points over all weeks. */
+  usd: number;
+  points: number;
+  readings: number;
+  weeks: number;
+};
+
+/** The readings of one credential and source on the weekly window that can be
+ *  used: supported, fresh, with a figure and a cost; oldest first. */
+export function usableReadings(rs: readonly UsageReading[], key: string, slot: number, source: string): UsageReading[] {
+  return rs
+    .filter((r) => r.secret_key === key && r.secret_slot === slot && r.source === source && r.supported && !r.stale
+      && r.week_percent != null && r.cost_usd != null && (r.window_kind === "seven_day" || r.window_kind === ""))
+    .sort((a, b) => Date.parse(a.fetched_at) - Date.parse(b.fetched_at));
+}
+
+/** A new week starts where the reset time moved forward, or — without reset
+ *  times — where the meter collapsed (below half and at least 5 points down). */
+function isReset(prev: UsageReading, cur: UsageReading): boolean {
+  if (prev.resets_at && cur.resets_at) return Date.parse(cur.resets_at) > Date.parse(prev.resets_at) + 3600_000;
+  if (prev.resets_at && Date.parse(prev.resets_at) <= Date.parse(cur.fetched_at)) return true;
+  return cur.week_percent! < prev.week_percent! / 2 && cur.week_percent! <= prev.week_percent! - 5;
+}
+
+/** "$X per 1 %": per week, the list $ between its first and last reading over
+ *  the points the meter rose; summed over the weeks. Each week leaves ±1 point. */
+export function meterRatio(rs: readonly UsageReading[]): MeterRatio | null {
+  if (rs.length < 2) return null;
+  let usd = 0, points = 0, weeks = 0;
+  let first = rs[0], top = rs[0].week_percent!;
+  const close = (last: UsageReading) => {
+    usd += (last.cost_usd ?? 0) - (first.cost_usd ?? 0);
+    points += Math.max(0, top - first.week_percent!);
+    weeks++;
+  };
+  let prev = rs[0];
+  for (const r of rs.slice(1)) {
+    if (isReset(prev, r)) {
+      close(prev);
+      first = r;
+      top = r.week_percent!;
+    } else {
+      top = Math.max(top, r.week_percent!);
+    }
+    prev = r;
+  }
+  close(prev);
+  const low = usd / (points + weeks);
+  const high = points - weeks > 0 ? usd / (points - weeks) : Infinity;
+  return { perPoint: points > 0 ? usd / points : null, low, high, usd, points, readings: rs.length, weeks };
+}
+
+/** The meter's whole-percent crossings in each period: "10 % → 11 %". */
+export function meterCrossings(cov: MeterCoverage, steps: readonly MeterStep[]): Map<string, { from: number; to: number; reset: boolean }> {
+  const own = steps
+    .filter((s) => s.secret_key === cov.secret_key && s.secret_slot === cov.secret_slot && s.source === cov.source && s.window_kind === cov.window_kind)
+    .sort((a, b) => Date.parse(a.period) - Date.parse(b.period));
+  const out = new Map<string, { from: number; to: number; reset: boolean }>();
+  let level = cov.baseline_percent;
+  for (const s of own) {
+    const reset = s.resets > 0;
+    const from = reset ? 0 : level;
+    const to = from + s.points;
+    level = to;
+    if (s.points > 0 || reset) out.set(s.period, { from, to, reset });
+  }
+  return out;
+}

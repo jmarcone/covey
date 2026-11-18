@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import i18n from "./i18n";
-import { exact, fmtBytes, fmtCount, fmtDelta, fmtUSD } from "./format";
+import { exact, fmtBytes, fmtCount, fmtDelta, fmtUSD, fmtUSDAxis } from "./format";
 
 /* The reason stood on the cost side: 147952885 read cache tokens. Nobody reads
    that as a hundred forty-eight million — you count it through digit by digit.
@@ -143,5 +143,16 @@ describe("andere Sprachen", () => {
   it("die Milliarden-Einheit bleibt, wie sie war", async () => {
     await i18n.changeLanguage("fr");
     expect(fmtCount(2_499_833_356)).toBe("2,5 B");
+  });
+});
+
+describe("fmtUSDAxis", () => {
+  it("keeps an axis tick as short as its step", async () => {
+    await i18n.changeLanguage("en");
+    expect(fmtUSDAxis(0)).toBe("0 $");
+    expect(fmtUSDAxis(0.25)).toBe("0.25 $");
+    expect(fmtUSDAxis(2.5)).toBe("2.5 $");
+    expect(fmtUSDAxis(12)).toBe("12 $");
+    expect(fmtUSDAxis(1500)).toBe("1.5 k $");
   });
 });

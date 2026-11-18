@@ -46,8 +46,12 @@ var CostTypes = []string{TypeCacheRead, TypeCacheWrite, TypeInput, TypeOutput, T
 type CellAgent struct {
 	ID    uuid.UUID `json:"id"`
 	Label string    `json:"label"`
-	// Reported is the agent's booked total over the window (ranking, legend).
+	// Reported is the agent's booked total over the window.
 	Reported float64 `json:"reported_usd"`
+	// Measured is the agent's recomputed list price over the window (its
+	// lines' tokens priced per type, unknown models at the engine's figure):
+	// the ranking and the legend. Bookings without lines are not in it.
+	Measured float64 `json:"measured_usd"`
 }
 
 // CostCell is one bucket × agent × credential. The credential is the secret
@@ -61,6 +65,14 @@ type CostCell struct {
 	CredentialKind string             `json:"credential_kind"`
 	Reported       float64            `json:"reported_usd"`
 	Measured       map[string]float64 `json:"measured"` // cost type → USD
+	// EngineUSD is what Claude Code itself priced the same lines at (Σ
+	// costUSD of the deltas): the "reported by Claude Code" figure, of the
+	// same calls as Measured — unlike Reported, which is what covey booked.
+	EngineUSD float64 `json:"engine_usd"`
+	// Tokens are the lines' tokens per type (input, output, cache_read,
+	// cache_write_5m, cache_write_1h) and web searches (web_search), over
+	// every model: the calls the dollars above are made of.
+	Tokens map[string]int64 `json:"tokens"`
 }
 
 // CostCells is the whole data set for the chart.
@@ -84,12 +96,26 @@ type CostCells struct {
 	// Plans are the dated plan prices valid in the window, per credential
 	// (migration 0145). The steps are priced with them.
 	Plans []CredentialPlan `json:"plans"`
+	// Bookings says what the window's cost entries were booked from, per
+	// credential and basis (0144): a booking-check, so a reader sees when
+	// some of the booked figures are an older daemon's running totals
+	// (legacy, cumulative) rather than a run's own spend.
+	Bookings []BookingBasis `json:"bookings"`
+}
+
+// BookingBasis counts the cost entries of one credential booked on one basis.
+type BookingBasis struct {
+	SecretKey  *string `json:"secret_key"`
+	SecretSlot *int    `json:"secret_slot"`
+	Basis      string  `json:"basis"`
+	Entries    int64   `json:"entries"`
+	USD        float64 `json:"usd"`
 }
 
 // CostCellsFor builds the data set for the organisation since `since`.
 func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time) (CostCells, error) {
 	bucket = normalizeBucket(bucket)
-	out := CostCells{Periods: []time.Time{}, Agents: []CellAgent{}, Types: CostTypes, Cells: []CostCell{}}
+	out := CostCells{Periods: []time.Time{}, Agents: []CellAgent{}, Types: CostTypes, Cells: []CostCell{}, Bookings: []BookingBasis{}}
 	type key struct {
 		p    time.Time
 		a    uuid.UUID
@@ -106,7 +132,7 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 		}
 		c, ok := cells[k]
 		if !ok {
-			c = &CostCell{Period: k.p, AgentID: a, Measured: map[string]float64{}}
+			c = &CostCell{Period: k.p, AgentID: a, Measured: map[string]float64{}, Tokens: map[string]int64{}}
 			if k.attr {
 				c.SecretKey, c.SecretSlot = &k.sk, &k.slot
 			}
@@ -187,11 +213,19 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 			rows.Close()
 			return out, err
 		}
-		agent(id, name)
+		ag := agent(id, name)
 		c := cell(p, id, sk, slot, kind)
+		c.EngineUSD += engine
+		c.Tokens["input"] += t.Input
+		c.Tokens["output"] += t.Output
+		c.Tokens["cache_read"] += t.CacheRead
+		c.Tokens["cache_write_5m"] += t.CacheWrite5m
+		c.Tokens["cache_write_1h"] += t.CacheWrite1h
+		c.Tokens["web_search"] += t.WebSearches
 		pr, ok := ListPrice(model)
 		if !ok {
 			c.Measured[TypeUnpriced] += engine // unknown model: keep the engine's figure, unsplit
+			ag.Measured += engine
 			continue
 		}
 		c.Measured[TypeCacheRead] += float64(t.CacheRead) * pr.CacheRead / 1e6
@@ -201,6 +235,7 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 		if t.WebSearches > 0 {
 			c.Measured[TypeWebSearch] += float64(t.WebSearches) * WebSearchUSD
 		}
+		ag.Measured += pr.Cost(t)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -263,8 +298,37 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 	for _, a := range agents {
 		out.Agents = append(out.Agents, *a)
 	}
-	// Costliest first: the palette and the bottom of every bar follow the ranking.
-	sort.Slice(out.Agents, func(i, j int) bool { return out.Agents[i].Reported > out.Agents[j].Reported })
+	// Costliest first by the recomputed list price: the palette and the
+	// bottom of every bar follow the ranking. The booked figure only breaks
+	// a tie (an agent with bookings but no lines).
+	sort.Slice(out.Agents, func(i, j int) bool {
+		a, b := out.Agents[i], out.Agents[j]
+		if a.Measured != b.Measured {
+			return a.Measured > b.Measured
+		}
+		return a.Reported > b.Reported
+	})
+
+	// The booking-check: what the window's entries were booked from.
+	rows, err = s.pool.Query(ctx, `SELECT ce.secret_key, ce.secret_slot, ce.basis, count(*), COALESCE(SUM(ce.usd),0)::float8
+		FROM cost_entries ce JOIN agents a ON a.id = ce.agent_id
+		WHERE a.org_id = $1 AND ce.created_at >= $2
+		GROUP BY 1,2,3 ORDER BY 1,2,3`, orgID, since)
+	if err != nil {
+		return out, err
+	}
+	for rows.Next() {
+		var b BookingBasis
+		if err := rows.Scan(&b.SecretKey, &b.SecretSlot, &b.Basis, &b.Entries, &b.USD); err != nil {
+			rows.Close()
+			return out, err
+		}
+		out.Bookings = append(out.Bookings, b)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
 
 	plans, err := s.CredentialPlans(ctx, orgID, since)
 	if err != nil {

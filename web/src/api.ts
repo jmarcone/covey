@@ -665,6 +665,10 @@ export type RunCost = Tokens & {
   state: string;
   origin: string;
   total_usd: number;
+  /** The run's lines priced with covey's list; null for a run without lines. */
+  measured_usd?: number | null;
+  /** What Claude Code priced the same lines at. */
+  engine_usd?: number | null;
   entries: number;
   actions: number;
   started_at: string;
@@ -690,6 +694,248 @@ export type CredentialCost = Tokens & {
   label: string;
   total_usd: number;
   entries: number;
+};
+
+// --- Cost cells, meter, plans and the bill (observability/stacked.go, billing.go) ---
+//
+// Three figures per credential, never mixed: what Claude Code reported for
+// its own lines (engine_usd), the same lines' tokens priced with covey's list
+// (measured), and the real money — the subscription meter's movement × the
+// plan's price per point, or what Anthropic billed the API key. The booked
+// figure (reported_usd) is what covey wrote into cost_entries; the page uses
+// it for the booking-check only.
+
+/** An agent in the cells, ranked by its recomputed list price. */
+export type CellAgent = {
+  id: string;
+  label: string;
+  /** Booked (cost_entries): for the booking-check, never a figure. */
+  reported_usd: number;
+  /** Recomputed list price of its lines over the window. */
+  measured_usd?: number;
+};
+
+/** One period × agent × credential (the secret value that paid; null: not attributable). */
+export type CostCell = {
+  period: string;
+  agent_id: string;
+  secret_key?: string | null;
+  secret_slot?: number | null;
+  /** api_key | subscription, empty when unknown. */
+  credential_kind?: string;
+  /** Booked by covey. */
+  reported_usd: number;
+  /** Recomputed list price per cost type. */
+  measured: Record<string, number>;
+  /** What Claude Code priced the same lines at. */
+  engine_usd?: number;
+  /** The lines' tokens per type: input, output, cache_read, cache_write_5m, cache_write_1h, web_search. */
+  tokens?: Record<string, number>;
+};
+
+/** How far one credential's meter moved in one period, read by one source. */
+export type MeterStep = {
+  period: string;
+  secret_key: string;
+  secret_slot: number;
+  credential_kind: string;
+  source: string;
+  window_kind: string;
+  points: number;
+  readings: number;
+  resets: number;
+  longest_gap_secs: number;
+  usd: number | null;
+  unpriced_points: number;
+};
+
+/** One week of a credential's meter within the window. */
+export type MeterSegment = {
+  start_at: string;
+  end_at: string;
+  from_percent: number;
+  to_percent: number;
+  reset: boolean;
+  points: number;
+};
+
+/** How well one credential's meter was read over the window, by one source. */
+export type MeterCoverage = {
+  secret_key: string;
+  secret_slot: number;
+  credential_kind: string;
+  source: string;
+  window_kind: string;
+  baseline_at: string;
+  baseline_percent: number;
+  baseline_before_window: boolean;
+  last_at: string;
+  last_percent: number;
+  readings: number;
+  points: number;
+  points_low: number;
+  points_high: number;
+  longest_gap_secs: number;
+  segments: MeterSegment[] | null;
+};
+
+/** A credential's dated plan price (0145), for measurement only. */
+export type CredentialPlan = {
+  runtime_id: string | null;
+  ord: number | null;
+  secret_key: string;
+  secret_slot: number;
+  plan_name: string;
+  amount: number;
+  currency: string;
+  /** month | year */
+  period: string;
+  tax_basis: string;
+  fx_to_usd: number;
+  fx_date: string | null;
+  valid_from: string;
+  valid_to: string | null;
+  weekly_usd: number;
+  usd_per_point: number;
+};
+
+/** Cost entries of one credential booked on one basis (0144). */
+export type BookingBasis = {
+  secret_key: string | null;
+  secret_slot: number | null;
+  /** invocation | from_deltas | corrected | legacy | cumulative | "" */
+  basis: string;
+  entries: number;
+  usd: number;
+};
+
+export type CostCells = {
+  periods: string[];
+  agents: CellAgent[];
+  types: string[];
+  cells: CostCell[];
+  subscription: MeterStep[] | null;
+  meter?: MeterCoverage[] | null;
+  plans?: CredentialPlan[] | null;
+  bookings?: BookingBasis[] | null;
+};
+
+/** One reading of the provider's meter, with the measured cost on its credential up to it. */
+export type UsageReading = {
+  runtime_id: string;
+  credential_ord: number;
+  secret_key: string | null;
+  secret_slot: number | null;
+  credential_kind: string;
+  /** usage_cmd | inband | manual */
+  source: string;
+  window_kind: string;
+  supported: boolean;
+  window_percent: number | null;
+  week_percent: number | null;
+  window_resets?: string;
+  week_resets?: string;
+  resets_at: string | null;
+  status: string;
+  reason: string;
+  stale: boolean;
+  fetched_at: string;
+  received_at: string;
+  /** Claude Code's price of the credential's lines from the window start up to this reading. */
+  cost_usd: number | null;
+};
+
+/** The billing poller's state. */
+export type BillingSyncStatus = {
+  configured: boolean;
+  last_attempt_at: string | null;
+  last_success_at: string | null;
+  last_daily_at: string | null;
+  /** Anthropic's own mark: the bill is complete up to here. */
+  data_refreshed_at: string | null;
+  last_status: string;
+  last_error: string;
+};
+
+/** One bucket × API key × model of the bill. Money is a decimal string in USD. */
+export type BilledPoint = {
+  bucket: string;
+  api_key_id: string;
+  workspace_id: string;
+  model: string;
+  secret_key: string | null;
+  secret_slot: number | null;
+  billed_usd: string;
+  billed_list_usd: string;
+  complete: boolean;
+};
+
+export type BilledReport = {
+  bucket: string;
+  points: BilledPoint[] | null;
+  sync: BillingSyncStatus;
+};
+
+export type TokenDiff = { type: string; reported: number; billed: number; diff: number };
+
+export type ReconcileModel = {
+  model: string;
+  reported_usd: string;
+  list_usd: string;
+  unpriced?: boolean;
+  billed_list_usd: string;
+  billed_usd: string;
+  residual_usd: string;
+  discount_usd: string;
+  residual_label: string;
+  tokens: TokenDiff[];
+  has_reported: boolean;
+  has_billed: boolean;
+  not_comparable: boolean;
+  not_comparable_reason?: string;
+};
+
+export type ReconcileDay = {
+  day: string;
+  secret_key: string;
+  secret_slot: number;
+  api_key_id: string;
+  workspace_id?: string;
+  complete: boolean;
+  data_refreshed_at: string | null;
+  runs_without_result: number;
+  models: ReconcileModel[];
+};
+
+export type Reconciliation = {
+  since: string;
+  data_refreshed_at: string | null;
+  days: ReconcileDay[] | null;
+};
+
+/** One row of /cost/models: agent × model × credential kind, as Claude Code reported it. */
+export type ModelUsageRow = {
+  agent_id: string;
+  agent_slug: string;
+  agent_name: string;
+  model: string;
+  credential_kind: string;
+  runs: number;
+  input_tokens: number;
+  output_tokens: number;
+  thinking_tokens: number;
+  cache_read_tokens: number;
+  cache_write_5m_tokens: number;
+  cache_write_1h_tokens: number;
+  web_search_requests: number;
+  engine_usd: number;
+  list_usd: number | null;
+};
+
+export type ModelUsageReport = {
+  rows: ModelUsageRow[] | null;
+  runs_without_breakdown: number;
+  usd_without_breakdown: number;
 };
 
 /** One row of the price list (spec/17-kpis.md): how often the indicator
