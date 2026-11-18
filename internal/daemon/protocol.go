@@ -119,7 +119,7 @@ type InjectConfig struct {
 	// gitauthor). The daemon puts it on every action's context and into the
 	// run's GIT_* variables; empty = nothing is set and GitHub attributes a
 	// commit to the token's account, as before.
-	GitAuthor gitauthor.Identity `json:"git_author"`
+	GitAuthor gitauthor.Identity `json:"git_author,omitzero"`
 }
 
 // ActionTool is one target system as a callable tool: the name the action proxy

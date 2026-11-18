@@ -80,6 +80,39 @@ func TestAnAuthorAlreadyThereIsKept(t *testing.T) {
 	if _, ok := got["committer"]; ok {
 		t.Error("committer added next to a caller's author")
 	}
+
+	got = post(t, WithIdentity(context.Background(), testID), "POST", "/repos/o/r/git/commits",
+		`{"message":"m","committer":{"name":"y","email":"y@example.com"}}`)
+	if who, _ := got["committer"].(map[string]any); who["name"] != "y" {
+		t.Errorf("committer overwritten: %v", got["committer"])
+	}
+	if _, ok := got["author"]; ok {
+		t.Error("author added next to a caller's committer")
+	}
+}
+
+// A body above maxBody is not buffered to rewrite, and it still arrives whole:
+// the transport promised not to touch it.
+func TestABodyOverTheCapArrivesWhole(t *testing.T) {
+	msg := strings.Repeat("x", 2*maxBody)
+	body := `{"message":"` + msg + `"}`
+	var got []byte
+	var length int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, _ = io.ReadAll(r.Body)
+		length = r.ContentLength
+	}))
+	defer srv.Close()
+	req, _ := http.NewRequestWithContext(WithIdentity(context.Background(), testID), "POST",
+		srv.URL+"/repos/o/r/git/commits", strings.NewReader(body))
+	resp, err := (&http.Client{Transport: Transport(nil)}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if string(got) != body || length != int64(len(body)) {
+		t.Errorf("server got %d bytes (content length %d), want %d", len(got), length, len(body))
+	}
 }
 
 func TestForAgent(t *testing.T) {

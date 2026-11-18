@@ -23,7 +23,6 @@ import (
 	"io"
 	"net/http"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -107,19 +106,26 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		return t.base.RoundTrip(req)
 	}
 	raw, err := io.ReadAll(io.LimitReader(req.Body, maxBody+1))
-	req.Body.Close()
 	if err != nil {
+		req.Body.Close()
 		return nil, err
-	}
-	body := raw
-	if len(raw) <= maxBody {
-		body = withIdentity(raw, id)
 	}
 	// RoundTrip must not modify the request it is given.
 	out := req.Clone(req.Context())
+	if len(raw) > maxBody {
+		// Not a commit request: hand on every byte, the prefix read above and
+		// the rest of the body, with the length and GetBody the caller set.
+		out.Body = struct {
+			io.Reader
+			io.Closer
+		}{io.MultiReader(bytes.NewReader(raw), req.Body), req.Body}
+		return t.base.RoundTrip(out)
+	}
+	req.Body.Close()
+	body := withIdentity(raw, id)
 	out.Body = io.NopCloser(bytes.NewReader(body))
+	// The request writer sends ContentLength, not a Content-Length header.
 	out.ContentLength = int64(len(body))
-	out.Header.Set("Content-Length", strconv.Itoa(len(body)))
 	out.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
 	return t.base.RoundTrip(out)
 }

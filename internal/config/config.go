@@ -345,7 +345,8 @@ type Config struct {
 	// this GitHub records the token's account and that account's own address.
 	// A noreply address (<id>+<login>@users.noreply.github.com) keeps the
 	// commit linked to the account without publishing the private one. Empty =
-	// not set, as before.
+	// not set, as before. It is only trimmed, not checked: a mistyped address
+	// makes GitHub refuse every agent commit (422 on author.email).
 	GitAuthorEmail string
 
 	// MarketplaceURL is the plugin catalogue the store offers target systems

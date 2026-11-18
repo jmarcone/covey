@@ -479,8 +479,16 @@ private address stays out of the history.
 COVEY_GIT_AUTHOR_EMAIL="358193092+covey-bot@users.noreply.github.com"
 ```
 
-It applies to commits made after the control plane restarts; existing history
-is not rewritten.
+It applies to commits made after the change takes effect; existing history is
+not rewritten. A commit a workflow step makes runs in the control plane, so it
+carries the address after the control plane restarts. An agent commits from its
+sandbox, where the daemon (`coveyd`) adds the identity: its commits carry it once
+the sandbox runs an image with this change, so rebuild and roll out the sandbox
+image as well.
+
+The address is not checked. A mistyped one makes GitHub refuse every commit an
+agent makes (`422` on `author.email`) until it is corrected, so test it with one
+commit after setting it.
 
 ### Where the money went
 

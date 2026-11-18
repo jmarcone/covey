@@ -1872,6 +1872,26 @@ func (o *Orchestrator) reapIdleWarm(ctx context.Context) {
 	}
 }
 
+// gitIdentity is who the commits of this agent are attributed to: the same
+// identity for a commit made from its sandbox and one a workflow step makes.
+func (o *Orchestrator) gitIdentity(agent agents.Agent) gitauthor.Identity {
+	return gitauthor.ForAgent(agent.Slug, o.GitAuthorEmail)
+}
+
+// injectConfig is the run's configuration as the daemon receives it.
+func (o *Orchestrator) injectConfig(agent agents.Agent, systemPrompt string, maxTurns int, actionTools []daemon.ActionTool) daemon.InjectConfig {
+	return daemon.InjectConfig{
+		SystemPrompt: systemPrompt,
+		Runtime:      agent.Runtime,
+		Model:        agent.Model,
+		Effort:       agent.Effort,
+		AllowedTools: o.RuntimeTools,
+		MaxTurns:     maxTurns,
+		ActionTools:  actionTools,
+		GitAuthor:    o.gitIdentity(agent),
+	}
+}
+
 func (o *Orchestrator) sendMsg(ctx context.Context, link DaemonLink, msgType string, payload any) error {
 	msg, err := daemon.Encode(msgType, payload)
 	if err != nil {
@@ -2548,16 +2568,7 @@ func (o *Orchestrator) processTask(ctx context.Context, agent agents.Agent, link
 	if maxTurns <= 0 {
 		maxTurns = agents.DefaultMaxTurns
 	}
-	if err := o.sendMsg(ctx, link, daemon.TypeInjectConfig, daemon.InjectConfig{
-		SystemPrompt: compiled,
-		Runtime:      agent.Runtime,
-		Model:        agent.Model,
-		Effort:       agent.Effort,
-		AllowedTools: o.RuntimeTools,
-		MaxTurns:     maxTurns,
-		ActionTools:  actionTools,
-		GitAuthor:    gitauthor.ForAgent(agent.Slug, o.GitAuthorEmail),
-	}); err != nil {
+	if err := o.sendMsg(ctx, link, daemon.TypeInjectConfig, o.injectConfig(agent, compiled, maxTurns, actionTools)); err != nil {
 		return err
 	}
 

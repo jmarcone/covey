@@ -626,7 +626,7 @@ func (c *Client) runTask(ctx context.Context, task AssignTask) {
 	c.mu.Unlock()
 	defer cancel()
 
-	proxy, err := c.startActionProxy(runCtx, task.TaskID, cfg.ActionTools)
+	proxy, err := c.startActionProxy(runCtx, task.TaskID, cfg.ActionTools, cfg.GitAuthor)
 	if err != nil {
 		_ = c.send(TypeTaskDone, TaskDone{TaskID: task.TaskID, Status: "failed", Error: err.Error()})
 		return
