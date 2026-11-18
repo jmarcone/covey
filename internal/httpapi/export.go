@@ -941,8 +941,10 @@ func (s *Server) handleImportAgent(w http.ResponseWriter, r *http.Request) {
 // A column whose name means a default column the board has keyed is not
 // created: it is a look-alike an agent made via set_stage ("Done" beside
 // "Erledigt"), as migration 0148 merged them, and since a bundle carries no
-// tasks there is nothing to move. A name the board already has is not created
-// twice either. Each skipped column is named in a warning.
+// tasks there is nothing to move. A column whose name means a default column
+// the board has not keyed becomes that column, as on CreateStage, so a second
+// one of that meaning is such a look-alike too. A name the board already has
+// is not created twice either. Each skipped column is named in a warning.
 func planImportBoard(stages []bundleStage) ([]bundleStage, []string) {
 	explicit := false
 	for _, st := range stages {
@@ -980,9 +982,18 @@ func planImportBoard(stages []bundleStage) ([]bundleStage, []string) {
 			name = backlog.LegacyStageName(k)
 		}
 		if k == "" {
-			if lk, ok := backlog.StageKeyFor(name); ok && keyed[lk] {
+			lk, ok := backlog.StageKeyFor(name)
+			if ok && keyed[lk] {
 				warnings = append(warnings, "board column "+name+" means a default column the board has already — not created")
 				continue
+			}
+			// A name of a default column the board has no column for makes
+			// that column, as CreateStage would. Keyed here, a second one of
+			// the same meaning ("Done", then "done") is skipped above rather
+			// than refused by CreateStage after the agent is written.
+			if ok {
+				k = lk
+				keyed[lk] = true
 			}
 		}
 		if name == "" {

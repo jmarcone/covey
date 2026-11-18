@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -378,14 +379,28 @@ func TestStageKeyMigration(t *testing.T) {
 	}
 	a, b, c, f, g := ag["a"], ag["b"], ag["c"], ag["f"], ag["g"]
 
-	if err := db.MigrateDown(ctx, s.pool, migrations.FS); err != nil {
-		t.Fatal(err)
+	// belowStageKeys rolls back through 0148 and whatever came after it, and
+	// no further: whatever main has below it stays.
+	version := func() int {
+		t.Helper()
+		var v int
+		if err := s.pool.QueryRow(ctx, "SELECT MAX(version) FROM schema_migrations").Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		return v
 	}
-	// The rollback took exactly stage keys: whatever main has below it stays.
-	var top int
-	if err := s.pool.QueryRow(ctx, "SELECT MAX(version) FROM schema_migrations").Scan(&top); err != nil || top >= 148 {
-		t.Fatalf("expected to stand below 0148 after the rollback, at %d (%v)", top, err)
+	belowStageKeys := func() {
+		t.Helper()
+		for version() >= 148 {
+			if err := db.MigrateDown(ctx, s.pool, migrations.FS); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if v := version(); v != 147 {
+			t.Fatalf("expected to stand right below 0148 after the rollback, at %d", v)
+		}
 	}
+	belowStageKeys()
 
 	// The boards as 0004/SeedDefaultStages and set_stage left them.
 	stage := func(agentID uuid.UUID, name string, pos int, color, by string) uuid.UUID {
@@ -451,7 +466,7 @@ func TestStageKeyMigration(t *testing.T) {
 	exec(`UPDATE agent_stages s SET created_at = a.created_at + interval '3 days'
 		FROM agents a WHERE a.id = s.agent_id AND s.id = $1`, gDone)
 
-	if n, err := db.MigrateUp(ctx, s.pool, migrations.FS); err != nil || n != 1 {
+	if n, err := db.MigrateUp(ctx, s.pool, migrations.FS); err != nil || n < 1 || version() < 148 {
 		t.Fatalf("migrate up: %d applied, %v", n, err)
 	}
 
@@ -601,6 +616,18 @@ func TestStageKeyMigration(t *testing.T) {
 			t.Errorf("set_stage %q on B landed in %s (%v), want %s", name, st.ID, err, want)
 		}
 	}
+	// B's "Done" stays a column of its own, so a human can recolour and move
+	// it under its name. A rename to another spelling of done is still a
+	// second done column. The colour and position go back for the rollback.
+	if st, err := s.backlog.UpdateStage(ctx, bDoneHuman, "Done", "var(--text-accent)", 5); err != nil || st.Color != "var(--text-accent)" || st.Position != 5 || st.Key != nil {
+		t.Errorf("recolouring B's Done: %+v, %v", st, err)
+	}
+	if _, err := s.backlog.UpdateStage(ctx, bDoneHuman, "done", "var(--text-accent)", 5); !errors.Is(err, backlog.ErrStageNameTaken) {
+		t.Errorf("B's Done renamed to done: %v, want ErrStageNameTaken", err)
+	}
+	if _, err := s.backlog.UpdateStage(ctx, bDoneHuman, "Done", "var(--text-warning)", 3); err != nil {
+		t.Fatal(err)
+	}
 
 	// After the migration: a task leaves a merged column's target for
 	// Research, and a board is seeded new (created_by 'seed').
@@ -613,9 +640,7 @@ func TestStageKeyMigration(t *testing.T) {
 
 	// Rollback: the look-alikes come back as they were, with the tasks still
 	// in the column they were merged into; created_by is what it was.
-	if err := db.MigrateDown(ctx, s.pool, migrations.FS); err != nil {
-		t.Fatal(err)
-	}
+	belowStageKeys()
 	for id, want := range map[uuid.UUID][4]string{
 		aDoneAgent: {"Done", "4", "var(--text-warning)", "agent"},
 		aWorkAgent: {"in progress", "5", "", "agent"},
@@ -757,6 +782,25 @@ func TestImportOfABundleWithoutKeys(t *testing.T) {
 	}
 }
 
+// A bundle without keys and without "Erledigt" can still carry two columns of
+// the done meaning ("Done", "done", "Hecho"). The first becomes the done
+// column, as CreateStage makes it; the others are look-alikes of it and are not
+// created. Before, the planner let each through, and the second CreateStage
+// answered 409 after the agent was written, leaving a half-imported draft.
+func TestImportOfTwoUnkeyedColumnsOfOneMeaning(t *testing.T) {
+	s := newStack(t)
+	board, warnings := importBoard(t, s, "eine-bedeutung", []map[string]string{
+		{"name": "Backlog"}, {"name": "Done"}, {"name": "done"}, {"name": "Hecho"}, {"name": "Research"},
+	})
+	want := []string{"Backlog:open", "Done:done", "Research:"}
+	if got := boardOf(board); strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("imported board %v, want %v", got, want)
+	}
+	if !strings.Contains(warnings, `done means`) || !strings.Contains(warnings, "Hecho") {
+		t.Errorf("the skipped columns must be named in a warning: %s", warnings)
+	}
+}
+
 // oldCodeBoard lays out an agent's board the way the code before 0148 seeds
 // it — CreateStage's INSERT verbatim, without a key, recorded as 'human'. An
 // instance of that code may share the database during a rolling start, after
@@ -890,6 +934,14 @@ func TestADeletedDefaultColumnComesBack(t *testing.T) {
 			map[string]string{"name": "Research"}, http.StatusCreated)
 		if research["key"] != nil {
 			t.Fatalf("Research means no default column: %v", research)
+		}
+		// A keyed column keeps its key on a rename, so the open column
+		// renamed to "Done" would read done and still be filled as open.
+		open := stageByKey(t, s, agent.ID, backlog.StageKeyOpen)
+		admin.expect(http.MethodPatch, "/api/v1/stages/"+open.ID.String(),
+			map[string]any{"name": "Done", "position": open.Position}, http.StatusConflict)
+		if st := stageByKey(t, s, agent.ID, backlog.StageKeyOpen); st.Name != open.Name {
+			t.Fatalf("the refused rename changed the open column: %+v", st)
 		}
 		got := admin.expect(http.MethodPatch, "/api/v1/stages/"+research["id"].(string),
 			map[string]any{"name": "Done", "position": 2}, http.StatusOK)

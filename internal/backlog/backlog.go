@@ -1262,7 +1262,9 @@ func (s *Store) SeedDefaultStages(ctx context.Context, agentID uuid.UUID) error 
 // as it is given. An empty name gives a keyed column its old German name back
 // (LegacyStageName): it is no longer renamed and shows the reader's language
 // again. A name that means another default column of the board, or that the
-// board already has, is ErrStageNameTaken. An unkeyed column renamed to a name
+// board already has, is ErrStageNameTaken; so is a keyed column renamed to a
+// name of another default column, also one the board does not have. An
+// unchanged name is not checked. An unkeyed column renamed to a name
 // that means a default column the board does not have becomes that column, as
 // on CreateStage.
 func (s *Store) UpdateStage(ctx context.Context, id uuid.UUID, name, color string, position int) (Stage, error) {
@@ -1276,9 +1278,21 @@ func (s *Store) UpdateStage(ctx context.Context, id uuid.UUID, name, color strin
 		}
 		name = LegacyStageName(*cur.Key)
 	}
-	key, err := s.checkStageName(ctx, cur.AgentID, id, name)
-	if err != nil {
-		return Stage{}, err
+	// The name is checked only when it changes. A colour or a position is no
+	// second column of any meaning, and a column 0148 kept beside the keyed
+	// one of its meaning (a human's "Done" beside "Erledigt") would otherwise
+	// be refused under its own name.
+	var key string
+	if name != cur.Name {
+		if key, err = s.checkStageName(ctx, cur.AgentID, id, name); err != nil {
+			return Stage{}, err
+		}
+		// A keyed column keeps its key (COALESCE below): under a name of
+		// another default column it would read as that one and be filled as
+		// its own, and a later column of that meaning would make two.
+		if key != "" && cur.Key != nil && key != *cur.Key {
+			return Stage{}, ErrStageNameTaken
+		}
 	}
 	var gain *string
 	if key != "" {
