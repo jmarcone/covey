@@ -1,6 +1,6 @@
-# Design: the agents area (Office · List · Board · Detail in one frame)
+# Design: the agents area (Office · List · Board · Detail in one frame) and the rail order
 
-Status: proposal, waiting for product-owner's acceptance. It covers design task 02a7904f (agent detail overflow, agent list, all-agents board) and the wish of 2026-11-18. Code references are to `main` @ 66f38956. Mockups are static HTML with covey's tokens and sample data. The screenshots are in `docs/design/agents-area/`.
+Status: proposal, waiting for product-owner's acceptance. It covers design tasks 353c5a39 (Agents as a main view), 02a7904f (agent detail overflow, agent list, all-agents board) and ab3251b3 (rail order with Agents and Costs), and the wish of 2026-11-18. Revision 2 (2026-11-18): Costs gets its own rail place (§1, §4), which backlog item 666b6666 “costs as main section” needs. Code references are to `main` @ 66f38956. Mockups are static HTML with covey's tokens and sample data. The screenshots are in `docs/design/agents-area/`.
 
 > Wish (2026-11-18): “The two agent views are not consistent: the site moves around, and on the left a new bar appears. Agents should not be part of settings but a main view, with their own link.”
 
@@ -21,12 +21,19 @@ Status: proposal, waiting for product-owner's acceptance. It covers design task 
 | 2 | `chat` “Team” (`team.workspace`) | **`bell` “Inbox”** (`nav.inbox`), new in the rail | `/team` · `/inbox` | `/team/*` except notes · `/inbox` | unread · open decisions |
 | 3 | `flow` “Workflows” | same | `/workflows` | `/workflows/*` | — |
 | 4 | `note` “Notes” | same | `/team/notes` · `/notes` | notes | — |
-| 5 | `sliders` “Admin” (`team.verwaltung`) | same | **`/org`**, the first item in the Admin column, visible to every role | every page in the Admin column | — |
+| 5 | **`chart` “Costs”** (`nav.costs`), new in the rail | same | `/costs` | `/costs`, `/costs/*` | — |
+| 6 | `sliders` “Admin” (`team.verwaltung`) | same | **`/org`**, the first item in the Admin column, visible to every role | every page in the Admin column | — |
 | foot | search (⌘K), person menu | same | | | |
 
 The **Office** rail entry goes away: Office is now a view of Agents. The tour step `buero` points to `data-tour="agents"`, and its text (`tour.buero.*`) gets rewritten for the area.
 - **The label is “Agents”** (`nav.agents`), because those are the human's own words. “Team” is taken by the conversations, and “Workforce” would be a new word.
 - **The icon is `robot`.** It is what Agents uses in the Admin column today, and it is free once Agents leaves that column.
+
+**Order.** The four places for the work come first, in the order they are used in a day: Agents, Team, Workflows, Notes. The two places for oversight come last: Costs, then Admin. Costs sits next to Admin because both are about controlling, not the daily work. It sits above Admin because it is read every week and Admin is set up once.
+- **Costs, `chart` icon, `nav.costs`.** The icon and the label are the ones the Admin column uses today, and both are free once Costs leaves the column. There is no role gate, as today (`AppShell.tsx:337`). Every member sees the rail entry.
+- **Costs has no badge.** A count of agents paused at their cap would be the natural badge, but `enforceBudget` publishes no `agent_status`, so the count would go stale on the rail. Paused agents already show as “Budget used up” in the List, and the budget mail links to `/costs` (`notify.go:126`).
+- **Costs is a place of its own, like Workflows.** AppShell hides the Admin column on `/costs` the way it does for `inWorkflows` (`AppShell.tsx:297`). The page is 240 px wider, and its title starts at x = 90, like the agents area. It has no area bar or view switch, because it is one page, not several views. The address does not change, so no redirect is needed.
+- **Fit.** At 390 × 844 the six places end at y ≈ 335 and search starts at y ≈ 810 (`agents-area/1-office-light-390.png`). That leaves about 470 px, enough for the Setup shortcut (42 px plus a 4 px gap) and the foot, with no scrolling.
 
 **Number:** the Agents badge is `inbox({status:"open"}).pending`, the same query and formula as today (`Rail.tsx:46-52`). The office's “Waiting for you” block lists these decisions, so the number sits on the entry that leads there.
 
@@ -85,6 +92,7 @@ The **Office** rail entry goes away: Office is now a view of Agents. The tour st
 | Board | ![](agents-area/3-board-light-1440.png) | ![](agents-area/3-board-light-390.png) |
 | Detail | ![](agents-area/4-detail-light-1440.png) ![](agents-area/4-detail-dark-1440.png) | ![](agents-area/4-detail-light-768.png) ![](agents-area/4-detail-light-390.png) |
 | Without team surface | ![](agents-area/6-list-no-team-surface-light-1440.png) | |
+| Costs (§1, its own place) | ![](agents-area/7-costs-light-1440.png) ![](agents-area/7-costs-dark-1440.png) | |
 
 ### Detail: a view of its own, not a panel
 The detail has seven tabs and a five-column backlog, so it needs the full width; squeezing it is what overflowed in 02a7904f.
@@ -110,13 +118,13 @@ The detail has seven tabs and a five-column backlog, so it needs the full width;
 | Setup (while open) | **rail shortcut only** (`Rail.tsx:93`); leaves the column | Both copies show at the same time and point to the same page. The rail copy is visible from every place. |
 | Agents | **rail “Agents”** | It is daily work, not a setting (the wish). |
 | Inbox (team surface off) | **rail “Inbox”**, in the slot “Team” takes when the team surface is on | Decisions are the human's daily to-do. With the team surface on, `/inbox` still redirects to `/team`. |
-| Org Chart | **stays in Admin**, first group | It is where departments, reporting lines and the org description are built, which is setup work. A fourth segment would not fit the switch at 390 px. The List already groups by department. |
-| Costs | **stays in Admin**, first group | It is about money and its sources (reported/measured/real), invoices and budget rails: controlling, not daily agent work. Per-agent spend already shows in List, Board and Detail. It also keeps “measured” blue away from the area's waiting blue. |
+| Org Chart | **stays in Admin**, first item | It is where departments, reporting lines and the org description are built, which is setup work. A fourth segment would not fit the switch at 390 px. The List already groups by department. |
+| Costs | **rail “Costs”**, its own place (§1); leaves the column | Revision 2 (ab3251b3, 666b6666): costs are read every week by whoever runs the workforce, not set up once. As a place of its own the page also gets 240 px more width. It stays outside the agents frame, which keeps “measured” blue away from the area's waiting blue. |
 | Tools: Connected systems, Credentials, Skills, Voices, Templates | unchanged | |
 | Security: Rules, Internet access, Activity log (org_admin/security/auditor), Traffic (org_admin/security) | unchanged, gates unchanged | |
 | Organization: Members, Settings (org_admin), Infrastructure, Platform (system admin) | unchanged, gates unchanged | |
 
-The column becomes: *Org Chart, Costs* · TOOLS (5) · SECURITY (4) · ORGANIZATION (4). The rail's Admin entry lands on `/org`. Mockup: `agents-area/5-admin-light-1440.png`.
+The column becomes: *Org Chart* · TOOLS (5) · SECURITY (4) · ORGANIZATION (4). The rail's Admin entry lands on `/org`. Mockups: `agents-area/5-admin-light-1440.png` and, for Costs, `agents-area/7-costs-light-1440.png` and `7-costs-dark-1440.png`.
 
 ## 5. Paths between views
 | From → to | How |
@@ -130,7 +138,7 @@ The column becomes: *Org Chart, Costs* · TOOLS (5) · SECURITY (4) · ORGANIZAT
 | Detail → Conversation | The new “Open conversation” button in the head (`team.gespraech`), team surface only. |
 
 ## 6. Strings
-**Reused:** `nav.agents`, `nav.inbox`, `team.verwaltung`, `team.ueberblick` (Office segment), `dashboard.title`, `team.wartetTitel`, `conversation.profile`, `team.gespraech`.
+**Reused:** `nav.agents`, `nav.inbox`, `nav.costs`, `team.verwaltung`, `team.ueberblick` (Office segment), `dashboard.title`, `team.wartetTitel`, `conversation.profile`, `team.gespraech`.
 
 **New, in all ten locales:**
 - `agents.views` “Agent views”
@@ -143,26 +151,27 @@ The column becomes: *Org Chart, Costs* · TOOLS (5) · SECURITY (4) · ORGANIZAT
 `mobile.ansichtListe` and `mobile.ansichtBoard` say the same words, but they label the mobile app's own toggle. One key belongs to one place.
 
 ## 7. Acceptance criteria
-1. **Rail.** In both modes the rail reads: mark, (Setup), Agents, Team or Inbox, Workflows, Notes, Admin. There is no Office entry. Admin opens `/org`. The badges are as in §1.
-2. **Frame.** At 1440, 768 and 390 px, the switch's left edge, the bar's height (52 px) and the h1's top-left corner are identical on Office, List, Board and Detail.
-3. **No sideways movement.** No view has a second sidebar. `scrollWidth == clientWidth` on every view, and the content's left edge does not change between views.
-4. **Back from the detail.** Open a detail from the Office card, from a List filtered to `?status=working`, and from a Board card. Back returns to that view with its filters. A bookmarked `/agents/<id>` marks List.
-5. **Conversation.** `/team/<id>` ↔ detail works in both directions, and no Admin column appears.
-6. **Admin column.** For each role it holds exactly the items in §4.
-7. **Without the team surface.** `/` → `/agents`, the switch shows `List | Board`, and the rail shows Inbox with a count.
-8. **Detail at 1440 px:** all five backlog columns are visible. **At 390 px:** the tabs scroll on one line, the stats are 2 × 2, and the backlog stacks by stage.
-9. **Accessibility.** Light and dark are both checked. The switch can be reached with Tab, each segment is a link, the current one has `aria-current`, and focus shows `--accent-ring`.
-10. **Strings.** The new keys exist in all ten locales, and `locales/parity.test.ts` is green.
+1. **Rail.** In both modes and for every role, the rail reads: mark, (Setup), Agents, Team or Inbox, Workflows, Notes, Costs, Admin. There is no Office entry. Admin opens `/org`. The badges are as in §1, and Costs has none. At 390 × 844, with Setup open, the rail fits without scrolling.
+2. **Costs.** `/costs` shows no Admin column, the rail marks Costs, and the title starts at x = 90. The link in a budget mail opens the same page.
+3. **Frame.** At 1440, 768 and 390 px, the switch's left edge, the bar's height (52 px) and the h1's top-left corner are identical on Office, List, Board and Detail.
+4. **No sideways movement.** No view has a second sidebar. `scrollWidth == clientWidth` on every view, and the content's left edge does not change between views.
+5. **Back from the detail.** Open a detail from the Office card, from a List filtered to `?status=working`, and from a Board card. Back returns to that view with its filters. A bookmarked `/agents/<id>` marks List.
+6. **Conversation.** `/team/<id>` ↔ detail works in both directions, and no Admin column appears.
+7. **Admin column.** For each role it holds exactly the items in §4.
+8. **Without the team surface.** `/` → `/agents`, the switch shows `List | Board`, and the rail shows Inbox with a count.
+9. **Detail at 1440 px:** all five backlog columns are visible. **At 390 px:** the tabs scroll on one line, the stats are 2 × 2, and the backlog stacks by stage.
+10. **Accessibility.** Light and dark are both checked. The switch can be reached with Tab, each segment is a link, the current one has `aria-current`, and focus shows `--accent-ring`.
+11. **Strings.** The new keys exist in all ten locales, and `locales/parity.test.ts` is green.
 
 ## 8. Implementation cut (for covey-lead)
 | PR | Content | Depends on |
 |---|---|---|
-| 1 | Rail entry + routes: `RailPlace` `agents`/`inbox`; Agents and Inbox entries; Admin → `/org`; `imTeam` without `/`; AppShell renders `/` (Office) with the column hidden for Agents and Inbox; tour target. Vitest for the path → rail place mapping. | — |
+| 1 | Rail entry + routes: `RailPlace` `agents`/`inbox`/`costs`; Agents, Inbox and Costs entries in the §1 order; `inCosts` hides the Admin column on `/costs`; Admin → `/org`; `imTeam` without `/`; AppShell renders `/` (Office) with the column hidden for Agents and Inbox; tour target. Vitest for the path → rail place mapping. | — |
 | 2 | Shared frame: `AgentsFrame`, `ViewSwitch`, `scrollbar-gutter`, Office padding and h1, origin state, crumb, office card links, “Open conversation” on the detail, strings. | 1 |
-| 3 | Admin column cleanup (§4). | 1 |
+| 3 | Admin column cleanup (§4): Agents, Inbox, Setup and Costs leave it. | 1 |
 | 4 | Board view at `/agents/board`, plus the API from board proposal §8 (4a backend, 4b view). | 2 (view), — (API) |
 | 5 | Detail overflow D1–D3 (CSS + `Agent.tsx` tabs). | — (check again after 2) |
-| 6 | Costs page overflow (D4). | — |
+| 6 | Costs page overflow (D4). Its own place gives 240 px, but the chip row needs 3108 px, so the overflow fix is still needed. | — |
 | 7 | Agent list redesign (proposal c81907df) inside the frame. | 2 |
 
 ## 9. Open points for product-owner (defaults apply)
