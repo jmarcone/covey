@@ -243,3 +243,40 @@ func TestTheTwoCooldownsAreDeliberatelyDifferent(t *testing.T) {
 		t.Error("a cooldown of zero parks nothing")
 	}
 }
+
+// A stale answer is filed with the age the engine states. One that states
+// none has no moment its figures belong to: filed with the time it arrived it
+// would read as current, so it is kept as a stale answer without figures.
+func TestUsageReadingOfStaleAnswer(t *testing.T) {
+	cred := observability.CredentialRef{RuntimeID: uuid.New(), SecretKey: "seat", Kind: "subscription"}
+	resets := time.Date(2026, 11, 20, 16, 0, 0, 0, time.UTC)
+	loaded := time.Now().Add(-40 * time.Minute)
+	answer := func(stale bool, fetched time.Time) daemon.UsageReport {
+		return daemon.UsageReport{Supported: true, Usage: daemon.Usage{WindowPercent: 4, WeekPercent: 13,
+			WeekResets: "Nov 20, 5pm (Europe/Berlin)", WeekResetsAt: &resets, Stale: stale, Fetched: fetched}}
+	}
+
+	ageless := usageReadingOf(answer(true, time.Time{}), cred)
+	if !ageless.Supported || !ageless.Stale || ageless.Reason != daemon.UsageStale {
+		t.Errorf("a stale answer without an age is not kept as stale: %+v", ageless)
+	}
+	if ageless.WeekPercent >= 0 || ageless.WindowPercent >= 0 || !ageless.ResetsAt.IsZero() || ageless.WeekResets != "" {
+		t.Errorf("a stale answer without an age was filed with its figures (as read now): %+v", ageless)
+	}
+
+	aged := usageReadingOf(answer(true, loaded), cred)
+	if aged.WeekPercent != 13 || aged.WindowPercent != 4 || !aged.FetchedAt.Equal(loaded) || !aged.Stale ||
+		aged.Reason != daemon.UsageStale || !aged.ResetsAt.Equal(resets) {
+		t.Errorf("a stale answer with its age: %+v — want its figures at the time the engine loaded them", aged)
+	}
+
+	fresh := usageReadingOf(answer(false, loaded), cred)
+	if fresh.WeekPercent != 13 || fresh.Stale || fresh.Reason != "" || !fresh.FetchedAt.Equal(loaded) {
+		t.Errorf("a fresh answer: %+v", fresh)
+	}
+
+	none := usageReadingOf(daemon.UsageReport{Reason: daemon.UsageExecFailed, Usage: daemon.Usage{WeekPercent: -1, WindowPercent: -1}}, cred)
+	if none.Supported || none.Stale || !none.FetchedAt.IsZero() || none.WeekPercent >= 0 {
+		t.Errorf("an answer without a figure: %+v", none)
+	}
+}

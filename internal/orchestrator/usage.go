@@ -197,25 +197,39 @@ func (o *Orchestrator) keepUsageReading(ctx context.Context, orgID uuid.UUID, re
 	if o.Obs == nil || cred.RuntimeID == uuid.Nil || cred.Ord < 0 {
 		return
 	}
+	if err := o.Obs.AddUsageReading(ctx, orgID, usageReadingOf(rep, cred)); err != nil {
+		o.Log.Warn("usage reading not kept", "runtime", cred.RuntimeID, "ord", cred.Ord, "err", err)
+	}
+}
+
+// usageReadingOf is the row an answer is filed as.
+//
+// A stale figure whose age the engine did not state has no time it was read
+// that anyone could vouch for: filed with the time it arrived (the store's
+// default for a zero FetchedAt) it would read as current, up to an hour off.
+// Such an answer is kept as what it is — a stale answer, reason stale — but
+// without its figures, which belong to a moment nobody knows.
+func usageReadingOf(rep daemon.UsageReport, cred observability.CredentialRef) observability.MeterReading {
 	u := rep.Usage
 	r := observability.MeterReading{Credential: cred, Source: observability.SourceUsageCmd,
 		WindowKind: observability.WindowSevenDay, Supported: rep.Supported, Reason: rep.Reason,
 		WindowPercent: -1, WeekPercent: -1, Stale: u.Stale, FetchedAt: u.Fetched}
-	if rep.Supported {
-		r.WindowPercent, r.WeekPercent = u.WindowPercent, u.WeekPercent
-		r.WindowResets, r.WeekResets = u.WindowResets, u.WeekResets
-		if u.WeekResetsAt != nil {
-			r.ResetsAt = *u.WeekResetsAt
-		}
-		if u.Stale && r.Reason == "" {
-			r.Reason = daemon.UsageStale
-		}
-	} else {
+	if !rep.Supported {
 		r.Stale, r.FetchedAt = false, time.Time{}
+		return r
 	}
-	if err := o.Obs.AddUsageReading(ctx, orgID, r); err != nil {
-		o.Log.Warn("usage reading not kept", "runtime", cred.RuntimeID, "ord", cred.Ord, "err", err)
+	if u.Stale && r.Reason == "" {
+		r.Reason = daemon.UsageStale
 	}
+	if u.Stale && u.Fetched.IsZero() {
+		return r
+	}
+	r.WindowPercent, r.WeekPercent = u.WindowPercent, u.WeekPercent
+	r.WindowResets, r.WeekResets = u.WindowResets, u.WeekResets
+	if u.WeekResetsAt != nil {
+		r.ResetsAt = *u.WeekResetsAt
+	}
+	return r
 }
 
 // reportedUtilisation is the capacity layer's view of what the provider said —
