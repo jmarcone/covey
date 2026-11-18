@@ -590,7 +590,8 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
   const typeList = byType ? COST_TYPES.filter((k) => types.has(k)) : COST_TYPES;
   // Real bars only where every point has a plan price: a bar of the priced
   // part alone would read as the whole. At an hour a bar is the whole points
-  // the meter crossed in it, as the server priced them: 0 without a crossing.
+  // read in it since the previous reading (readings come when an agent
+  // wakes), as the server priced them: 0 without a reading.
   const showReal = src.real && !filtered && f.kind !== "api_key" && f.meter != null && f.real?.priced === true;
   const vs = view === "vs" && layout === "combined" && showReal;
   const showBilled = src.billed && !filtered && f.kind === "api_key";

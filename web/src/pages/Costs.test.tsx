@@ -416,12 +416,16 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
       expect(total).toBe("2,31 $");
       expect(within(tile).getByText("≈ 2,31 $")).toBeInTheDocument();
       const note = container.querySelector("[data-hour-note]")!.textContent!;
-      expect(note).toMatch(/0,46 \$ je Punkt/);
-      expect(note).toMatch(/Stunden ohne Überschreitung zeigen 0/);
+      expect(note).toMatch(/ein Punkt 0,46 \$ wert/);
+      // a bar is what was read in the hour, since the previous reading — not what was worked in it
+      expect(note).toMatch(/die in dieser Stunde seit der vorigen Ablesung abgelesen wurden/);
+      expect(note).toMatch(/Arbeit aus früheren Stunden kann später erscheinen/);
+      expect(note).toMatch(/Stunden ohne Ablesung zeigen 0/);
+      expect(note).not.toMatch(/Überschreitung/);
       expect(note).not.toMatch(/nicht in Dollar/);
     });
 
-    it("zeigt für eine Stunde ohne Überschreitung 0 und keinen Balken", async () => {
+    it("zeigt für eine Stunde ohne Ablesung 0 und keinen Balken", async () => {
       const { container } = render([2, 0]);
       await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
       expect(container.querySelectorAll("g[data-period] rect[fill^='url(']").length).toBe(1);
@@ -537,8 +541,9 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
       await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
       const note = container.querySelector("[data-hour-note]")!.textContent!;
       expect(note).not.toMatch(/\d,\d\d \$/);
-      expect(note).toMatch(/Preis je Punkt des Tarifs, der bei der jeweiligen Messung galt/);
-      expect(note).toMatch(/Stunden ohne Überschreitung zeigen 0/);
+      expect(note).toMatch(/Preis je Punkt des Tarifs wert, der bei der jeweiligen Ablesung galt/);
+      expect(note).toMatch(/seit der vorigen Ablesung abgelesen wurden/);
+      expect(note).toMatch(/Stunden ohne Ablesung zeigen 0/);
       await click("Als Tabelle zeigen");
       expect(realCol(container).rows).toEqual(["0,92 $", "1,85 $"]);
     });
@@ -546,7 +551,7 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     it("nennt den Preis je Punkt, wenn alle bepreisten Schritte ihn teilen", async () => {
       const { container } = render([2, 3]);
       await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
-      expect(container.querySelector("[data-hour-note]")!.textContent).toMatch(/0,46 \$ je Punkt/);
+      expect(container.querySelector("[data-hour-note]")!.textContent).toMatch(/ein Punkt 0,46 \$ wert/);
     });
 
     // Review 4: the chip stays pressed where the comparison does not apply; the page says why.
