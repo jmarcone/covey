@@ -192,6 +192,9 @@
       "agents": "Agenten",
       "all": "Alle",
       "toggleHint": "Klick: hinzu/weg · Doppelklick: nur dieser",
+      "noDepartment": "Keine Abteilung",
+      "more": "+{{n}} weitere",
+      "fewer": "Weniger anzeigen",
       "split": "Aufteilen nach",
       "split_type": "Kostenart",
       "split_none": "Keine",
@@ -205,10 +208,7 @@
       "layout_combined": "Zusammen",
       "layout_agents": "Je Agent",
       "billedHint": "Von Anthropic berechnet: was die Usage-and-Cost-API für den API-Schlüssel hinter den Zugangsdaten meldet, nach Rabatten und vor Gutschriften. Sie kommt 4–24 h verspätet; die Markierung sagt, bis wann sie vollständig ist.",
-      "sourceHints": "Was die vier Zahlen bedeuten",
-      "noDepartment": "Keine Abteilung",
-      "more": "+{{n}} weitere",
-      "fewer": "Weniger anzeigen"
+      "sourceHints": "Was die vier Zahlen bedeuten"
     },
     "stack": {
       "cache_read": "Cache gelesen",

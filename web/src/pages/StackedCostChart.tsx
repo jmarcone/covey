@@ -274,11 +274,12 @@ export function AgentFilter({ agents, selected, onChange }: {
             : g.agents.filter((a, i) => i < DEPT_CHIPS || selected.has(a.id) || pinned.has(a.id));
           const hidden = g.agents.length - shown.length;
           // One disclosure button, kept mounted across Enter so the focus
-          // stays on it: folded while chips are hidden, unfolded while
-          // folding would hide any (not after the group shrank to five).
-          const disclosure = expanded
-            ? g.agents.some((a, i) => i >= DEPT_CHIPS && !selected.has(a.id))
-            : hidden > 0;
+          // stays on it: "+N more" while chips are hidden, "Show fewer" while
+          // all show and folding would hide one. That also holds for a folded
+          // group whose pins show every chip; "Show fewer" lets go of them.
+          const showsAll = hidden === 0;
+          const canHide = g.agents.some((a, i) => i >= DEPT_CHIPS && !selected.has(a.id));
+          const disclosure = !showsAll || canHide;
           const rowId = `${chipsId}-${g.key || "none"}`;
           return (
             <div key={g.key} role="group" aria-label={name} data-department={g.key || "none"} style={{ marginBottom: 8 }}>
@@ -299,10 +300,10 @@ export function AgentFilter({ agents, selected, onChange }: {
               <div id={rowId} className="flex flex-wrap items-center gap-2">
                 {shown.map(chip)}
                 {disclosure && (
-                  <button type="button" className="muted text-xs" aria-expanded={expanded} aria-controls={rowId}
-                    onClick={() => fold(g, !expanded)}
+                  <button type="button" className="muted text-xs" aria-expanded={showsAll} aria-controls={rowId}
+                    onClick={() => fold(g, !showsAll)}
                     style={{ border: 0, background: "transparent", cursor: "pointer", padding: "4px 2px" }}>
-                    {expanded ? t("costs.filter.fewer") : t("costs.filter.more", { n: hidden })}
+                    {showsAll ? t("costs.filter.fewer") : t("costs.filter.more", { n: hidden })}
                   </button>
                 )}
               </div>

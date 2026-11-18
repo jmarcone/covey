@@ -196,5 +196,53 @@ describe("AgentFilter by department", () => {
       expect(screen.getAllByRole("button", { name: /^w\d/ })).toHaveLength(5);
       expect(screen.getByRole("button", { name: "+3 weitere" })).toBeInTheDocument();
     });
+
+    // A folded group whose pins show every chip still offers to fold.
+    const foldsBack = async (user: ReturnType<typeof userEvent.setup>) => {
+      const g = screen.getByRole("group", { name: "Big" });
+      expect(within(g).getAllByRole("button", { name: /^w\d/ })).toHaveLength(8);
+      const fewer = within(g).getByRole("button", { name: "Weniger anzeigen" });
+      expect(fewer).toHaveAttribute("aria-expanded", "true");
+      fewer.focus();
+      await user.keyboard("{Enter}");
+      expect(within(g).getAllByRole("button", { name: /^w\d/ })).toHaveLength(5);
+      expect(fewer).toHaveTextContent("+3 weitere");
+      expect(fewer).toHaveAttribute("aria-expanded", "false");
+      expect(document.activeElement).toBe(fewer);
+    };
+
+    it("offers \"Show fewer\" after the heading selected and cleared the folded chips", async () => {
+      const user = userEvent.setup();
+      render(<Harness agents={many} />);
+      await user.click(heading("Big"));
+      await user.click(heading("Big"));
+      expect(picked()).toBe("");
+      await foldsBack(user);
+    });
+
+    it("offers \"Show fewer\" after the folded chips were deselected one by one", async () => {
+      const user = userEvent.setup();
+      render(<Harness agents={many} start={["w5", "w6", "w7"]} />);
+      const g = screen.getByRole("group", { name: "Big" });
+      // Every chip is selected or among the first five: folding hides none.
+      expect(within(g).getAllByRole("button", { name: /^w\d/ })).toHaveLength(8);
+      expect(within(g).queryByRole("button", { name: /weitere|Weniger/ })).toBeNull();
+      await user.click(screen.getByRole("button", { name: /^w5/ }));
+      // w5 is pinned, folding would hide it: the button reads "Show fewer"
+      // although w6 and w7 beyond the fifth are still selected.
+      expect(within(g).getByRole("button", { name: "Weniger anzeigen" })).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: /^w6/ }));
+      await user.click(screen.getByRole("button", { name: /^w7/ }));
+      expect(picked()).toBe("");
+      await foldsBack(user);
+    });
+
+    it("offers \"Show fewer\" after \"Alle\" cleared the folded chips", async () => {
+      const user = userEvent.setup();
+      render(<Harness agents={many} start={["w5", "w6", "w7"]} />);
+      await user.click(screen.getByRole("button", { name: "Alle" }));
+      expect(picked()).toBe("");
+      await foldsBack(user);
+    });
   });
 });

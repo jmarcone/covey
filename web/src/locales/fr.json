@@ -192,6 +192,9 @@
       "agents": "Agents",
       "all": "Tous",
       "toggleHint": "Clic : ajouter ou retirer · double-clic : seulement celui-ci",
+      "noDepartment": "Sans département",
+      "more": "+{{n}} de plus",
+      "fewer": "Afficher moins",
       "split": "Répartir par",
       "split_type": "Type de coût",
       "split_none": "Aucun",
@@ -205,10 +208,7 @@
       "layout_combined": "Ensemble",
       "layout_agents": "Par agent",
       "billedHint": "Facturé par Anthropic : ce que l'API d'usage et de coût indique pour la clé API derrière l'identifiant, après remises et avant crédits. Les données arrivent avec 4 à 24 h de retard ; la marque indique jusqu'où elles sont complètes.",
-      "sourceHints": "Ce que signifient les quatre chiffres",
-      "noDepartment": "Sans département",
-      "more": "+{{n}} de plus",
-      "fewer": "Afficher moins"
+      "sourceHints": "Ce que signifient les quatre chiffres"
     },
     "stack": {
       "cache_read": "Cache lu",

@@ -192,6 +192,9 @@
       "agents": "Agents",
       "all": "Alle",
       "toggleHint": "Klik: toevoegen of weghalen · dubbelklik: alleen deze",
+      "noDepartment": "Geen afdeling",
+      "more": "+{{n}} meer",
+      "fewer": "Minder tonen",
       "split": "Verdelen naar",
       "split_type": "Kostensoort",
       "split_none": "Geen",
@@ -205,10 +208,7 @@
       "layout_combined": "Samen",
       "layout_agents": "Per agent",
       "billedHint": "Gefactureerd door Anthropic: wat de Usage-and-Cost-API meldt voor de API-sleutel achter de referentie, na kortingen en vóór tegoeden. Het komt 4–24 uur later binnen; de markering zegt tot wanneer het volledig is.",
-      "sourceHints": "Wat de vier cijfers betekenen",
-      "noDepartment": "Geen afdeling",
-      "more": "+{{n}} meer",
-      "fewer": "Minder tonen"
+      "sourceHints": "Wat de vier cijfers betekenen"
     },
     "stack": {
       "cache_read": "Cache gelezen",

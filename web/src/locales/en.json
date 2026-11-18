@@ -192,6 +192,9 @@
       "agents": "Agents",
       "all": "All",
       "toggleHint": "Click: add or remove · double-click: only this one",
+      "noDepartment": "No department",
+      "more": "+{{n}} more",
+      "fewer": "Show fewer",
       "split": "Split by",
       "split_type": "Cost type",
       "split_none": "None",
@@ -205,10 +208,7 @@
       "layout_combined": "Combined",
       "layout_agents": "Per agent",
       "billedHint": "Billed by Anthropic: what the Usage and Cost API reports for the API key behind the credential, after discounts and before credits. It lands 4–24 h late; the marker says how far it is complete.",
-      "sourceHints": "What the four figures mean",
-      "noDepartment": "No department",
-      "more": "+{{n}} more",
-      "fewer": "Show fewer"
+      "sourceHints": "What the four figures mean"
     },
     "stack": {
       "cache_read": "Cache read",

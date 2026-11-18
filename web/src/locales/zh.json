@@ -192,6 +192,9 @@
       "agents": "代理",
       "all": "全部",
       "toggleHint": "单击：添加或移除 · 双击：仅此一个",
+      "noDepartment": "无部门",
+      "more": "另外 {{n}} 个",
+      "fewer": "收起",
       "split": "拆分方式",
       "split_type": "成本类型",
       "split_none": "无",
@@ -205,10 +208,7 @@
       "layout_combined": "合并",
       "layout_agents": "按代理",
       "billedHint": "Anthropic 账单金额：Usage and Cost API 对凭据所用 API 密钥报告的金额（折扣后、抵扣前）。数据延迟 4–24 小时到达；标记表明完整到何时。",
-      "sourceHints": "四个数字的含义",
-      "noDepartment": "无部门",
-      "more": "另外 {{n}} 个",
-      "fewer": "收起"
+      "sourceHints": "四个数字的含义"
     },
     "stack": {
       "cache_read": "缓存读取",

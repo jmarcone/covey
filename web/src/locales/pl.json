@@ -192,6 +192,9 @@
       "agents": "Agenci",
       "all": "Wszyscy",
       "toggleHint": "Klik: dodaj lub usuń · dwuklik: tylko ten",
+      "noDepartment": "Bez działu",
+      "more": "+{{n}} więcej",
+      "fewer": "Pokaż mniej",
       "split": "Podział według",
       "split_type": "Rodzaj kosztu",
       "split_none": "Brak",
@@ -205,10 +208,7 @@
       "layout_combined": "Razem",
       "layout_agents": "Według agenta",
       "billedHint": "Zafakturowane przez Anthropic: to, co API użycia i kosztów podaje dla klucza API za poświadczeniem, po rabatach i przed kredytami. Dane spływają z opóźnieniem 4–24 h; znacznik mówi, do kiedy są kompletne.",
-      "sourceHints": "Co znaczą cztery liczby",
-      "noDepartment": "Bez działu",
-      "more": "+{{n}} więcej",
-      "fewer": "Pokaż mniej"
+      "sourceHints": "Co znaczą cztery liczby"
     },
     "stack": {
       "cache_read": "Cache odczyt",

@@ -192,6 +192,9 @@
       "agents": "エージェント",
       "all": "すべて",
       "toggleHint": "クリック: 追加/除外 · ダブルクリック: これだけ",
+      "noDepartment": "部署なし",
+      "more": "他 {{n}} 件",
+      "fewer": "表示を減らす",
       "split": "分割",
       "split_type": "コスト種別",
       "split_none": "なし",
@@ -205,10 +208,7 @@
       "layout_combined": "まとめて",
       "layout_agents": "エージェント別",
       "billedHint": "Anthropic の請求額：認証情報の API キーについて Usage and Cost API が報告する額（割引後、クレジット適用前）。4〜24 時間遅れで届き、マーカーがどこまで確定しているかを示します。",
-      "sourceHints": "4 つの数値の意味",
-      "noDepartment": "部署なし",
-      "more": "他 {{n}} 件",
-      "fewer": "表示を減らす"
+      "sourceHints": "4 つの数値の意味"
     },
     "stack": {
       "cache_read": "キャッシュ読取",
