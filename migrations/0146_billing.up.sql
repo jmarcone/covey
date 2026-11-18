@@ -101,6 +101,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_credential_billing_keys_open
     ON credential_billing_keys (org_id, secret_key, secret_slot) WHERE valid_to IS NULL;
 CREATE INDEX IF NOT EXISTS idx_credential_billing_keys_api_key
     ON credential_billing_keys (org_id, api_key_id);
+-- At most one open mapping per API key: one key mapped to two credentials
+-- would count its bill twice. Overlapping closed intervals are refused where
+-- the mapping is made (SetBillingKey); an index cannot say that.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_credential_billing_keys_api_key_open
+    ON credential_billing_keys (org_id, api_key_id) WHERE valid_to IS NULL;
 
 -- The mapping ends with its value: a new ciphertext in the slot (Put over an
 -- existing value, Replace by a rotation) or the row gone (DeleteValue,

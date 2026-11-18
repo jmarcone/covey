@@ -199,7 +199,9 @@ type BillingKeyMapping struct {
 // entered a week later still covers the week. A correction of the open
 // mapping of the same value replaces it; a new value (the trigger of 0146
 // closed the old mapping) starts a new one. Only an API-key credential is
-// billed per API key; a subscription seat has no api_key_id.
+// billed per API key; a subscription seat has no api_key_id. An API key that
+// another credential is mapped to over any part of the same interval is
+// refused (ErrInvalidBillingKey): its bill would be counted twice.
 func (s *Store) SetBillingKey(ctx context.Context, orgID, runtimeID uuid.UUID, ord int, apiKey, workspaceID string) (BillingKeyMapping, error) {
 	apiKey, workspaceID = strings.TrimSpace(apiKey), strings.TrimSpace(workspaceID)
 	if !apiKeyID.MatchString(apiKey) {
@@ -250,17 +252,47 @@ func (s *Store) SetBillingKey(ctx context.Context, orgID, runtimeID uuid.UUID, o
 		orgID, m.SecretKey, m.SecretSlot, m.ValidFrom); err != nil {
 		return BillingKeyMapping{}, err
 	}
+	// The mapping's interval: from the value's write until the end a mapping
+	// of the same write already has (a correction keeps it), else open.
+	err = tx.QueryRow(ctx, `SELECT valid_to FROM credential_billing_keys
+		WHERE org_id = $1 AND secret_key = $2 AND secret_slot = $3 AND valid_from = $4`,
+		orgID, m.SecretKey, m.SecretSlot, m.ValidFrom).Scan(&m.ValidTo)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return BillingKeyMapping{}, err
+	}
+	// One API key is billed to one credential at a time: a second credential
+	// mapped to the same key over an overlapping interval would count every
+	// billed cent twice. Serialised per key, so two concurrent mappings of one
+	// key to two credentials cannot both pass; the unique index of 0146 holds
+	// the open case in the database too.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('billing-api-key/' || $1::uuid::text || '/' || $2))`,
+		orgID, apiKey); err != nil {
+		return BillingKeyMapping{}, err
+	}
+	var (
+		otherKey  string
+		otherSlot int16
+	)
+	err = tx.QueryRow(ctx, `SELECT secret_key, secret_slot FROM credential_billing_keys
+		WHERE org_id = $1 AND api_key_id = $2 AND NOT (secret_key = $3 AND secret_slot = $4)
+		  AND COALESCE(valid_to, 'infinity'::timestamptz) > $5
+		  AND valid_from < COALESCE($6::timestamptz, 'infinity'::timestamptz)
+		ORDER BY valid_from DESC LIMIT 1`,
+		orgID, apiKey, m.SecretKey, m.SecretSlot, m.ValidFrom, m.ValidTo).Scan(&otherKey, &otherSlot)
+	switch {
+	case err == nil:
+		return BillingKeyMapping{}, ErrInvalidBillingKey{Reason: fmt.Sprintf(
+			"%s is already mapped to the credential %s#%d over the same time; an API key is billed to one credential only",
+			apiKey, otherKey, otherSlot)}
+	case !errors.Is(err, pgx.ErrNoRows):
+		return BillingKeyMapping{}, err
+	}
 	if _, err := tx.Exec(ctx, `INSERT INTO credential_billing_keys (org_id, secret_key, secret_slot, api_key_id,
 			workspace_id, valid_from, source)
 		VALUES ($1,$2,$3,$4,$5,$6,'manual')
 		ON CONFLICT (org_id, secret_key, secret_slot, valid_from) DO UPDATE SET
 			api_key_id = EXCLUDED.api_key_id, workspace_id = EXCLUDED.workspace_id, source = EXCLUDED.source`,
 		orgID, m.SecretKey, m.SecretSlot, apiKey, workspaceID, m.ValidFrom); err != nil {
-		return BillingKeyMapping{}, err
-	}
-	if err := tx.QueryRow(ctx, `SELECT valid_to FROM credential_billing_keys
-		WHERE org_id = $1 AND secret_key = $2 AND secret_slot = $3 AND valid_from = $4`,
-		orgID, m.SecretKey, m.SecretSlot, m.ValidFrom).Scan(&m.ValidTo); err != nil {
 		return BillingKeyMapping{}, err
 	}
 	return m, tx.Commit(ctx)
@@ -584,8 +616,9 @@ type BilledPoint struct {
 	APIKeyID    string    `json:"api_key_id"`
 	WorkspaceID string    `json:"workspace_id"`
 	Model       string    `json:"model"`
-	// SecretKey/SecretSlot: the credential the key is mapped to now, if any;
-	// nil is other use of the organisation's account.
+	// SecretKey/SecretSlot: the credential the key was mapped to during the
+	// bucket (the latest such mapping when one ended inside it); nil is use
+	// of the organisation's account by no covey credential at that time.
 	SecretKey     *string `json:"secret_key"`
 	SecretSlot    *int    `json:"secret_slot"`
 	BilledUSD     string  `json:"billed_usd"`
@@ -625,7 +658,8 @@ func (s *Store) BilledSeries(ctx context.Context, orgID uuid.UUID, bucket string
 		FROM bcost c
 		LEFT JOIN LATERAL (SELECT k.secret_key, k.secret_slot::int AS secret_slot FROM credential_billing_keys k
 			WHERE k.org_id = $1 AND k.api_key_id = c.api_key_id AND (k.workspace_id = '' OR k.workspace_id = c.workspace_id)
-			ORDER BY k.valid_to IS NULL DESC, k.valid_from DESC LIMIT 1) mk ON true
+			  AND k.valid_from < c.bucket_end AND COALESCE(k.valid_to, 'infinity'::timestamptz) > c.bucket_start
+			ORDER BY k.valid_from DESC LIMIT 1) mk ON true
 		GROUP BY 1, 2, 3, 4, 5, 6
 		ORDER BY 1, 2, 4`, orgID, since)
 	if err != nil {

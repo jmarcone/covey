@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +15,7 @@ import (
 
 	"covey/internal/daemon"
 	"covey/internal/observability"
+	"covey/internal/secrets"
 )
 
 // billingFixture is a stack with one mapped API-key credential and a way to
@@ -86,5 +90,93 @@ func TestBillingWindowComparedUntilDataRefreshed(t *testing.T) {
 	}
 	if b := w.Totals[0]; b.BilledUSD != "1.00000000" || math.Abs(b.ReportedUSD-1) > 1e-9 || math.Abs(b.ListUSD-1) > 1e-9 {
 		t.Errorf("totals %+v — want billed 1 beside reported 1 and recomputed 1 (the line after data_refreshed_at left out)", b)
+	}
+}
+
+// One API key is billed to one credential at a time. A second credential
+// mapped to a key another one holds over any part of the same interval is
+// refused — its bill would count twice — whether that mapping is open or was
+// closed by a rotation after the second value was written. A value written
+// after the first mapping ended may take the key.
+func TestBillingKeyMappedToOneCredential(t *testing.T) {
+	f := newBillingFixture(t, "ein-schluessel")
+	admin := login(t, f.s, "admin@test.local", "admin-passwort")
+	rt, err := f.s.runtimes.Create(f.ctx, f.s.orgID, "claude-code", "Claude", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	one := f.s.seat(t, rt.ID, daemon.CredAPIKey, "anthropic_api_key", "sk-ant-api03-billing-one", "Eins")
+	two := f.s.seat(t, rt.ID, daemon.CredAPIKey, "anthropic_api_key", "sk-ant-api03-billing-two", "Zwei")
+	f.exec(t, `UPDATE secrets SET updated_at = $2 WHERE org_id = $1 AND key = 'anthropic_api_key'`,
+		f.s.orgID, time.Now().Add(-5*24*time.Hour))
+	place := func(ord int) string {
+		return fmt.Sprintf("/api/v1/runtime-instances/%s/credentials/%d/billing-key", rt.ID, ord)
+	}
+	refused := func(ord int, key string) {
+		t.Helper()
+		resp := admin.do(http.MethodPatch, place(ord), map[string]string{"api_key_id": key})
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), "already mapped") {
+			t.Errorf("mapping ord %d to %s: HTTP %d %s, want 400 already mapped", ord, key, resp.StatusCode, body)
+		}
+	}
+
+	admin.expect(http.MethodPatch, place(one), map[string]string{"api_key_id": "apikey_dup"}, http.StatusOK)
+	refused(two, "apikey_dup")
+	admin.expect(http.MethodPatch, place(two), map[string]string{"api_key_id": "apikey_own"}, http.StatusOK)
+	// A correction of the same credential's mapping is no conflict.
+	admin.expect(http.MethodPatch, place(one), map[string]string{"api_key_id": "apikey_dup", "workspace_id": "wrkspc_a"}, http.StatusOK)
+
+	// The first value is rotated: its mapping ends now. The second value was
+	// written before that, so it was not the only one with the key.
+	if err := f.s.secrets.Replace(f.ctx, secrets.Ref{OrgID: f.s.orgID, Key: "anthropic_api_key", Slot: 0},
+		"sk-ant-api03-billing-rotated", secrets.Lifetime{}); err != nil {
+		t.Fatal(err)
+	}
+	refused(two, "apikey_dup")
+	// A value written after the old mapping ended may take the key.
+	three := f.s.seat(t, rt.ID, daemon.CredAPIKey, "anthropic_api_key", "sk-ant-api03-billing-three", "Drei")
+	admin.expect(http.MethodPatch, place(three), map[string]string{"api_key_id": "apikey_dup"}, http.StatusOK)
+
+	// The database holds the open case on its own.
+	if _, err := f.s.pool.Exec(f.ctx, `INSERT INTO credential_billing_keys (org_id, secret_key, secret_slot, api_key_id, valid_from)
+		VALUES ($1, 'other_key', 0, 'apikey_dup', now())`, f.s.orgID); err == nil {
+		t.Error("a second open mapping of apikey_dup was stored")
+	}
+}
+
+// A bill bucket belongs to the credential the API key was mapped to during
+// that bucket, not to whichever mapping is open now: before a key changed
+// hands it is the old credential's, between two mappings nobody's.
+func TestBilledSeriesMappingAtBucketTime(t *testing.T) {
+	f := newBillingFixture(t, "rechnung-zeitpunkt")
+	now := time.Now().UTC()
+	f.exec(t, `INSERT INTO credential_billing_keys (org_id, secret_key, secret_slot, api_key_id, valid_from, valid_to)
+		VALUES ($1, 'key_old', 0, 'apikey_moved', $2, $3), ($1, 'key_new', 0, 'apikey_moved', $4, NULL)`,
+		f.s.orgID, now.Add(-10*24*time.Hour), now.Add(-3*24*time.Hour), now.Add(-2*24*time.Hour))
+	hour := func(at time.Time) time.Time { return at.Truncate(time.Hour) }
+	for _, at := range []time.Time{hour(now.Add(-5 * 24 * time.Hour)), hour(now.Add(-60 * time.Hour)), hour(now.Add(-24 * time.Hour))} {
+		f.exec(t, `INSERT INTO billed_cost (org_id, bucket_width, bucket_start, bucket_end, api_key_id, model, cost_type, token_type,
+			amount_cents, list_amount_cents, data_refreshed_at, fetched_at)
+			VALUES ($1,'1h',$2,$3,'apikey_moved','claude-opus-5-5','tokens','output_tokens',100,100,$4,$4)`,
+			f.s.orgID, at, at.Add(time.Hour), now)
+	}
+	series, err := f.s.obs.BilledSeries(f.ctx, f.s.orgID, "hour", now.Add(-7*24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[time.Time]string{}
+	for _, p := range series.Points {
+		got[p.Bucket.UTC()] = "<none>"
+		if p.SecretKey != nil {
+			got[p.Bucket.UTC()] = *p.SecretKey
+		}
+	}
+	for at, want := range map[time.Time]string{hour(now.Add(-5 * 24 * time.Hour)): "key_old",
+		hour(now.Add(-60 * time.Hour)): "<none>", hour(now.Add(-24 * time.Hour)): "key_new"} {
+		if got[at] != want {
+			t.Errorf("bucket %v billed to %q, want %q", at, got[at], want)
+		}
 	}
 }
