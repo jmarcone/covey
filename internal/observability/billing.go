@@ -337,25 +337,40 @@ func (s *Store) BillingKeyMappings(ctx context.Context, orgID uuid.UUID) ([]Bill
 // widths hold the same money; summing both would count it twice. By default
 // it is the width read most recently (the 1h read of the last 48 h is fresher
 // than the daily re-read, the daily re-read is fresher than an old 1h read),
-// 1d on a tie. hourly takes the 1h rows wherever the day has them and its 1d
-// rows only where it has none: an hourly view, and the tile beside it. The
-// width matters beyond the shape of the chart: a credential mapping is chosen
-// per row (billedMapping), so a 1d row goes whole to the latest holder of its
-// day while 1h rows split at a hand-over — two readers that are to agree on
-// whose a bucket is must take their rows by the same rule. $1 is the
-// organisation, $2 the start (a UTC midnight; an hourly tile's first whole
-// hour, see BilledWindowFor).
+// 1d on a tie. hourly takes a day's 1h rows wherever they are complete, and
+// falls back to the default elsewhere: an hourly view, and the tile beside
+// it. The width matters beyond the shape of the chart: a credential mapping
+// is chosen per row (billedMapping), so a 1d row goes whole to the latest
+// holder of its day while 1h rows split at a hand-over — two readers that
+// are to agree on whose a bucket is must take their rows by the same rule.
+//
+// A day's 1h rows are complete when their data_refreshed_at is past the
+// day's end, or reaches at least the last whole hour its 1d rows know of (a
+// day still running, where the daily re-read can land seconds after the
+// hourly one). They are not when the poller stopped before the day ended and
+// resumed only after the day left the hourly reach: the hours keep what the
+// last hourly read saw, and only the daily re-read has the whole day.
+//
+// The pick looks at the whole UTC day of $2, so a reader starting mid-day
+// decides that day as one starting at its midnight does; the rows it then
+// takes start at $2. $1 is the organisation, $2 the start (a UTC midnight;
+// an hourly tile's first whole hour, see BilledWindowFor).
 func chosenRows(table, pick, alias string, hourly bool) string {
 	order := `fetched DESC, bucket_width = '1d' DESC`
 	if hourly {
-		order = `bucket_width = '1h' DESC`
+		order = `(bucket_width = '1h' AND COALESCE(refreshed >= LEAST(day + interval '24 hours',
+			date_trunc('hour', day_refreshed AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'), false)) DESC, ` + order
 	}
 	return pick + ` AS (
 	SELECT DISTINCT ON (day) day, bucket_width FROM (
-		SELECT date_trunc('day', bucket_start AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS day, bucket_width,
-			max(fetched_at) AS fetched
-		FROM ` + table + ` WHERE org_id = $1 AND bucket_start >= $2
-		GROUP BY 1, 2) x
+		SELECT day, bucket_width, fetched, refreshed,
+			max(refreshed) FILTER (WHERE bucket_width = '1d') OVER (PARTITION BY day) AS day_refreshed
+		FROM (
+			SELECT date_trunc('day', bucket_start AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS day, bucket_width,
+				max(fetched_at) AS fetched, max(data_refreshed_at) AS refreshed
+			FROM ` + table + `
+			WHERE org_id = $1 AND bucket_start >= date_trunc('day', $2::timestamptz AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+			GROUP BY 1, 2) w) x
 	ORDER BY day, ` + order + `),
 ` + alias + ` AS (
 	SELECT t.*, p.day FROM ` + table + ` t
@@ -563,12 +578,13 @@ ORDER BY k.day, k.secret_key, k.secret_slot, f.valid_from, k.api_key_id, k.works
 		return rec, err
 	}
 	defer rows.Close()
-	// One credential can have two mappings on one day (its value was
-	// replaced): they are two entries, each with its own api key.
+	// An entry is one day × credential × API key × workspace, as the query
+	// keys its rows: a credential whose value was replaced by another key on
+	// one day has two entries, a value re-saved on the same key one.
 	type dayKey struct {
-		day         time.Time
-		key, apiKey string
-		slot        int
+		day                    time.Time
+		key, apiKey, workspace string
+		slot                   int
 	}
 	index := map[dayKey]int{}
 	for rows.Next() {
@@ -617,7 +633,7 @@ ORDER BY k.day, k.secret_key, k.secret_slot, f.valid_from, k.api_key_id, k.works
 		default:
 			m.ResidualLabel = "billed_below_list"
 		}
-		k := dayKey{day: d, key: secretKey, apiKey: apiKey, slot: int(slot)}
+		k := dayKey{day: d, key: secretKey, apiKey: apiKey, workspace: workspace, slot: int(slot)}
 		i, ok := index[k]
 		if !ok {
 			rec.Days = append(rec.Days, ReconcileDay{Day: d.Format("2006-01-02"), SecretKey: secretKey,
@@ -638,6 +654,9 @@ ORDER BY k.day, k.secret_key, k.secret_slot, f.valid_from, k.api_key_id, k.works
 
 // BilledPoint is one bucket × API key × model of the bill.
 type BilledPoint struct {
+	// Bucket is the start of the point's hour, day or week. In an hourly
+	// series a day known only as a whole (its 1h rows missing or incomplete,
+	// see chosenRows) is one point at its midnight that covers the whole day.
 	Bucket      time.Time `json:"bucket"`
 	APIKeyID    string    `json:"api_key_id"`
 	WorkspaceID string    `json:"workspace_id"`
@@ -678,8 +697,9 @@ const billedMapping = `LEFT JOIN LATERAL (SELECT k.secret_key, k.secret_slot::in
 
 // BilledSeries sums the billed rows per bucket (hour | day | week, UTC; day
 // by default), API key and model, one width per day (chosenRows): hours from
-// the 1h rows wherever a day has them — a day known only as a whole is one
-// point at its midnight — days and weeks from the width read most recently.
+// the 1h rows wherever a day has them complete — a day known only as a whole
+// is one point at its midnight — days and weeks from the width read most
+// recently.
 // BilledWindowFor with the same bucket reads the same rows.
 func (s *Store) BilledSeries(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time) (BilledSeries, error) {
 	out := BilledSeries{Bucket: bucket, Points: []BilledPoint{}}
@@ -791,15 +811,17 @@ func (s *Store) BilledWindowFor(ctx context.Context, orgID uuid.UUID, bucket str
 	start, width := billedWindowStart(since, now)
 	out := BilledWindow{Start: start, End: now.UTC(), Width: width, Totals: []BilledTotal{}}
 	// $2 is the window's start, a midnight only for a daily window. A day's
-	// width is still the chart's: for the first, partial day of an hourly
-	// window either both read its 1h rows from Start on, or the chart reads
-	// only 1h rows before Start (left out of the window) and the tile none.
+	// width is still the chart's, decided on the whole day: for the first,
+	// partial day of an hourly window either both read its 1h rows from Start
+	// on, or both its 1d row, which starts before Start and so counts in
+	// neither the tile nor the chart's points from Start on.
 	src := chosenRows("billed_cost", "cpick", "bcost", bucket == "hour" || width == billing.Hour)
 	maps := `maps AS (
 	SELECT secret_key, secret_slot::int AS secret_slot, api_key_id, workspace_id, valid_from,
 		COALESCE(valid_to, 'infinity'::timestamptz) AS valid_to
 	FROM credential_billing_keys
-	WHERE org_id = $1 AND COALESCE(valid_to, 'infinity'::timestamptz) > $2 AND valid_from < $3)`
+	WHERE org_id = $1 AND COALESCE(valid_to, 'infinity'::timestamptz) > $2 AND valid_from < $3
+	  AND COALESCE(valid_to, 'infinity'::timestamptz) > valid_from)`
 	// Each bucket goes to one mapping, as in the chart (billedMapping). The
 	// credentials are the mapped ones plus, should a bucket's mapping only
 	// begin after now, its holder — a bucket in the chart is never missing

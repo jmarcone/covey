@@ -115,6 +115,35 @@ func TestBilledTileAndChartReadTheSameRows(t *testing.T) {
 	}
 }
 
+// The hourly rule takes a day's 1h rows only where they hold the whole day,
+// or at least every whole hour its 1d row does. The hours of a day are
+// complete only if an hourly read landed after the day ended and before it
+// left the hourly reach; with the poller down over that stretch the day
+// keeps the hours its last hourly read saw, and only the daily re-read has
+// it whole. Taking those hours anyway made the tile follow an under-counted
+// chart, and the bill change with the Hour/Day switch.
+func TestBilledHourlyRuleSkipsIncompleteHours(t *testing.T) {
+	f := newBillingFixture(t, "rechnung-unvollstaendige-stunden")
+	admin := login(t, f.s, "admin@test.local", "admin-passwort")
+	now := time.Now().UTC()
+	day := now.Truncate(24 * time.Hour).Add(-4 * 24 * time.Hour)
+	f.exec(t, `INSERT INTO credential_billing_keys (org_id, secret_key, secret_slot, api_key_id, valid_from)
+		VALUES ($1, 'key_x', 0, 'apikey_x', $2)`, f.s.orgID, now.Add(-10*24*time.Hour))
+	// The last hourly read of the day landed at 10:00; the daily re-read of
+	// yesterday has the whole day.
+	for h := 0; h < 10; h++ {
+		f.billedRow(t, "1h", day.Add(time.Duration(h)*time.Hour), "apikey_x", "", 400, day.Add(10*time.Hour))
+	}
+	f.billedRow(t, "1d", day, "apikey_x", "", 9600, now.Add(-24*time.Hour))
+
+	for _, q := range []string{"days=7&bucket=hour", "days=7&bucket=day"} {
+		_, tile, chart := billedShown(t, admin, q)
+		if tile["key_x"] != 96 || chart["key_x"] != 96 {
+			t.Errorf("%s: tile %v, chart %v — want the re-read day whole (96) in both", q, tile["key_x"], chart["key_x"])
+		}
+	}
+}
+
 // ?days=2 is a window of exactly two days: inside the hourly reach, so the
 // tile is made of hours like the chart the page asks for. The handler took
 // since a moment before the window's own now, which made it a hair older
@@ -176,6 +205,40 @@ func TestReconcileResavedDayBilledOnce(t *testing.T) {
 	}
 }
 
+// A credential mapped to one key, then re-saved into another workspace of it
+// on the same day, is two reconciliation entries, one per workspace, each
+// with its own bill — not one entry under the first workspace with the model
+// twice.
+func TestReconcileWorkspaceSplitsTheDay(t *testing.T) {
+	f := newBillingFixture(t, "abgleich-arbeitsbereiche")
+	now := time.Now().UTC()
+	day := now.Truncate(24 * time.Hour).Add(-2 * 24 * time.Hour)
+	f.exec(t, `INSERT INTO credential_billing_keys (org_id, secret_key, secret_slot, api_key_id, workspace_id, valid_from, valid_to)
+		VALUES ($1, 'key_v', 0, 'apikey_v', 'wrkspc_a', $2, $3), ($1, 'key_v', 0, 'apikey_v', 'wrkspc_b', $3, NULL)`,
+		f.s.orgID, now.Add(-10*24*time.Hour), day.Add(10*time.Hour))
+	f.billedRow(t, "1h", day.Add(8*time.Hour), "apikey_v", "wrkspc_a", 200, now)
+	f.billedRow(t, "1h", day.Add(14*time.Hour), "apikey_v", "wrkspc_b", 500, now)
+
+	rec, err := f.s.obs.Reconcile(f.ctx, f.s.orgID, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, d := range rec.Days {
+		if d.SecretKey != "key_v" {
+			continue
+		}
+		if len(d.Models) != 1 {
+			t.Errorf("%s: %d model rows, want one", d.WorkspaceID, len(d.Models))
+			continue
+		}
+		got[d.WorkspaceID] = d.Models[0].BilledUSD
+	}
+	if len(got) != 2 || got["wrkspc_a"] != "2.00000000" || got["wrkspc_b"] != "5.00000000" {
+		t.Errorf("entries %v — want wrkspc_a 2 and wrkspc_b 5", got)
+	}
+}
+
 // A mapping that ended where it began (closed by a write in the same
 // instant) was never valid: a bucket around it belongs to the mapping that
 // is. A mapping limited to a workspace holds only that workspace's rows of
@@ -197,6 +260,8 @@ func TestBilledMappingEdges(t *testing.T) {
 	f.billedRow(t, "1h", at, "apikey_w", "wrkspc_a", 300, now)
 	f.billedRow(t, "1h", at, "apikey_w", "wrkspc_b", 500, now)
 	f.billedRow(t, "1d", older, "apikey_e", "", 900, now)
+	f.line(t, observability.CredentialRef{RuntimeID: uuid.New(), SecretKey: "key_w", Kind: daemon.CredAPIKey},
+		at.Add(10*time.Minute), 1000000)
 
 	want := map[string]float64{"key_y": 7, "key_z": 0, "key_w": 3, "key_ended": 0, "key_from": 9}
 	for _, q := range []string{"days=5&bucket=hour", "days=5&bucket=day"} {
@@ -205,6 +270,9 @@ func TestBilledMappingEdges(t *testing.T) {
 			if tile[key] != usd || chart[key] != usd {
 				t.Errorf("%s, %s: tile %v, chart %v — want %v", q, key, tile[key], chart[key], usd)
 			}
+		}
+		if _, listed := tile["key_z"]; listed {
+			t.Errorf("%s: the never-valid mapping key_z is listed in the tile", q)
 		}
 	}
 
@@ -223,5 +291,19 @@ func TestBilledMappingEdges(t *testing.T) {
 		if got[key] != usd {
 			t.Errorf("reconciliation, %s: billed %v, want %v", key, got[key], usd)
 		}
+	}
+	// The workspace mapping's line and its bill are one entry, not a
+	// lines-only row beside a bill-only one.
+	var entries []observability.ReconcileDay
+	for _, d := range rec.Days {
+		if d.SecretKey == "key_w" {
+			entries = append(entries, d)
+		}
+	}
+	if len(entries) != 1 || len(entries[0].Models) != 1 || entries[0].WorkspaceID != "wrkspc_a" {
+		t.Fatalf("reconciliation, key_w: %+v — want one entry in wrkspc_a with one model", entries)
+	}
+	if m := entries[0].Models[0]; m.BilledUSD != "3.00000000" || !m.HasReported || m.ReportedUSD == "0.00000000" {
+		t.Errorf("reconciliation, key_w: billed %s, reported %s — want 3 and the line beside it", m.BilledUSD, m.ReportedUSD)
 	}
 }
