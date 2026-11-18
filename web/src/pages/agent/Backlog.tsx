@@ -800,7 +800,7 @@ function TaskCard({
           )}
           {task.correlation_key && (
             <p>
-              <span className="muted">{t("agent.backlog.waitingOn", { key: "" }).replace(" ", "")}:</span>{" "}
+              <span className="muted">{t("agent.backlog.correlationKey")}:</span>{" "}
               <span className="mono">{task.correlation_key}</span>
             </p>
           )}

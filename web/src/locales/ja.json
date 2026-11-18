@@ -708,6 +708,7 @@
       "parked": "保留中",
       "parkedUntil": "{{key}} まで保留",
       "reason": "理由",
+      "correlationKey": "相関キー",
       "agentNotes": "エージェントのメモ",
       "showRecording": "このタスクの記録",
       "reschedule": "予定を組み直す",

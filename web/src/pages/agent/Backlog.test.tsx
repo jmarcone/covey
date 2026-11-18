@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { useState } from "react";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import i18n from "../../i18n";
 import { Backlog } from "./Backlog";
 import HelpDrawer from "../../components/HelpDrawer";
 import { mockFetch, renderWithProviders, useGerman } from "../../test/render";
@@ -258,6 +259,19 @@ describe("Geparkte Aufgaben auf dem Board", () => {
     await zeige(blocked({ correlation_key: "parked:feat/cost-insights" }));
     expect(screen.getByText("geparkt")).toBeInTheDocument();
     expect(screen.queryByText("Grund:")).not.toBeInTheDocument();
+  });
+
+  // The key line names what the task waits on. Its label is a word of its own
+  // in each locale; the old label was cut out of a translated sentence.
+  it("zeigt den Korrelationsschlüssel mit seinem eigenen Label", async () => {
+    await i18n.changeLanguage("en");
+    try {
+      await zeige(blocked({ correlation_key: "ticket:42" }));
+      expect(screen.getByText("correlation key:")).toBeInTheDocument();
+      expect(screen.getByText("ticket:42")).toBeInTheDocument();
+    } finally {
+      await i18n.changeLanguage("de");
+    }
   });
 
   it("zeigt bei einem leeren Grund keine Grund-Zeile (anderer Schlüssel)", async () => {

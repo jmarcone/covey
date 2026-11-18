@@ -708,6 +708,7 @@
       "parked": "estacionada",
       "parkedUntil": "estacionada até {{key}}",
       "reason": "motivo",
+      "correlationKey": "chave de correlação",
       "agentNotes": "Notas do agente",
       "showRecording": "Gravação desta tarefa",
       "reschedule": "Reagendar",

@@ -708,6 +708,7 @@
       "parked": "aparcada",
       "parkedUntil": "aparcada hasta {{key}}",
       "reason": "motivo",
+      "correlationKey": "clave de correlación",
       "agentNotes": "Notas del agente",
       "showRecording": "Grabación de esta tarea",
       "reschedule": "Reprogramar",

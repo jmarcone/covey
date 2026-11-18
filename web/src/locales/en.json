@@ -708,6 +708,7 @@
       "parked": "parked",
       "parkedUntil": "parked until {{key}}",
       "reason": "reason",
+      "correlationKey": "correlation key",
       "agentNotes": "Agent notes",
       "showRecording": "Recording for this task",
       "reschedule": "Reschedule",
