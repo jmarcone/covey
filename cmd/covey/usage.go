@@ -105,6 +105,9 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 		key = k
 	}
 
+	// The watermark: every call of this host up to here is in the files read
+	// now. Five minutes are left as a margin for a reply still being written.
+	through := map[string]time.Time{h: time.Now().UTC().Add(-5 * time.Minute).Truncate(time.Second)}
 	rows, st, err := usagepush.Read(dirs, h, sinceT)
 	if err != nil {
 		return err
@@ -147,6 +150,7 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 		if len(rows) > 0 {
 			fmt.Fprintf(stdout, "%s .. %s\n", sum.First.Format(time.RFC3339), sum.Last.Format(time.RFC3339))
 		}
+		fmt.Fprintf(stdout, "reported_through %s: %s\n", h, through[h].Format(time.RFC3339))
 		printTotals(stdout, "all", &sum.All)
 		for _, group := range []map[string]*usagepush.Totals{sum.ByOrigin, sum.ByModel} {
 			for _, k := range sortedKeys(group) {
@@ -156,7 +160,7 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 		return nil
 	}
 
-	batches, err := usagepush.Batches(strings.TrimSpace(*source), m, rows)
+	batches, err := usagepush.Batches(strings.TrimSpace(*source), m, rows, through)
 	if err != nil {
 		return err
 	}

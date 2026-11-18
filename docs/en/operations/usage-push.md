@@ -32,6 +32,12 @@ covey usage push ~/.claude/projects/<project> --source "operator: laptop" \
   file must not be readable by group or others (`chmod 600`); on Windows the
   file's ACL is not checked, so keep it in your own profile. The key is never
   taken from the command line.
+- Each push also says how far this host has reported (`reported_through`:
+  the time of the run, less five minutes). covey splits an hour of the
+  subscription meter between its agents and these sessions only once every
+  host of the source has reported past it; until then the hour shows as "not
+  reported". A run with no new calls still sends the watermark, so schedule
+  the push even on quiet machines.
 - A directory may be one project (`~/.claude/projects/<project>`), all of
   `~/.claude/projects`, or one session's folder: the session and its origin
   come from each file's own place, not from the directory named.

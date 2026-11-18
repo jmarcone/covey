@@ -34,6 +34,12 @@ covey usage push ~/.claude/projects/<projekt> --source "operator: laptop" \
   (`chmod 600`); unter Windows wird die ACL der Datei nicht geprüft, also
   gehört sie ins eigene Profil. Von der Kommandozeile wird der Schlüssel nie
   genommen.
+- Jeder Push meldet auch, bis wann dieser Rechner berichtet hat
+  (`reported_through`: Zeitpunkt des Laufs minus fünf Minuten). covey teilt
+  eine Stunde des Abo-Zählers erst dann zwischen seinen Agenten und diesen
+  Sitzungen auf, wenn jeder Rechner der Quelle über sie hinaus berichtet hat;
+  bis dahin gilt die Stunde als „nicht gemeldet“. Auch ein Lauf ohne neue
+  Aufrufe sendet die Marke, also den Push auch auf ruhigen Rechnern planen.
 - Ein Verzeichnis kann ein Projekt (`~/.claude/projects/<projekt>`), ganz
   `~/.claude/projects` oder der Ordner einer Sitzung sein: Sitzung und
   Herkunft ergeben sich aus dem Ort jeder Datei, nicht aus dem genannten

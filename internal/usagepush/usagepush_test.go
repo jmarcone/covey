@@ -135,7 +135,8 @@ func TestBatchesCarryOnlyTheListedFields(t *testing.T) {
 		rows[i] = Row{Host: "h", SessionID: "s", MessageID: "msg_" + strings.Repeat("x", 8) + string(rune('a'+i%26)) + itoa(i),
 			TS: time.Date(2026, 11, 18, 0, 0, i%60, 0, time.UTC), Model: "claude-opus-5-5", Output: int64(i), Origin: OriginMain}
 	}
-	bs, err := Batches("operator: home", &Meter{SecretKey: "claude_code_oauth_token"}, rows)
+	wm := map[string]time.Time{"h": time.Date(2026, 11, 18, 1, 0, 0, 0, time.UTC)}
+	bs, err := Batches("operator: home", &Meter{SecretKey: "claude_code_oauth_token"}, rows, wm)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +145,7 @@ func TestBatchesCarryOnlyTheListedFields(t *testing.T) {
 	}
 	n := 0
 	rowKeys := []string{"cache_read", "cache_write_1h", "cache_write_5m", "host", "input", "message_id", "model", "origin", "output", "session_id", "ts"}
-	for _, b := range bs {
+	for i, b := range bs {
 		if len(b) > MaxBody {
 			t.Fatalf("batch of %d bytes", len(b))
 		}
@@ -152,8 +153,13 @@ func TestBatchesCarryOnlyTheListedFields(t *testing.T) {
 		if err := json.Unmarshal(b, &req); err != nil {
 			t.Fatal(err)
 		}
-		if got := keys(req); strings.Join(got, ",") != "meter_credential,rows,source" {
-			t.Fatalf("top-level keys %v", got)
+		want := "meter_credential,rows,source"
+		if i == len(bs)-1 {
+			// The watermark rides only on the last batch.
+			want = "meter_credential,reported_through,rows,source"
+		}
+		if got := keys(req); strings.Join(got, ",") != want {
+			t.Fatalf("batch %d: top-level keys %v, want %s", i, got, want)
 		}
 		var rs []map[string]json.RawMessage
 		if err := json.Unmarshal(req["rows"], &rs); err != nil {
@@ -172,8 +178,13 @@ func TestBatchesCarryOnlyTheListedFields(t *testing.T) {
 	if n != len(rows) {
 		t.Fatalf("%d rows sent of %d", n, len(rows))
 	}
-	if bs, _ := Batches("s", nil, nil); len(bs) != 0 {
+	if bs, _ := Batches("s", nil, nil, nil); len(bs) != 0 {
 		t.Fatal("no rows, but a batch")
+	}
+	// No new calls still moves the watermark: one request, empty rows.
+	bs, _ = Batches("s", nil, nil, wm)
+	if len(bs) != 1 || !strings.Contains(string(bs[0]), `"rows":[]`) || !strings.Contains(string(bs[0]), `"reported_through":{"h":"2026-11-18T01:00:00Z"}`) {
+		t.Fatalf("watermark-only push: %q", bs)
 	}
 }
 

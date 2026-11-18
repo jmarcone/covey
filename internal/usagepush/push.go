@@ -30,6 +30,10 @@ type Request struct {
 	Source          string `json:"source"`
 	MeterCredential *Meter `json:"meter_credential,omitempty"`
 	Rows            []Row  `json:"rows"`
+	// ReportedThrough is the watermark per host: every call of that host up
+	// to this time has been sent. The intake splits a meter reading only
+	// when every active host of the source has reported past it.
+	ReportedThrough map[string]time.Time `json:"reported_through,omitempty"`
 }
 
 // Result is the intake's answer to one POST.
@@ -43,16 +47,29 @@ type Result struct {
 
 // Batches cuts rows into requests that each stay under MaxRows and MaxBody.
 // The meter link travels with every batch (the intake keeps the last one, and
-// they are all the same).
-func Batches(source string, meter *Meter, rows []Row) ([][]byte, error) {
+// they are all the same). The watermark travels only with the last batch, so
+// it is stored only once every earlier batch was accepted; with no rows and a
+// watermark there is one request that carries just the watermark.
+func Batches(source string, meter *Meter, rows []Row, through map[string]time.Time) ([][]byte, error) {
 	var out [][]byte
+	if len(rows) == 0 && len(through) > 0 {
+		b, err := json.Marshal(Request{Source: source, MeterCredential: meter, Rows: []Row{}, ReportedThrough: through})
+		if err != nil {
+			return nil, err
+		}
+		return [][]byte{b}, nil
+	}
 	for start := 0; start < len(rows); {
 		end := start + MaxRows
 		if end > len(rows) {
 			end = len(rows)
 		}
 		for {
-			b, err := json.Marshal(Request{Source: source, MeterCredential: meter, Rows: rows[start:end]})
+			req := Request{Source: source, MeterCredential: meter, Rows: rows[start:end]}
+			if end == len(rows) {
+				req.ReportedThrough = through
+			}
+			b, err := json.Marshal(req)
 			if err != nil {
 				return nil, err
 			}
