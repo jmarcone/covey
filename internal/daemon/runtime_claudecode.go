@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -92,76 +93,169 @@ func init() {
 
 func (c *ClaudeCode) Name() string { return "claude-code" }
 
-// streamEvent is the generic view of a stream-json line.
+// streamEvent is the generic view of a stream-json line, as decodeStreamEvent
+// reads it.
 type streamEvent struct {
-	Type         string   `json:"type"`
-	Subtype      string   `json:"subtype"`
-	SessionID    string   `json:"session_id"`
-	Result       string   `json:"result"`
-	IsError      bool     `json:"is_error"`
-	Errors       []string `json:"errors"`
-	NumTurns     int      `json:"num_turns"`
-	TotalCostUSD float64  `json:"total_cost_usd"`
+	Type         string
+	Subtype      string
+	SessionID    string
+	Result       string
+	IsError      bool
+	Errors       []string
+	NumTurns     int
+	TotalCostUSD float64
 	// TerminalReason names why the run ended ("completed", "max_turns",
 	// "api_error", …). For the turn limit it is the more reliable source than
 	// subtype, because there only error_max_turns arrives.
-	TerminalReason string `json:"terminal_reason"`
+	TerminalReason string
 	// Usage: input_tokens counts ONLY the uncached input. With Claude Code
 	// practically the entire context comes out of the prompt cache, so that
 	// field stays in the low three digits while the run reads millions of
 	// tokens. Without the two cache fields the input side of the billing is
 	// off by three orders of magnitude — measured on a single run: 56
 	// input_tokens against 2,341,568 cache_read_input_tokens.
-	Usage struct {
-		InputTokens         int64 `json:"input_tokens"`
-		OutputTokens        int64 `json:"output_tokens"`
-		CacheReadTokens     int64 `json:"cache_read_input_tokens"`
-		CacheCreationTokens int64 `json:"cache_creation_input_tokens"`
-	} `json:"usage"`
-	// Message carries the model on the assistant events. The result event does
-	// NOT name it, which is why cost entries used to end up with an empty model
-	// and the cost breakdown reported everything as "unknown".
-	Message struct {
-		Model string `json:"model"`
-	} `json:"message"`
-	// ModelUsage and SinceLast are the per-model breakdowns of a result line,
-	// and they measure different things. ModelUsage, like total_cost_usd, is
-	// the SESSION's running total: Claude Code stores it in the transcript and
-	// restores it on --resume, so the third run of a session reports all three.
+	Usage resultUsage
+	// Model comes from message.model on the assistant events. The result event
+	// does NOT name it, which is why cost entries used to end up with an empty
+	// model and the cost breakdown reported everything as "unknown".
+	Model string
 	// SinceLast (model_usage_since_last_result) is what happened since the
 	// previous result line of the session — this invocation's own spend, over
 	// every model, the side calls to a smaller model included (Usage above
-	// names the main model only). Booking is done from SinceLast; older CLIs
-	// send neither field.
-	ModelUsage map[string]ccModelUsage `json:"modelUsage"`
-	SinceLast  map[string]ccModelUsage `json:"model_usage_since_last_result"`
+	// names the main model only). Booking is done from it; nil where the line
+	// has no such field (an older CLI). The line's modelUsage is the
+	// session's running total and is not read here: the control plane files
+	// it per model (observability.RecordRuntime), the daemon books deltas.
+	SinceLast map[string]ccModelUsage
 }
 
-// ccModelUsage is one model's entry in modelUsage or
-// model_usage_since_last_result. The thinking tokens are already inside
-// OutputTokens (list price × outputTokens reproduces costUSD to the last
-// digit), so they are not read separately — adding them would price thinking
-// twice.
+// resultUsage is a result line's top-level usage: the main model's, per
+// invocation.
+type resultUsage struct {
+	InputTokens         lenientInt `json:"input_tokens"`
+	OutputTokens        lenientInt `json:"output_tokens"`
+	CacheReadTokens     lenientInt `json:"cache_read_input_tokens"`
+	CacheCreationTokens lenientInt `json:"cache_creation_input_tokens"`
+}
+
+// ccModelUsage is one model's entry in model_usage_since_last_result. The
+// thinking tokens are already inside OutputTokens (list price × outputTokens
+// reproduces costUSD to the last digit), so they are not read separately —
+// adding them would price thinking twice.
 type ccModelUsage struct {
-	CostUSD              float64 `json:"costUSD"`
-	InputTokens          int64   `json:"inputTokens"`
-	OutputTokens         int64   `json:"outputTokens"`
-	CacheReadInputTokens int64   `json:"cacheReadInputTokens"`
+	CostUSD              lenientFloat `json:"costUSD"`
+	InputTokens          lenientInt   `json:"inputTokens"`
+	OutputTokens         lenientInt   `json:"outputTokens"`
+	CacheReadInputTokens lenientInt   `json:"cacheReadInputTokens"`
 	// The cache write split by lifetime (the two are priced differently), and
 	// the plain sum, which is all an older CLI sends.
-	CacheCreation5mInputTokens int64 `json:"cacheCreationEphemeral5mInputTokens"`
-	CacheCreation1hInputTokens int64 `json:"cacheCreationEphemeral1hInputTokens"`
-	CacheCreationInputTokens   int64 `json:"cacheCreationInputTokens"`
-	WebSearchRequests          int64 `json:"webSearchRequests"`
+	CacheCreation5mInputTokens lenientInt `json:"cacheCreationEphemeral5mInputTokens"`
+	CacheCreation1hInputTokens lenientInt `json:"cacheCreationEphemeral1hInputTokens"`
+	CacheCreationInputTokens   lenientInt `json:"cacheCreationInputTokens"`
+	WebSearchRequests          lenientInt `json:"webSearchRequests"`
 }
 
 // cacheCreation is the entry's cache write: 5 min + 1 h, or the plain sum where
 // the split is missing.
 func (m ccModelUsage) cacheCreation() int64 {
 	if split := m.CacheCreation5mInputTokens + m.CacheCreation1hInputTokens; split > 0 {
-		return split
+		return int64(split)
 	}
-	return m.CacheCreationInputTokens
+	return int64(m.CacheCreationInputTokens)
+}
+
+// lenientInt and lenientFloat read a figure of a result line the way the
+// control plane's SQL does (observability's jsonInt): a JSON number, whole or
+// not (12.0, 1.2e3), counts; anything else — a string, null, an object, a
+// number no int64 holds — is 0, never an error. The line is the engine's to
+// shape, and one odd figure must not cost the run its status or its booking:
+// with plain int64 fields a single 12.0 made the whole result line undecodable.
+type (
+	lenientInt   int64
+	lenientFloat float64
+)
+
+func (n *lenientInt) UnmarshalJSON(b []byte) error {
+	f := math.Round(float64(jsonNumber(b)))
+	if math.Abs(f) >= 1<<63 {
+		f = 0
+	}
+	*n = lenientInt(f)
+	return nil
+}
+
+func (f *lenientFloat) UnmarshalJSON(b []byte) error {
+	*f = jsonNumber(b)
+	return nil
+}
+
+// jsonNumber is b as a JSON number, 0 for anything else.
+func jsonNumber(b []byte) lenientFloat {
+	var f float64
+	if json.Unmarshal(b, &f) != nil || math.IsInf(f, 0) || math.IsNaN(f) {
+		return 0
+	}
+	return lenientFloat(f)
+}
+
+// decodeStreamEvent reads a stream-json line field by field. ok is false only
+// for a line that is not a JSON object. Each field is decoded on its own and a
+// field of an unexpected shape stays at its zero value: the status fields
+// (type, subtype, result, …) must survive whatever the usage figures look
+// like, because a result line that fails to decode is a run without a result —
+// no status, no handover, no booking.
+func decodeStreamEvent(line []byte) (ev streamEvent, ok bool) {
+	var f map[string]json.RawMessage
+	if json.Unmarshal(line, &f) != nil || f == nil {
+		return ev, false
+	}
+	ev.Type = jsonField[string](f, "type")
+	ev.Subtype = jsonField[string](f, "subtype")
+	ev.SessionID = jsonField[string](f, "session_id")
+	ev.Result = jsonField[string](f, "result")
+	ev.IsError = jsonField[bool](f, "is_error")
+	ev.Errors = jsonField[[]string](f, "errors")
+	ev.NumTurns = int(jsonField[lenientInt](f, "num_turns"))
+	ev.TotalCostUSD = float64(jsonField[lenientFloat](f, "total_cost_usd"))
+	ev.TerminalReason = jsonField[string](f, "terminal_reason")
+	ev.Usage = jsonField[resultUsage](f, "usage")
+	ev.Model = jsonField[struct {
+		Model string `json:"model"`
+	}](f, "message").Model
+	if raw, ok := f["model_usage_since_last_result"]; ok {
+		ev.SinceLast = decodeModelUsage(raw)
+	}
+	return ev, true
+}
+
+// jsonField decodes one field; a missing field or one of another shape is the
+// zero value.
+func jsonField[T any](f map[string]json.RawMessage, key string) T {
+	var v T
+	if raw, ok := f[key]; ok && json.Unmarshal(raw, &v) != nil {
+		var zero T
+		return zero
+	}
+	return v
+}
+
+// decodeModelUsage reads a per-model map entry by entry: an entry that is not
+// an object is skipped, the others keep their figures. nil when the field is
+// not an object (null included) — the line is then read like one from a CLI
+// without the field.
+func decodeModelUsage(raw json.RawMessage) map[string]ccModelUsage {
+	var entries map[string]json.RawMessage
+	if json.Unmarshal(raw, &entries) != nil || entries == nil {
+		return nil
+	}
+	out := make(map[string]ccModelUsage, len(entries))
+	for model, e := range entries {
+		var m ccModelUsage
+		if json.Unmarshal(e, &m) == nil {
+			out[model] = m
+		}
+	}
+	return out
 }
 
 // tokenSums is the token side of a process over all models.
@@ -412,8 +506,8 @@ func (c *ClaudeCode) stream(ctx context.Context, spec RunSpec, args []string, ba
 		raw := json.RawMessage(append([]byte(nil), line...))
 		onEvent("runtime", raw)
 
-		var ev streamEvent
-		if err := json.Unmarshal(line, &ev); err != nil {
+		ev, ok := decodeStreamEvent(line)
+		if !ok {
 			continue // tolerate non-JSON lines, the recording has them anyway
 		}
 		if ev.SessionID != "" {
@@ -422,8 +516,8 @@ func (c *ClaudeCode) stream(ctx context.Context, spec RunSpec, args []string, ba
 		// The model is only named on the way past (system/init and every
 		// assistant event), never on the result. Whoever wants it has to pick it
 		// up here.
-		if ev.Message.Model != "" {
-			out.model = ev.Message.Model
+		if ev.Model != "" {
+			out.model = ev.Model
 		}
 		if ev.Type == "result" {
 			// The status fields are the LAST line's: a process can write more
@@ -468,10 +562,10 @@ func (c *ClaudeCode) stream(ctx context.Context, spec RunSpec, args []string, ba
 func (o *outcome) addResult(ev streamEvent) {
 	if ev.SinceLast != nil {
 		for _, m := range ev.SinceLast {
-			o.deltaUSD += m.CostUSD
-			o.tokens.input += m.InputTokens
-			o.tokens.output += m.OutputTokens
-			o.tokens.cacheRead += m.CacheReadInputTokens
+			o.deltaUSD += float64(m.CostUSD)
+			o.tokens.input += int64(m.InputTokens)
+			o.tokens.output += int64(m.OutputTokens)
+			o.tokens.cacheRead += int64(m.CacheReadInputTokens)
 			o.tokens.cacheCreation += m.cacheCreation()
 		}
 	} else {
@@ -487,10 +581,10 @@ func (o *outcome) addResult(ev streamEvent) {
 			// process's own figure.
 			o.deltaUSD += ev.TotalCostUSD
 		}
-		o.tokens.input += ev.Usage.InputTokens
-		o.tokens.output += ev.Usage.OutputTokens
-		o.tokens.cacheRead += ev.Usage.CacheReadTokens
-		o.tokens.cacheCreation += ev.Usage.CacheCreationTokens
+		o.tokens.input += int64(ev.Usage.InputTokens)
+		o.tokens.output += int64(ev.Usage.OutputTokens)
+		o.tokens.cacheRead += int64(ev.Usage.CacheReadTokens)
+		o.tokens.cacheCreation += int64(ev.Usage.CacheCreationTokens)
 	}
 	o.lastTotalUSD, o.haveBaseline = ev.TotalCostUSD, true
 }

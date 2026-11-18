@@ -876,3 +876,66 @@ fi`)
 		}
 	}
 }
+
+// A result line is the engine's to shape. One figure written as 12.0 or
+// 1.2e3 made the whole line undecodable with int64 fields: no status, no
+// result, nothing booked — a finished run looked like one that ended without
+// a result. Status and money have to survive; an odd figure counts as the
+// number it is, or as 0 where it is no number at all.
+func TestClaudeCodeReadsOddNumericShapes(t *testing.T) {
+	line := `{"type":"result","subtype":"success","is_error":false,"session_id":"sess-odd","num_turns":3.0,` +
+		`"result":` + strconv.Quote(ccDone) + `,"total_cost_usd":0.5,` +
+		`"usage":{"input_tokens":12.0,"output_tokens":"many","cache_read_input_tokens":null,"cache_creation_input_tokens":1.5e2},` +
+		`"modelUsage":{"claude-opus-5-5":{"costUSD":"n/a","inputTokens":{"x":1}}},` +
+		`"model_usage_since_last_result":{"claude-opus-5-5":{"costUSD":0.5,"inputTokens":1.2e3,"outputTokens":300.0,` +
+		`"cacheReadInputTokens":"10","cacheCreationEphemeral1hInputTokens":1e30,"cacheCreationInputTokens":400},` +
+		`"claude-haiku-5-5":"not an object"}}`
+	bin, dir := fakeClaude(t, "cat <<'EOF'\n"+line+"\nEOF")
+	res, err := (&ClaudeCode{Binary: bin}).Run(context.Background(),
+		RunSpec{TaskID: "t", Title: "x", HomeDir: dir}, func(string, json.RawMessage) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "done" || res.Result != "fertig" || res.SessionID != "sess-odd" {
+		t.Fatalf("the line's status has to survive its odd figures: %+v", res)
+	}
+	// 1.2e3 is 1200 and 300.0 is 300; the string and the number beyond int64
+	// count 0, so the cache write falls back to the plain sum.
+	if !near(res.CostUSD, 0.5) || res.InputTokens != 1200 || res.OutputTokens != 300 ||
+		res.CacheReadTokens != 0 || res.CacheCreationTokens != 400 {
+		t.Fatalf("the since-last figures have to be read leniently: %+v", res)
+	}
+
+	// The same leniency for a CLI without the per-line field: the top-level
+	// usage with a float and a string in it.
+	old := `{"type":"result","subtype":"success","session_id":"sess-odd2","result":` + strconv.Quote(ccDone) +
+		`,"total_cost_usd":"0.3","usage":{"input_tokens":12.0,"output_tokens":"many","cache_creation_input_tokens":1.5e2}}`
+	bin, dir = fakeClaude(t, "cat <<'EOF'\n"+old+"\nEOF")
+	res, err = (&ClaudeCode{Binary: bin}).Run(context.Background(),
+		RunSpec{TaskID: "t", Title: "x", HomeDir: dir}, func(string, json.RawMessage) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "done" || res.InputTokens != 12 || res.OutputTokens != 0 || res.CacheCreationTokens != 150 || res.CostUSD != 0 {
+		t.Fatalf("an old line with odd figures has to keep its status and its numbers: %+v", res)
+	}
+}
+
+func TestLenientNumbers(t *testing.T) {
+	for raw, want := range map[string]int64{
+		`12`: 12, `12.0`: 12, `1.2e3`: 1200, `2.5`: 3, `-2.5`: -3, `"12"`: 0, `null`: 0,
+		`{}`: 0, `[1]`: 0, `true`: 0, `1e30`: 0, `-1e30`: 0,
+	} {
+		var n lenientInt
+		if err := json.Unmarshal([]byte(raw), &n); err != nil || int64(n) != want {
+			t.Errorf("lenientInt(%s) = %d, %v — want %d", raw, n, err, want)
+		}
+	}
+	var f lenientFloat
+	if err := json.Unmarshal([]byte(`"0.3"`), &f); err != nil || f != 0 {
+		t.Errorf("lenientFloat of a string = %v, %v — want 0", f, err)
+	}
+	if err := json.Unmarshal([]byte(`0.25`), &f); err != nil || f != 0.25 {
+		t.Errorf("lenientFloat(0.25) = %v, %v", f, err)
+	}
+}
