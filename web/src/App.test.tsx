@@ -1,7 +1,7 @@
 import type { ReactElement } from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { screen, render, waitFor, within, act, fireEvent } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, onlineManager } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 import App from "./App";
 import { api } from "./api";
@@ -60,17 +60,31 @@ function serverMitSitzung(angemeldet: () => boolean, teamSurface = false) {
   );
 }
 
+/* The shell opens an event stream; jsdom does not know EventSource. The
+   stand-in keeps its instances and lets a test play the browser: set
+   readyState, fire onerror or onopen. */
+class FakeEventSource {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSED = 2;
+  static instances: FakeEventSource[] = [];
+  readyState = FakeEventSource.OPEN;
+  onopen: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  constructor() {
+    FakeEventSource.instances.push(this);
+  }
+  close() {
+    this.readyState = FakeEventSource.CLOSED;
+  }
+  addEventListener() {}
+}
+
 beforeEach(() => {
   useGerman();
   merkeSprache("de");
-  // The shell opens an event stream; jsdom does not know EventSource.
-  vi.stubGlobal(
-    "EventSource",
-    class {
-      close() {}
-      addEventListener() {}
-    },
-  );
+  FakeEventSource.instances = [];
+  vi.stubGlobal("EventSource", FakeEventSource);
   /* The public website brings its own background (canvas, scroll reveals).
      jsdom has neither; without stand-ins the login page dies on its
      decoration before the test sees it. */
@@ -250,6 +264,146 @@ describe("App und /auth/me im Hintergrund", () => {
     expect(await screen.findByLabelText("Passwort")).toBeInTheDocument();
     expect(aufrufe.gesamt).toBeGreaterThan(vorher);
     expect(screen.queryByText("Agenten")).not.toBeInTheDocument();
+  });
+});
+
+/* The event stream and /auth/me work together (#115): an error on the stream
+   asks /auth/me whether the session is still there. */
+describe("App und der Ereignisstrom", () => {
+  const streams = () => FakeEventSource.instances;
+
+  it("öffnet einen neuen Strom, wenn der Browser ihn nach einem 502 endgültig geschlossen hat", async () => {
+    /* A proxy that answers 502 while covey restarts makes the browser fail
+       the connection for good: readyState CLOSED, no reconnect of its own.
+       The session is intact, so the shell stands and nothing else would
+       open a stream again. */
+    let antwort: "ok" | "502" = "ok";
+    const aufrufe = serverMitMe(() => antwort);
+    renderApp(<App />, "/agents");
+    expect((await screen.findAllByText("Agenten")).length).toBeGreaterThan(0);
+    expect(streams()).toHaveLength(1);
+
+    antwort = "502";
+    const vorher = aufrufe.gesamt;
+    streams()[0].readyState = FakeEventSource.CLOSED;
+    act(() => streams()[0].onerror?.());
+    await waitFor(() => expect(aufrufe.gesamt).toBeGreaterThan(vorher));
+    expect(streams()).toHaveLength(1);
+
+    // The server is back: /auth/me answers again, and a stream follows.
+    antwort = "ok";
+    await waitFor(() => expect(streams()).toHaveLength(2), { timeout: 5000 });
+    expect(screen.queryByLabelText("Passwort")).not.toBeInTheDocument();
+  }, 10_000);
+
+  it("lässt einen Strom stehen, den der Browser selbst wieder aufbaut", async () => {
+    const aufrufe = serverMitMe(() => "ok");
+    renderApp(<App />, "/agents");
+    expect((await screen.findAllByText("Agenten")).length).toBeGreaterThan(0);
+
+    const vorher = aufrufe.gesamt;
+    streams()[0].readyState = FakeEventSource.CONNECTING;
+    act(() => streams()[0].onerror?.());
+    await waitFor(() => expect(aufrufe.gesamt).toBeGreaterThan(vorher));
+    await new Promise((r) => setTimeout(r, 100));
+    expect(streams()).toHaveLength(1);
+  });
+
+  it("holt beim ersten Öffnen nach einer Lücke nach, was die Ereignisse gemeldet hätten", async () => {
+    serverMitMe(() => "ok");
+    const server = globalThis.fetch;
+    let agentenListen = 0;
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => {
+      if (/\/agents(\?|$)/.test(String(input))) agentenListen++;
+      return server(input, init);
+    });
+    renderApp(<App />, "/agents");
+    expect((await screen.findAllByText("Agenten")).length).toBeGreaterThan(0);
+
+    // The first open is no gap: nothing to catch up on.
+    act(() => streams()[0].onopen?.());
+    await new Promise((r) => setTimeout(r, 100));
+    const vorher = agentenListen;
+
+    streams()[0].readyState = FakeEventSource.CLOSED;
+    act(() => streams()[0].onerror?.());
+    await waitFor(() => expect(streams()).toHaveLength(2));
+    act(() => streams()[1].onopen?.());
+    await waitFor(() => expect(agentenListen).toBeGreaterThan(vorher));
+    // Once, not on every open.
+    const nachgeholt = agentenListen;
+    act(() => streams()[1].onopen?.());
+    await new Promise((r) => setTimeout(r, 100));
+    expect(agentenListen).toBe(nachgeholt);
+  });
+
+  it("wartet länger, wenn der neue Strom sich nicht öffnet, statt den Server zu bedrängen", async () => {
+    serverMitMe(() => "ok");
+    renderApp(<App />, "/agents");
+    expect((await screen.findAllByText("Agenten")).length).toBeGreaterThan(0);
+
+    streams()[0].readyState = FakeEventSource.CLOSED;
+    act(() => streams()[0].onerror?.());
+    await waitFor(() => expect(streams()).toHaveLength(2));
+
+    // The second one fails before it ever opened: the third waits.
+    streams()[1].readyState = FakeEventSource.CLOSED;
+    act(() => streams()[1].onerror?.());
+    await new Promise((r) => setTimeout(r, 400));
+    expect(streams()).toHaveLength(2);
+    await waitFor(() => expect(streams()).toHaveLength(3), { timeout: 3000 });
+  });
+
+  it("fragt /auth/me bei mehreren Fehlern während der Pause nur einmal", async () => {
+    /* The browser fires error again and again while it reconnects. Without
+       cancelRefetch: false each one would cancel the running check, together
+       with the pause of its retry, and start over. */
+    let antwort: "ok" | "502" = "ok";
+    const aufrufe = serverMitMe(() => antwort);
+    renderApp(<App />, "/agents");
+    expect((await screen.findAllByText("Agenten")).length).toBeGreaterThan(0);
+
+    antwort = "502";
+    const vorher = aufrufe.gesamt;
+    for (let i = 0; i < 3; i++) act(() => streams()[0].onerror?.());
+    await new Promise((r) => setTimeout(r, 200));
+    expect(aufrufe.gesamt - vorher).toBe(1);
+  });
+});
+
+/* The first load, before there is any data (#115). */
+describe("App beim ersten Laden ohne Antwort", () => {
+  it("rendert nichts und kommt hoch, sobald der Browser wieder online ist", async () => {
+    /* Offline, the first fetch is paused: neither loading nor an error, and
+       no data. The shell must not read me.data then. */
+    serverMitSitzung(() => true);
+    onlineManager.setOnline(false);
+    try {
+      const { container } = renderApp(<App />, "/agents");
+      await new Promise((r) => setTimeout(r, 100));
+      expect(container).toBeEmptyDOMElement();
+      expect(screen.queryByLabelText("Passwort")).not.toBeInTheDocument();
+
+      act(() => onlineManager.setOnline(true));
+      expect((await screen.findAllByText("Agenten")).length).toBeGreaterThan(0);
+    } finally {
+      onlineManager.setOnline(true);
+    }
+  });
+
+  it("fragt in einem Ausfall höchstens alle fünf Sekunden nach", async () => {
+    /* No data means no stream and no focus check to notice that the server is
+       back, so the page would stay blank up to the 30 s cap. Attempts at
+       0, 1, 3, 7, 12 s with the lower cap; 0, 1, 3, 7, 15 s without. */
+    vi.useFakeTimers();
+    try {
+      const aufrufe = serverMitMe(() => "502");
+      renderApp(<App />, "/agents");
+      await act(() => vi.advanceTimersByTimeAsync(12_100));
+      expect(aufrufe.gesamt).toBe(5);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
