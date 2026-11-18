@@ -13,10 +13,12 @@ import (
 
 // TestSetStageMovesOnlyTheCallersOwnTasks pins the reach of covey/set_stage
 // with a task_id (#66): a board column belongs to its agent, so the action
-// moves the calling agent's own tasks and nothing else. A colleague's task and
-// a task of another organisation stay where their owners put them, and the
-// refused call leaves no column behind on the caller's board either — exactly
-// like an id that does not exist.
+// moves the calling agent's own tasks and nothing else. A colleague's task, a
+// task the caller only delegated and a task of another organisation stay where
+// their owners put them, and the refused call leaves no column behind on the
+// caller's board either — exactly like an id that does not exist. The delegated
+// one is the deliberate difference from what the agent may read (readableBy,
+// #64): reading it is fine, placing it on the caller's board is not.
 func TestSetStageMovesOnlyTheCallersOwnTasks(t *testing.T) {
 	s := newStack(t)
 	ctx := context.Background()
@@ -62,9 +64,23 @@ func TestSetStageMovesOnlyTheCallersOwnTasks(t *testing.T) {
 	if _, err := s.backlog.Cancel(ctx, earlier.ID, "test"); err != nil {
 		t.Fatal(err)
 	}
+	// A task the caller delegated to the colleague, created the way
+	// covey/create_task with an agent does it. It sits on the colleague's
+	// board, so it is not the caller's to place.
+	delegated, err := s.backlog.CreateChild(ctx, earlier.ID, backlog.ChildSpec{
+		AgentID: colleague.ID, Title: "Delegated", Origin: "agent:" + caller.Slug, Priority: 5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	delegatedStage, err := s.backlog.SetTaskStageByName(ctx, colleague.ID, delegated.ID, "Waiting")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	run, err := s.backlog.Create(ctx, s.orgID, caller.ID, "Move cards",
 		`[mock:action covey/set_stage {"stage":"Taken","task_id":"`+theirs.ID.String()+`"}]
+[mock:action covey/set_stage {"stage":"Taken delegated","task_id":"`+delegated.ID.String()+`"}]
 [mock:action covey/set_stage {"stage":"Taken abroad","task_id":"`+foreignTask.ID.String()+`"}]
 [mock:action covey/set_stage {"stage":"Nowhere","task_id":"`+uuid.NewString()+`"}]
 [mock:action covey/set_stage {"stage":"Mine","task_id":"`+earlier.ID.String()+`"}]
@@ -82,6 +98,7 @@ func TestSetStageMovesOnlyTheCallersOwnTasks(t *testing.T) {
 		stage uuid.UUID
 	}{
 		{"the colleague's task", theirs.ID, theirStage.ID},
+		{"the task the caller delegated", delegated.ID, delegatedStage.ID},
 		{"the other organisation's task", foreignTask.ID, foreignStage.ID},
 	} {
 		got, err := s.backlog.Get(ctx, c.id)
@@ -100,7 +117,7 @@ func TestSetStageMovesOnlyTheCallersOwnTasks(t *testing.T) {
 	var mine *backlog.Stage
 	for i, st := range stages {
 		switch st.Name {
-		case "Taken", "Taken abroad", "Nowhere":
+		case "Taken", "Taken delegated", "Taken abroad", "Nowhere":
 			t.Errorf("a refused set_stage must not leave a column on the caller's board: %q", st.Name)
 		case "Mine":
 			mine = &stages[i]
