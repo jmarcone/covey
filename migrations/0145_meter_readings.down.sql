@@ -8,6 +8,10 @@ DELETE FROM usage_readings WHERE source = 'inband';
 
 DROP INDEX IF EXISTS idx_usage_readings_meter;
 DROP INDEX IF EXISTS idx_usage_readings_once;
+
+-- The copies the up migration moved aside come back, under their own ids.
+INSERT INTO usage_readings SELECT * FROM usage_readings_0145_duplicates;
+DROP TABLE IF EXISTS usage_readings_0145_duplicates;
 ALTER TABLE usage_readings DROP CONSTRAINT IF EXISTS usage_readings_source_chk;
 ALTER TABLE usage_readings
     DROP COLUMN IF EXISTS secret_key,

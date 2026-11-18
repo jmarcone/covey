@@ -263,6 +263,14 @@ func TestMigration0145MeterReadings(t *testing.T) {
 		window_resets, week_resets, stale, fetched_at) VALUES
 		($1,$2,$3,true,4,9,'','Nov 20',false,$4), ($1,$2,$3,false,NULL,NULL,'','',false,$5)`,
 		s.orgID, rt.ID, ord, base.Add(-time.Hour), base.Add(5*time.Minute))
+	// And one reading filed twice, as the doubled backfill left them on the
+	// instance this was written for: the same place, figure and moment. Both
+	// get the same secret, source and window, which the unique index of 0145
+	// would not take.
+	exec(`INSERT INTO usage_readings (org_id, runtime_id, credential_ord, supported, window_percent, week_percent,
+		window_resets, week_resets, stale, fetched_at) VALUES
+		($1,$2,$3,true,NULL,11,'','',false,$4), ($1,$2,$3,true,NULL,11,'','',false,$4)`,
+		s.orgID, rt.ID, ord, base.Add(10*time.Minute))
 
 	snapshot := func() string {
 		t.Helper()
@@ -288,14 +296,18 @@ func TestMigration0145MeterReadings(t *testing.T) {
 		return
 	}
 	all, inband := count()
-	if all != 5 || inband != 3 {
-		t.Fatalf("after 0145: %d readings, %d in band — want the 2 kept and 3 windows (the stranger's line has no credential)", all, inband)
+	if all != 6 || inband != 3 {
+		t.Fatalf("after 0145: %d readings, %d in band — want the 3 kept (one copy of the twice-filed one) and 3 windows (the stranger's line has no credential)", all, inband)
 	}
 	var keyed int
 	_ = s.pool.QueryRow(ctx, `SELECT count(*) FROM usage_readings WHERE org_id = $1 AND secret_key = 'claude_code_oauth_token'
 		AND secret_slot = 0 AND credential_kind = 'subscription'`, s.orgID).Scan(&keyed)
-	if keyed != 5 {
-		t.Errorf("%d of 5 readings carry the secret", keyed)
+	if keyed != 6 {
+		t.Errorf("%d of 6 readings carry the secret", keyed)
+	}
+	var aside int
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM usage_readings_0145_duplicates WHERE org_id = $1`, s.orgID).Scan(&aside); err != nil || aside != 1 {
+		t.Errorf("copies moved aside: %d (%v), want 1", aside, err)
 	}
 	var week float64
 	var resets time.Time
@@ -336,6 +348,11 @@ func TestMigration0145MeterReadings(t *testing.T) {
 	_ = s.pool.QueryRow(ctx, `SELECT to_regclass('credential_plans') IS NOT NULL`).Scan(&plans)
 	if plans {
 		t.Error("credential_plans survived the down migration")
+	}
+	var aside0145 bool
+	_ = s.pool.QueryRow(ctx, `SELECT to_regclass('usage_readings_0145_duplicates') IS NOT NULL`).Scan(&aside0145)
+	if aside0145 {
+		t.Error("usage_readings_0145_duplicates survived the down migration")
 	}
 	if _, err := db.MigrateUp(ctx, s.pool, migrations.FS); err != nil {
 		t.Fatal(err)

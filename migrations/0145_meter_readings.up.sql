@@ -53,6 +53,21 @@ UPDATE usage_readings ur SET secret_key = rc.secret_key, secret_slot = rc.secret
 FROM runtime_credentials rc
 WHERE rc.runtime_id = ur.runtime_id AND rc.ord = ur.credential_ord AND ur.secret_key IS NULL;
 
+-- Readings filed twice before this migration (a backfill that ran beside the
+-- poller left exact copies: the same runtime, ord and fetched_at) now share
+-- the key the index below makes unique, and would stop it from being built.
+-- One reading per key stays, the lowest id; the others are moved aside, not
+-- dropped, so the down migration can put them back. Where two copies differ
+-- in their figures, the first one filed is the one kept.
+CREATE TABLE IF NOT EXISTS usage_readings_0145_duplicates (LIKE usage_readings);
+WITH dup AS (
+    DELETE FROM usage_readings a
+    USING usage_readings b
+    WHERE a.id > b.id AND a.org_id = b.org_id AND a.secret_key = b.secret_key AND a.secret_slot = b.secret_slot
+      AND a.source = b.source AND a.window_kind = b.window_kind AND a.fetched_at = b.fetched_at
+    RETURNING a.*)
+INSERT INTO usage_readings_0145_duplicates SELECT * FROM dup;
+
 -- One reading per credential, source, window and moment: filing the same one
 -- twice (a re-sent event, the backfill run again) adds nothing.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_readings_once
