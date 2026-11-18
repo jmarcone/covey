@@ -197,57 +197,71 @@ func usageEach(x func(name string) string, p string) string {
 
 // modelUsageGapInsert files the gap a result line ($1) reveals, per model:
 // what the session's running total (modelUsage) grew by since the session's
-// previous line, minus what this line says it added itself
-// (model_usage_since_last_result). Whatever is left was spent between the two
-// lines without a line of its own — a process of the session that ended
-// without a result line, whose cost Claude Code kept in the running total.
-// $2..$6 are the credential, as for modelUsageInsert.
+// previous lines, minus what was booked for those lines and what this line
+// says it added itself (model_usage_since_last_result). Whatever is left was
+// spent between the lines without a booking — a process of the session that
+// ended without a result line, whose cost Claude Code kept in the running
+// total. $2..$6 are the credential, as for modelUsageInsert.
 //
 // The running total before this line is, per model and per figure, the
-// largest one the session's earlier RECORDED lines report — read back from
-// the recording, not from the rows a line left. Two kinds of line count:
-//
-//   - every earlier line that left a model_usage row (of any basis, a gap row
-//     included), and
-//   - every result line of the session recorded after the latest of those.
-//     That is a line whose filing failed (an error in the rows, the gap or
-//     its booking — one transaction): the recording stands, the daemon booked
-//     its run all the same, and its share must not come back as a gap.
-//
-// Those failed lines are looked for in the recording of the session's tasks
-// only — the tasks its filed lines belong to, and this line's — between the
-// latest filed line and this one. A session outlives a run: a blocked task
-// resumes it days later, a turn-limit continuation carries it into a child
-// task. Over the agent's or the install's recording that window holds every
-// other run in between; over the session's tasks it holds their own
-// transcript. The per-task subquery compares (task_id, id) as a row, which
-// only idx_recording_task can answer, and its ORDER BY keeps the planner from
-// folding it into one scan of the whole id range. What it cannot see: a
-// continuation task in between none of whose lines was filed — its lines are
-// not found, and the next line books their shares a second time, as a gap.
-//
-// The largest, not the latest: a running total cannot shrink, so the largest
-// is the session's latest state whatever order the lines arrived in. A line
-// without a uuid that is sent again after later lines is filed again; as the
-// latest line it would put the running total back and book the lines after
-// it a second time. That rests on the totals only growing within a session.
+// largest one the session's earlier FILED lines report (any basis, a gap row
+// included) — read back from the recording, not from the rows. The largest,
+// not the latest: a running total cannot shrink, so the largest is the
+// session's latest state whatever order the lines arrived in. A line without
+// a uuid that is sent again after later lines is filed again; as the latest
+// line it would put the running total back and book the lines after it a
+// second time. That rests on the totals only growing within a session.
 // Should a session ever come back with smaller totals (a CLI that does not
 // restore them on resume, a forked session), every later gap stays hidden
 // until its total climbs past the old largest one: it errs towards booking
 // too little, never twice.
 //
+// A line whose filing failed (an error in the rows, the gap or its booking —
+// one transaction) left its recording and nothing else. Its share is
+// subtracted only where it was booked all the same; otherwise it stays in the
+// gap. Booked means one of two things:
+//
+//   - an invocation entry of the line's task and of the session, booked
+//     after the line and before the task's next run started (a lifecycle
+//     record "working" — the orchestrator writes one at the start of every
+//     run): the daemon reported that run's own spend, the line's included;
+//   - the line belongs to this line's run (the same task, no run started
+//     since): that run's report is still to come, and holds the line.
+//
+// A run killed (kill switch, budget pause, sandbox gone) never reports; what
+// BookUnreported books instead is the run's rows, and a failed line has none.
+// Neither has a run whose BookRun failed, nor one booked from its rows
+// (from_deltas). The share of such a line is the gap's.
+//
+// Those lines are looked for in the recording of the session's tasks only —
+// the tasks its filed lines belong to, this line's, and the tasks this line's
+// task continues (a turn-limit continuation carries the session into a child
+// task, origin "continuation:<parent>"; a child in the middle of the chain
+// often holds two lines, and one failure leaves it without a filed one) —
+// after the filed line with the largest running total and before this one.
+// Bounded by the largest total, not the latest filed line: a late copy is
+// filed after the lines that followed its original. A session outlives a
+// run: a blocked task resumes it days later. Over the agent's or the
+// install's recording that window holds every other run in between; over the
+// session's tasks it holds their own transcript. The per-task subquery
+// compares (task_id, id) as a row, which only idx_recording_task can answer,
+// and its ORDER BY keeps the planner from folding it into one scan of the
+// whole id range. Copies of one failed line count once (the same running
+// total), and a failed line whose total is not above the bound's is an old
+// line arriving late: its share is already inside the bound's total.
+//
 // Measured from line to line, not against the sum of the session's rows: a
 // session whose earlier lines were never filed (before 0142, or pruned before
 // its backfill) would otherwise have its whole history booked again as a gap.
-// Without an earlier line — the session's first line here, a session none of
-// whose lines was filed yet, or earlier recordings already pruned — nothing
-// is filed: a gap is only booked where both ends are known.
+// Without an earlier filed line — the session's first line here, a session
+// none of whose lines was filed yet, or earlier recordings already pruned —
+// nothing is filed: a gap is only booked where both ends are known.
 //
 // It cannot book anything twice:
 //
-//   - After a process WITH a result line, that line is the previous one and
-//     the running total grew by exactly this line's share: no gap. This holds
-//     where that line's filing failed, too.
+//   - After a process WITH a result line, the running total grew by that
+//     line's share and this one's: no gap, where the earlier line was filed
+//     and where it failed but was booked.
 //   - After one WITHOUT, the growth holds its spend once, and this line is the
 //     previous one for every later line: none of them finds it again.
 //   - The turn-limit handover resumes the same session and writes a line of
@@ -259,13 +273,18 @@ func usageEach(x func(name string) string, p string) string {
 //     is 0, the difference minus its share. The same for a copy arriving after
 //     later lines, and for every line after that copy.
 //
+// What it cannot see: a failed line before the bound whose total is larger
+// than every filed line's (a failure and an out-of-order arrival together),
+// and a run killed after a failed line of its own was followed by a filed one
+// (that line's gap counted the failed line as its run's, still to come).
+//
 // Only a difference above a millionth of a dollar is filed, and only upwards:
 // a negative difference is never booked. Tokens follow the money, each floored
 // at 0. Lines without a session, without the per-line field (their derived
 // rows already are the running total's difference) or without a running total
 // file nothing here.
 var modelUsageGapInsert = `
-WITH e AS (
+WITH RECURSIVE e AS (
 	SELECT id, org_id, agent_id, task_id, payload, created_at, payload->>'session_id' AS session_id
 	FROM recording_events
 	WHERE id = $1 AND payload->>'type' = 'result'
@@ -273,68 +292,115 @@ WITH e AS (
 	  AND jsonb_typeof(payload->'model_usage_since_last_result') = 'object'
 	  AND jsonb_typeof(payload->'modelUsage') = 'object'),
 filed AS (
-	SELECT p.event_id AS id, p.task_id
+	SELECT DISTINCT p.event_id AS id, p.task_id
 	FROM model_usage p, e
 	WHERE p.session_id = e.session_id AND p.session_id <> '' AND p.event_id < e.id),
+filed_lines AS (
+	SELECT r.id, r.payload->'modelUsage' AS usage, ` + lineTotal("r.payload") + ` AS total
+	FROM recording_events r
+	WHERE r.id IN (SELECT id FROM filed)),
+bound AS (
+	SELECT id, total FROM filed_lines ORDER BY total DESC, id LIMIT 1),
+chain(task_id) AS (
+	SELECT task_id FROM e WHERE task_id IS NOT NULL
+	UNION
+	SELECT t.parent_task_id
+	FROM chain JOIN backlog_tasks t ON t.id = chain.task_id
+	WHERE t.origin LIKE 'continuation:%' AND t.parent_task_id IS NOT NULL),
 tasks AS (
 	SELECT task_id FROM filed WHERE task_id IS NOT NULL
 	UNION
-	SELECT task_id FROM e WHERE task_id IS NOT NULL),
-lines AS (
-	SELECT id FROM filed
-	UNION
-	SELECT w.id
-	FROM e, tasks
+	SELECT task_id FROM chain),
+w AS (
+	SELECT x.id, x.task_id, x.kind, x.payload, x.created_at
+	FROM e, bound, tasks
 	CROSS JOIN LATERAL (
-		SELECT r.id, r.payload
+		SELECT r.id, r.task_id, r.kind, r.payload, r.created_at
 		FROM recording_events r
-		WHERE (r.task_id, r.id) > (tasks.task_id, (SELECT max(id) FROM filed))
+		WHERE (r.task_id, r.id) > (tasks.task_id, bound.id)
 		  AND (r.task_id, r.id) < (tasks.task_id, e.id)
-		  AND r.kind = '` + KindRuntime + `'
-		ORDER BY r.task_id, r.id) AS w
-	WHERE w.payload->>'session_id' = e.session_id AND w.payload->>'type' = 'result'),
-known AS (
-	SELECT r.payload->'modelUsage' AS usage
-	FROM recording_events r
-	WHERE r.id IN (SELECT id FROM lines) AND jsonb_typeof(r.payload->'modelUsage') = 'object'),
+		  AND r.kind IN ('` + KindRuntime + `', '` + KindLifecycle + `')
+		ORDER BY r.task_id, r.id) AS x
+	WHERE (x.kind = '` + KindRuntime + `' AND x.payload->>'type' = 'result' AND x.payload->>'session_id' = e.session_id
+	       AND x.id NOT IN (SELECT id FROM filed))
+	   OR (x.kind = '` + KindLifecycle + `' AND x.payload->>'status' = 'working')),
+failed AS (
+	SELECT w.id, w.task_id, w.payload, w.created_at, ` + lineTotal("w.payload") + ` AS total
+	FROM w WHERE w.kind = '` + KindRuntime + `'),
+booked AS (
+	SELECT DISTINCT ON (fl.total) fl.payload
+	FROM e, bound, failed fl
+	LEFT JOIN LATERAL (
+		SELECT nr.created_at FROM w nr
+		WHERE nr.kind = '` + KindLifecycle + `' AND nr.task_id = fl.task_id AND nr.id > fl.id
+		ORDER BY nr.id LIMIT 1) AS next_run ON true
+	WHERE fl.total > bound.total
+	  AND ((next_run.created_at IS NULL AND fl.task_id = e.task_id)
+	    OR EXISTS (
+		SELECT 1 FROM cost_entries c
+		WHERE c.agent_id = e.agent_id AND c.created_at >= fl.created_at
+		  AND (next_run.created_at IS NULL OR c.created_at < next_run.created_at)
+		  AND c.task_id = fl.task_id AND c.session_id = e.session_id AND c.basis = '` + BasisInvocation + `'))
+	ORDER BY fl.total, fl.id),
 f AS (
 	SELECT m.key AS model,
 		` + usageFigures("m.value", "") + `
-	FROM known
-	CROSS JOIN LATERAL jsonb_each(CASE WHEN jsonb_typeof(known.usage) = 'object' THEN known.usage ELSE '{}'::jsonb END) AS m(key, value)
+	FROM filed_lines
+	CROSS JOIN LATERAL jsonb_each(CASE WHEN jsonb_typeof(filed_lines.usage) = 'object' THEN filed_lines.usage ELSE '{}'::jsonb END) AS m(key, value)
 	WHERE jsonb_typeof(m.value) = 'object'),
 prev AS (
 	SELECT f.model,
 		` + usageEach(func(n string) string { return "max(f." + n + ")" }, "p_") + `
 	FROM f
 	GROUP BY f.model),
+bs AS (
+	SELECT m.key AS model,
+		` + usageFigures("m.value", "") + `
+	FROM booked
+	CROSS JOIN LATERAL jsonb_each(CASE WHEN jsonb_typeof(booked.payload->'model_usage_since_last_result') = 'object'
+		THEN booked.payload->'model_usage_since_last_result' ELSE '{}'::jsonb END) AS m(key, value)
+	WHERE jsonb_typeof(m.value) = 'object'),
+shares AS (
+	SELECT bs.model,
+		` + usageEach(func(n string) string { return "sum(bs." + n + ")" }, "k_") + `
+	FROM bs
+	GROUP BY bs.model),
 g AS (
 	SELECT e.id, e.org_id, e.agent_id, e.task_id, e.created_at, e.session_id, m.key AS model,
 		` + usageFigures("m.value", "c_") + `,
 		` + usageEach(func(n string) string { return "COALESCE(prev.p_" + n + ", 0)" }, "p_") + `,
+		` + usageEach(func(n string) string { return "COALESCE(shares.k_" + n + ", 0)" }, "k_") + `,
 		` + usageFigures("(e.payload->'model_usage_since_last_result'->m.key)", "s_") + `
 	FROM e
 	CROSS JOIN LATERAL jsonb_each(e.payload->'modelUsage') AS m(key, value)
 	LEFT JOIN prev ON prev.model = m.key
-	WHERE jsonb_typeof(m.value) = 'object' AND EXISTS (SELECT 1 FROM known))
+	LEFT JOIN shares ON shares.model = m.key
+	WHERE jsonb_typeof(m.value) = 'object' AND EXISTS (SELECT 1 FROM bound))
 INSERT INTO model_usage (org_id, agent_id, task_id, event_id, session_id, model,
 	input_tokens, output_tokens, thinking_tokens, cache_read_tokens,
 	cache_write_5m_tokens, cache_write_1h_tokens, web_search_requests,
 	engine_usd, created_at, basis,
 	runtime_id, credential_ord, secret_key, secret_slot, credential_kind)
 SELECT g.org_id, g.agent_id, g.task_id, g.id, g.session_id, g.model,
-	GREATEST(g.c_input_tokens - g.p_input_tokens - g.s_input_tokens, 0),
-	GREATEST(g.c_output_tokens - g.p_output_tokens - g.s_output_tokens, 0),
-	GREATEST(g.c_thinking_tokens - g.p_thinking_tokens - g.s_thinking_tokens, 0),
-	GREATEST(g.c_cache_read_tokens - g.p_cache_read_tokens - g.s_cache_read_tokens, 0),
-	GREATEST(g.c_cache_write_5m_tokens - g.p_cache_write_5m_tokens - g.s_cache_write_5m_tokens, 0),
-	GREATEST(g.c_cache_write_1h_tokens - g.p_cache_write_1h_tokens - g.s_cache_write_1h_tokens, 0),
-	GREATEST(g.c_web_search_requests - g.p_web_search_requests - g.s_web_search_requests, 0),
-	g.c_engine_usd - g.p_engine_usd - g.s_engine_usd, g.created_at, '` + BasisGap + `',
+	GREATEST(g.c_input_tokens - g.p_input_tokens - g.k_input_tokens - g.s_input_tokens, 0),
+	GREATEST(g.c_output_tokens - g.p_output_tokens - g.k_output_tokens - g.s_output_tokens, 0),
+	GREATEST(g.c_thinking_tokens - g.p_thinking_tokens - g.k_thinking_tokens - g.s_thinking_tokens, 0),
+	GREATEST(g.c_cache_read_tokens - g.p_cache_read_tokens - g.k_cache_read_tokens - g.s_cache_read_tokens, 0),
+	GREATEST(g.c_cache_write_5m_tokens - g.p_cache_write_5m_tokens - g.k_cache_write_5m_tokens - g.s_cache_write_5m_tokens, 0),
+	GREATEST(g.c_cache_write_1h_tokens - g.p_cache_write_1h_tokens - g.k_cache_write_1h_tokens - g.s_cache_write_1h_tokens, 0),
+	GREATEST(g.c_web_search_requests - g.p_web_search_requests - g.k_web_search_requests - g.s_web_search_requests, 0),
+	g.c_engine_usd - g.p_engine_usd - g.k_engine_usd - g.s_engine_usd, g.created_at, '` + BasisGap + `',
 	$2::uuid, $3::smallint, $4::text, $5::smallint, $6::text
 FROM g
-WHERE g.c_engine_usd - g.p_engine_usd - g.s_engine_usd > 0.000001
+WHERE g.c_engine_usd - g.p_engine_usd - g.k_engine_usd - g.s_engine_usd > 0.000001
 ON CONFLICT DO NOTHING`
+
+// lineTotal is a result line's running total over all of its models — the
+// expression r is the line's payload, its modelUsage what the gap compares.
+func lineTotal(r string) string {
+	return "(SELECT COALESCE(SUM(CASE WHEN jsonb_typeof(t.value->'costUSD') = 'number' THEN (t.value->>'costUSD')::numeric END), 0)\n\t\t" +
+		"FROM jsonb_each(CASE WHEN jsonb_typeof(" + r + "->'modelUsage') = 'object' THEN " + r + "->'modelUsage' ELSE '{}'::jsonb END) AS t)"
+}
 
 // gapBooking books the gap rows of one recording event ($1) as one cost entry
 // of basis gap and links them to it, so that what the budget, the capacity

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -500,5 +501,191 @@ func TestCostGapAfterAFailedFilingInAContinuation(t *testing.T) {
 	g := readGap(t, s, agent.ID)
 	if g.rows != 1 || math.Abs(g.rowsUSD-0.3) > 1e-6 || g.out != 300 {
 		t.Fatalf("the dead process's 0.3 is the gap, not the failed line's 0.8 with it: %+v", g)
+	}
+}
+
+// gapRun is one run of a session's task, as the orchestrator leaves it in
+// the recording and the booking: the lifecycle record "working" at its start,
+// its result lines (some of whose filing fails), and what its end booked.
+type gapRun struct {
+	task   uuid.UUID
+	lines  []recordedLine
+	failed map[int]bool // indexes into lines whose filing fails
+	noUUID bool
+	// end: "booked" (the daemon's invocation report, the lines' shares),
+	// "killed" (no report: BookUnreported, as after a kill or a budget pause;
+	// a BookRun that failed leaves the same) or "" (the run goes on).
+	end string
+}
+
+func playGapRuns(t *testing.T, s *stack, agentID, orgID uuid.UUID, sid string, runs []gapRun) {
+	t.Helper()
+	ctx := context.Background()
+	n := 0
+	for _, r := range runs {
+		task := r.task
+		if err := s.obs.Record(ctx, orgID, agentID, &task, observability.KindLifecycle, map[string]string{"status": "working"}); err != nil {
+			t.Fatal(err)
+		}
+		usd := 0.0
+		for i, l := range r.lines {
+			raw := []byte(l.json(sid, n, true))
+			n++
+			if r.noUUID {
+				var line map[string]any
+				if err := json.Unmarshal(raw, &line); err != nil {
+					t.Fatal(err)
+				}
+				delete(line, "uuid")
+				raw, _ = json.Marshal(line)
+			}
+			var err error
+			if r.failed[i] {
+				// What RecordRuntime leaves when fileModelUsage fails.
+				err = s.obs.Record(ctx, orgID, agentID, &task, observability.KindRuntime, json.RawMessage(raw))
+			} else {
+				err = s.obs.RecordRuntime(ctx, orgID, agentID, &task, observability.CredentialRef{}, raw)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, u := range l.since {
+				usd += u.USD
+			}
+		}
+		switch r.end {
+		case "booked":
+			if _, err := s.obs.BookRun(ctx, observability.CostEntry{AgentID: agentID, TaskID: &task, USD: usd,
+				Model: opus, Basis: observability.BasisInvocation, SessionID: sid}, false); err != nil {
+				t.Fatal(err)
+			}
+		case "killed":
+			if _, err := s.obs.BookUnreported(ctx, agentID, task); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
+// A failed line is booked only if its run reported: the daemon's invocation
+// entry holds its share. A run killed (kill switch, budget pause, its sandbox
+// gone) never reports, BookUnreported books only rows, and a failed line has
+// none — so does a run whose BookRun failed. Its share has to stay in the
+// next line's gap, once. Where the run did report, the next line books no
+// gap; nor where the failed line's run is the next line's own, whose report
+// is still to come (the turn-limit handover after a failed main line).
+func TestCostGapAfterAFailedLineOfAKilledRun(t *testing.T) {
+	s := newStack(t)
+	at := func(usd float64, out int64) ccUsage { return ccUsage{USD: usd, Out: out} }
+	line := func(total, share float64) recordedLine {
+		return recordedLine{0, 1000, total, map[string]ccUsage{opus: at(total, int64(total*1000))},
+			map[string]ccUsage{opus: at(share, int64(share*1000+0.5))}}
+	}
+	for _, c := range []struct {
+		name string
+		runs func(task uuid.UUID) []gapRun
+		gap  float64
+	}{
+		{"killed", func(task uuid.UUID) []gapRun {
+			return []gapRun{
+				{task: task, lines: []recordedLine{line(0.5, 0.5)}, end: "booked"},
+				{task: task, lines: []recordedLine{line(1.3, 0.8)}, failed: map[int]bool{0: true}, end: "killed"},
+				{task: task, lines: []recordedLine{line(1.7, 0.4)}, end: "booked"},
+			}
+		}, 0.8},
+		{"booked", func(task uuid.UUID) []gapRun {
+			return []gapRun{
+				{task: task, lines: []recordedLine{line(0.5, 0.5)}, end: "booked"},
+				{task: task, lines: []recordedLine{line(1.3, 0.8)}, failed: map[int]bool{0: true}, end: "booked"},
+				{task: task, lines: []recordedLine{line(1.7, 0.4)}, end: "booked"},
+			}
+		}, 0},
+		{"same run", func(task uuid.UUID) []gapRun {
+			return []gapRun{
+				{task: task, lines: []recordedLine{line(0.5, 0.5)}, end: "booked"},
+				// The main line fails, the handover's line is filed; the
+				// run's report comes after both and holds both.
+				{task: task, lines: []recordedLine{line(1.3, 0.8), line(1.7, 0.4)}, failed: map[int]bool{0: true}, end: "booked"},
+			}
+		}, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			agent := s.newSupportAgent("gap-gekillt-" + strings.ReplaceAll(c.name, " ", "-"))
+			task := uuid.New()
+			sid := uuid.NewString()
+			playGapRuns(t, s, agent.ID, agent.OrgID, sid, c.runs(task))
+			g := readGap(t, s, agent.ID)
+			if math.Abs(g.entryUSD-c.gap) > 1e-6 || math.Abs(g.rowsUSD-c.gap) > 1e-6 || math.Abs(g.booked-1.7) > 1e-6 {
+				t.Fatalf("want a gap of %v and the session's 1.7 booked: %+v", c.gap, g)
+			}
+			// The next line finds nothing again.
+			playGapRuns(t, s, agent.ID, agent.OrgID, sid, []gapRun{{task: task, lines: []recordedLine{line(2.1, 0.4)}, end: "booked"}})
+			if g2 := readGap(t, s, agent.ID); g2.rows != g.rows || math.Abs(g2.booked-2.1) > 1e-6 {
+				t.Errorf("the failed line's share is caught once; the next line books no gap: %+v", g2)
+			}
+		})
+	}
+}
+
+// A turn-limit continuation in the middle of the chain usually holds just
+// its main line and the handover's, seconds apart: one failed filing leaves
+// the task without a filed line. Its run booked the share all the same; the
+// next continuation must find that line through the chain of tasks, not book
+// it again as a gap.
+func TestCostGapAfterAFailedFilingInTheMiddleOfTheChain(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	agent := s.newSupportAgent("gap-kettenmitte")
+	s.ohneLaeufe(agent.ID)
+	sid := uuid.NewString()
+	parent, err := s.backlog.Create(ctx, s.orgID, agent.ID, "Sylius bench", "work", "manual", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := []uuid.UUID{parent.ID}
+	for i := 1; i < 3; i++ {
+		child, err := s.backlog.CreateChild(ctx, ids[i-1], backlog.ChildSpec{Title: "Sylius bench", Body: "carry on",
+			Origin: "continuation:" + ids[i-1].String(), SessionID: sid, ResumeInput: "carry on"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, child.ID)
+	}
+	at := func(usd float64, out int64) ccUsage { return ccUsage{USD: usd, Out: out} }
+	playGapRuns(t, s, agent.ID, agent.OrgID, sid, []gapRun{
+		{task: ids[0], lines: []recordedLine{{0, 1000, 0.5, map[string]ccUsage{opus: at(0.5, 500)}, map[string]ccUsage{opus: at(0.5, 500)}}}, end: "booked"},
+		{task: ids[1], lines: []recordedLine{{1, 1000, 1.3, map[string]ccUsage{opus: at(1.3, 1300)}, map[string]ccUsage{opus: at(0.8, 800)}}},
+			failed: map[int]bool{0: true}, end: "booked"},
+		{task: ids[2], lines: []recordedLine{{2, 1000, 1.7, map[string]ccUsage{opus: at(1.7, 1700)}, map[string]ccUsage{opus: at(0.4, 400)}}}, end: "booked"},
+	})
+	if g := readGap(t, s, agent.ID); g.rows != 0 || g.entries != 0 || math.Abs(g.booked-1.7) > 1e-6 {
+		t.Fatalf("the middle task's 0.8 is booked by its run; the last task must not book it again: %+v", g)
+	}
+}
+
+// The failed lines are looked for after the filed line with the largest
+// running total, not after the latest filed one: a late copy without a uuid
+// is filed after the lines that followed its original, and a failed line
+// among those would fall out of the window.
+func TestCostGapWindowFromTheLargestTotal(t *testing.T) {
+	s := newStack(t)
+	agent := s.newSupportAgent("gap-groesste-summe")
+	task := uuid.New()
+	sid := uuid.NewString()
+	at := func(usd float64, out int64) ccUsage { return ccUsage{USD: usd, Out: out} }
+	line := func(total, share float64) recordedLine {
+		return recordedLine{0, 1000, total, map[string]ccUsage{opus: at(total, int64(total*1000))},
+			map[string]ccUsage{opus: at(share, int64(share*1000+0.5))}}
+	}
+	playGapRuns(t, s, agent.ID, agent.OrgID, sid, []gapRun{
+		{task: task, lines: []recordedLine{line(0.2, 0.2)}, noUUID: true, end: "booked"},
+		{task: task, lines: []recordedLine{line(1.0, 0.8)}, noUUID: true, end: "booked"},
+		{task: task, lines: []recordedLine{line(1.5, 0.5)}, noUUID: true, end: "booked"},
+		{task: task, lines: []recordedLine{line(2.0, 0.5)}, noUUID: true, failed: map[int]bool{0: true}, end: "booked"},
+		// The second line arrives again, then the run's own line.
+		{task: task, lines: []recordedLine{line(1.0, 0.8), line(2.4, 0.4)}, noUUID: true, end: "booked"},
+	})
+	if g := readGap(t, s, agent.ID); g.rows != 0 || g.entries != 0 {
+		t.Fatalf("no process died: the failed line's booked 0.5 must not come back as a gap: %+v", g)
 	}
 }
