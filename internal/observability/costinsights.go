@@ -257,7 +257,7 @@ func usageEach(x func(name string) string, p string) string {
 // none of whose lines was filed yet, or earlier recordings already pruned —
 // nothing is filed: a gap is only booked where both ends are known.
 //
-// It cannot book anything twice:
+// It books nothing twice, but for the first case it cannot see (below):
 //
 //   - After a process WITH a result line, the running total grew by that
 //     line's share and this one's: no gap, where the earlier line was filed
@@ -274,9 +274,11 @@ func usageEach(x func(name string) string, p string) string {
 //     later lines, and for every line after that copy.
 //
 // What it cannot see: a failed line before the bound whose total is larger
-// than every filed line's (a failure and an out-of-order arrival together),
-// and a run killed after a failed line of its own was followed by a filed one
-// (that line's gap counted the failed line as its run's, still to come).
+// than every filed line's (a failure and an out-of-order arrival together:
+// the next line's gap holds its share again, booked twice where its run
+// reported), and a run killed after a failed line of its own was followed by
+// a filed one (that line's gap counted the failed line as its run's, still
+// to come: its share is booked too little).
 //
 // Only a difference above a millionth of a dollar is filed, and only upwards:
 // a negative difference is never booked. Tokens follow the money, each floored
