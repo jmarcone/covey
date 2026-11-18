@@ -27,8 +27,9 @@ permissions:
   contents: write
 
 # Two merges in a row both push the `catalog` branch. They queue instead of
-# racing, and none is cancelled: each carries a version of the file somebody
-# reviewed, and the later run overwrites the earlier one in order.
+# racing: a run waits for the one before it, and of several waiting only the
+# newest runs. That is the right one, because it carries the newest reviewed
+# file and so the branch ends in the right state.
 concurrency:
   group: engine-catalogue
   cancel-in-progress: false

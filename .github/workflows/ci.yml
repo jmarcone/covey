@@ -24,11 +24,13 @@ on:
 permissions:
   contents: read
 
-# One run per pull request and ref: a push to a PR branch cancels the run it
-# supersedes. Runs on main are never cancelled, so that every commit there
-# keeps a result of its own.
+# One run per pull request: a push to a PR branch cancels the run it
+# supersedes. Every other run (push to main, the weekly cron) gets a group of
+# its own, so it neither waits for another run nor is cancelled by one: a
+# group holds one running and ONE pending run, and a third arrival would
+# cancel the pending one, which is a merge commit left without a result.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -126,6 +128,7 @@ jobs:
       # instruments pgx, chromedp and the rest of the module graph, which
       # would make half the number somebody else's code.
       - name: go test
+        id: gotest
       # -timeout is a FUSE, not a budget. go test cuts a package off after ten
       # minutes when nothing says otherwise, and that default knows nothing
       # about the machine it runs on: the integration package took 592 s here
@@ -156,7 +159,7 @@ jobs:
       # with the indented lines go prints under it, plus package FAIL and panic
       # lines; %0A is how a workflow command spells a newline.
       - name: Failed tests as an annotation
-        if: failure()
+        if: failure() && steps.gotest.outcome == 'failure'
         run: |
           msg=$(awk '
             /^[[:space:]]*--- FAIL/ { n = 8; print; next }
