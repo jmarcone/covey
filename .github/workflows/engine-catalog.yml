@@ -26,6 +26,13 @@ on:
 permissions:
   contents: write
 
+# Two merges in a row both push the `catalog` branch. They queue instead of
+# racing, and none is cancelled: each carries a version of the file somebody
+# reviewed, and the later run overwrites the earlier one in order.
+concurrency:
+  group: engine-catalogue
+  cancel-in-progress: false
+
 jobs:
   publish:
     runs-on: ubuntu-latest
