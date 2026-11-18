@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -136,5 +137,41 @@ func TestEveryInjectTypeIsRouted(t *testing.T) {
 	})
 	if found == 0 {
 		t.Fatal("no inject_ type found — the parse is not doing what it claims")
+	}
+}
+
+// The cost message says what its figure covers. A new daemon sends the basis
+// and the session; a daemon from before the fields sends neither, and its
+// message must decode to an empty basis — that emptiness is how the control
+// plane recognizes a session-cumulative claude-code figure.
+func TestCostCarriesBasisAndSession(t *testing.T) {
+	in := Cost{TaskID: "t", USD: 0.3, InputTokens: 2, OutputTokens: 300,
+		CacheReadTokens: 52000, CacheCreationTokens: 900, Model: "claude-opus-5-5",
+		Basis: CostBasisInvocation, SessionID: "sess-1", SessionTotalUSD: 1.3}
+	msg, err := Encode(TypeCost, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"basis":"invocation"`, `"session_id":"sess-1"`, `"session_total_usd":1.3`} {
+		if !strings.Contains(string(msg.Payload), want) {
+			t.Fatalf("%s missing from %s", want, msg.Payload)
+		}
+	}
+	out, err := DecodePayload[Cost](msg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(in, out) {
+		t.Fatalf("round trip lost fields:\n in %+v\nout %+v", in, out)
+	}
+
+	old := Message{Type: TypeCost, Payload: json.RawMessage(
+		`{"task_id":"t","usd":2.3,"input_tokens":5,"output_tokens":900,"cache_read_tokens":40000,"model":"claude-opus-5-5"}`)}
+	got, err := DecodePayload[Cost](old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Basis != "" || got.SessionID != "" || got.SessionTotalUSD != 0 || got.USD != 2.3 {
+		t.Fatalf("an old daemon's message must decode with an empty basis: %+v", got)
 	}
 }

@@ -138,7 +138,8 @@ func (s *Store) Pick(ctx context.Context, orgID, agentID, runtimeID uuid.UUID, e
 			return Picked{}, err
 		}
 		return Picked{RuntimeID: rt.ID, Ord: c.Ord, Kind: c.Kind, Label: c.Label,
-			Value: value, EnvVar: cred.EnvVar, Path: cred.Path}, nil
+			Value: value, EnvVar: cred.EnvVar, Path: cred.Path,
+			SecretKey: c.SecretKey, SecretSlot: c.SecretSlot}, nil
 	}
 	find := func(ord int) (Credential, bool) {
 		for _, c := range healthy {

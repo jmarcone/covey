@@ -122,6 +122,12 @@ type RuntimeCapabilities struct {
 	// engine has no such control: then the field is not offered and not
 	// accepted, rather than being stored where nothing reads it.
 	EffortLevels []string `json:"effort_levels,omitempty"`
+	// ResultUsage: the engine's result lines carry its usage per model, which
+	// the control plane files as model_usage (Claude Code's modelUsage and
+	// model_usage_since_last_result). A run of such an engine is booked
+	// together with those rows: checked against them, and from a daemon that
+	// predates the cost basis computed from them (spec/06).
+	ResultUsage bool `json:"result_usage,omitempty"`
 }
 
 // NeedsCredential is derived rather than declared — one fact, one place.

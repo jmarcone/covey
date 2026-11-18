@@ -690,6 +690,13 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/runtime-instances/{id}/credentials/order", s.rbac(securityRoles, s.handleReorderRuntimeCredentials))
 	mux.Handle("PATCH /api/v1/runtime-instances/{id}/credentials/{ord}", s.rbac(securityRoles, s.handlePatchRuntimeCredential))
 	mux.Handle("DELETE /api/v1/runtime-instances/{id}/credentials/{ord}", s.rbac(securityRoles, s.handleDeleteRuntimeCredential))
+	// The credential's dated plan price (0145): for measuring what the
+	// subscription meter's points cost, never for a budget.
+	mux.Handle("GET /api/v1/runtime-instances/{id}/credentials/{ord}/plan", s.rbac(securityRoles, s.handleGetCredentialPlan))
+	mux.Handle("PUT /api/v1/runtime-instances/{id}/credentials/{ord}/plan", s.rbac(securityRoles, s.handlePutCredentialPlan))
+	// Which Anthropic API key the credential's value is (0146): what joins
+	// the bill to the runs.
+	mux.Handle("PATCH /api/v1/runtime-instances/{id}/credentials/{ord}/billing-key", s.rbac(securityRoles, s.handleSetBillingKey))
 	mux.Handle("POST /api/v1/agents/{id}/runtime-instance", s.agentScoped(manage, s.handleAssignRuntime))
 	mux.Handle("GET /api/v1/marketplace", s.rbac(anyRole, s.handleMarketplace))
 	mux.Handle("POST /api/v1/marketplace/{name}/install", s.rbac(securityRoles, s.handleMarketplaceInstall))
@@ -713,6 +720,19 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/agents/{id}/cost/series", s.agentScoped(anyRole, s.handleCostSeries))
 	mux.Handle("GET /api/v1/cost/org", s.rbac(anyRole, s.handleOrgCost))
 	mux.Handle("GET /api/v1/cost/runs", s.rbac(anyRole, s.handleOrgRunCosts))
+	// Cost insights (0142): usage per model as the engine reported it, and the
+	// provider's subscription meter next to the booked list-price cost.
+	mux.Handle("GET /api/v1/cost/models", s.rbac(anyRole, s.handleModelUsage))
+	mux.Handle("GET /api/v1/cost/subscription", s.rbac(anyRole, s.handleUsageReadings))
+	mux.Handle("GET /api/v1/cost/usage-readings", s.rbac(anyRole, s.handleUsageReadings))
+	mux.Handle("GET /api/v1/cost/cells", s.rbac(anyRole, s.handleCostCells))
+	// Billed money (0146): what Anthropic charged, read with the organisation's
+	// anthropic_admin_key by the control plane. No endpoint returns the key.
+	mux.Handle("GET /api/v1/cost/billed", s.rbac(anyRole, s.handleBilled))
+	mux.Handle("GET /api/v1/cost/reconcile", s.rbac(anyRole, s.handleReconcile))
+	mux.Handle("GET /api/v1/cost/billing-sync", s.rbac(anyRole, s.handleGetBillingSync))
+	mux.Handle("POST /api/v1/cost/billing-sync", s.rbac(securityRoles, s.handlePostBillingSync))
+	mux.Handle("GET /api/v1/cost/billing-keys", s.rbac(anyRole, s.handleBillingKeys))
 	mux.Handle("GET /api/v1/agents/{id}/cost/runs", s.agentScoped(anyRole, s.handleAgentRunCosts))
 	// The price list: delivery next to the cost, same scope, same period
 	// (spec/17-kpis.md).
@@ -1090,6 +1110,10 @@ func mapErr(w http.ResponseWriter, err error) {
 		errors.Is(err, marketplace.ErrNotFound), errors.Is(err, chat.ErrNotFound),
 		errors.Is(err, pgx.ErrNoRows):
 		writeErr(w, http.StatusNotFound, "not found")
+	case errors.Is(err, secrets.ErrReserved):
+		// A reserved key sent where it may not go (internal/secrets): the
+		// request is refused, and the sentence says what to do instead.
+		writeErr(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, backlog.ErrInvalidTransition),
 		errors.Is(err, org.ErrLastAdmin), errors.Is(err, org.ErrEmailTaken),
 		errors.Is(err, org.ErrAlreadyMember), errors.Is(err, org.ErrSharedLogin),

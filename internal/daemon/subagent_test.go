@@ -1,13 +1,19 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/coder/websocket"
 
 	"github.com/benjaminLedel/covey-plugin-sdk/target"
 )
@@ -275,19 +281,22 @@ func writeFile(t *testing.T, dir, name, content string) {
 // otherwise the commissioning agent takes half-finished work for finished.
 func TestSubAgentReportsTurnLimit(t *testing.T) {
 	// The first run ends at the turn limit; the adapter then fetches the
-	// handover state via --resume from the same session.
+	// handover state via --resume from the same session. That process reports
+	// the session's running total (0.62), which already contains the first
+	// run's 0.5 — the run cost 0.62, not 1.12.
 	bin, home := fakeClaude(t, `
 if printf '%s\n' "$@" | grep -q -- '--resume'; then
 cat <<'EOF'
-{"type":"result","subtype":"success","session_id":"s","result":"## Erledigt\nHälfte des Fixes"}
+{"type":"result","subtype":"success","session_id":"s","result":"## Erledigt\nHälfte des Fixes","total_cost_usd":0.62,"model_usage_since_last_result":{"claude-opus-5-5":{"costUSD":0.12,"inputTokens":1,"outputTokens":200,"cacheReadInputTokens":30000,"cacheCreationEphemeral1hInputTokens":400}}}
 EOF
 else
 cat <<'EOF'
-{"type":"result","subtype":"error_max_turns","session_id":"s","num_turns":60,"total_cost_usd":0.5}
+{"type":"result","subtype":"error_max_turns","session_id":"s","num_turns":60,"total_cost_usd":0.5,"model_usage_since_last_result":{"claude-opus-5-5":{"costUSD":0.5,"inputTokens":4,"outputTokens":800,"cacheReadInputTokens":90000,"cacheCreationEphemeral1hInputTokens":11000}}}
 EOF
 fi`)
 	c := &Client{homeDir: home, runtimes: map[string]Runtime{"claude-code": &ClaudeCode{Binary: bin}},
 		creds: map[string]InjectCredentials{}, cfg: InjectConfig{Runtime: "claude-code"}}
+	sent := captureSends(t, c)
 
 	res, err := c.runSubAgent(t.Context(), "task-1", target.SubAgentRequest{Dir: home, Task: "Fix den Bug"})
 	if err != nil {
@@ -298,6 +307,73 @@ fi`)
 	}
 	if !strings.Contains(res.Result, "Erledigt") {
 		t.Fatalf("the handover state must appear in the report: %+v", res)
+	}
+
+	cost := waitForCost(t, sent)
+	if !near(cost.USD, 0.62) || !near(res.CostUSD, 0.62) {
+		t.Fatalf("the cost is the sum of the two deltas (0.5 + 0.12), not of the totals: sent %+v, report %v", cost, res.CostUSD)
+	}
+	if cost.InputTokens != 5 || cost.OutputTokens != 1000 || cost.CacheReadTokens != 120000 || cost.CacheCreationTokens != 11400 {
+		t.Fatalf("tokens are the two deltas' sum: %+v", cost)
+	}
+	if cost.TaskID != "task-1" || cost.Basis != CostBasisInvocation || cost.SessionID != "s" || !near(cost.SessionTotalUSD, 0.62) {
+		t.Fatalf("basis and session must travel with the cost: %+v", cost)
+	}
+}
+
+// captureSends gives c a connection to a stand-in control plane and returns
+// what arrives there.
+func captureSends(t *testing.T, c *Client) <-chan Message {
+	t.Helper()
+	got := make(chan Message, 256)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		conn.SetReadLimit(16 << 20)
+		for {
+			_, raw, err := conn.Read(context.Background())
+			if err != nil {
+				return
+			}
+			var m Message
+			if json.Unmarshal(raw, &m) == nil {
+				got <- m
+			}
+		}
+	}))
+	t.Cleanup(srv.Close)
+	conn, _, err := websocket.Dial(t.Context(), "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.CloseNow() })
+	c.writeMu.Lock()
+	c.conn = conn
+	c.writeMu.Unlock()
+	return got
+}
+
+// waitForCost returns the first cost message among the sent ones.
+func waitForCost(t *testing.T, sent <-chan Message) Cost {
+	t.Helper()
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case m := <-sent:
+			if m.Type != TypeCost {
+				continue
+			}
+			cost, err := DecodePayload[Cost](m)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return cost
+		case <-timeout:
+			t.Fatal("no cost message was sent")
+		}
 	}
 }
 

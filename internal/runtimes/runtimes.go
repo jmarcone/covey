@@ -141,6 +141,11 @@ type Picked struct {
 	Kind      string
 	Label     string
 	Value     string
+	// SecretKey/SecretSlot name the value behind Ord as it stands at the pick:
+	// what the run's costs are booked against, since a Reorder moves values
+	// between places but not between secrets.
+	SecretKey  string
+	SecretSlot int
 	// Exactly one of these is set, from the engine's declaration: an
 	// environment variable, or a file at this path in the agent home.
 	EnvVar string

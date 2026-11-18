@@ -4,13 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeClaude creates a fake `claude` binary that writes its arguments to
@@ -624,5 +628,394 @@ EOF`)
 	}
 	if !strings.Contains(res.Error, "turn limit reached (3 turns)") {
 		t.Fatalf("the main run's error text has to stand: %q", res.Error)
+	}
+}
+
+// ccUsage is one model entry of modelUsage / model_usage_since_last_result in
+// the shape CLI 2.1.325 writes it. thinkingTokens is set on purpose: those
+// tokens are already inside outputTokens, and a booking that added them would
+// show up in the token assertions below.
+func ccUsage(cost float64, in, out, read, write5m, write1h int64) string {
+	return fmt.Sprintf(`{"costUSD":%g,"provider":"firstParty","costBasis":"list","inputTokens":%d,"outputTokens":%d,"thinkingTokens":%d,"cacheReadInputTokens":%d,"cacheCreationInputTokens":%d,"cacheCreationEphemeral5mInputTokens":%d,"cacheCreationEphemeral1hInputTokens":%d,"webSearchRequests":0,"contextWindow":1000000,"maxOutputTokens":128000}`,
+		cost, in, out, out/2, read, write5m+write1h, write5m, write1h)
+}
+
+// ccResultLine is a result line of CLI 2.1.325: total_cost_usd and modelUsage
+// are the session's running totals, model_usage_since_last_result is this
+// line's own share. The top-level usage is the main model's per-invocation
+// figure — set to numbers that must NOT be booked when the since-last map is
+// there.
+func ccResultLine(subtype, terminal, result string, total float64, cumulative, since string) string {
+	line := fmt.Sprintf(`{"type":"result","subtype":%q,"terminal_reason":%q,"is_error":false,"session_id":"sess-cc","num_turns":3,"result":%q,"total_cost_usd":%g,"usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":1,"cache_creation_input_tokens":1},"modelUsage":%s`,
+		subtype, terminal, result, total, cumulative)
+	if since != "" {
+		line += `,"model_usage_since_last_result":` + since
+	}
+	return line + "}"
+}
+
+// opusOnly wraps one model entry into a modelUsage map.
+func opusOnly(entry string) string { return `{"claude-opus-5-5":` + entry + `}` }
+
+// byResume answers with the main run's lines, or with the summary's when the
+// process was started with --resume.
+func byResume(main, resume string) string {
+	return "if printf '%s\\n' \"$@\" | grep -q -- '--resume'; then\ncat <<'EOF'\n" + resume +
+		"\nEOF\nelse\ncat <<'EOF'\n" + main + "\nEOF\nfi"
+}
+
+func near(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
+
+const ccDone = `COVEY_STATUS: {"status":"done","result":"fertig"}`
+
+// The turn limit, then the handover. The summary process resumes the same
+// session, so its total_cost_usd (1.3) already contains the main run (1.0).
+// Booking the two totals gave 2.3 — the main run twice. What the run cost is
+// 1.0 + 0.3.
+func TestClaudeCodeBooksDeltasAcrossTheHandover(t *testing.T) {
+	main := ccResultLine("error_max_turns", "max_turns", "", 1.0,
+		opusOnly(ccUsage(1.0, 5, 900, 40000, 0, 12000)),
+		opusOnly(ccUsage(1.0, 5, 900, 40000, 0, 12000)))
+	summary := ccResultLine("success", "completed", "## Done\nhalf", 1.3,
+		opusOnly(ccUsage(1.3, 7, 1200, 92000, 100, 12800)),
+		opusOnly(ccUsage(0.3, 2, 300, 52000, 100, 800)))
+	bin, dir := fakeClaude(t, byResume(main, summary))
+	res, err := (&ClaudeCode{Binary: bin}).Run(context.Background(),
+		RunSpec{TaskID: "t", Title: "x", HomeDir: dir, MaxTurns: 30}, func(string, json.RawMessage) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "incomplete" || !strings.Contains(res.Result, "half") {
+		t.Fatalf("the handover must still arrive: %+v", res)
+	}
+	if !near(res.CostUSD, 1.3) {
+		t.Fatalf("CostUSD = %v, want 1.3 (main 1.0 + summary 0.3, not the two running totals)", res.CostUSD)
+	}
+	if res.InputTokens != 7 || res.OutputTokens != 1200 || res.CacheReadTokens != 92000 || res.CacheCreationTokens != 12900 {
+		t.Fatalf("tokens must be the sum of both since-last maps: %+v", res)
+	}
+	if res.Basis != CostBasisInvocation || res.SessionID != "sess-cc" || !near(res.SessionTotalUSD, 1.3) {
+		t.Fatalf("basis/session wrong: %+v", res)
+	}
+}
+
+// A continuation resumes a session that already cost 4.3 in earlier tasks. Its
+// line says total 5.0; what THIS run spent is the 0.7 since the last result.
+func TestClaudeCodeBooksOnlyTheResumedRunsShare(t *testing.T) {
+	line := ccResultLine("success", "completed", ccDone, 5.0,
+		opusOnly(ccUsage(5.0, 50, 9000, 900000, 0, 80000)),
+		opusOnly(ccUsage(0.7, 3, 400, 60000, 0, 2000)))
+	bin, dir := fakeClaude(t, "cat <<'EOF'\n"+line+"\nEOF")
+	res, err := (&ClaudeCode{Binary: bin}).Run(context.Background(),
+		RunSpec{TaskID: "t", Title: "x", HomeDir: dir, ResumeSessionID: "sess-cc", ResumeInput: "weiter"},
+		func(string, json.RawMessage) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !near(res.CostUSD, 0.7) || res.OutputTokens != 400 || res.CacheReadTokens != 60000 {
+		t.Fatalf("a resumed run must book its own share, got %+v", res)
+	}
+	if res.Basis != CostBasisInvocation || !near(res.SessionTotalUSD, 5.0) {
+		t.Fatalf("basis/session total wrong: %+v", res)
+	}
+}
+
+// One process, two result lines: the run hit its turn limit and was woken
+// again in the same process. Both lines' shares count; the status is the
+// later line's.
+func TestClaudeCodeSumsSeveralResultLinesOfOneProcess(t *testing.T) {
+	first := ccResultLine("error_max_turns", "max_turns", "", 1.0,
+		opusOnly(ccUsage(1.0, 5, 900, 40000, 0, 12000)),
+		opusOnly(ccUsage(1.0, 5, 900, 40000, 0, 12000)))
+	second := ccResultLine("success", "completed", ccDone, 1.6,
+		opusOnly(ccUsage(1.6, 9, 1500, 70000, 0, 13000)),
+		opusOnly(ccUsage(0.6, 4, 600, 30000, 0, 1000)))
+	bin, dir := fakeClaude(t, "cat <<'EOF'\n"+first+"\n"+second+"\nEOF")
+	res, err := (&ClaudeCode{Binary: bin}).Run(context.Background(),
+		RunSpec{TaskID: "t", Title: "x", HomeDir: dir}, func(string, json.RawMessage) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "done" || res.Result != "fertig" {
+		t.Fatalf("status and result are the last line's: %+v", res)
+	}
+	if !near(res.CostUSD, 1.6) || res.InputTokens != 9 || res.OutputTokens != 1500 ||
+		res.CacheReadTokens != 70000 || res.CacheCreationTokens != 13000 {
+		t.Fatalf("both lines' deltas must be summed: %+v", res)
+	}
+}
+
+// A CLI without model_usage_since_last_result: the money is the difference of
+// the running totals, as far as the total before is known.
+func TestClaudeCodeOldCLIFallsBackToTotalDifferences(t *testing.T) {
+	old := func(subtype, terminal, result string, total float64, out int64) string {
+		return fmt.Sprintf(`{"type":"result","subtype":%q,"terminal_reason":%q,"session_id":"sess-old","result":%q,"total_cost_usd":%g,"usage":{"input_tokens":2,"output_tokens":%d,"cache_read_input_tokens":1000,"cache_creation_input_tokens":100}}`,
+			subtype, terminal, result, total, out)
+	}
+	run := func(t *testing.T, script string, spec RunSpec) RunResult {
+		t.Helper()
+		bin, dir := fakeClaude(t, script)
+		spec.TaskID, spec.Title, spec.HomeDir = "t", "x", dir
+		res, err := (&ClaudeCode{Binary: bin}).Run(context.Background(), spec, func(string, json.RawMessage) {})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+
+	t.Run("two lines in one fresh process", func(t *testing.T) {
+		res := run(t, "cat <<'EOF'\n"+old("success", "completed", "", 1.0, 10)+"\n"+
+			old("success", "completed", ccDone, 1.4, 20)+"\nEOF", RunSpec{})
+		if !near(res.CostUSD, 1.4) || res.Basis != CostBasisInvocation {
+			t.Fatalf("1.0 then 1.4 is 1.4 in all, got %+v", res)
+		}
+		if res.OutputTokens != 30 || res.CacheReadTokens != 2000 {
+			t.Fatalf("the per-line usage is summed: %+v", res)
+		}
+	})
+	t.Run("handover with the main run's total as baseline", func(t *testing.T) {
+		res := run(t, byResume(old("error_max_turns", "max_turns", "", 1.4, 10),
+			old("success", "completed", "## Done", 1.9, 5)), RunSpec{MaxTurns: 30})
+		if !near(res.CostUSD, 1.9) || res.Basis != CostBasisInvocation {
+			t.Fatalf("main 1.4 + summary 0.5, got %+v", res)
+		}
+	})
+	t.Run("resume without a baseline", func(t *testing.T) {
+		res := run(t, "cat <<'EOF'\n"+old("success", "completed", ccDone, 3.0, 10)+"\nEOF",
+			RunSpec{ResumeSessionID: "sess-old", ResumeInput: "weiter"})
+		if !near(res.CostUSD, 3.0) || res.Basis != CostBasisCumulative {
+			t.Fatalf("the whole running total, flagged cumulative, got %+v", res)
+		}
+	})
+}
+
+// Claude Code makes side calls to a smaller model. The top-level usage leaves
+// them out; the since-last map has them, and the run's tokens are both
+// models'.
+func TestClaudeCodeCountsSideCallsOfOtherModels(t *testing.T) {
+	since := `{"claude-opus-5-5":` + ccUsage(0.9, 4, 700, 50000, 0, 9000) +
+		`,"claude-haiku-5-5":` + ccUsage(0.01, 6, 300, 20000, 0, 1500) + `}`
+	line := ccResultLine("success", "completed", ccDone, 0.91, since, since)
+	bin, dir := fakeClaude(t, "cat <<'EOF'\n"+
+		`{"type":"assistant","session_id":"sess-cc","message":{"model":"claude-opus-5-5","content":"arbeite"}}`+"\n"+
+		line+"\nEOF")
+	res, err := (&ClaudeCode{Binary: bin}).Run(context.Background(),
+		RunSpec{TaskID: "t", Title: "x", HomeDir: dir}, func(string, json.RawMessage) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !near(res.CostUSD, 0.91) || res.InputTokens != 10 || res.OutputTokens != 1000 ||
+		res.CacheReadTokens != 70000 || res.CacheCreationTokens != 10500 {
+		t.Fatalf("both models belong in the run's figures: %+v", res)
+	}
+	if res.Model != "claude-opus-5-5" {
+		t.Fatalf("the entry stays on the main model: %q", res.Model)
+	}
+}
+
+// The handover resumes with the main run's arguments. The prompt cache is
+// keyed on the prefix — system prompt, tool schemas, MCP servers — and a resume
+// without them wrote the whole context again on every handover (15 % of one
+// evening's spend).
+func TestSummarizeArgvMatchesBuildArgs(t *testing.T) {
+	main := ccResultLine("error_max_turns", "max_turns", "", 1.0,
+		opusOnly(ccUsage(1.0, 5, 900, 40000, 0, 12000)),
+		opusOnly(ccUsage(1.0, 5, 900, 40000, 0, 12000)))
+	summary := ccResultLine("success", "completed", "## Done", 1.1,
+		opusOnly(ccUsage(1.1, 6, 1000, 90000, 0, 12000)),
+		opusOnly(ccUsage(0.1, 1, 100, 50000, 0, 0)))
+	bin, dir := fakeClaude(t, `
+if printf '%s\n' "$@" | grep -q -- '--resume'; then
+printf '%s\0' "$@" > "$HOME/args-resume.nul"
+cat <<'EOF'
+`+summary+`
+EOF
+else
+cat <<'EOF'
+`+main+`
+EOF
+fi`)
+	spec := RunSpec{
+		TaskID: "t", Title: "Ticket 42", Body: "Bitte prüfen",
+		SystemPrompt: "Du bist der Support-Agent.", MemoryContext: "Kunde nutzt Chrome",
+		Model: "claude-opus-5-5", Effort: "high",
+		AllowedTools: []string{"Bash", "Read"}, Skills: true, MaxTurns: 30,
+		MCPConfig: `{"mcpServers":{"covey":{"type":"http","url":"http://127.0.0.1:4711/mcp"}}}`,
+		HomeDir:   dir,
+	}
+	adapter := &ClaudeCode{Binary: bin}
+	if _, err := adapter.Run(context.Background(), spec, func(string, json.RawMessage) {}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "args-resume.nul"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Split(strings.TrimSuffix(string(raw), "\x00"), "\x00")
+
+	// The main run's arguments for a resume of its session — with the summary
+	// prompt in place of the resume input and the summary's turn cap in place
+	// of thirty; the tool guard comes on top as a setting, outside the prefix.
+	resumed := spec
+	resumed.ResumeSessionID = "sess-cc"
+	want, _ := adapter.buildArgs(resumed)
+	for i := 1; i < len(want); i++ {
+		switch want[i-1] {
+		case "-p":
+			want[i] = maxTurnsSummaryPrompt
+		case "--max-turns":
+			want[i] = strconv.Itoa(maxTurnsSummaryTurns)
+		}
+	}
+	want = append(want, "--settings", summaryToolGuard)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("the summary's argv must be the main run's with prompt and turn limit swapped:\n got %q\nwant %q", got, want)
+	}
+	for _, flag := range []string{"--append-system-prompt", "--tools", "--allowedTools", "--mcp-config", "--model", "--effort"} {
+		if !slices.Contains(got, flag) {
+			t.Fatalf("%s missing from the summary's argv: %q", flag, got)
+		}
+	}
+}
+
+// A result line is the engine's to shape. One figure written as 12.0 or
+// 1.2e3 made the whole line undecodable with int64 fields: no status, no
+// result, nothing booked — a finished run looked like one that ended without
+// a result. Status and money have to survive; an odd figure counts as the
+// number it is, or as 0 where it is no number at all.
+func TestClaudeCodeReadsOddNumericShapes(t *testing.T) {
+	line := `{"type":"result","subtype":"success","is_error":false,"session_id":"sess-odd","num_turns":3.0,` +
+		`"result":` + strconv.Quote(ccDone) + `,"total_cost_usd":0.5,` +
+		`"usage":{"input_tokens":12.0,"output_tokens":"many","cache_read_input_tokens":null,"cache_creation_input_tokens":1.5e2},` +
+		`"modelUsage":{"claude-opus-5-5":{"costUSD":"n/a","inputTokens":{"x":1}}},` +
+		`"model_usage_since_last_result":{"claude-opus-5-5":{"costUSD":0.5,"inputTokens":1.2e3,"outputTokens":300.0,` +
+		`"cacheReadInputTokens":"10","cacheCreationEphemeral1hInputTokens":1e30,"cacheCreationInputTokens":400},` +
+		`"claude-haiku-5-5":"not an object"}}`
+	bin, dir := fakeClaude(t, "cat <<'EOF'\n"+line+"\nEOF")
+	res, err := (&ClaudeCode{Binary: bin}).Run(context.Background(),
+		RunSpec{TaskID: "t", Title: "x", HomeDir: dir}, func(string, json.RawMessage) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "done" || res.Result != "fertig" || res.SessionID != "sess-odd" {
+		t.Fatalf("the line's status has to survive its odd figures: %+v", res)
+	}
+	// 1.2e3 is 1200 and 300.0 is 300; the string and the number beyond int64
+	// count 0, so the cache write falls back to the plain sum.
+	if !near(res.CostUSD, 0.5) || res.InputTokens != 1200 || res.OutputTokens != 300 ||
+		res.CacheReadTokens != 0 || res.CacheCreationTokens != 400 {
+		t.Fatalf("the since-last figures have to be read leniently: %+v", res)
+	}
+
+	// The same leniency for a CLI without the per-line field: the top-level
+	// usage with a float and a string in it.
+	old := `{"type":"result","subtype":"success","session_id":"sess-odd2","result":` + strconv.Quote(ccDone) +
+		`,"total_cost_usd":"0.3","usage":{"input_tokens":12.0,"output_tokens":"many","cache_creation_input_tokens":1.5e2}}`
+	bin, dir = fakeClaude(t, "cat <<'EOF'\n"+old+"\nEOF")
+	res, err = (&ClaudeCode{Binary: bin}).Run(context.Background(),
+		RunSpec{TaskID: "t", Title: "x", HomeDir: dir}, func(string, json.RawMessage) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "done" || res.InputTokens != 12 || res.OutputTokens != 0 || res.CacheCreationTokens != 150 || res.CostUSD != 0 {
+		t.Fatalf("an old line with odd figures has to keep its status and its numbers: %+v", res)
+	}
+}
+
+func TestLenientNumbers(t *testing.T) {
+	for raw, want := range map[string]int64{
+		`12`: 12, `12.0`: 12, `1.2e3`: 1200, `2.5`: 3, `-2.5`: -3, `"12"`: 0, `null`: 0,
+		`{}`: 0, `[1]`: 0, `true`: 0, `1e30`: 0, `-1e30`: 0,
+	} {
+		var n lenientInt
+		if err := json.Unmarshal([]byte(raw), &n); err != nil || int64(n) != want {
+			t.Errorf("lenientInt(%s) = %d, %v — want %d", raw, n, err, want)
+		}
+	}
+	var f lenientFloat
+	if err := json.Unmarshal([]byte(`"0.3"`), &f); err != nil || f != 0 {
+		t.Errorf("lenientFloat of a string = %v, %v — want 0", f, err)
+	}
+	if err := json.Unmarshal([]byte(`0.25`), &f); err != nil || f != 0.25 {
+		t.Errorf("lenientFloat(0.25) = %v, %v", f, err)
+	}
+}
+
+// A CLI whose running total does not carry across --resume: the handover's
+// total (0.5) is its own figure and lies below the main run's (1.4), the
+// baseline it is measured against. The difference would be negative; the
+// handover's own total is what it spent.
+func TestClaudeCodeHandoverBelowTheBaseline(t *testing.T) {
+	old := func(subtype, terminal, result string, total float64) string {
+		return fmt.Sprintf(`{"type":"result","subtype":%q,"terminal_reason":%q,"session_id":"sess-own","result":%q,"total_cost_usd":%g,"usage":{"output_tokens":10}}`,
+			subtype, terminal, result, total)
+	}
+	bin, dir := fakeClaude(t, byResume(old("error_max_turns", "max_turns", "", 1.4), old("success", "completed", "## Done", 0.5)))
+	res, err := (&ClaudeCode{Binary: bin}).Run(context.Background(),
+		RunSpec{TaskID: "t", Title: "x", HomeDir: dir, MaxTurns: 30}, func(string, json.RawMessage) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !near(res.CostUSD, 1.9) || res.Basis != CostBasisInvocation || res.OutputTokens != 20 {
+		t.Fatalf("main 1.4 + the handover's own 0.5, got %+v", res)
+	}
+}
+
+// The turn limit with several result lines on both sides: the main process
+// was woken again after a first limit (two lines), the handover wrote two as
+// well. Every line's share counts once; the session total is the last line's;
+// the handover's text is its last line's.
+func TestClaudeCodeHandoverWithSeveralResultLines(t *testing.T) {
+	main := ccResultLine("error_max_turns", "max_turns", "", 1.0,
+		opusOnly(ccUsage(1.0, 5, 900, 40000, 0, 12000)), opusOnly(ccUsage(1.0, 5, 900, 40000, 0, 12000))) + "\n" +
+		ccResultLine("error_max_turns", "max_turns", "", 1.6,
+			opusOnly(ccUsage(1.6, 9, 1500, 70000, 0, 13000)), opusOnly(ccUsage(0.6, 4, 600, 30000, 0, 1000)))
+	summary := ccResultLine("success", "completed", "## Done\nfirst", 1.8,
+		opusOnly(ccUsage(1.8, 10, 1600, 90000, 0, 13500)), opusOnly(ccUsage(0.2, 1, 100, 20000, 0, 500))) + "\n" +
+		ccResultLine("success", "completed", "## Done\nsecond", 1.9,
+			opusOnly(ccUsage(1.9, 11, 1700, 95000, 0, 13600)), opusOnly(ccUsage(0.1, 1, 100, 5000, 0, 100)))
+	bin, dir := fakeClaude(t, byResume(main, summary))
+	res, err := (&ClaudeCode{Binary: bin}).Run(context.Background(),
+		RunSpec{TaskID: "t", Title: "x", HomeDir: dir, MaxTurns: 30}, func(string, json.RawMessage) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "incomplete" || !strings.Contains(res.Result, "second") {
+		t.Fatalf("the handover is the summary's last line: %+v", res)
+	}
+	if !near(res.CostUSD, 1.9) || res.OutputTokens != 1700 || res.CacheReadTokens != 95000 || res.CacheCreationTokens != 13600 {
+		t.Fatalf("four lines' shares, 1.0+0.6+0.2+0.1: %+v", res)
+	}
+	if !near(res.SessionTotalUSD, 1.9) || res.Basis != CostBasisInvocation {
+		t.Fatalf("session total / basis: %+v", res)
+	}
+}
+
+// The handover runs into its timeout (or is killed) before its result line.
+// The main run's spend stands as booked; the handover's is not known here —
+// the session's running total keeps it, and the control plane books it as a
+// gap at the session's next line. Nothing of it may be guessed in here.
+func TestClaudeCodeHandoverTimeout(t *testing.T) {
+	old := maxTurnsSummaryTimeout
+	maxTurnsSummaryTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { maxTurnsSummaryTimeout = old })
+	main := ccResultLine("error_max_turns", "max_turns", "", 1.0,
+		opusOnly(ccUsage(1.0, 5, 900, 40000, 0, 12000)), opusOnly(ccUsage(1.0, 5, 900, 40000, 0, 12000)))
+	bin, dir := fakeClaude(t, "if printf '%s\n' \"$@\" | grep -q -- '--resume'; then\nexec sleep 30\nelse\ncat <<'EOF'\n"+
+		main+"\nEOF\nfi")
+	start := time.Now()
+	res, err := (&ClaudeCode{Binary: bin}).Run(context.Background(),
+		RunSpec{TaskID: "t", Title: "x", HomeDir: dir, MaxTurns: 30}, func(string, json.RawMessage) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(start) > 10*time.Second {
+		t.Fatalf("the handover has to be cut off at its timeout, took %v", time.Since(start))
+	}
+	if res.Status != "incomplete" || res.Result != "" || res.SessionID != "sess-cc" {
+		t.Fatalf("without a handover the run stays incomplete with its session: %+v", res)
+	}
+	if !near(res.CostUSD, 1.0) || res.OutputTokens != 900 || !near(res.SessionTotalUSD, 1.0) || res.Basis != CostBasisInvocation {
+		t.Fatalf("the main run's own spend stands, nothing on top: %+v", res)
 	}
 }

@@ -298,5 +298,10 @@ func (e *Educa) Run(ctx context.Context, spec RunSpec, onEvent func(kind string,
 		res.CacheReadTokens, res.CacheCreationTokens); ok {
 		res.CostUSD = usd
 	}
+	// What is left is priced from tokens, and the harness's tokens are per
+	// invocation on every CLI — the per-line deltas, or the line's usage. The
+	// harness's running total is no figure of this contract either.
+	res.Basis = CostBasisInvocation
+	res.SessionTotalUSD = 0
 	return res, nil
 }

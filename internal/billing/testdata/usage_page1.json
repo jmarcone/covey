@@ -1,0 +1,25 @@
+{
+  "data": [
+    {
+      "starting_at": "2026-11-16T10:00:00Z",
+      "ending_at": "2026-11-16T11:00:00Z",
+      "group": {
+        "product": null, "model": "claude-opus-5-5", "context_window": null, "inference_geo": null, "speed": null,
+        "workspace_id": "wrkspc_test", "service_tier": "standard", "actor": null, "actor_type": null,
+        "api_key_id": "apikey_test"
+      },
+      "usage": {
+        "uncached_input_tokens": 60,
+        "cache_creation": {"ephemeral_1h_input_tokens": 95179, "ephemeral_5m_input_tokens": 0},
+        "cache_read_input_tokens": 1781843,
+        "output_tokens": 34246,
+        "total_tokens": 1911328,
+        "server_tool_use": {"web_search_requests": 1},
+        "requests": 31
+      }
+    }
+  ],
+  "has_more": false,
+  "next_page": null,
+  "data_refreshed_at": "2026-11-17T08:00:00Z"
+}

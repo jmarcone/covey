@@ -694,6 +694,12 @@ func (c *Client) runTask(ctx context.Context, task AssignTask) {
 	res, err := runtime.Run(runCtx, spec, func(kind string, payload json.RawMessage) {
 		_ = c.send(TypeEvent, Event{TaskID: task.TaskID, Kind: kind, Payload: payload})
 	})
+	// What the run spent is reported before anything else, cancelled or not:
+	// a run killed after its main result line (or in its handover) has spent
+	// that money, and the result carries it. Best effort on the kill path —
+	// the control plane may have stopped listening already, and then books
+	// the run's lines itself.
+	c.sendCost(task.TaskID, res)
 	if runCtx.Err() != nil {
 		return // kill path: the control plane has taken over
 	}
@@ -702,12 +708,6 @@ func (c *Client) runTask(ctx context.Context, task AssignTask) {
 	if err != nil {
 		res.Status = "failed"
 		res.Error = err.Error()
-	}
-	if res.Measured() {
-		_ = c.send(TypeCost, Cost{TaskID: task.TaskID, USD: res.CostUSD,
-			InputTokens: res.InputTokens, OutputTokens: res.OutputTokens,
-			CacheReadTokens: res.CacheReadTokens, CacheCreationTokens: res.CacheCreationTokens,
-			Model: res.Model})
 	}
 	if res.Status == "blocked" {
 		_ = c.send(TypeBlocked, Blocked{TaskID: task.TaskID, CorrelationKey: res.CorrelationKey,
@@ -718,6 +718,18 @@ func (c *Client) runTask(ctx context.Context, task AssignTask) {
 		Result: res.Result, Error: res.Error, Memory: res.Memory, SessionID: res.SessionID, Reply: res.Reply})
 }
 
+// sendCost reports a run's spend, if it measured any.
+func (c *Client) sendCost(taskID string, res RunResult) {
+	if !res.Measured() {
+		return
+	}
+	_ = c.send(TypeCost, Cost{TaskID: taskID, USD: res.CostUSD,
+		InputTokens: res.InputTokens, OutputTokens: res.OutputTokens,
+		CacheReadTokens: res.CacheReadTokens, CacheCreationTokens: res.CacheCreationTokens,
+		Model: res.Model, Basis: res.Basis,
+		SessionID: res.SessionID, SessionTotalUSD: res.SessionTotalUSD})
+}
+
 // reportUsage answers the control plane's question about the engine's own
 // utilisation figure.
 //
@@ -725,25 +737,51 @@ func (c *Client) runTask(ctx context.Context, task AssignTask) {
 // text that no longer parses — all of it answers "not supported" rather than an
 // error the caller has to handle. The figure is a nicety on top of the
 // platform's own estimate, never a precondition for anything.
+//
+// The engine is the one the REQUEST names. The control plane asks as soon as
+// the link is up, and a fresh daemon has no config at that point — it arrives
+// with the first task. Looking the engine up in the config answered "not
+// supported" on every first wake, and the first wake is every wake of an agent
+// that sleeps between tasks. The config stays the fallback for a control plane
+// that does not name the engine.
+//
+// Every answer without a fresh figure carries a reason code, so the control
+// plane can tell an engine that cannot ask (stop asking) from a question that
+// failed this time (ask again later).
 func (c *Client) reportUsage(ctx context.Context, req RequestUsage) {
 	out := UsageReport{RequestID: req.RequestID}
-	c.mu.Lock()
-	engine := c.cfg.Runtime
-	c.mu.Unlock()
+	engine := req.Runtime
+	if engine == "" {
+		c.mu.Lock()
+		engine = c.cfg.Runtime
+		c.mu.Unlock()
+	}
+	if engine == "" {
+		out.Reason = UsageNoRuntimeConfig
+		_ = c.send(TypeUsageReport, out)
+		return
+	}
 
 	rt := c.runtimes[engine]
 	reporter, ok := rt.(UsageReporter)
 	if !ok || rt == nil {
+		out.Reason = UsageNoReporter
 		_ = c.send(TypeUsageReport, out)
 		return
 	}
 	u, err := reporter.Usage(ctx, c.runtimeKeyEnv())
 	if err != nil {
-		out.Error = err.Error()
+		out.Reason, out.Error = UsageExecFailed, err.Error()
 		_ = c.send(TypeUsageReport, out)
 		return
 	}
 	out.Supported, out.Usage = u.Reported(), u
+	switch {
+	case !out.Supported:
+		out.Reason = UsageUnparsed
+	case u.Stale:
+		out.Reason = UsageStale
+	}
 	_ = c.send(TypeUsageReport, out)
 }
 

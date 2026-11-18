@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"math"
 	"reflect"
 	"slices"
 	"strconv"
@@ -27,6 +28,7 @@ import (
 
 	"covey/internal/agents"
 	"covey/internal/backlog"
+	"covey/internal/billing"
 	"covey/internal/buildinfo"
 	"covey/internal/chat"
 	"covey/internal/daemon"
@@ -69,8 +71,11 @@ type Options struct {
 	// Runtimes is the capacity layer: which contract an agent works on and
 	// which of its credentials this waking phase runs on (spec/18).
 	Runtimes *runtimes.Store
-	Identity identity.Provider
-	Memory   *memory.Store
+	// BillingClient builds the Usage and Cost Analytics client for an admin
+	// key (billing.go). nil = the Anthropic API; tests point it at a fake.
+	BillingClient func(key string) *billing.Client
+	Identity      identity.Provider
+	Memory        *memory.Store
 	// Skills are the agents' skills (library + agent-owned). nil = feature
 	// switched off; runs then get no skills materialized.
 	Skills *skills.Store
@@ -426,6 +431,12 @@ type session struct {
 	// from the API puts into cooldown.
 	credRuntime uuid.UUID
 	credOrd     int
+	// The same credential by its secret value and kind, resolved once at the
+	// pick: model_usage and cost_entries carry it so that a later Reorder of
+	// the runtime's credentials cannot move past runs to another value.
+	credKey  string
+	credSlot int
+	credKind string
 	// Where this run is happening: the host the sandbox stands on, and the
 	// name it carried at that moment. Held here and not only written into the
 	// recording, because the question "where is this agent working right now"
@@ -486,6 +497,7 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	o.nebenlaeufig(func() { o.boardJanitorLoop(ctx) })
 	o.nebenlaeufig(func() { o.homeJanitorLoop(ctx) })
 	o.nebenlaeufig(func() { o.credentialLoop(ctx) })
+	o.nebenlaeufig(func() { o.billingLoop(ctx) })
 	ticker := time.NewTicker(o.TickInterval)
 	defer ticker.Stop()
 	o.tick(ctx)
@@ -1236,6 +1248,7 @@ func (o *Orchestrator) runAgent(ctx context.Context, agentID uuid.UUID, s *sessi
 		return nil
 	}
 	s.credRuntime, s.credOrd = cred.RuntimeID, cred.Ord
+	s.credKey, s.credSlot, s.credKind = cred.SecretKey, cred.SecretSlot, cred.Kind
 
 	o.setStatus(ctx, agent, nil, agents.StatusTriggered)
 
@@ -1356,7 +1369,11 @@ func (o *Orchestrator) runAgent(ctx context.Context, agentID uuid.UUID, s *sessi
 		// stopped, so the request went out and the answer fell into a closed
 		// room. Nothing failed, no figure ever arrived, and the interface
 		// simply showed none.
-		o.refreshUsage(ctx, link, cred.RuntimeID, cred.Ord)
+		//
+		// The question names the engine: the daemon gets its config only with
+		// the first task, and one that looked the engine up there answered
+		// "not supported" on every fresh wake.
+		o.refreshUsage(ctx, link, agent.Runtime, cred.RuntimeID, cred.Ord)
 	}
 
 	for ctx.Err() == nil {
@@ -1885,7 +1902,8 @@ func (o *Orchestrator) llmCredentialFor(ctx context.Context, agent agents.Agent)
 	}
 	// TrimSpace catches copy-and-paste whitespace/newlines.
 	return llmCredential{Token: strings.TrimSpace(p.Value), EnvVar: p.EnvVar, Path: p.Path,
-		RuntimeID: p.RuntimeID, Ord: p.Ord, Label: p.Label}, nil
+		RuntimeID: p.RuntimeID, Ord: p.Ord, Label: p.Label,
+		Kind: p.Kind, SecretKey: p.SecretKey, SecretSlot: p.SecretSlot}, nil
 }
 
 // errNoRuntime: nothing to broker — either the agent has no runtime assigned or
@@ -2082,6 +2100,10 @@ type llmCredential struct {
 	RuntimeID uuid.UUID
 	Ord       int
 	Label     string
+	// Kind (api_key | subscription) and the secret value behind Ord.
+	Kind       string
+	SecretKey  string
+	SecretSlot int
 }
 
 // pushAnthropicKey hands the already picked credential to the daemon. Never
@@ -2551,6 +2573,12 @@ func (o *Orchestrator) processTask(ctx context.Context, agent agents.Agent, link
 		return err
 	}
 
+	// However the loop ends, what the run's lines say it spent is booked:
+	// a run killed, paused at its budget or cut off with its sandbox never
+	// sends its cost message (the control plane stops reading the moment it
+	// kills), and its lines would stay without a booking.
+	defer o.bookUnreported(context.WithoutCancel(ctx), agent, taskID)
+
 	// Message loop until blocked/task_done.
 	for {
 		msg, err := link.Receive(ctx)
@@ -2613,6 +2641,102 @@ func (o *Orchestrator) storeActionArtifact(ctx context.Context, agent agents.Age
 	return payload
 }
 
+// credential is the phase's credential as observability books it.
+func (s *session) credential() observability.CredentialRef {
+	if s == nil {
+		return observability.CredentialRef{}
+	}
+	return observability.CredentialRef{RuntimeID: s.credRuntime, Ord: s.credOrd,
+		SecretKey: s.credKey, SecretSlot: s.credSlot, Kind: s.credKind}
+}
+
+// bookCost books a run's cost message, against the pool value this waking
+// phase runs on — without that attribution no limit per value is measurable
+// and no utilisation showable (spec/04).
+//
+// An engine whose result lines leave model_usage rows (Claude Code) is booked
+// together with those rows, and the rows are linked to the entry:
+//
+//   - basis invocation: the daemon sent the run's own spend. Booked as sent;
+//     the run's rows are the cross-check, and a gap between the two is said.
+//   - no basis (a daemon from before the field) or cumulative (a resume on a
+//     CLI that reports only running totals): the figure includes the
+//     session's earlier runs, the turn-limit handover's twice. Booked as the
+//     sum of the run's rows; the daemon's figure only where the run left none.
+//
+// Every other engine is booked as sent. enforceBudget and CredentialUsage
+// read these entries, so they see the corrected figure without a change.
+func (o *Orchestrator) bookCost(ctx context.Context, agent agents.Agent, taskID uuid.UUID, c daemon.Cost, s *session) {
+	e := observability.CostEntry{AgentID: agent.ID, TaskID: &taskID, USD: c.USD,
+		Tokens: observability.Tokens{Input: c.InputTokens, Output: c.OutputTokens,
+			CacheRead: c.CacheReadTokens, CacheCreation: c.CacheCreationTokens},
+		Model: c.Model, Credential: s.credential(), Basis: c.Basis, SessionID: c.SessionID}
+	if !engineResultUsage(agent.Runtime) {
+		if e.Basis == "" {
+			e.Basis = observability.BasisInvocation
+		}
+		if _, err := o.Obs.BookCost(ctx, e); err != nil {
+			o.Log.Warn("booking a run's cost failed", "agent", agent.Slug, "task", taskID, "err", err)
+		}
+		return
+	}
+	fromLines := c.Basis != daemon.CostBasisInvocation
+	if c.Basis == "" {
+		e.Basis = observability.BasisLegacy
+	}
+	b, err := o.Obs.BookRun(ctx, e, fromLines)
+	if err != nil {
+		o.Log.Warn("booking a run's cost failed", "agent", agent.Slug, "task", taskID, "err", err)
+		return
+	}
+	switch {
+	case fromLines && b.Basis == observability.BasisFromDeltas:
+		o.Log.Info("run booked from its result lines, not the daemon's running total",
+			"agent", agent.Slug, "task", taskID, "sent_usd", c.USD, "booked_usd", b.USD, "lines", b.Lines)
+	case !fromLines && b.Lines > 0 && math.Abs(b.LinesUSD-c.USD) > costTolerance*float64(b.Lines):
+		// Both sides are sums of the same costUSD figures, each rounded to
+		// 1e-6 where it is stored; anything beyond that is a real difference.
+		o.Log.Warn("a run's booked cost and its result lines disagree",
+			"agent", agent.Slug, "task", taskID, "booked_usd", c.USD, "lines_usd", b.LinesUSD, "lines", b.Lines)
+	}
+}
+
+// costTolerance is the rounding of one stored dollar figure (NUMERIC(…,6)).
+const costTolerance = 1e-6
+
+// engineResultUsage says whether the engine's result lines carry its usage per
+// model, priced the way covey's list prices it (Claude Code): only then are
+// they filed as model_usage and its runs booked against them.
+func engineResultUsage(engine string) bool {
+	d, ok := daemon.Describe(engine)
+	return ok && d.Capabilities.ResultUsage
+}
+
+// bookUnreported books the task's result lines no cost message claimed, once
+// the task's message loop has ended. Normally there are none: the daemon sends
+// a run's cost before its completion, and the booking links the run's lines.
+// A run that is killed (kill switch, budget pause) or loses its sandbox never
+// sends it — the daemon tries, but the control plane has stopped reading — and
+// what its lines say it spent would be in the measured figures but not in the
+// booked ones, not in the budget and not in the capacity steering.
+//
+// It cannot book twice: it takes only lines no entry holds and links them, and
+// after the loop no cost message of that run can arrive any more.
+func (o *Orchestrator) bookUnreported(ctx context.Context, agent agents.Agent, taskID uuid.UUID) {
+	if o.Obs == nil || !engineResultUsage(agent.Runtime) {
+		return
+	}
+	b, err := o.Obs.BookUnreported(ctx, agent.ID, taskID)
+	if err != nil {
+		o.Log.Warn("booking a run's unreported lines failed", "agent", agent.Slug, "task", taskID, "err", err)
+		return
+	}
+	if b.Lines > 0 {
+		o.Log.Info("run ended without reporting its cost; booked from its lines",
+			"agent", agent.Slug, "task", taskID, "booked_usd", b.USD, "lines", b.Lines)
+	}
+}
+
 // recordHTTP puts an HTTP request reported from the sandbox into the request
 // log — with the context only the control plane has (org, agent, task). Without
 // a configured log it is a no-op.
@@ -2655,7 +2779,41 @@ func (o *Orchestrator) handleDaemonMessage(ctx context.Context, agent agents.Age
 			// the action, where it would read as a permission problem.
 			o.noteTargetRejection(ctx, agent, payload)
 		}
-		_ = o.Obs.Record(ctx, agent.OrgID, agent.ID, &taskID, kind, payload)
+		if kind == observability.KindRuntime {
+			// A Claude Code `result` line also files its usage per model
+			// (cost insights, migrations 0142/0144), booked against the
+			// credential of this phase. The line itself is filed even when
+			// that fails; the failure is said, not swallowed — a missing
+			// per-model row is a hole in the measurement nobody would find.
+			//
+			// Only for an engine that declares such lines (ResultUsage). An
+			// engine that drives the same binary against another endpoint
+			// (educa-ai) writes lines of the same shape, but its models are
+			// not on covey's price list and its runs are booked as sent: its
+			// rows would land in the measured figures as unpriced spend
+			// beside a booking that never links them.
+			if engineResultUsage(agent.Runtime) {
+				if err := o.Obs.RecordRuntime(ctx, agent.OrgID, agent.ID, &taskID, s.credential(), payload); err != nil {
+					o.Log.Warn("filing a runtime line failed",
+						"agent", agent.Slug, "task", taskID, "err", err)
+				}
+			} else {
+				_ = o.Obs.Record(ctx, agent.OrgID, agent.ID, &taskID, kind, payload)
+			}
+			// A rate_limit_event is the provider's meter, in band: every
+			// window it names (five_hour, seven_day, …) with its utilisation
+			// and reset time, at no cost and without a rate limit of its own.
+			// Filed as readings of the phase's credential, beside the /usage
+			// answers and told apart from them by source (migration 0145).
+			if observability.IsRateLimitEvent(payload) {
+				if err := o.Obs.AddInbandReadings(ctx, agent.OrgID, s.credential(), payload); err != nil {
+					o.Log.Warn("filing an in-band meter reading failed",
+						"agent", agent.Slug, "task", taskID, "err", err)
+				}
+			}
+		} else {
+			_ = o.Obs.Record(ctx, agent.OrgID, agent.ID, &taskID, kind, payload)
+		}
 		o.events.Publish(Event{Type: "recording", AgentID: agent.ID.String(), OrgID: agent.OrgID,
 			Data: map[string]any{"task_id": taskID.String(), "kind": kind}})
 		return false, nil
@@ -2665,13 +2823,7 @@ func (o *Orchestrator) handleDaemonMessage(ctx context.Context, agent agents.Age
 		if err != nil {
 			return false, nil
 		}
-		// Booked against the pool value this waking phase runs on — without that
-		// attribution no limit per value is measurable and no utilisation
-		// showable (spec/04).
-		_ = o.Obs.AddCost(ctx, agent.ID, &taskID, c.USD, observability.Tokens{
-			Input: c.InputTokens, Output: c.OutputTokens,
-			CacheRead: c.CacheReadTokens, CacheCreation: c.CacheCreationTokens,
-		}, c.Model, s.credRuntime, s.credOrd)
+		o.bookCost(ctx, agent, taskID, c, s)
 		return false, o.enforceBudget(ctx, agent, link, taskID, s)
 
 	case daemon.TypeUsageReport:
@@ -2679,7 +2831,8 @@ func (o *Orchestrator) handleDaemonMessage(ctx context.Context, agent agents.Age
 		if err != nil {
 			return false, nil
 		}
-		o.noteUsage(rep, s.credRuntime, s.credOrd)
+		o.noteUsage(rep, s.credential())
+		o.keepUsageReading(ctx, agent.OrgID, rep, s.credential())
 		return false, nil
 
 	case daemon.TypeRequestCredential:

@@ -121,7 +121,8 @@ func (Codex) Prices() PriceList { return PriceList{} }
 // Those are listed as open points in spec/19 and have to be established, not
 // inferred.
 func (c *Codex) Run(ctx context.Context, spec RunSpec, onEvent func(kind string, payload json.RawMessage)) (RunResult, error) {
-	res := RunResult{Status: "failed", Model: spec.Model}
+	// Basis: every exec is a fresh thread, and its token counts are its own.
+	res := RunResult{Status: "failed", Model: spec.Model, Basis: CostBasisInvocation}
 
 	if spec.ResumeSessionID != "" {
 		// The control plane should not get here — the assignment refuses a

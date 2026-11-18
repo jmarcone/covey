@@ -1,0 +1,286 @@
+import { useEffect, useId, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
+import { ApiError, api, put, type CredentialPlan, type RuntimeInstance, type UsageReading } from "../api";
+import { fmtBucket, fmtNumber, fmtUSD } from "../format";
+import { uiLocale } from "../i18n";
+import type { CredentialFigures } from "./costFigures";
+
+/* The plan price of a subscription credential, set from the cost page.
+ *
+ * The real figure and the multiple divide the meter's points by what a point
+ * costs, and that needs the plan's price (spec/07 D13). The endpoint is
+ * PUT /runtime-instances/{id}/credentials/{ord}/plan; it appends a price valid
+ * from a moment and never overwrites. The price follows the secret value, but
+ * the endpoint is addressed by the place the credential sits at, and the server
+ * resolves that place when the request arrives. A reading or a stored plan
+ * keeps the ord it was written with, which a reorder has since given to
+ * another secret, so the place comes from the runtime instances as they are
+ * now. */
+
+const WEEK_MS = 7 * 86400_000;
+
+/** The roles the plan endpoint lets through (securityRoles in httpapi). */
+export const canSetPlan = (role: string) => role === "org_admin" || role === "security";
+
+/** Where the credential sits now: any instance and ord whose credential holds
+ *  its secret key and slot. The price follows the secret value, so every such
+ *  place is right. Null: it sits nowhere (or the instances are not loaded),
+ *  and there is nowhere to send the price to. */
+export function planPlace(f: CredentialFigures, instances: readonly RuntimeInstance[] | null | undefined): { runtimeId: string; ord: number } | null {
+  for (const rt of instances ?? []) {
+    const c = rt.creds.find((x) => x.secret_key === f.secretKey && x.secret_slot === f.slot);
+    if (c) return { runtimeId: rt.id, ord: c.ord };
+  }
+  return null;
+}
+
+/** The latest weekly reset the credential's readings name, in ms; NaN when
+ *  they name none. A five-hour window does not say when the week began (the
+ *  server files every reading under a window name, seven_day when the
+ *  reader gave none). The readings of the meter's own source come first: the
+ *  week is the one the meter's points are counted in, and another source can
+ *  name another reset. The others only stand in when that one names none. */
+function weeklyReset(f: CredentialFigures, readings: readonly UsageReading[]): number {
+  const latest = (source: string | null) => {
+    let out = NaN;
+    for (const r of readings) {
+      if (r.secret_key !== f.secretKey || r.secret_slot !== f.slot || !r.resets_at || r.window_kind !== "seven_day") continue;
+      if (source != null && r.source !== source) continue;
+      const ms = Date.parse(r.resets_at);
+      if (!Number.isNaN(ms) && !(ms <= out)) out = ms;
+    }
+    return out;
+  };
+  const own = f.meter ? latest(f.meter.source) : NaN;
+  return Number.isNaN(own) ? latest(null) : own;
+}
+
+/** The start of the current meter week: the latest weekly reset the
+ *  credential's readings name, minus seven days. A reset already behind us
+ *  (the last reading is old) starts a week itself, so it is stepped forward
+ *  to the week that contains `now`. Without a reading: now. */
+export function defaultValidFrom(f: CredentialFigures, readings: readonly UsageReading[], now: Date): Date {
+  const latest = weeklyReset(f, readings);
+  if (Number.isNaN(latest)) return now;
+  let start = latest - WEEK_MS;
+  while (start + WEEK_MS <= now.getTime()) start += WEEK_MS;
+  return new Date(start);
+}
+
+/** Why the form starts where it does: the meter week, now for want of a
+ *  weekly reset, or now because a price is being corrected. */
+export type PresetWhy = "week" | "now" | "correct";
+
+/** Where the form starts: the start of the current meter week. When the
+ *  credential's plan already starts there or later, the form corrects a
+ *  price, and a second plan at the same instant is a conflict (the server
+ *  never overwrites): then now, to the minute, so the correction holds from
+ *  here on. */
+export function presetValidFrom(f: CredentialFigures, readings: readonly UsageReading[], now: Date): { at: Date; why: PresetWhy } {
+  const week = defaultValidFrom(f, readings, now);
+  const planFrom = f.plan ? Date.parse(f.plan.valid_from) : NaN;
+  if (planFrom >= week.getTime()) return { at: new Date(Math.floor(now.getTime() / 60_000) * 60_000), why: "correct" };
+  return { at: week, why: Number.isNaN(weeklyReset(f, readings)) ? "now" : "week" };
+}
+
+/** An instant as the value of a datetime-local input: the reader's clock,
+ *  to the minute. */
+export function toLocalInput(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** "$200.00/mo since 13/11 UTC" — the plan valid now. */
+function currentPlan(t: TFunction, p: CredentialPlan): string {
+  const price = p.currency.toUpperCase() === "USD" ? fmtUSD(p.amount) : `${fmtNumber(p.amount, p.amount % 1 ? 2 : 0)} ${p.currency}`;
+  return t("costs.plan.current", {
+    price, per: t(p.period === "year" ? "costs.fig.perYear" : "costs.fig.perMonth"), since: fmtBucket(p.valid_from, "day"),
+  });
+}
+
+/** An instant in UTC, with the year: a start the reader types can lie in
+ *  another year, and the cost page's short notation would hide that. */
+function fmtInstantUTC(d: Date): string {
+  return `${d.toLocaleString(uiLocale(), { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "UTC" })} UTC`;
+}
+
+/** The server stored the price at another credential than the form's. */
+class PlanMoved extends Error {}
+
+/** The credential sits on no runtime instance any more: nowhere to send it. */
+class PlanGone extends Error {}
+
+/** What a failed save says, in the reader's language; the server's own text
+ *  in parentheses where it says more than the status. */
+function saveError(t: TFunction, err: Error): string {
+  if (err instanceof PlanMoved) return t("costs.plan.errMoved");
+  if (err instanceof PlanGone) return t("costs.plan.errGone");
+  if (err instanceof ApiError) {
+    // A plan starting at that very instant: the server does not overwrite.
+    if (err.status === 409) return t("costs.plan.errConflict");
+    if (err.status === 400) return t("costs.plan.errInvalid", { msg: err.message });
+    if (err.status === 403) return t("costs.plan.errForbidden", { msg: err.message });
+  }
+  return err.message;
+}
+
+/** One credential's plan line: what is stored, and for the roles that may,
+ *  the form that stores a new one. */
+export function PlanPrice({ f, name, readings, editable }: {
+  f: CredentialFigures; /** The credential as its block names it. */ name: string; readings: readonly UsageReading[]; editable: boolean;
+}) {
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+  const uid = useId();
+  const [open, setOpen] = useState(false);
+  const amountRef = useRef<HTMLInputElement>(null);
+  const setRef = useRef<HTMLButtonElement>(null);
+  // Set when the form closes by Save or Cancel: focus goes back to the
+  // button that opened it, not to the top of the page.
+  const refocus = useRef(false);
+  useEffect(() => {
+    if (open) amountRef.current?.focus();
+    else if (refocus.current) {
+      refocus.current = false;
+      setRef.current?.focus();
+    }
+  }, [open]);
+  const close = () => {
+    refocus.current = true;
+    setOpen(false);
+  };
+  const [amount, setAmount] = useState("");
+  const [period, setPeriod] = useState("month");
+  const [from, setFrom] = useState("");
+  // The default as an instant: sent as it is while the field is untouched, so
+  // the minute the input shows does not round a reset that has seconds.
+  const [fallback, setFallback] = useState<Date>(() => new Date());
+  const [why, setWhy] = useState<PresetWhy>("now");
+
+  // Only the roles that see the form need the place. The list is the one the
+  // instances page keeps, so it is fetched once for all credentials.
+  const instances = useQuery({
+    queryKey: ["runtime-instances"],
+    queryFn: () => api<RuntimeInstance[]>("/runtime-instances"),
+    enabled: editable,
+  });
+  const place = planPlace(f, instances.data);
+  const save = useMutation({
+    mutationFn: async (body: { amount: number; currency: string; period: string; valid_from: string }) => {
+      if (!place) throw new PlanGone();
+      const saved = await put<CredentialPlan>(`/runtime-instances/${place.runtimeId}/credentials/${place.ord}/plan`, body);
+      // The server resolved the place when the request arrived. A reorder
+      // since the list was fetched gave it to another secret, and the price
+      // is stored there now: say so, and look again for the next try.
+      if (saved?.secret_key !== f.secretKey || saved?.secret_slot !== f.slot) {
+        void qc.invalidateQueries({ queryKey: ["cost"] });
+        void qc.invalidateQueries({ queryKey: ["runtime-instances"] });
+        throw new PlanMoved();
+      }
+      return saved;
+    },
+    // The real figure and the multiple read the plan: every cost query is stale.
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["cost"] });
+      close();
+    },
+  });
+
+  const show = () => {
+    // A reorder since the list was fetched moves the ord: look again while the
+    // form is filled in, the place is read when it is saved. Save waits for
+    // the answer.
+    void instances.refetch();
+    const preset = presetValidFrom(f, readings, new Date());
+    setFallback(preset.at);
+    setWhy(preset.why);
+    setFrom(toLocalInput(preset.at));
+    setAmount("");
+    setPeriod("month");
+    save.reset();
+    setOpen(true);
+  };
+
+  const amountNum = amount.trim() === "" ? NaN : Number(amount);
+  const whenMs = from === toLocalInput(fallback) ? fallback.getTime() : new Date(from).getTime();
+  // A price of nothing is no plan: a free seat has no meter to price.
+  const valid = Number.isFinite(amountNum) && amountNum > 0 && Number.isFinite(whenMs);
+  const hint = { week: "costs.plan.fromHintWeek", now: "costs.plan.fromHintNow", correct: "costs.plan.fromHintCorrect" }[why];
+  // The place can go while the form is open (the credential was removed):
+  // the form stays with what was typed, and says why it cannot save.
+  const gone = !place && !instances.isFetching;
+  const error = save.error ? saveError(t, save.error) : gone ? t("costs.plan.errGone") : null;
+  // A refused save is about the fields; a 409 about the start alone. A place
+  // that went is about neither.
+  const badFrom = save.error != null && !(save.error instanceof PlanGone);
+  const badAmount = badFrom && !(save.error instanceof ApiError && save.error.status === 409);
+  const hintId = `${uid}-hint`;
+  const errorId = `${uid}-error`;
+  const described = (...ids: string[]) => [...ids, ...(error ? [errorId] : [])].join(" ") || undefined;
+
+  return (
+    <div className="mb-2" data-plan-price={f.id}>
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="muted text-xs">{f.plan ? currentPlan(t, f.plan) : t("costs.plan.none")}</span>
+        {editable && place && !open && (
+          <button ref={setRef} type="button" className="btn sm ghost" onClick={show}>{t("costs.plan.set")}</button>
+        )}
+      </div>
+      {editable && open && (
+        <form
+          className="mt-3"
+          aria-label={t("costs.plan.form", { name })}
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!valid || save.isPending || instances.isFetching) return;
+            save.mutate({ amount: amountNum, currency: "USD", period, valid_from: new Date(whenMs).toISOString() });
+          }}
+          // Escape is Cancel, and like Cancel it waits while a save is under way.
+          onKeyDown={(e) => {
+            if (e.key !== "Escape" || save.isPending) return;
+            e.preventDefault();
+            close();
+          }}
+        >
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="text-xs" htmlFor={`${uid}-amount`}>
+              <span className="block mb-1">{t("costs.plan.amount")}</span>
+              <input ref={amountRef} id={`${uid}-amount`} type="number" inputMode="decimal" min="0" step="0.01" required value={amount}
+                aria-invalid={badAmount || undefined} aria-describedby={described()}
+                style={{ width: 120 }} onChange={(e) => setAmount(e.target.value)} />
+            </label>
+            <label className="text-xs" htmlFor={`${uid}-period`}>
+              <span className="block mb-1">{t("costs.plan.period")}</span>
+              <select id={`${uid}-period`} value={period} onChange={(e) => setPeriod(e.target.value)}>
+                <option value="month">{t("costs.plan.month")}</option>
+                <option value="year">{t("costs.plan.year")}</option>
+              </select>
+            </label>
+            <label className="text-xs" htmlFor={`${uid}-from`}>
+              <span className="block mb-1">{t("costs.plan.validFrom")}</span>
+              <input id={`${uid}-from`} type="datetime-local" required value={from}
+                aria-invalid={badFrom || undefined} aria-describedby={described(hintId)}
+                onChange={(e) => setFrom(e.target.value)} />
+            </label>
+            <div className="flex gap-2">
+              <button type="submit" className="btn sm primary" disabled={!valid || !place || save.isPending || instances.isFetching}>
+                {save.isPending ? t("costs.plan.saving") : t("costs.plan.save")}
+              </button>
+              <button type="button" className="btn sm ghost" disabled={save.isPending} onClick={close}>{t("costs.plan.cancel")}</button>
+            </div>
+          </div>
+          <p id={hintId} className="muted text-xs mt-1 mb-0">
+            {/* The input is the reader's clock; the cost page is UTC. */}
+            {Number.isFinite(whenMs) && <>{fmtInstantUTC(new Date(whenMs))} · </>}
+            {t(hint)}
+          </p>
+          {error && (
+            <p id={errorId} className="text-xs mt-1 mb-0" role="alert" style={{ color: "var(--text-danger)" }}>{error}</p>
+          )}
+        </form>
+      )}
+    </div>
+  );
+}

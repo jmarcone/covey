@@ -101,6 +101,9 @@ func (s *Store) Open(ctx context.Context, ref secrets.Ref) (string, error) {
 }
 
 func (s *Store) Replace(ctx context.Context, ref secrets.Ref, value string, lt secrets.Lifetime) error {
+	if err := secrets.CheckValue(ref.Key, value); err != nil {
+		return err
+	}
 	nonce, ct, err := s.seal(aad(ref.OrgID, ref.AgentID, ref.Key, ref.Slot), value)
 	if err != nil {
 		return err

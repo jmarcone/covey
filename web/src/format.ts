@@ -20,17 +20,47 @@ export function fmtBytes(n: number): string {
   return `${v.toFixed(v < 10 ? 1 : 0)} ${units[i]}`;
 }
 
-// fmtUSD brings an amount to as many decimal digits as it still carries —
-// `2.746 $`, `12,30 $`, `0,0042 $`. A single run often costs fractions of a
-// cent; rounded to two digits it would read 0,00 $ everywhere. Used by the cost
-// page and by the backlog (cost on the task card).
+// fmtUSD brings an amount to cents — `2.746 $`, `12,30 $`, `0,42 $` — and an
+// amount below a cent to `<0,01 $`. Four digits below a dollar read as
+// precision the figures do not have (`0,4615 $` next to `33,70 $`), and
+// printed `0,0000 $` for a run that cost a fraction of a cent: `<0,01 $` says
+// it was not nothing. Zero is `0,00 $`. Used by the cost page and by the
+// backlog (cost on the task card).
 //
 // From a thousand with thousands separators, because that is exactly where they
 // start to help: `2746 $` you read digit by digit, `2.746 $` at one glance.
+//
+// The symbol stands where the UI's language puts it (`$12.30` in English,
+// `12,30 $` in German), taken from Intl like the separators.
 export function fmtUSD(v: number): string {
-  if (v >= 1000) return `${group(Math.round(v))} $`;
-  if (v >= 1) return `${dezimal(v, 2)} $`;
-  return `${dezimal(v, 4)} $`;
+  const a = Math.abs(v);
+  if (a > 0 && a < 0.01) return v > 0 ? `<${dollar(dezimal(0.01, 2))}` : `>-${dollar(dezimal(0.01, 2))}`;
+  const num = a >= 1000 ? group(Math.round(a)) : dezimal(a, 2);
+  return v < 0 ? `-${dollar(num)}` : dollar(num);
+}
+
+// dollar puts the symbol on the side the UI's language expects, with the
+// space it puts between — one Intl.NumberFormat per locale, like trenner().
+let cur: { loc: string; before: boolean; space: boolean } | undefined;
+function dollar(num: string): string {
+  const loc = uiLocale();
+  if (cur?.loc !== loc) {
+    const parts = new Intl.NumberFormat(loc, { style: "currency", currency: "USD", currencyDisplay: "narrowSymbol" }).formatToParts(1);
+    const c = parts.findIndex((p) => p.type === "currency"), n = parts.findIndex((p) => p.type === "integer");
+    cur = { loc, before: c >= 0 && c < n, space: parts.some((p) => p.type === "literal" && /\s/.test(p.value)) };
+  }
+  const sp = cur.space ? " " : "";
+  return cur.before ? `$${sp}${num}` : `${num}${sp}$`;
+}
+
+// fmtNumber is a plain number with a fixed number of decimal digits, in the
+// UI's spelling: `28,6`, `1.234,50` — for multiples, percents and shares
+// that stand next to amounts and must not switch to a point.
+export function fmtNumber(v: number, digits: number): string {
+  if (!Number.isFinite(v)) return v > 0 ? "∞" : v < 0 ? "-∞" : "–";
+  const neg = v < 0 && Math.abs(v) >= 0.5 * 10 ** -digits;
+  const [int, frac] = Math.abs(v).toFixed(digits).split(".");
+  return `${neg ? "-" : ""}${group(Number(int))}${frac ? komma() + frac : ""}`;
 }
 
 // dezimal: a fixed number of decimal digits, with the separator of the UI.
@@ -152,4 +182,73 @@ export function fmtDelta(ms: number): string {
   if (h < 24) return m % 60 ? `${h} h ${m % 60} min` : `${h} h`;
   const d = Math.floor(h / 24);
   return h % 24 ? `${d} d ${h % 24} h` : `${d} d`;
+}
+
+// fmtUSDAxis is fmtUSD for an axis tick: as short as the round steps allow —
+// `0 $`, `0,25 $`, `12 $`, `1,5 k $`. An axis with `12,00 $` next to
+// `0,2500 $` reads as two scales.
+//
+// With the axis' step, every tick carries the step's precision: at a step of
+// 0,0025 $ the ticks read `0,0025 $`, `0,0050 $`, not `0,003 $`, and at a top
+// of 0,0003 $ not `0 $` four times.
+export function fmtUSDAxis(v: number, step?: number): string {
+  if (v === 0) return dollar("0");
+  if (step != null && step > 0) {
+    if (Math.abs(v) >= 1000) return dollar(`${fmtNumber(v / 1000, stepDigits(step / 1000))} k`);
+    return dollar(fmtNumber(v, stepDigits(step)));
+  }
+  if (Math.abs(v) >= 1000) return dollar(`${trim(v / 1000)} k`);
+  const digits = Math.abs(v) >= 10 ? 0 : Math.abs(v) >= 1 ? 1 : Math.abs(v) >= 0.1 ? 2 : 3;
+  let s = v.toFixed(digits);
+  if (s.includes(".")) s = s.replace(/0+$/, "").replace(/\.$/, "");
+  return dollar(s.replace(".", komma()));
+}
+
+// fmtCountAxis is fmtCount for an axis tick with the axis' step: in the unit
+// fmtCount would pick for the tick, with as many digits as the step carries
+// there — `750 k`, `1,25 M` at a step of 250 k, where fmtCount rounds to
+// `1,3 M`.
+export function fmtCountAxis(v: number, step: number): string {
+  const a = Math.abs(v);
+  if (v === 0 || !(step > 0)) return fmtCount(v);
+  if (a >= 1_000_000_000) return `${fmtNumber(v / 1e9, stepDigits(step / 1e9))} ${milliarde()}`;
+  if (a >= 1_000_000) return `${fmtNumber(v / 1e6, stepDigits(step / 1e6))} M`;
+  if (a >= 10_000) return `${fmtNumber(v / 1e3, stepDigits(step / 1e3))} k`;
+  return fmtNumber(v, stepDigits(step));
+}
+
+// stepDigits: the decimal digits a step needs to be written exactly — 0 for
+// 250, 2 for 0,25, 4 for 0,0025.
+function stepDigits(step: number): number {
+  for (let d = 0; d < 10; d++) {
+    const x = step * 10 ** d;
+    if (Math.abs(x - Math.round(x)) < 1e-6 * Math.max(1, Math.abs(x))) return d;
+  }
+  return 10;
+}
+
+// fmtBucket labels a cost bucket in the UI's language. Buckets are UTC (the
+// server truncates in UTC), so they are shown in UTC and say so — a local
+// clock would shift every bar by the offset, and a UTC day is not the
+// reader's day. A week is named by its first day (Monday, UTC): "week of".
+export function fmtBucket(iso: string, bucket: string): string {
+  const d = new Date(iso);
+  const lang = uiLocale();
+  switch (bucket) {
+    case "hour":
+      return `${d.toLocaleString(lang, { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "UTC" })} UTC`;
+    case "month":
+      return d.toLocaleDateString(lang, { month: "short", year: "numeric", timeZone: "UTC" });
+    case "week":
+      return i18n.t("costs.weekOf", { date: `${d.toLocaleDateString(lang, { day: "2-digit", month: "2-digit", timeZone: "UTC" })} UTC` });
+    default:
+      return `${d.toLocaleDateString(lang, { day: "2-digit", month: "2-digit", timeZone: "UTC" })} UTC`;
+  }
+}
+
+// fmtClockUTC is an instant as HH:MM UTC in the UI's language — how far
+// Anthropic's bill is complete.
+export function fmtClockUTC(iso: string | Date): string {
+  const d = typeof iso === "string" ? new Date(iso) : iso;
+  return `${d.toLocaleTimeString(uiLocale(), { hour: "2-digit", minute: "2-digit", timeZone: "UTC" })} UTC`;
 }

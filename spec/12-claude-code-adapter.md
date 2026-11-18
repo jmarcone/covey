@@ -29,7 +29,7 @@ The control maps almost 1:1 onto the daemon protocol:
 | `--effort <low\|medium\|high\|xhigh\|max>` | `inject_config.effort` — the reasoning effort per agent (registry field, PATCH `/agents/{id}/effort`); empty = the binary's default. Independent of the model: a model runs at any level |
 | `--max-turns <n>` | `inject_config.max_turns` — the turn limit per agent (registry field, PATCH `/agents/{id}/max-turns`); 0 = orchestrator default (30) |
 | `--output-format stream-json` | the `event` stream → recording ([`06`](06-observability-control.md)) |
-| `--output-format json` → `total_cost_usd` | `cost` → cost control ([`06`](06-observability-control.md)) |
+| `result` → `model_usage_since_last_result` | `cost` → cost control ([`06`](06-observability-control.md)); see [Cost](#cost) for why not `total_cost_usd` |
 | `--resume <session_id>` | `blocked → working` — resumption ([`03`](03-lifecycle-scheduling.md)) |
 | `--allowedTools` / `--permission-mode` | tool guard rails ([`06`](06-observability-control.md)) |
 | `--max-turns`, `--max-budget-usd` | budget/runaway guard rails ([`06`](06-observability-control.md)) |
@@ -63,7 +63,29 @@ With that, the `blocked → working` edge from [`03-lifecycle-scheduling.md`](03
 
 ## Cost
 
-The final `result` event (or `--output-format json`) contains `total_cost_usd` including a breakdown per model → straight into covey's **cost tracking** per agent ([`06-observability-control.md`](06-observability-control.md)), without a separate usage query.
+Every `result` line prices the run itself → straight into covey's **cost tracking** per agent ([`06-observability-control.md`](06-observability-control.md)), without a separate usage query. Which of its figures is booked matters, because they measure different things:
+
+| field | covers |
+|---|---|
+| `total_cost_usd`, `modelUsage` | the **session's running total**. Claude Code stores it in the transcript and restores it on `--resume`, so a continuation reports everything the session ever cost. |
+| `model_usage_since_last_result` | what happened **since the previous result line of the session**, per model, over all models (the side calls to a smaller model included). Summed over a session's lines it equals the last line's total exactly. |
+| `usage` | this invocation, but the **main model only**. |
+
+The adapter books **per invocation**: one `cost` message per run carrying the spend and tokens of that run's own `claude` processes and nothing else. On every result line — a process can write more than one, and the turn-limit handover is a second process — it adds that line's `model_usage_since_last_result` (money, input, output, cache read, cache write = 5 min + 1 h). Thinking tokens are already inside `outputTokens` and are not added again. The status of the run (subtype, terminal reason, result text, session) stays the last line's.
+
+A CLI from before `model_usage_since_last_result` gets a fallback: the money is the difference of `total_cost_usd` to the session's total before the line (0 for a fresh session, the main run's last total for the handover), the tokens are the line's `usage`. A resumed process whose total before is unknown can only book the whole running total; it does, and says so.
+
+Booking `total_cost_usd` as it stands was the previous behaviour and overcounted: a continuation booked the session's history again, and the handover added a second running total that already contained the main run (×1.95 over one evening's runs).
+
+The `cost` message says what its figure covers in **`basis`**:
+
+- `invocation` — the run's own spend, the figure to book. Claude Code sends it whenever its lines carry the per-invocation delta or the total before is known; Codex, sevencode and educa-ai always send it, they count per run anyway.
+- `cumulative` — the fallback above on a resumed process: the money includes earlier runs of the session.
+- empty — a daemon from before the field. For claude-code that daemon sent the session's running total; the control plane does not book it as the run's spend but as the sum of the run's own result lines in `model_usage`, and the daemon's figure only where the run left no line ([`06`](06-observability-control.md#cost-control)). `cumulative` is booked the same way.
+
+Next to it travel `session_id` and `session_total_usd` (the last line's `total_cost_usd`): a cross-check — a session's booked amounts should add up to its last total — never a figure to book.
+
+**The handover resumes with the run's own arguments.** The summary turn after a turn limit (`summarize`) is started with the main run's argument list — system prompt, `--tools`, `--allowedTools`, `--mcp-config`, model, effort — and differs only in the prompt, `--resume` and `--max-turns 1`. The prompt cache is keyed on that prefix: a resume with a shorter argument list missed it and wrote the whole context again on every handover (some 15 % of one evening's spend).
 
 On a **subscription seat that figure is notional** — Claude Code prices the run as if it had been billed, but the seat is paid for regardless. It is booked as it arrives and labelled by the credential it came from; what that means for totals and unit costs is in [`18-runtimes-capacity.md`](18-runtimes-capacity.md) and [`17-kpis.md`](17-kpis.md). An adapter for another engine may not report a dollar figure at all, in which case it has to be derived from tokens and a price list — which is why the token counts are stored separately and not only the money.
 

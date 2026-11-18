@@ -2,13 +2,18 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
+	"math"
 	"net/http"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
+	"covey/internal/daemon"
 	"covey/internal/observability"
 )
 
@@ -254,5 +259,121 @@ func TestTotalInputAddsEveryKindOfRead(t *testing.T) {
 	}
 	if got := (observability.Tokens{}).TotalInput(); got != 0 {
 		t.Errorf("TotalInput of nothing = %d", got)
+	}
+}
+
+// A booking names the secret value that paid, not only its place in the
+// runtime: a Reorder moves values between places, and the 0047 columns that
+// were meant for this stayed empty until 0144. A booking of a Claude Code run
+// counts every model's tokens, so a token limit sees the side calls too.
+func TestCostBookedAgainstTheSecretValue(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	agent := s.newSupportAgent("wert-agent")
+	rt, err := s.runtimes.Create(ctx, s.orgID, "claude-code", "Claude", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := s.seat(t, rt.ID, daemon.CredSubscription, "claude_code_oauth_token", "sitz-a", "A")
+	b := s.seat(t, rt.ID, daemon.CredSubscription, "claude_code_oauth_token", "sitz-b", "B")
+
+	if err := s.obs.AddCost(ctx, agent.ID, nil, 1.00, observability.Tokens{Output: 5}, "m", rt.ID, b); err != nil {
+		t.Fatal(err)
+	}
+	var key string
+	var slot, want int
+	if err := s.pool.QueryRow(ctx, `SELECT secret_key, secret_slot FROM cost_entries WHERE agent_id=$1`, agent.ID).Scan(&key, &slot); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.pool.QueryRow(ctx, `SELECT secret_slot FROM runtime_credentials WHERE runtime_id=$1 AND ord=$2`, rt.ID, b).Scan(&want); err != nil {
+		t.Fatal(err)
+	}
+	if key != "claude_code_oauth_token" || slot != want {
+		t.Errorf("booked against %s/%d, want claude_code_oauth_token/%d", key, slot, want)
+	}
+
+	// A run booked from its lines: the haiku side calls count towards the
+	// credential's window as well.
+	task := uuid.New()
+	cred := observability.CredentialRef{RuntimeID: rt.ID, Ord: a, SecretKey: "claude_code_oauth_token", Kind: daemon.CredSubscription}
+	line := session[0].json("wert-sess", 0, true)
+	if err := s.obs.RecordRuntime(ctx, agent.OrgID, agent.ID, &task, cred, json.RawMessage(line)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.obs.BookRun(ctx, observability.CostEntry{AgentID: agent.ID, TaskID: &task, USD: 1.8177047,
+		Credential: cred, Basis: observability.BasisLegacy}, true); err != nil {
+		t.Fatal(err)
+	}
+	usd, tokens, err := s.obs.CredentialUsage(ctx, rt.ID, a, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(usd-1.817705) > 1e-6 || tokens != 60+34246+1781843+95179+29681+3552 {
+		t.Errorf("credential usage = %v USD, %d tokens — want both models", usd, tokens)
+	}
+}
+
+// Every bucket is a UTC bucket. The two-argument date_trunc follows the
+// session's TimeZone: on a connection that runs with SET TIME ZONE
+// 'Europe/Berlin', a run at 23:30 UTC lands on the next day. The same rows,
+// read over such a connection, have to fall into the same buckets.
+func TestCostBucketsIgnoreSessionTimeZone(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	agent := s.newSupportAgent("zeitzone")
+	task := uuid.New()
+	if err := s.obs.RecordRuntime(ctx, agent.OrgID, agent.ID, &task, observability.CredentialRef{}, json.RawMessage(resultLine)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.obs.BookRun(ctx, observability.CostEntry{AgentID: agent.ID, TaskID: &task, USD: 1.3991645,
+		Basis: observability.BasisInvocation}, false); err != nil {
+		t.Fatal(err)
+	}
+	// 23:30 UTC on the 16th is 00:30 on the 17th in Berlin.
+	at := time.Date(2026, 11, 16, 23, 30, 0, 0, time.UTC)
+	for _, table := range []string{"model_usage", "cost_entries"} {
+		if _, err := s.pool.Exec(ctx, `UPDATE `+table+` SET created_at = $2 WHERE agent_id = $1`, agent.ID, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cfg := s.pool.Config().Copy()
+	cfg.AfterConnect = func(ctx context.Context, c *pgx.Conn) error {
+		_, err := c.Exec(ctx, `SET TIME ZONE 'Europe/Berlin'`)
+		return err
+	}
+	berlin, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer berlin.Close()
+	var tz string
+	if err := berlin.QueryRow(ctx, `SHOW TimeZone`).Scan(&tz); err != nil || tz != "Europe/Berlin" {
+		t.Fatalf("the connection runs in %q (%v), the test needs Berlin", tz, err)
+	}
+	obs := observability.NewStore(berlin)
+	since := at.Add(-48 * time.Hour)
+	day := time.Date(2026, 11, 16, 0, 0, 0, 0, time.UTC)
+
+	cells, err := obs.CostCellsFor(ctx, agent.OrgID, "day", since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cells.Cells) != 1 || !cells.Cells[0].Period.Equal(day) || cells.Cells[0].Reported == 0 || len(cells.Cells[0].Measured) == 0 {
+		t.Errorf("cells = %+v, want one on %v with both figures", cells.Cells, day)
+	}
+	rep, err := obs.OrgCostReport(ctx, agent.OrgID, "day", since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Series) != 1 || !rep.Series[0].Period.Equal(day) {
+		t.Errorf("org series = %+v, want one bucket on %v", rep.Series, day)
+	}
+	series, err := obs.CostSeriesByAgent(ctx, agent.ID, "day", since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(series) != 1 || !series[0].Period.Equal(day) {
+		t.Errorf("agent series = %+v, want one bucket on %v", series, day)
 	}
 }

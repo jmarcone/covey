@@ -4,6 +4,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -422,4 +423,116 @@ func (s *Server) syncDefaultRuntime(ctx context.Context, orgID uuid.UUID, key st
 			return
 		}
 	}
+}
+
+// credentialPlace reads the {id} and {ord} of a credential route.
+func credentialPlace(w http.ResponseWriter, r *http.Request) (uuid.UUID, int, bool) {
+	id, err := parseID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid id")
+		return uuid.Nil, 0, false
+	}
+	ord, err := strconv.Atoi(r.PathValue("ord"))
+	if err != nil || ord < 0 {
+		writeErr(w, http.StatusBadRequest, "invalid ord")
+		return uuid.Nil, 0, false
+	}
+	return id, ord, true
+}
+
+// handleGetCredentialPlan returns the price history of a credential, newest
+// first (migration 0145). It follows the secret value, not the place.
+func (s *Server) handleGetCredentialPlan(w http.ResponseWriter, r *http.Request) {
+	p := principalFrom(r)
+	id, ord, ok := credentialPlace(w, r)
+	if !ok {
+		return
+	}
+	plans, err := s.Runtimes.Plans(r.Context(), p.OrgID, id, ord)
+	if err != nil {
+		mapErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, plans)
+}
+
+// handlePutCredentialPlan appends a price to a credential, valid from
+// valid_from (now when absent). It never overwrites: the plan valid at that
+// moment is closed there, and a plan starting at the same moment is a
+// conflict. The price is for measurement — what the subscription meter's
+// points cost — and nothing steers by it (spec/07 D13).
+func (s *Server) handlePutCredentialPlan(w http.ResponseWriter, r *http.Request) {
+	p := principalFrom(r)
+	id, ord, ok := credentialPlace(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		PlanName  string     `json:"plan_name"`
+		Amount    *float64   `json:"amount"`
+		Currency  string     `json:"currency"`
+		Period    string     `json:"period"`
+		TaxBasis  string     `json:"tax_basis"`
+		FXToUSD   float64    `json:"fx_to_usd"`
+		FXDate    *string    `json:"fx_date"`
+		ValidFrom *time.Time `json:"valid_from"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if in.Amount == nil {
+		writeErr(w, http.StatusBadRequest, "amount is required")
+		return
+	}
+	plan := runtimes.Plan{PlanName: in.PlanName, Amount: *in.Amount, Currency: in.Currency, Period: in.Period,
+		TaxBasis: in.TaxBasis, FXToUSD: in.FXToUSD, FXDate: in.FXDate}
+	if in.ValidFrom != nil {
+		plan.ValidFrom = *in.ValidFrom
+	}
+	saved, err := s.Runtimes.SetPlan(r.Context(), p.OrgID, id, ord, plan)
+	var invalid runtimes.InvalidPlan
+	switch {
+	case errors.As(err, &invalid):
+		writeErr(w, http.StatusBadRequest, invalid.Error())
+		return
+	case errors.Is(err, runtimes.ErrPlanExists):
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	case err != nil:
+		mapErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, saved)
+}
+
+// handleSetBillingKey says which Anthropic API key the credential's value is
+// ({api_key_id, workspace_id}; the workspace is optional and narrows the bill
+// to it). The mapping follows the value, from when it was written until it is
+// replaced or removed (migration 0146). Only an API-key credential has one.
+func (s *Server) handleSetBillingKey(w http.ResponseWriter, r *http.Request) {
+	p := principalFrom(r)
+	id, ord, ok := credentialPlace(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		APIKeyID    string `json:"api_key_id"`
+		WorkspaceID string `json:"workspace_id"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	m, err := s.Obs.SetBillingKey(r.Context(), p.OrgID, id, ord, in.APIKeyID, in.WorkspaceID)
+	var invalid observability.ErrInvalidBillingKey
+	switch {
+	case errors.As(err, &invalid):
+		writeErr(w, http.StatusBadRequest, invalid.Error())
+		return
+	case err != nil:
+		mapErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, m)
 }
