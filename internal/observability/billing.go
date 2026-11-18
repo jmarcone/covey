@@ -646,6 +646,18 @@ type BilledSeries struct {
 	Points []BilledPoint `json:"points"`
 }
 
+// billedMapping joins a bill row c to the ONE mapping it belongs to (mk, NULL
+// columns when none): the API key's mapping valid during the row's bucket, the
+// latest when one ended inside it. A bucket overlaps two mappings when a value
+// is re-saved or a key changes hands inside it; joining every overlapping
+// mapping would count it once per mapping. The chart (BilledSeries) and the
+// tile (BilledWindowFor) both take it from here, so they cannot disagree on
+// whose a bucket is.
+const billedMapping = `LEFT JOIN LATERAL (SELECT k.secret_key, k.secret_slot::int AS secret_slot FROM credential_billing_keys k
+			WHERE k.org_id = $1 AND k.api_key_id = c.api_key_id AND (k.workspace_id = '' OR k.workspace_id = c.workspace_id)
+			  AND k.valid_from < c.bucket_end AND COALESCE(k.valid_to, 'infinity'::timestamptz) > c.bucket_start
+			ORDER BY k.valid_from DESC LIMIT 1) mk ON true`
+
 // BilledSeries sums the billed rows per bucket (hour | day | week, UTC; day
 // by default), API key and model. Hours come from the 1h reads only; days and
 // weeks from one width per day (chosenRows).
@@ -669,10 +681,7 @@ func (s *Store) BilledSeries(ctx context.Context, orgID uuid.UUID, bucket string
 			round(SUM(c.amount_cents) / 100, 8)::text, round(SUM(c.list_amount_cents) / 100, 8)::text,
 			bool_and(c.data_refreshed_at IS NOT NULL AND c.bucket_end <= c.data_refreshed_at)
 		FROM bcost c
-		LEFT JOIN LATERAL (SELECT k.secret_key, k.secret_slot::int AS secret_slot FROM credential_billing_keys k
-			WHERE k.org_id = $1 AND k.api_key_id = c.api_key_id AND (k.workspace_id = '' OR k.workspace_id = c.workspace_id)
-			  AND k.valid_from < c.bucket_end AND COALESCE(k.valid_to, 'infinity'::timestamptz) > c.bucket_start
-			ORDER BY k.valid_from DESC LIMIT 1) mk ON true
+		`+billedMapping+`
 		GROUP BY 1, 2, 3, 4, 5, 6
 		ORDER BY 1, 2, 4`, orgID, since)
 	if err != nil {
@@ -720,11 +729,14 @@ type BilledWindow struct {
 
 // BilledTotal is one credential with a mapping to an API key valid in the
 // window — also when nothing was billed, so "mapped, nothing billed" can be
-// told from "not mapped". Both sides stay inside the mapping's interval.
+// told from "not mapped" — or the holder of a bucket whose mapping begins
+// only after now (see BilledWindowFor). A bill bucket counts for the mapping
+// of its time (billedMapping), as in the chart; the lines stay inside the
+// mapping's interval.
 type BilledTotal struct {
 	SecretKey  string `json:"secret_key"`
 	SecretSlot int    `json:"secret_slot"`
-	// HasBilled: the mapped key has any billed row in the window.
+	// HasBilled: a billed row in the window went to this credential.
 	HasBilled     bool   `json:"has_billed"`
 	BilledUSD     string `json:"billed_usd"`
 	BilledListUSD string `json:"billed_list_usd"`
@@ -767,12 +779,20 @@ func (s *Store) BilledWindowFor(ctx context.Context, orgID uuid.UUID, since, now
 		COALESCE(valid_to, 'infinity'::timestamptz) AS valid_to
 	FROM credential_billing_keys
 	WHERE org_id = $1 AND COALESCE(valid_to, 'infinity'::timestamptz) > $2 AND valid_from < $3)`
-	rows, err := s.pool.Query(ctx, `WITH `+maps+`, `+src+`
-		SELECT m.secret_key, m.secret_slot, count(c.api_key_id) > 0,
-			round(COALESCE(SUM(c.amount_cents), 0) / 100, 8)::text, round(COALESCE(SUM(c.list_amount_cents), 0) / 100, 8)::text
-		FROM maps m
-		LEFT JOIN bcost c ON c.api_key_id = m.api_key_id AND (m.workspace_id = '' OR c.workspace_id = m.workspace_id)
-			AND c.bucket_end > m.valid_from AND c.bucket_start < m.valid_to AND c.bucket_start < $3
+	// Each bucket goes to one mapping, as in the chart (billedMapping). The
+	// credentials are the mapped ones plus, should a bucket's mapping only
+	// begin after now, its holder — a bucket in the chart is never missing
+	// from the tile.
+	rows, err := s.pool.Query(ctx, `WITH `+maps+`, `+src+`,
+	billed AS (
+		SELECT mk.secret_key, mk.secret_slot, c.amount_cents, c.list_amount_cents
+		FROM bcost c
+		`+billedMapping+`
+		WHERE c.bucket_start < $3 AND mk.secret_key IS NOT NULL)
+		SELECT m.secret_key, m.secret_slot, count(b.secret_key) > 0,
+			round(COALESCE(SUM(b.amount_cents), 0) / 100, 8)::text, round(COALESCE(SUM(b.list_amount_cents), 0) / 100, 8)::text
+		FROM (SELECT secret_key, secret_slot FROM maps UNION SELECT secret_key, secret_slot FROM billed) m
+		LEFT JOIN billed b ON b.secret_key = m.secret_key AND b.secret_slot = m.secret_slot
 		GROUP BY 1, 2
 		ORDER BY 1, 2`, orgID, start, now)
 	if err != nil {
