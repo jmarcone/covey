@@ -259,12 +259,18 @@ func TestThePRReviewTestFailsWhenARequiredKeyIsMissing(t *testing.T) {
 
 func prReviewEngine(t *testing.T, mode Mode, w *world) *Engine {
 	t.Helper()
+	return prReviewEngineAt(t, mode, w, newClock())
+}
+
+// prReviewEngineAt is prReviewEngine on a clock the test moves itself.
+func prReviewEngineAt(t *testing.T, mode Mode, w *world, c *clock) *Engine {
+	t.Helper()
 	d, err := Parse([]byte(prReviewSource(t)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	d.Mode = mode
-	e, err := New(d, w, newClock().now)
+	e, err := New(d, w, c.now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,6 +295,51 @@ func TestInWatchModeThePRReviewOnlyRecordsTheCase(t *testing.T) {
 	}
 	if got := logOf(r); got != "  trigger: started for github:pull:jmarcone/covey#136\n  review: seen here\n" {
 		t.Errorf("log:\n%s", got)
+	}
+}
+
+// The header of the file says the switch to steer does not take over the
+// watch week's runs. This walk pins what it says: a watching run restored
+// into a steer engine stays on review, watching, and neither a Tick past both
+// limits nor a Start for its case moves it. If the engine ever takes such runs
+// over, this test fails and the header has to change with it.
+func TestASwitchToSteerLeavesTheWatchWeeksRunsWatching(t *testing.T) {
+	watch := prReviewEngine(t, ModeWatch, &world{})
+	id := startPRReview(t, watch)
+	runs := watch.Runs()
+	if len(runs) != 1 || runs[0].ID != id {
+		t.Fatalf("the watch engine has runs %v, want only %s", runs, id)
+	}
+
+	w := &world{}
+	c := newClock()
+	steer := prReviewEngineAt(t, ModeSteer, w, c)
+	must(t, steer.Restore(runs))
+	expect(t, at(t, steer, id), "review", StateWatching)
+
+	// Past the review limit (2h) and the fix limit (3h), in steps of 3h.
+	for i := 0; i < 5; i++ {
+		c.pass(3 * time.Hour)
+		steer.Tick()
+	}
+	r := at(t, steer, id)
+	expect(t, r, "review", StateWatching)
+	if r.Stuck {
+		t.Errorf("a watching run was marked over its limit")
+	}
+	if len(w.tasks)+len(w.actions)+len(w.questions)+len(w.messages) != 0 {
+		t.Fatalf("the restored run sent out tasks %v, actions %v, questions %v, messages %v", w.tasks, w.actions, w.questions, w.messages)
+	}
+
+	// The case comes back through the gate: Start returns the same run.
+	again, err := steer.Start("github:pull:jmarcone/covey#136", map[string]string{"no": "pull:jmarcone/covey#136", "title": "PR review"})
+	must(t, err)
+	if again.ID != id {
+		t.Errorf("Start for the same case returned run %s, want %s", again.ID, id)
+	}
+	expect(t, again, "review", StateWatching)
+	if len(w.tasks) != 0 {
+		t.Errorf("Start for a watching case handed out %v", w.tasks)
 	}
 }
 
