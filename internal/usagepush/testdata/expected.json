@@ -1,0 +1,5 @@
+{
+  "_from": "covey-experiment scripts/measure/harness_usage.py run on testdata/transcripts (2026-11-18)",
+  "messages": 806,
+  "input": 18809, "output": 613153, "cache_read": 75297349, "cache_write_5m": 7397129, "cache_write_1h": 346335
+}

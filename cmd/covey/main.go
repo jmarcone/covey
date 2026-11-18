@@ -112,6 +112,14 @@ func main() {
 			os.Exit(1)
 		}
 		return
+	// usage push reads Claude Code transcripts where they are and sends only
+	// token counts; like style it needs neither database nor master key.
+	case "usage":
+		if err := runUsage(os.Args[2:], os.Stdout, os.Getenv); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
 	case "version", "--version", "-v":
 		fmt.Println("covey " + buildinfo.String())
 		// covey is a network service under AGPL-3.0: whoever offers a modified
@@ -178,6 +186,7 @@ func usage() {
   covey config lint       check agent configs for known pitfalls (changes nothing)
   covey plugin lint <f>   check a target-system plugin file (manifest or MCP config)
   covey style stats|check measure texts, or check one against a TONE.md profile
+  covey usage push DIR... --source LABEL   send token counts of Claude Code sessions outside covey (no text)
   covey skills validate   check skill directories or zips against the Agent Skills format
   covey settings [k v]    show the instance's settings, or set one (e.g. signup.mode waitlist)
   covey waitlist          list waitlist codes | new [-label L] [-uses N] [-days D] | revoke <hash>
