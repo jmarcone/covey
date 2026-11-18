@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, auditConversations, type AuditEntry } from "../api";
 import AuditGespraeche from "./AuditGespraeche";
+import { uiLocale } from "../i18n";
 
 // Supervision → Audit: what PEOPLE have done on the platform.
 //
@@ -114,7 +115,7 @@ export default function Audit({ embedded }: { embedded?: boolean }) {
             <tbody>
               {eintraege.map((e) => (
                 <tr key={e.id}>
-                  <td className="muted text-xs">{new Date(e.created_at).toLocaleString()}</td>
+                  <td className="muted text-xs">{new Date(e.created_at).toLocaleString(uiLocale())}</td>
                   <td className="text-xs">
                     {e.actor_email}
                     <span className="muted"> · {e.actor_role}</span>

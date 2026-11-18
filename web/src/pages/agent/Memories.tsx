@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
-import i18n from "../../i18n";
+import { uiLocale } from "../../i18n";
 import {
   api,
   post,
@@ -116,7 +116,7 @@ export function Memories({ agentId, canManage }: { agentId: string; canManage: b
   });
   const list = useMemo(() => mems.data ?? [], [mems.data]);
   const logs = log.data ?? [];
-  const locale = i18n.language === "de" ? "de-DE" : "en-US";
+  const locale = uiLocale();
   const opLabel = (op: string) =>
     ({
       ingest: t("agent.memory.opIngest"),

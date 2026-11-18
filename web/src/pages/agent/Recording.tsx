@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
-import i18n from "../../i18n";
+import i18n, { uiLocale } from "../../i18n";
 import {
   api,
   type RecordingEvent,
@@ -244,7 +244,7 @@ const compactInput = (input: unknown) => {
 function RecordingItem({ event }: { event: RecordingEvent }) {
   const s = summarize(event);
   const raw = typeof event.payload === "string" ? event.payload : JSON.stringify(event.payload, null, 2);
-  const locale = i18n.language === "de" ? "de-DE" : "en-US";
+  const locale = uiLocale();
   // Raw view and narrative view must say the same thing: if the line belongs
   // to a sub-run, that stands here as a badge — there as its own block.
   const sub = subAgentMark(event);

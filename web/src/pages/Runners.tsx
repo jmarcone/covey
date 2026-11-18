@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import { api, patch, post, type Principal } from "../api";
 import { fmtBytes } from "../format";
+import { uiLocale } from "../i18n";
 
 // The runners view (spec/16, stage 5). From the third runner on it is what
 // makes operation workable: which hosts exist, which one carries right now,
@@ -360,11 +361,11 @@ export default function Runners({ me, embedded = false }: { me: Principal; embed
                     ? t("runners.tokenRevoked")
                     : new Date(tok.expires_at).getTime() < Date.now()
                       ? t("runners.tokenExpired")
-                      : t("runners.tokenUsableUntil", { until: new Date(tok.expires_at).toLocaleString() });
+                      : t("runners.tokenUsableUntil", { until: new Date(tok.expires_at).toLocaleString(uiLocale()) });
                   const usable = !tok.revoked_at && new Date(tok.expires_at).getTime() >= Date.now();
                   return (
                     <tr key={tok.id}>
-                      <td>{new Date(tok.created_at).toLocaleString()}</td>
+                      <td>{new Date(tok.created_at).toLocaleString(uiLocale())}</td>
                       <td className={usable ? "" : "muted"}>{state}</td>
                       <td>
                         {usable && (

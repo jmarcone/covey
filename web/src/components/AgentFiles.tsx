@@ -17,6 +17,7 @@ import {
 import { fmtBytes } from "../format";
 import { Markdown } from "./Markdown";
 import { Modal, ConfirmDialog } from "./Modal";
+import { uiLocale } from "../i18n";
 
 // The agent's workstation: its persistent home as a file tree. It is
 // the answer to "what does this one have lying around?" — until now only reachable
@@ -442,7 +443,7 @@ export function AgentFiles({ agent, canWrite }: { agent: Agent; canWrite: boolea
                     {e.outside && <span className="muted text-xs"> {t("agent.files.outside")}</span>}
                   </td>
                   <td className="muted mono text-xs">{e.is_dir ? "—" : fmtBytes(e.size)}</td>
-                  <td className="muted text-xs">{new Date(e.mod_time).toLocaleString()}</td>
+                  <td className="muted text-xs">{new Date(e.mod_time).toLocaleString(uiLocale())}</td>
                   <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                     {!e.outside && (
                       // A folder comes as an archive, a file raw — both
@@ -637,7 +638,7 @@ function FileViewer({
       {d && (
         <>
           <p className="muted text-xs mb-2 mono">
-            {fmtBytes(d.size)} · {d.mode} · {new Date(d.mod_time).toLocaleString()}
+            {fmtBytes(d.size)} · {d.mode} · {new Date(d.mod_time).toLocaleString(uiLocale())}
           </p>
           {d.preview === "image" && (
             <img

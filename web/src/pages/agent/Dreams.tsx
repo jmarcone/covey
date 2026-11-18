@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import i18n from "../../i18n";
+import { uiLocale } from "../../i18n";
 import {
   api,
   post,
@@ -49,7 +49,7 @@ export function logDetail(summary: string, pageName: string): string {
 export function Dreams({ agentId, canManage }: { agentId: string; canManage: boolean }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
-  const locale = i18n.language === "de" ? "de-DE" : "en-US";
+  const locale = uiLocale();
   const [note, setNote] = useState("");
   const [open, setOpen] = useState<Set<string>>(new Set());
 

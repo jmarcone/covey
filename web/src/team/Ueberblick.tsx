@@ -5,6 +5,7 @@ import { Link } from "react-router";
 import { api, inbox, isColleague, type Agent, type Department, type InboxEntry, type Laufend, type Principal } from "../api";
 import Gesicht from "../components/Gesicht";
 import Dauer from "../components/Dauer";
+import { uiLocale } from "../i18n";
 
 /* The office carries three.js; it is loaded only when this page is shown. */
 const Buero = lazy(() => import("./Buero"));
@@ -92,7 +93,7 @@ export default function Ueberblick({ me }: { me: Principal }) {
                   <span className="tm-wartet-titel">{e.title}</span>
                   <span className="tm-wartet-wer">{e.agent_name}</span>
                   <time className="tm-leise" dateTime={e.created_at}>
-                    {new Date(e.created_at).toLocaleString()}
+                    {new Date(e.created_at).toLocaleString(uiLocale())}
                   </time>
                 </Link>
               </li>
