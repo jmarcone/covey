@@ -543,6 +543,26 @@ describe("Neue Aufgabe hinter einem Knopf", () => {
       expect(await screen.findByText(NEU.title)).toBeTruthy();
     });
 
+    // The answer clears both fields: what was typed after the press would go
+    // with them, so the fields do not take input until the answer is there.
+    it("nimmt während des Sendens keine Eingabe an, die die Antwort wegräumen würde", async () => {
+      const h = held();
+      await absenden(h.post);
+
+      expect(titel().readOnly).toBe(true);
+      expect(beschreibung().readOnly).toBe(true);
+      await userEvent.type(titel(), " und mehr");
+      await userEvent.type(beschreibung(), "Kontext");
+      expect(titel().value).toBe(NEU.title);
+      expect(beschreibung().value).toBe("");
+
+      h.release({ status: 500, body: { error: "backlog store unavailable" } });
+      expect(await screen.findByText(/backlog store unavailable/)).toBeTruthy();
+      expect(titel().readOnly).toBe(false);
+      await userEvent.type(titel(), "!");
+      expect(titel().value).toBe(`${NEU.title}!`);
+    });
+
     it("zeigt einen späten Fehler im offen gebliebenen Formular", async () => {
       const h = held();
       await absenden(h.post);

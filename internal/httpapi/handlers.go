@@ -395,10 +395,12 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		Body     string `json:"body"`
 		Priority int    `json:"priority"`
 	}
-	if err := readJSON(r, &in); err != nil || in.Title == "" {
+	// A title of blanks is no title: the form's "required" lets it through.
+	if err := readJSON(r, &in); err != nil || strings.TrimSpace(in.Title) == "" {
 		writeErr(w, http.StatusBadRequest, "title is required")
 		return
 	}
+	in.Title = strings.TrimSpace(in.Title)
 	t, err := s.Backlog.Create(r.Context(), p.OrgID, id, in.Title, in.Body, "manual:"+p.Email, in.Priority)
 	if err != nil {
 		mapErr(w, err)

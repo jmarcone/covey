@@ -104,8 +104,10 @@ function AgentBacklog({ agentId, phase, canManage, onShowRecording }: BacklogPro
       invalBacklog();
     },
   });
-  // Not while the POST is out: resetting the mutation then detaches it from the
-  // form, Add comes back enabled on the same draft (a second task), and the
+  // Not while the POST is out: both fields are read-only then (readOnly, not
+  // disabled, so the focus stays and Escape is still heard), because the answer
+  // clears them and would take whatever was typed meanwhile. Resetting the
+  // mutation then detaches it from the form, Add comes back enabled on the same draft (a second task), and the
   // answer that is still on its way would close or clear a form opened since,
   // or lose its error. The form stays as it is until the answer is there.
   const closeComposer = () => {
@@ -311,10 +313,12 @@ function AgentBacklog({ agentId, phase, canManage, onShowRecording }: BacklogPro
             placeholder={t("agent.backlog.titlePlaceholder")}
             className="mb-2"
             required
+            readOnly={create.isPending}
           />
           <textarea
             value={body}
             onChange={(e) => setBody(e.target.value)}
+            readOnly={create.isPending}
             placeholder={t("agent.backlog.descPlaceholder")}
             aria-label={t("agent.backlog.descPlaceholder")}
             rows={2}
