@@ -290,7 +290,8 @@
       "unit": "jetons"
     },
     "weekOf": "semaine du {{date}}",
-    "hourTooLong": "Par heure seulement jusqu'à {{days}} jours"
+    "hourTooLong": "Par heure seulement jusqu'à {{days}} jours",
+    "orgWide": "toute l'organisation : ne suit pas le filtre d'agents"
   },
   "lang": {
     "label": "Langue"

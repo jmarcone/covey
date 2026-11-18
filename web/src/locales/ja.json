@@ -290,7 +290,8 @@
       "unit": "トークン"
     },
     "weekOf": "{{date}} からの週",
-    "hourTooLong": "時間単位は {{days}} 日までのみ"
+    "hourTooLong": "時間単位は {{days}} 日までのみ",
+    "orgWide": "組織全体：エージェントフィルターは適用されません"
   },
   "lang": {
     "label": "言語"

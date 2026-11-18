@@ -5,7 +5,7 @@ import { Link } from "react-router";
 import { api, type ModelUsageReport, type UsageReading } from "../api";
 import { fmtBucket, fmtCount, fmtNumber, fmtUSD } from "../format";
 import { usableReadings, type CredentialFigures } from "./costFigures";
-import { SOURCE_COLOR, Swatch } from "./StackedCostChart";
+import { OrgWide, SOURCE_COLOR, Swatch } from "./StackedCostChart";
 
 /* Cost insights.
  *
@@ -166,7 +166,7 @@ const times = (v: number) => (Number.isFinite(v) ? `${fmtNumber(v, 1)}×` : "∞
 
 /** The cards below the chart. `figures` are the credentials' figures over the
  *  whole organisation — the same the tiles show without an agent filter. */
-export function CostInsights({ days, figures }: { days: number; figures: CredentialFigures[] }) {
+export function CostInsights({ days, figures, filtered = false }: { days: number; figures: CredentialFigures[]; filtered?: boolean }) {
   const { t } = useTranslation();
   const models = useQuery({
     queryKey: ["cost", "models", days],
@@ -184,12 +184,12 @@ export function CostInsights({ days, figures }: { days: number; figures: Credent
   return (
     <div className="grid gap-4 mt-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(420px, 100%), 1fr))" }}>
       <div className="card">
-        <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.insights.modelsTitle")}</div>
+        <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.insights.modelsTitle")}{filtered && <OrgWide />}</div>
         <p className="muted text-xs mb-3">{t("costs.insights.modelsHint")}</p>
         {models.data ? <ModelTable rep={models.data} /> : <div className="muted text-sm">…</div>}
       </div>
       <div className="card">
-        <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.insights.meterTitle")}</div>
+        <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.insights.meterTitle")}{filtered && <OrgWide />}</div>
         <p className="muted text-xs mb-3">{t("costs.insights.meterHint")}</p>
         {metered.length === 0 && <div className="muted text-sm">{t("costs.insights.noReadings")}</div>}
         {metered.map((f) => <MeterFigures key={f.id} f={f} readings={rs} />)}

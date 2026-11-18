@@ -131,6 +131,17 @@ export function Swatch({ color, hatched, dim }: { color: string; hatched?: boole
   );
 }
 
+/** A card that does not follow the agent filter says so: its figures are
+ *  the whole organisation's while the rest of the page is narrowed. */
+export function OrgWide() {
+  const { t } = useTranslation();
+  return (
+    <span className="muted text-xs" data-org-wide style={{
+      marginLeft: 8, padding: "1px 6px", borderRadius: 4, border: "1px solid var(--border)", fontWeight: 400, whiteSpace: "nowrap",
+    }}>{t("costs.orgWide")}</span>
+  );
+}
+
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-wrap items-center gap-2" style={{ marginBottom: 8 }}>

@@ -290,7 +290,8 @@
       "unit": "tokenów"
     },
     "weekOf": "tydzień od {{date}}",
-    "hourTooLong": "Godzinowo tylko do {{days}} dni"
+    "hourTooLong": "Godzinowo tylko do {{days}} dni",
+    "orgWide": "cała organizacja: nie uwzględnia filtra agentów"
   },
   "lang": {
     "label": "Język"

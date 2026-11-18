@@ -11,6 +11,7 @@ import {
   AgentFilter,
   BUCKET_MS,
   CostExplorer,
+  OrgWide,
   SOURCE_COLOR,
   Swatch,
   TokenExplorer,
@@ -356,7 +357,7 @@ export default function Costs() {
       {/* Price list + token types + priciest runs: they hold for every scope */}
       <div className="grid gap-4 mb-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(320px, 100%), 1fr))" }}>
         <div className="card">
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.indicators.title")}</div>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.indicators.title")}{scope === "org" && selected.size > 0 && <OrgWide />}</div>
           <p className="muted text-xs mb-3">{t("costs.indicators.hint")}</p>
           {indicatorsForbidden ? (
             <p className="muted text-xs">{t("costs.indicators.restricted")}</p>
@@ -370,15 +371,16 @@ export default function Costs() {
           <TokenMix tokens={tok} />
         </div>
         <div className="card" style={{ gridColumn: "span 1" }}>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.runs.title")}</div>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.runs.title")}{scope === "org" && selected.size > 0 && <OrgWide />}</div>
           <p className="muted text-xs mb-3">{t("costs.runs.hint")}</p>
           <ExpensiveRuns runs={runs.data ?? []} />
         </div>
       </div>
 
       {/* Cost insights: per model as Claude Code reported it, and the
-          subscription meter per credential against the list price. Org-wide only. */}
-      {selected.size === 0 && <CostInsights days={days} figures={orgFigures} />}
+          subscription meter per credential. Org-wide, also under an agent
+          filter, and then they say so. */}
+      <CostInsights days={days} figures={orgFigures} filtered={selected.size > 0} />
     </div>
   );
 }

@@ -290,7 +290,8 @@
       "unit": "token"
     },
     "weekOf": "{{date}} 起的一周",
-    "hourTooLong": "按小时仅限 {{days}} 天以内"
+    "hourTooLong": "按小时仅限 {{days}} 天以内",
+    "orgWide": "整个组织：不受智能体筛选影响"
   },
   "lang": {
     "label": "语言"

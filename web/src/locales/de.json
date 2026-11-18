@@ -290,7 +290,8 @@
       "unit": "Tokens"
     },
     "weekOf": "Woche ab {{date}}",
-    "hourTooLong": "Stündlich nur bis {{days}} Tage"
+    "hourTooLong": "Stündlich nur bis {{days}} Tage",
+    "orgWide": "ganze Organisation: folgt dem Agentenfilter nicht"
   },
   "lang": {
     "label": "Sprache"

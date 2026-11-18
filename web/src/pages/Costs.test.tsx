@@ -328,6 +328,25 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     expect(card.closest(".card")!.querySelector("svg")).toBeNull();
   });
 
+  // Review C9: under an agent filter the per-model and meter cards vanished,
+  // and the cards that stay org-wide did not say so.
+  it("behält die Karten unter dem Agentenfilter und sagt, welche ihm nicht folgen", async () => {
+    const data = cells([2, 2]);
+    data.agents.push({ id: "a2", label: "QA", reported_usd: 0, measured_usd: 1 });
+    const { container } = serve(data);
+    await screen.findByRole("group", { name: MULTIPLE });
+    expect(container.querySelectorAll("[data-org-wide]")).toHaveLength(0);
+    await act(async () => { await userEvent.click(screen.getByRole("button", { name: /^Coordinator/ })); });
+    expect(screen.getByText(/^Verbrauch je Modell/)).toBeInTheDocument();
+    expect(screen.getByText(/^Abo-Zähler je Zugangsdaten/)).toBeInTheDocument();
+    // one agent: the price list and the runs follow it, the two insight cards cannot
+    expect(container.querySelectorAll("[data-org-wide]")).toHaveLength(2);
+    await act(async () => { await userEvent.click(screen.getByRole("button", { name: /^QA/ })); });
+    // two agents: the price list and the runs are the whole organisation's too
+    expect(container.querySelectorAll("[data-org-wide]")).toHaveLength(4);
+    expect(container.querySelector("[data-org-wide]")!.textContent).toBe("ganze Organisation: folgt dem Agentenfilter nicht");
+  });
+
   // Review C4: a cost type switched off under "split by cost type" stayed
   // off, invisibly, after the split was switched off again.
   it("lässt einen ausgeblendeten Kostentyp nicht weiterwirken, wenn die Aufteilung aus ist", async () => {
