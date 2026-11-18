@@ -29,7 +29,7 @@ export type TourSchritt = {
 
 export const TEAM_TOUR: TourSchritt[] = [
   { id: "willkommen" },
-  { id: "buero", ziel: "office" },
+  { id: "buero", ziel: "agents" },
   { id: "team", ziel: "team" },
   { id: "gespraech", ziel: "eingabe" },
   { id: "entscheiden", ziel: "entscheiden" },

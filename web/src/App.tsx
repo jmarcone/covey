@@ -15,17 +15,20 @@ const Team = lazy(() => import("./team/Team"));
 const NoOrganization = lazy(() => import("./pages/NoOrganization"));
 const PairLink = lazy(() => import("./pages/PairLink"));
 
-/* Zwei Schalen, und welche gilt, entscheidet die Adresse.
+/* Two shells, and the address decides which one applies.
  *
- * Das TEAM ist die Oberfläche dessen, der MIT der Belegschaft arbeitet:
- * Verläufe, offene Fragen, ein Eingabefeld. Die Konsole ist die Oberfläche
- * dessen, der sie BAUT: Konfiguration, Zugänge, Guard-Rails, Kosten. Beide
- * teilen sich weder Navigation noch Grund — ein Reiter zwischen dreizehn
- * anderen hätte behauptet, das sei dieselbe Arbeit.
+ * The TEAM is the surface of whoever works WITH the workforce: threads,
+ * open questions, an input field. The console is the surface of whoever
+ * BUILDS it: configuration, access, guard rails, costs. The two share
+ * neither navigation nor purpose — a tab among thirteen others would have
+ * claimed it was the same work.
  *
- * Die Wurzel gehört dem Team, weil dort jeder landet. Die Agentenliste,
- * die früher hier stand, steht unter /agents. */
-const imTeam = (pfad: string) => pfad === "/" || pfad === "/team" || pfad.startsWith("/team/");
+ * The root used to belong to the team, because everyone lands there. Since
+ * agents are a main view of their own, the office at the root is one of
+ * its views, beside the list under /agents and every agent's page, and the
+ * console renders all three in one frame. The team keeps the
+ * conversations. */
+const imTeam = (pfad: string) => pfad === "/team" || pfad.startsWith("/team/");
 
 // useLiveEvents keeps the UI current over SSE: every server event invalidates
 // the queries it touches, and TanStack Query refetches just those.

@@ -30,7 +30,7 @@ import {
 import i18n, { initialLang, ladeSprache } from "./i18n";
 import HelpDrawer from "./components/HelpDrawer";
 import { NavIcon } from "./components/navicons";
-import Rail from "./components/Rail";
+import Rail, { rememberAgentsView } from "./components/Rail";
 import { useDrawer, useNarrow } from "./components/ConsoleDrawer";
 import Suche, { useSucheKuerzel } from "./components/Suche";
 
@@ -38,6 +38,8 @@ import Suche, { useSucheKuerzel } from "./components/Suche";
 import "./app.css";
 
 const Dashboard = lazy(() => import("./pages/Dashboard"));
+/* The office carries three.js; it is loaded only when the root is shown. */
+const Ueberblick = lazy(() => import("./team/Ueberblick"));
 const AgentPage = lazy(() => import("./pages/Agent"));
 const Inbox = lazy(() => import("./pages/Inbox"));
 const Workflows = lazy(() => import("./pages/workflows/Workflows"));
@@ -206,6 +208,8 @@ export default function AppShell({ me, onLogout }: { me: Principal; onLogout: ()
   const menuButton = useRef<HTMLButtonElement>(null);
   const closeMenu = useCallback(() => setMenuOpen(false), []);
   useEffect(() => setMenuOpen(false), [location.pathname, narrow]);
+  // Which agents view was used last: the rail's Agents entry opens it.
+  useEffect(() => rememberAgentsView(location.pathname), [location.pathname]);
   useDrawer(drawerOpen, closeMenu, menuPanel, menuButton);
 
   // "?" opens the help from anywhere — except while typing in form fields.
@@ -293,8 +297,16 @@ export default function AppShell({ me, onLogout }: { me: Principal; onLogout: ()
   }
 
   /* Workflows are a place of their own in the rail (#560); their pages
-     need the width, and the console's navigation has nothing to say there. */
-  const inWorkflows = location.pathname === "/workflows" || location.pathname.startsWith("/workflows/");
+     need the width, and the console's navigation has nothing to say there.
+     The same holds for the agents area — the office, the list and every
+     agent's page — and, without the team surface, for the inbox: daily work,
+     each with its own rail entry. Before, the office stood in the team shell
+     and the list in this one with the column beside it, so the page jumped
+     by the column's width between two views of the same thing. */
+  const pfad = location.pathname;
+  const inWorkflows = pfad === "/workflows" || pfad.startsWith("/workflows/");
+  const inAgents = pfad === "/" || pfad === "/agents" || pfad.startsWith("/agents/");
+  const ownPlace = inWorkflows || inAgents || pfad === "/inbox";
 
   return (
     <div className="flex min-h-screen tm-drei">
@@ -302,13 +314,12 @@ export default function AppShell({ me, onLogout }: { me: Principal; onLogout: ()
           the settings; this column beside it is the console's navigation. */}
       <Rail
         me={me}
-        active={location.pathname === "/notes" ? "notes" : inWorkflows ? "workflows" : "admin"}
         onLogout={onLogout}
         onHelp={() => setHelpOpen(true)}
         onSearch={() => sucheOeffnen()}
       />
       {drawerOpen && <div className="konsole-scrim" onClick={closeMenu} aria-hidden="true" />}
-      {!inWorkflows && (
+      {!ownPlace && (
         <aside
           ref={menuPanel}
           id="konsole-nav"
@@ -387,7 +398,7 @@ export default function AppShell({ me, onLogout }: { me: Principal; onLogout: ()
         </aside>
       )}
       <main className="flex-1 min-w-0 flex flex-col">
-        {narrow && !inWorkflows && (
+        {narrow && !ownPlace && (
           <div className="konsole-bar">
             <button
               ref={menuButton}
@@ -415,6 +426,9 @@ export default function AppShell({ me, onLogout }: { me: Principal; onLogout: ()
               signal. */}
           <Suspense fallback={null}>
           <Routes>
+            {/* The office needs the team surface: its card and rows open
+                conversations. Without it the root is the list. */}
+            <Route path="/" element={me.TeamSurface ? <Ueberblick me={me} /> : <Navigate to="/agents" replace />} />
             <Route path="/agents" element={<Dashboard me={me} />} />
             <Route path="/agents/:id" element={<AgentPage me={me} />} />
             <Route path="/workflows" element={<Workflows me={me} />} />
@@ -484,7 +498,9 @@ export default function AppShell({ me, onLogout }: { me: Principal; onLogout: ()
         agents={agenten.data ?? []}
         departments={abteilungen.data ?? []}
         wartetBei={wartetBei}
-        pfad={(a) => `/agents/${a.id}`}
+        /* From the office the search leads into the conversation, as it did
+           while the office stood in the team shell. */
+        pfad={(a) => (me.TeamSurface && pfad === "/" ? `/team/${a.id}` : `/agents/${a.id}`)}
         fokus={sucheFokus}
         onFokus={setSucheFokus}
       />

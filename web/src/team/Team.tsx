@@ -20,7 +20,6 @@ import "../app.css";
 const Thread = lazy(() => import("./Thread"));
 const Gespraech = lazy(() => import("./Gespraech"));
 const NeuesGespraech = lazy(() => import("./NeuesGespraech"));
-const Ueberblick = lazy(() => import("./Ueberblick"));
 const NotesMain = lazy(() => import("../notes/NotesPane").then((m) => ({ default: m.NotesMain })));
 const NotesSidebar = lazy(() => import("../notes/NotesPane").then((m) => ({ default: m.NotesSidebar })));
 
@@ -150,8 +149,6 @@ export default function Team({ me, onLogout }: { me: Principal; onLogout: () => 
 
   const pfad = useLocation().pathname;
   const notizenOffen = pfad === "/team/notes" || pfad.startsWith("/team/notes/");
-  // The office wants the full width: no list column beside it (#390).
-  const buero = pfad === "/";
   const notizId = notizenOffen ? (pfad.split("/")[3] ?? null) : null;
 
   return (
@@ -163,13 +160,11 @@ export default function Team({ me, onLogout }: { me: Principal; onLogout: () => 
           with the row picked there. */}
       <Rail
         me={me}
-        active={notizenOffen ? "notes" : buero ? "office" : "team"}
         onLogout={onLogout}
         onHelp={() => setHelpOpen(true)}
         onSearch={() => sucheOeffnen()}
       />
 
-      {!buero && (
       <aside className="sidebar tm-sidebar">
         {notizenOffen ? (
           <Suspense fallback={null}>
@@ -298,12 +293,10 @@ export default function Team({ me, onLogout }: { me: Principal; onLogout: () => 
         </>
         )}
       </aside>
-      )}
 
       <main className="tm-haupt">
         <Suspense fallback={null}>
           <Routes>
-            <Route path="/" element={<Ueberblick me={me} />} />
             <Route path="/team" element={<p className="tm-start">{t("mobile.waehlen")}</p>} />
             <Route path="/team/notes" element={<NotesMain noteId={null} />} />
             <Route path="/team/notes/:noteId" element={<NoteRoute />} />
