@@ -27,6 +27,14 @@ import (
 // running total minus what the session's earlier rows already hold (basis
 // derived). Either way a row is one invocation's own share, so plain SUMs over
 // any window are right and every row sits on its own task and time.
+//
+// One share has no line of its own: a process that dies without a result line
+// (killed, timed out, its sandbox gone) still spent money, and the session's
+// running total keeps it — model_usage_since_last_result of the next line does
+// not. Where a line's running total grew by more than the line's own share
+// since the session's previous line, the difference is filed as a row of its
+// own (basis gap, migration 0147) and booked as a cost entry of its own, see
+// modelUsageGapInsert.
 
 // CredentialRef names the credential a run went out on: its place in the
 // runtime (RuntimeID/Ord — a Reorder moves values between places), the secret
@@ -134,6 +142,133 @@ WHERE d.input_tokens <> 0 OR d.output_tokens <> 0 OR d.thinking_tokens <> 0 OR d
    OR d.cache_write_5m_tokens <> 0 OR d.cache_write_1h_tokens <> 0 OR d.web_search_requests <> 0 OR d.engine_usd <> 0
 ON CONFLICT DO NOTHING`
 
+// usageFigures reads one per-model entry — the JSON expression v — into the
+// figures model_usage keeps, each column named with the prefix p. Guarded
+// like jsonInt: what is not a JSON number is 0.
+func usageFigures(v, p string) string {
+	num := func(field, cast string) string {
+		return "CASE WHEN jsonb_typeof(" + v + "->'" + field + "') = 'number' THEN (" + v + "->>'" + field + "')::numeric" + cast + " ELSE 0 END"
+	}
+	cols := []struct{ name, field string }{
+		{"input_tokens", "inputTokens"}, {"output_tokens", "outputTokens"}, {"thinking_tokens", "thinkingTokens"},
+		{"cache_read_tokens", "cacheReadInputTokens"}, {"cache_write_5m_tokens", "cacheCreationEphemeral5mInputTokens"},
+		{"cache_write_1h_tokens", "cacheCreationEphemeral1hInputTokens"}, {"web_search_requests", "webSearchRequests"},
+	}
+	var b strings.Builder
+	for _, c := range cols {
+		b.WriteString(num(c.field, "::bigint") + " AS " + p + c.name + ",\n\t\t")
+	}
+	b.WriteString(num("costUSD", "") + " AS " + p + "engine_usd")
+	return b.String()
+}
+
+// modelUsageGapInsert files the gap a result line ($1) reveals, per model:
+// what the session's running total (modelUsage) grew by since the session's
+// previous line, minus what this line says it added itself
+// (model_usage_since_last_result). Whatever is left was spent between the two
+// lines without a line of its own — a process of the session that ended
+// without a result line, whose cost Claude Code kept in the running total.
+// $2..$6 are the credential, as for modelUsageInsert.
+//
+// The previous line is the latest earlier recording event of the session that
+// left a model_usage row (of any basis, a gap row included), read back from
+// the recording. Measured from line to line, not against the sum of the
+// session's rows: a session whose earlier lines were never filed (before
+// 0142, or pruned before its backfill) would otherwise have its whole history
+// booked again as a gap. Without a previous line — the session's first line
+// here, or a previous recording already pruned — nothing is filed: a gap is
+// only booked where both ends are known.
+//
+// It cannot book anything twice:
+//
+//   - After a process WITH a result line, that line is the previous one and
+//     the running total grew by exactly this line's share: no gap.
+//   - After one WITHOUT, the growth holds its spend once, and this line is the
+//     previous one for every later line: none of them finds it again.
+//   - The turn-limit handover resumes the same session and writes a line of
+//     its own; a handover killed before its line is found by the session's
+//     next line, if the session is resumed again.
+//   - Covey's sub-agent runs are sessions of their own; Claude Code's own
+//     sub-agents are inside the line's share.
+//   - A line filed twice (a retried event) has its first copy as previous
+//     line: the growth is 0, the difference minus its share. The same for a
+//     copy arriving after later lines — the running total cannot shrink.
+//
+// Only a difference above a millionth of a dollar is filed, and only upwards:
+// a negative difference is never booked. Tokens follow the money, each floored
+// at 0. Lines without a session, without the per-line field (their derived
+// rows already are the running total's difference) or without a running total
+// file nothing here.
+var modelUsageGapInsert = `
+WITH e AS (
+	SELECT id, org_id, agent_id, task_id, payload, created_at, payload->>'session_id' AS session_id
+	FROM recording_events
+	WHERE id = $1 AND payload->>'type' = 'result'
+	  AND jsonb_typeof(payload->'session_id') = 'string' AND payload->>'session_id' <> ''
+	  AND jsonb_typeof(payload->'model_usage_since_last_result') = 'object'
+	  AND jsonb_typeof(payload->'modelUsage') = 'object'),
+prev AS (
+	SELECT r.payload->'modelUsage' AS usage
+	FROM recording_events r
+	WHERE r.id = (SELECT max(p.event_id) FROM model_usage p, e
+	              WHERE p.session_id = e.session_id AND p.event_id < e.id)
+	  AND jsonb_typeof(r.payload->'modelUsage') = 'object'),
+g AS (
+	SELECT e.id, e.org_id, e.agent_id, e.task_id, e.created_at, e.session_id, m.key AS model,
+		` + usageFigures("m.value", "c_") + `,
+		` + usageFigures("(prev.usage->m.key)", "p_") + `,
+		` + usageFigures("(e.payload->'model_usage_since_last_result'->m.key)", "s_") + `
+	FROM e
+	CROSS JOIN prev
+	CROSS JOIN LATERAL jsonb_each(e.payload->'modelUsage') AS m(key, value)
+	WHERE jsonb_typeof(m.value) = 'object')
+INSERT INTO model_usage (org_id, agent_id, task_id, event_id, session_id, model,
+	input_tokens, output_tokens, thinking_tokens, cache_read_tokens,
+	cache_write_5m_tokens, cache_write_1h_tokens, web_search_requests,
+	engine_usd, created_at, basis,
+	runtime_id, credential_ord, secret_key, secret_slot, credential_kind)
+SELECT g.org_id, g.agent_id, g.task_id, g.id, g.session_id, g.model,
+	GREATEST(g.c_input_tokens - g.p_input_tokens - g.s_input_tokens, 0),
+	GREATEST(g.c_output_tokens - g.p_output_tokens - g.s_output_tokens, 0),
+	GREATEST(g.c_thinking_tokens - g.p_thinking_tokens - g.s_thinking_tokens, 0),
+	GREATEST(g.c_cache_read_tokens - g.p_cache_read_tokens - g.s_cache_read_tokens, 0),
+	GREATEST(g.c_cache_write_5m_tokens - g.p_cache_write_5m_tokens - g.s_cache_write_5m_tokens, 0),
+	GREATEST(g.c_cache_write_1h_tokens - g.p_cache_write_1h_tokens - g.s_cache_write_1h_tokens, 0),
+	GREATEST(g.c_web_search_requests - g.p_web_search_requests - g.s_web_search_requests, 0),
+	g.c_engine_usd - g.p_engine_usd - g.s_engine_usd, g.created_at, '` + BasisGap + `',
+	$2::uuid, $3::smallint, $4::text, $5::smallint, $6::text
+FROM g
+WHERE g.c_engine_usd - g.p_engine_usd - g.s_engine_usd > 0.000001
+ON CONFLICT DO NOTHING`
+
+// gapBooking books the gap rows of one recording event ($1) as one cost entry
+// of basis gap and links them to it, so that what the budget, the capacity
+// steering and the booked side of the cost page read holds the dead process's
+// spend too — beside the runs, never inside one: a run's own entry is what
+// its daemon reported, and the gap is exactly what no daemon reported. The
+// entry's model is the gap's costliest one, its time the line's.
+const gapBooking = `
+WITH g AS (
+	SELECT id FROM model_usage WHERE event_id = $1 AND basis = '` + BasisGap + `' AND cost_entry_id IS NULL
+	FOR UPDATE),
+s AS (
+	SELECT mu.agent_id, mu.task_id, mu.session_id, mu.runtime_id, mu.credential_ord, mu.secret_key, mu.secret_slot,
+		SUM(mu.engine_usd) AS usd, SUM(mu.input_tokens) AS input_tokens, SUM(mu.output_tokens) AS output_tokens,
+		SUM(mu.cache_read_tokens) AS cache_read_tokens,
+		SUM(mu.cache_write_5m_tokens + mu.cache_write_1h_tokens) AS cache_creation_tokens,
+		(array_agg(mu.model ORDER BY mu.engine_usd DESC))[1] AS model, MAX(mu.created_at) AS created_at
+	FROM model_usage mu WHERE mu.id IN (SELECT id FROM g)
+	GROUP BY 1, 2, 3, 4, 5, 6, 7),
+ins AS (
+	INSERT INTO cost_entries (agent_id, task_id, usd, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+		model, runtime_id, credential_ord, secret_key, secret_slot, basis, session_id, created_at)
+	SELECT agent_id, task_id, usd, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+		model, runtime_id, credential_ord, secret_key, secret_slot, '` + BasisGap + `', session_id, created_at
+	FROM s
+	RETURNING id)
+UPDATE model_usage mu SET cost_entry_id = (SELECT id FROM ins)
+WHERE mu.id IN (SELECT id FROM g)`
+
 // carriesModelUsage is the cheap pre-check: most runtime lines are transcript.
 func carriesModelUsage(raw []byte) bool {
 	return (bytes.Contains(raw, []byte(`"modelUsage"`)) || bytes.Contains(raw, []byte(`"model_usage_since_last_result"`))) &&
@@ -148,6 +283,10 @@ func carriesModelUsage(raw []byte) bool {
 // the recording its line, which is what one statement did when a cast failed.
 // The second statement's error is returned (wrapped) for the caller to log;
 // the line is filed either way.
+//
+// The per-model rows, the gap the line reveals and the gap's booking are one
+// transaction: a gap row without its booking would be spend the booked side
+// never sees.
 func (s *Store) RecordRuntime(ctx context.Context, orgID, agentID uuid.UUID, taskID *uuid.UUID, cred CredentialRef, payload json.RawMessage) error {
 	if !carriesModelUsage(payload) || !json.Valid(payload) {
 		return s.Record(ctx, orgID, agentID, taskID, KindRuntime, payload)
@@ -157,11 +296,34 @@ func (s *Store) RecordRuntime(ctx context.Context, orgID, agentID uuid.UUID, tas
 		VALUES ($1,$2,$3,$4,$5) RETURNING id`, orgID, agentID, taskID, KindRuntime, []byte(payload)).Scan(&id); err != nil {
 		return err
 	}
-	rt, ord, key, slot := cred.columns()
-	if _, err := s.pool.Exec(ctx, modelUsageInsert, id, rt, ord, key, slot, cred.Kind); err != nil {
+	if err := s.fileModelUsage(ctx, id, cred); err != nil {
 		return fmt.Errorf("model usage of recording event %d: %w", id, err)
 	}
 	return nil
+}
+
+// fileModelUsage files the per-model rows of recording event id, then the gap
+// it reveals, and books the gap.
+func (s *Store) fileModelUsage(ctx context.Context, id int64, cred CredentialRef) error {
+	rt, ord, key, slot := cred.columns()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, modelUsageInsert, id, rt, ord, key, slot, cred.Kind); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, modelUsageGapInsert, id, rt, ord, key, slot, cred.Kind)
+	if err != nil {
+		return fmt.Errorf("gap: %w", err)
+	}
+	if tag.RowsAffected() > 0 {
+		if _, err := tx.Exec(ctx, gapBooking, id); err != nil {
+			return fmt.Errorf("booking the gap: %w", err)
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 // ModelTokens is what one model consumed, with the cache writes split by TTL.

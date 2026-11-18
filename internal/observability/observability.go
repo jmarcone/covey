@@ -571,6 +571,12 @@ const (
 	// BasisCorrected: rewritten by migration 0144 from the lines; the figure
 	// booked before is kept in booked_usd.
 	BasisCorrected = "corrected"
+	// BasisGap: spend no result line reported — a process of the session
+	// that ended without one — found in the next line's running total
+	// (migration 0147). Both the model_usage rows and the cost entry that
+	// books them carry it, so the cost page can show the gap as its own
+	// kind beside the runs.
+	BasisGap = "gap"
 )
 
 // CostEntry is one booking of a run.
@@ -656,7 +662,7 @@ func (s *Store) BookRun(ctx context.Context, e CostEntry, fromLines bool) (Booke
 			SELECT id, engine_usd, input_tokens, output_tokens, cache_read_tokens,
 				cache_write_5m_tokens + cache_write_1h_tokens AS cache_creation_tokens
 			FROM model_usage
-			WHERE task_id = $2::uuid AND cost_entry_id IS NULL
+			WHERE task_id = $2::uuid AND cost_entry_id IS NULL AND basis <> '`+BasisGap+`'
 			FOR UPDATE),
 		s AS (
 			SELECT count(*) AS n, COALESCE(SUM(engine_usd),0) AS usd,
