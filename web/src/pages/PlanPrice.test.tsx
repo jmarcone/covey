@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Costs from "./Costs";
@@ -16,6 +16,17 @@ const SEAT = "claude_code_oauth_token";
 const RT = "0b0e0000-0000-4000-8000-000000000001";
 const RESET = "2026-11-20T16:00:00Z"; // the weekly reset the readings name
 const WEEK_START = "2026-11-13T16:00:00.000Z"; // RESET − 7 days
+// The page's clock in the integration tests: inside the week RESET ends. The
+// preset steps an old reset forward to the week that contains now, so on the
+// real clock these tests would fail once RESET has passed.
+const NOW = "2026-11-18T12:00:00Z";
+
+/** Pins Date (and only Date: react-query's and userEvent's timers stay real)
+ *  to `at` for the test. */
+function pinClock(at: string = NOW) {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(at);
+}
 
 const reading = (over: Partial<UsageReading> = {}): UsageReading => ({
   runtime_id: RT, credential_ord: 1, secret_key: SEAT, secret_slot: 0, credential_kind: "subscription", source: "usage_cmd",
@@ -88,7 +99,15 @@ const block = async (c: HTMLElement) => waitFor(() => {
 });
 
 describe("Kosten — Tarifpreis setzen", () => {
-  beforeEach(() => useGerman());
+  beforeEach(() => {
+    useGerman();
+    pinClock();
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("läuft auf der festgehaltenen Uhr", () => {
+    expect(new Date().toISOString()).toBe("2026-11-18T12:00:00.000Z");
+  });
 
   it("schickt den Tarifpreis mit dem Wochenbeginn aus resets_at der Ablesung als valid_from", async () => {
     const s = serve({ readings: [reading()] });
