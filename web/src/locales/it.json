@@ -291,7 +291,22 @@
     },
     "weekOf": "settimana dal {{date}}",
     "hourTooLong": "Orario solo fino a {{days}} giorni",
-    "orgWide": "intera organizzazione: non segue il filtro degli agenti"
+    "orgWide": "intera organizzazione: non segue il filtro degli agenti",
+    "plan": {
+      "current": "Piano: {{price}}/{{per}} dal {{since}}",
+      "none": "Nessun prezzo del piano",
+      "set": "Imposta il prezzo del piano",
+      "amount": "Importo (USD)",
+      "period": "Periodo",
+      "month": "al mese",
+      "year": "all'anno",
+      "validFrom": "Valido dal",
+      "save": "Salva",
+      "saving": "Salvataggio…",
+      "cancel": "Annulla",
+      "fromHintWeek": "Preimpostato: l'inizio della settimana corrente del contatore.",
+      "fromHintNow": "Ancora nessun reset settimanale noto, preimpostato: adesso."
+    }
   },
   "lang": {
     "label": "Lingua"

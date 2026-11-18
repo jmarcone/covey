@@ -291,7 +291,22 @@
     },
     "weekOf": "tydzień od {{date}}",
     "hourTooLong": "Godzinowo tylko do {{days}} dni",
-    "orgWide": "cała organizacja: nie uwzględnia filtra agentów"
+    "orgWide": "cała organizacja: nie uwzględnia filtra agentów",
+    "plan": {
+      "current": "Plan: {{price}}/{{per}} od {{since}}",
+      "none": "Brak ceny planu",
+      "set": "Ustaw cenę planu",
+      "amount": "Kwota (USD)",
+      "period": "Okres",
+      "month": "miesięcznie",
+      "year": "rocznie",
+      "validFrom": "Obowiązuje od",
+      "save": "Zapisz",
+      "saving": "Zapisywanie…",
+      "cancel": "Anuluj",
+      "fromHintWeek": "Domyślnie: początek bieżącego tygodnia licznika.",
+      "fromHintNow": "Nie znamy jeszcze tygodniowego resetu, domyślnie: teraz."
+    }
   },
   "lang": {
     "label": "Język"

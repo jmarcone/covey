@@ -291,7 +291,22 @@
     },
     "weekOf": "Woche ab {{date}}",
     "hourTooLong": "Stündlich nur bis {{days}} Tage",
-    "orgWide": "ganze Organisation: folgt dem Agentenfilter nicht"
+    "orgWide": "ganze Organisation: folgt dem Agentenfilter nicht",
+    "plan": {
+      "current": "Tarif: {{price}}/{{per}} seit {{since}}",
+      "none": "Kein Tarifpreis",
+      "set": "Tarifpreis setzen",
+      "amount": "Betrag (USD)",
+      "period": "Zeitraum",
+      "month": "pro Monat",
+      "year": "pro Jahr",
+      "validFrom": "Gültig ab",
+      "save": "Speichern",
+      "saving": "Speichern …",
+      "cancel": "Abbrechen",
+      "fromHintWeek": "Vorbelegt: Beginn der aktuellen Zählerwoche.",
+      "fromHintNow": "Noch kein Wochen-Reset bekannt, vorbelegt: jetzt."
+    }
   },
   "lang": {
     "label": "Sprache"
