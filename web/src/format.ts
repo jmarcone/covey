@@ -109,12 +109,21 @@ function trim(v: number): string {
 // Intl.NumberFormat of the UI locale — the de/else switch that stood here gave
 // every language but German the English `1,234.5`, and French `1 234,5`
 // (a narrow no-break space) was not reachable.
+// They are kept per locale: building an Intl.NumberFormat for every number a
+// table formats is the expensive part, and the separators only change when the
+// UI locale does.
+let sep: { loc: string; tausend: string; komma: string } | undefined;
 function trenner(): { tausend: string; komma: string } {
-  const parts = new Intl.NumberFormat(uiLocale()).formatToParts(1234567.8);
-  return {
-    tausend: parts.find((p) => p.type === "group")?.value ?? ",",
-    komma: parts.find((p) => p.type === "decimal")?.value ?? ".",
-  };
+  const loc = uiLocale();
+  if (sep?.loc !== loc) {
+    const parts = new Intl.NumberFormat(loc).formatToParts(1234567.8);
+    sep = {
+      loc,
+      tausend: parts.find((p) => p.type === "group")?.value ?? ",",
+      komma: parts.find((p) => p.type === "decimal")?.value ?? ".",
+    };
+  }
+  return sep;
 }
 
 function tausender(): string {
