@@ -157,10 +157,12 @@ func (o outcome) truncated() bool {
 // Deliberately terse: one answer against the already cached context, and cheap
 // compared to the run that would otherwise be lost — but only as long as the
 // handover turn sends the same prefix as the run (see summaryArgs). A first
-// version resumed with nothing but --resume and --model; without the run's
-// tools and appended system prompt every cached token after them missed, and
-// the turn wrote the whole conversation into the cache again (58,843
-// cache-creation tokens, 0.63 USD for a single turn). Its cost belongs in the
+// version resumed with nothing but --resume and --model, so Claude Code sent
+// its default tool set instead of the run's --tools; the system prompt was
+// already identical (checked with CLI 2.1.325), but the changed tools broke the
+// prefix and every cached token after them missed. The turn then wrote the
+// whole conversation into the cache again (measured on 84f8f55e: 63,276
+// cache-write tokens, 0.53 USD for a single turn). Its cost belongs in the
 // billing either way, hence res is updated in summarize().
 const maxTurnsSummaryPrompt = `Your run was cut off at the turn limit — you are NOT finished.
 Do not continue working now and do not call any tools. Answer only with a short
