@@ -324,6 +324,15 @@ describe("per credential", () => {
       expect(real).toMatchObject({ with: 1, of: 2 });
     });
 
+    it("counts only the credentials whose tile offers a real cost, not one of another kind", () => {
+      const other = credentialFigures({
+        cells: { ...mixed, cells: [...mixed.cells!, cell("2026-11-17T18:00:00Z", { output: 3 }, { secret_key: "odd_credential", secret_slot: 2, credential_kind: "mystery" })] },
+        bucketMs: HOUR, windowEnd: new Date("2026-11-17T23:00:00Z"),
+      });
+      expect(other.find((f) => f.secretKey === "odd_credential")!.kind).toBe("mystery");
+      expect(perCredentialTotals(other).real).toMatchObject({ with: 1, of: 1 });
+    });
+
     it("keeps a key without a bill in the count, whether it is unmapped or its bill has not landed", () => {
       const twoKeys = (second: BilledReport["window"]) => {
         const cellsTwo = { ...mixed, cells: [...mixed.cells!, cell("2026-11-17T18:00:00Z", { output: 9 }, { secret_key: KEY, secret_slot: 2, credential_kind: "api_key" })] };

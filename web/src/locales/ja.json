@@ -178,6 +178,7 @@
       "meterSpanValue": "{{from}} %（{{fromAt}}）→ {{to}} %（{{toAt}}）：{{n}} 回の読み取りで {{pts}} ポイント",
       "meterList": "再計算した定価（同じ期間）",
       "perCredential": "モデルごとではなく認証情報ごと：合計の下の専用行。",
+      "lastColumn": "少なくとも 1 つのソースはオンのままになります。",
       "someWithout": "{{n}} / {{m}} 件の認証情報に数値なし",
       "billedPending": "請求は最後の同期までしか揃っていません。上のタイルに期間が出ています。",
       "col_reported": "報告値",

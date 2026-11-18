@@ -104,8 +104,10 @@ export function agentColor(agents: readonly { id: string }[], id: string) {
   return AGENT_COLORS[(i < 0 ? 0 : i) % AGENT_COLORS.length];
 }
 
-export function Chip({ on, color, hatched, children, onClick, onDoubleClick }: {
+export function Chip({ on, color, hatched, children, onClick, onDoubleClick, locked, title }: {
   on: boolean; color?: string; hatched?: boolean; children: React.ReactNode; onClick: () => void; onDoubleClick?: () => void;
+  /** The last chip that is on: it stays, and says so instead of ignoring the click. */
+  locked?: boolean; title?: string;
 }) {
   return (
     <button
@@ -113,13 +115,15 @@ export function Chip({ on, color, hatched, children, onClick, onDoubleClick }: {
       onClick={onClick}
       onDoubleClick={onDoubleClick}
       aria-pressed={on}
+      aria-disabled={locked || undefined}
+      title={title}
       className="text-xs"
       style={{
         display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 6,
         border: `1px solid ${on ? "var(--border-strong)" : "var(--border)"}`,
         background: on ? "var(--surface-2)" : "transparent",
         color: on ? "var(--text-primary)" : "var(--text-muted)",
-        cursor: "pointer", lineHeight: 1.2,
+        cursor: locked ? "default" : "pointer", lineHeight: 1.2,
       }}
     >
       {color && <Swatch color={color} hatched={hatched} dim={!on} />}

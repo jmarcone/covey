@@ -381,9 +381,9 @@ export default function Costs({ me }: { me?: Principal }) {
       </div>
 
       {/* Cost insights: per model as Claude Code reported it, and the
-          subscription meter per credential. Org-wide, also under an agent
-          filter, and then they say so. */}
-      <CostInsights days={days} figures={orgFigures} filtered={selected.size > 0} />
+          subscription meter per credential. The model lines follow the agent
+          filter; what is per credential stays org-wide and says so. */}
+      <CostInsights days={days} figures={orgFigures} agents={selected} />
     </div>
   );
 }

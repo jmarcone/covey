@@ -178,6 +178,7 @@
       "meterSpanValue": "{{from}} % ({{fromAt}}) → {{to}} % ({{toAt}}) : {{pts}} points sur {{n}} relevés",
       "meterList": "Prix catalogue recalculé, même période",
       "perCredential": "Par identifiant, pas par modèle : sur sa propre ligne sous le total.",
+      "lastColumn": "Au moins une source reste activée.",
       "someWithout": "{{n}} identifiant(s) sur {{m}} sans chiffre",
       "billedPending": "La facture n'est complète que jusqu'à la dernière synchronisation ; la tuile ci-dessus indique jusqu'où.",
       "col_reported": "Déclaré",

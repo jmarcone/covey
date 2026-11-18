@@ -1,4 +1,5 @@
 import type { TFunction } from "i18next";
+import type { ModelUsageRow } from "../api";
 
 /* The four money sources of the Costs page, defined once: the chart's chips,
  * its colour key and the per-model table's columns all read them from here,
@@ -8,6 +9,41 @@ export type Source = "reported" | "recomputed" | "real" | "billed";
 
 /** The sources in the order the page shows them. */
 export const SOURCES: readonly Source[] = ["reported", "recomputed", "real", "billed"];
+
+/** What a source can be broken down by. A per-model source has a figure for
+ *  each model line; a per-credential one (the meter's real cost, the bill)
+ *  only for a credential, so the per-model table shows it in a row of its
+ *  own and never beside a model. */
+export type Granularity = "model" | "credential";
+
+type SourceInfo = {
+  granularity: Granularity;
+  /** On when nothing is remembered: the table as it was before the others. */
+  defaultOn: boolean;
+  /** For a per-credential source, the label of its row under the total. */
+  rowLabel?: string;
+  /** Shown as "≈" with a range: the meter's real cost is an estimate, a bill is not. */
+  estimate?: boolean;
+};
+
+export const SOURCE_INFO: Record<Source, SourceInfo> = {
+  reported: { granularity: "model", defaultOn: true },
+  recomputed: { granularity: "model", defaultOn: true },
+  real: { granularity: "credential", defaultOn: false, rowLabel: "costs.insights.seatsRow", estimate: true },
+  billed: { granularity: "credential", defaultOn: false, rowLabel: "costs.insights.keysRow" },
+};
+
+export const DEFAULT_SOURCES: readonly Source[] = SOURCES.filter((s) => SOURCE_INFO[s].defaultOn);
+
+export const isPerModel = (s: Source): boolean => SOURCE_INFO[s].granularity === "model";
+
+/** A per-model source's figure for one model line; null where it has none
+ *  (a model the list does not price has no recomputed figure). */
+export function modelFigure(s: Source, r: ModelUsageRow): number | null {
+  if (s === "reported") return r.engine_usd;
+  if (s === "recomputed") return r.list_usd;
+  return null;
+}
 
 /** One colour per source, everywhere on the page (styles.css). */
 export const SOURCE_COLOR: Record<Source, string> = {
