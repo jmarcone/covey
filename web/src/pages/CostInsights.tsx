@@ -1,11 +1,12 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import { api, type ModelUsageReport, type ModelUsageRow, type UsageReading } from "../api";
 import { fmtBucket, fmtCount, fmtNumber, fmtUSD } from "../format";
 import { perCredentialTotals, usableReadings, type CredentialFigures, type SourceTotal } from "./costFigures";
-import { Chip, OrgWide, SOURCE_COLOR, Swatch } from "./StackedCostChart";
+import { SOURCES, SOURCE_COLOR, sourceHint, sourceLabel, type Source } from "./costSources";
+import { Chip, OrgWide, Swatch } from "./StackedCostChart";
 
 /* Cost insights.
  *
@@ -15,8 +16,10 @@ import { Chip, OrgWide, SOURCE_COLOR, Swatch } from "./StackedCostChart";
  *     cache writes split by lifetime. The table sets Claude Code's own price
  *     (reported) next to the same tokens priced with covey's list
  *     (recomputed): a price-table check. Each money source is a column that
- *     can be switched off, as in the chart; the real cost and the bill are
- *     per credential, not per model, and stand in the totals row only.
+ *     can be switched off, as in the chart. The real cost and the bill are
+ *     per credential, not per model: each has a row of its own under the
+ *     total, beside the list price of the same credentials over the same
+ *     span, so that no row sets figures of different scopes side by side.
  *  2. What does a point of the subscription meter buy? Per credential, the
  *     same figures as its tiles above (costFigures.ts): the meter's span,
  *     the real cost of its movement, the list price of the credential's
@@ -31,13 +34,7 @@ function shortModel(m: string) {
   return m.replace(/^claude-/, "");
 }
 
-type Col = "reported" | "recomputed" | "real" | "billed";
-const COLS: Col[] = ["reported", "recomputed", "real", "billed"];
-// The headers are short so that the figures stay in view; the chips carry the full names.
-const COL_HEAD: Record<Col, string> = {
-  reported: "costs.insights.colReported", recomputed: "costs.insights.colRecomputed",
-  real: "costs.insights.colReal", billed: "costs.insights.colBilled",
-};
+type Col = Source;
 const COLS_KEY = "covey.cost.modelColumns";
 const DEFAULT_COLS: Col[] = ["reported", "recomputed"];
 
@@ -47,7 +44,7 @@ export function loadColumns(): Col[] {
   try {
     const v: unknown = JSON.parse(window.localStorage.getItem(COLS_KEY) ?? "null");
     if (Array.isArray(v)) {
-      const on = COLS.filter((c) => v.includes(c));
+      const on = SOURCES.filter((c) => v.includes(c));
       if (on.length > 0) return on;
     }
   } catch { /* private mode, or not JSON */ }
@@ -75,7 +72,7 @@ function ModelTable({ rep, figures }: { rep: ModelUsageReport; figures: Credenti
   const check = priced > 0 ? ((list - priced) / priced) * 100 : 0;
 
   // The real cost and the bill are offered only where a meter or a bill exists.
-  const offered = COLS.filter((c) => (c === "real" ? per.real : c === "billed" ? per.billed : true));
+  const offered = SOURCES.filter((c) => (c === "real" ? per.real : c === "billed" ? per.billed : true));
   const shown = offered.filter((c) => chosen.includes(c));
   // What was stored may name a column this window does not offer: then the default.
   const visible = shown.length > 0 ? shown : DEFAULT_COLS;
@@ -86,39 +83,59 @@ function ModelTable({ rep, figures }: { rep: ModelUsageReport; figures: Credenti
     saveColumns(next);
   };
 
-  const label = (c: Col) => t(c === "real" ? "costs.fig.realEstimate" : `costs.fig.${c}`);
   const hint = (c: Col) => {
-    const h = t(c === "reported" ? "costs.filter.reportedHint" : c === "recomputed" ? "costs.filter.measuredHint"
-      : c === "real" ? "costs.filter.subscriptionHint" : "costs.filter.billedHint");
+    const h = sourceHint(t, c);
     return c === "real" || c === "billed" ? `${h} ${t("costs.insights.perCredential")}` : h;
   };
-  // The figure in the totals row of a per-credential source: none, with the
+  const perCredential = t("costs.insights.perCredential");
+  // The cell of a per-credential source in its own row: none, with the
   // reason, where the credentials with a figure are not all of them.
   const perCell = (c: SourceTotal | null, real: boolean) => {
     if (!c) return { text: "–", title: undefined };
-    const title = c.with < c.of ? t("costs.insights.someWithout", { n: c.of - c.with, m: c.of })
-      : c.pending ? t("costs.insights.billedPending") : undefined;
-    if (c.with < c.of || c.with === 0) return { text: "–", title };
-    if (real && c.below) return { text: `< ${fmtUSD(c.high)}`, title };
-    return { text: `${real ? "≈ " : ""}${fmtUSD(c.usd)}`, title };
+    if (c.with < c.of) return { text: "–", title: t("costs.insights.someWithout", { n: c.of - c.with, m: c.of }) };
+    if (c.with === 0) return { text: "–", title: undefined };
+    if (real && c.below) return { text: `< ${fmtUSD(c.high)}`, title: undefined };
+    // The seats without movement count as 0 in the sum; the whole is
+    // somewhere between the lowest and the highest each seat's range allows.
+    if (real) return { text: `≈ ${fmtUSD(c.usd)}`, title: t("costs.insights.sumRange", { low: fmtUSD(c.low), high: fmtUSD(c.high) }) };
+    return { text: fmtUSD(c.usd), title: c.pending ? t("costs.insights.billedPending") : undefined };
   };
+  // The list figures beside it: the same credentials over the same span.
+  const sameScope = (c: SourceTotal | null, v: number | null | undefined) =>
+    c && c.with === c.of && v != null ? fmtUSD(v) : "–";
   const modelCell = (c: Col, r: ModelUsageRow) => {
-    if (c === "reported") return fmtUSD(r.engine_usd);
-    if (c === "recomputed") return r.list_usd === null ? "–" : fmtUSD(r.list_usd);
-    return "–"; // per credential, not per model
+    if (c === "reported") return { text: fmtUSD(r.engine_usd), title: undefined };
+    if (c === "recomputed") return { text: r.list_usd === null ? "–" : fmtUSD(r.list_usd), title: undefined };
+    return { text: "–", title: perCredential }; // per credential, not per model
   };
   const totalCell = (c: Col) => {
-    if (c === "reported") return { text: fmtUSD(engine), title: undefined };
-    if (c === "recomputed") return { text: fmtUSD(list + unpricedUSD), title: undefined };
-    return perCell(c === "real" ? per.real : per.billed, c === "real");
+    if (c === "reported") return fmtUSD(engine);
+    if (c === "recomputed") return fmtUSD(list + unpricedUSD);
+    return ""; // the real cost and the bill have rows of their own
   };
+  const spanOf = (c: SourceTotal) => c.spans.length > 0 ? {
+    from: fmtBucket(new Date(Math.min(...c.spans.map((x) => x.from.getTime()))).toISOString(), "hour"),
+    to: fmtBucket(new Date(Math.max(...c.spans.map((x) => x.to.getTime()))).toISOString(), "hour"),
+  } : { from: "–", to: "–" };
+  const spanTitle = (c: SourceTotal) => c.spans.length > 1
+    ? c.spans.map((x) => `${x.id}: ${fmtBucket(x.from.toISOString(), "hour")} – ${fmtBucket(x.to.toISOString(), "hour")}`).join("\n") : undefined;
+  // The price-table check compares the two per-model sources, so it stands
+  // only while both are on.
+  const notes: string[] = [];
+  if (visible.includes("reported") && visible.includes("recomputed")) {
+    notes.push(t("costs.insights.priceTableCheck", { pct: `${check >= 0 ? "+" : ""}${fmtNumber(check, 2)}` }));
+  }
+  if (unpriced > 0) notes.push(t("costs.insights.unpriced", { count: unpriced }));
+  if (rep.runs_without_breakdown > 0) {
+    notes.push(t("costs.insights.without", { count: rep.runs_without_breakdown, usd: fmtUSD(rep.usd_without_breakdown) }));
+  }
   return (
     <div>
       <div className="flex flex-wrap items-center gap-2" style={{ marginBottom: 8 }} role="group" aria-label={t("costs.filter.source")}>
         <span className="muted text-xs" style={{ marginRight: 4 }}>{t("costs.filter.source")}</span>
         {offered.map((c) => (
           <Chip key={c} on={visible.includes(c)} color={SOURCE_COLOR[c]} hatched={c === "real"} onClick={() => toggle(c)}>
-            {label(c)}
+            {sourceLabel(t, c)}
           </Chip>
         ))}
       </div>
@@ -133,7 +150,7 @@ function ModelTable({ rep, figures }: { rep: ModelUsageReport; figures: Credenti
               <th style={{ ...th, textAlign: "right" }}>{t("costs.insights.cacheRead")}</th>
               <th style={{ ...th, textAlign: "right" }}>{t("costs.insights.cacheWrite")}</th>
               {visible.map((c) => (
-                <th key={c} data-col={c} style={{ ...th, textAlign: "right" }} title={hint(c)}>{t(COL_HEAD[c])}</th>
+                <th key={c} data-col={c} style={{ ...th, textAlign: "right" }} title={hint(c)}>{t(`costs.insights.col_${c}`)}</th>
               ))}
             </tr>
           </thead>
@@ -152,7 +169,10 @@ function ModelTable({ rep, figures }: { rep: ModelUsageReport; figures: Credenti
                 <td style={num} title={`5m ${fmtCount(r.cache_write_5m_tokens)} · 1h ${fmtCount(r.cache_write_1h_tokens)}`}>
                   {fmtCount(r.cache_write_5m_tokens + r.cache_write_1h_tokens)}
                 </td>
-                {visible.map((c) => <td key={c} style={num}>{modelCell(c, r)}</td>)}
+                {visible.map((c) => {
+                  const x = modelCell(c, r);
+                  return <td key={c} style={num} title={x.title}>{x.text}</td>;
+                })}
               </tr>
             ))}
             {unpriced > 0 && (
@@ -165,20 +185,36 @@ function ModelTable({ rep, figures }: { rep: ModelUsageReport; figures: Credenti
             )}
             <tr data-total style={{ borderTop: "1px solid var(--border)", fontWeight: 600 }}>
               <td style={td} colSpan={6}>{t(unpriced > 0 && visible.includes("recomputed") ? "costs.insights.totalWithUnpriced" : "costs.insights.total")}</td>
-              {visible.map((c) => {
-                const x = totalCell(c);
-                return <td key={c} data-col={c} style={num} title={x.title}>{x.text}</td>;
-              })}
+              {visible.map((c) => <td key={c} data-col={c} style={num}>{totalCell(c)}</td>)}
             </tr>
+            {visible.includes("real") && per.real && (
+              <tr data-seats style={{ borderTop: "1px solid var(--border)" }}>
+                <td style={{ ...td, whiteSpace: "normal" }} colSpan={6} title={spanTitle(per.real)}>
+                  {t("costs.insights.seatsRow", spanOf(per.real))}
+                </td>
+                {visible.map((c) => {
+                  const x = c === "real" ? perCell(per.real, true) : { text: c === "recomputed" ? sameScope(per.real, per.real!.recomputed) : "", title: undefined };
+                  return <td key={c} data-col={c} style={num} title={x.title}>{x.text}</td>;
+                })}
+              </tr>
+            )}
+            {visible.includes("billed") && per.billed && (
+              <tr data-keys style={{ borderTop: "1px solid var(--border)" }}>
+                <td style={{ ...td, whiteSpace: "normal" }} colSpan={6}>
+                  {t("costs.insights.keysRow", spanOf(per.billed))}
+                </td>
+                {visible.map((c) => {
+                  const x = c === "billed" ? perCell(per.billed, false)
+                    : { text: c === "reported" ? sameScope(per.billed, per.billed!.reported) : c === "recomputed" ? sameScope(per.billed, per.billed!.recomputed) : "", title: undefined };
+                  return <td key={c} data-col={c} style={num} title={x.title}>{x.text}</td>;
+                })}
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
       <p className="muted text-xs mt-2 mb-0">
-        {t("costs.insights.priceTableCheck", { pct: `${check >= 0 ? "+" : ""}${fmtNumber(check, 2)}` })}
-        {unpriced > 0 && <> · {t("costs.insights.unpriced", { count: unpriced })}</>}
-        {rep.runs_without_breakdown > 0 && (
-          <> · {t("costs.insights.without", { count: rep.runs_without_breakdown, usd: fmtUSD(rep.usd_without_breakdown) })}</>
-        )}
+        {notes.map((n, i) => <Fragment key={i}>{i > 0 && " · "}{n}</Fragment>)}
       </p>
     </div>
   );
