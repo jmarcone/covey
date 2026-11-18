@@ -1,4 +1,4 @@
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -168,28 +168,159 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   );
 }
 
-/** The agent filter: chips, any combination; "All" = nobody narrowed out. */
+/** Chips a department shows before "+N more" folds the rest away. */
+export const DEPT_CHIPS = 5;
+
+export type DepartmentGroup = {
+  /** The department's id; "" for the agents without one. */
+  key: string;
+  /** Null for the group without a department: the heading is localized by the caller. */
+  name: string | null;
+  /** Their recomputed list price over the window. */
+  usd: number;
+  /** Ranked by cost, as the flat filter was. */
+  agents: CellAgent[];
+};
+
+/** The agents grouped by their current department: departments by their
+ *  cost in the window, descending, then by name; the agents without one
+ *  last. Not Dashboard's groupByDepartment, which orders the org chart's way. */
+export function groupCellAgentsByDepartment(agents: readonly CellAgent[]): DepartmentGroup[] {
+  const groups = new Map<string, DepartmentGroup>();
+  for (const a of rankAgents(agents)) {
+    const key = a.department_id ?? "";
+    let g = groups.get(key);
+    if (!g) {
+      g = { key, name: key ? a.department ?? key : null, usd: 0, agents: [] };
+      groups.set(key, g);
+    }
+    g.usd += a.measured_usd ?? 0;
+    g.agents.push(a);
+  }
+  return [...groups.values()].sort((a, b) =>
+    a.key === "" ? 1 : b.key === "" ? -1 : b.usd - a.usd || (a.name ?? "").localeCompare(b.name ?? ""));
+}
+
+/** The agent filter: chips, any combination; "All" = nobody narrowed out.
+ *  With departments the chips sit under their heading, and the heading
+ *  selects the whole department: pressed, not pressed, or mixed. */
 export function AgentFilter({ agents, selected, onChange }: {
   agents: CellAgent[]; selected: Set<string>; onChange: (s: Set<string>) => void;
 }) {
   const { t } = useTranslation();
   const ranked = rankAgents(agents);
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const [pinned, setPinned] = useState<Set<string>>(new Set());
+  const chipsId = useId().replace(/[^a-zA-Z0-9_-]/g, "");
   const toggle = (id: string) => {
     const n = new Set(selected);
     if (n.has(id)) n.delete(id);
     else n.add(id);
     onChange(n);
   };
+  const chip = (a: CellAgent) => (
+    <Chip key={a.id} on={selected.has(a.id)} color={agentColor(ranked, a.id)}
+      onClick={() => toggle(a.id)} onDoubleClick={() => onChange(new Set([a.id]))}>
+      {a.label} <span style={{ opacity: 0.7 }}>{fmtUSD(a.measured_usd ?? 0)}</span>
+    </Chip>
+  );
+  const hint = ranked.length > 1 && <span className="muted text-xs">{t("costs.filter.toggleHint")}</span>;
+  const all = <Chip on={selected.size === 0} onClick={() => onChange(new Set())}>{t("costs.filter.all")}</Chip>;
+
+  // Nobody has a department: headings would all say the same, keep the flat row.
+  const flat = !ranked.some((a) => a.department_id);
+  const groups = flat ? [] : groupCellAgentsByDepartment(ranked);
+  // A folded group shows its first chips and the selected ones: a selection
+  // no chip shows would narrow the figures unseen. A chip on screen only
+  // because it is selected is pinned there until its group is folded or
+  // unfolded, so deselecting it does not pull it from under the pointer or
+  // the keyboard focus.
+  const toPin = groups.flatMap((g) => open.has(g.key) ? [] : g.agents
+    .filter((a, i) => i >= DEPT_CHIPS && selected.has(a.id) && !pinned.has(a.id)).map((a) => a.id));
+  useEffect(() => {
+    if (toPin.length) setPinned((p) => new Set([...p, ...toPin]));
+  }, [toPin.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (flat) {
+    return (
+      <Row label={t("costs.filter.agents")}>
+        {all}
+        {ranked.map(chip)}
+        {hint}
+      </Row>
+    );
+  }
+
+  const toggleGroup = (g: DepartmentGroup) => {
+    const n = new Set(selected);
+    const everyone = g.agents.every((a) => n.has(a.id));
+    for (const a of g.agents) {
+      if (everyone) n.delete(a.id);
+      else n.add(a.id);
+    }
+    onChange(n);
+  };
+  const fold = (g: DepartmentGroup, expand: boolean) => {
+    setOpen((s) => {
+      const n = new Set(s);
+      if (expand) n.add(g.key);
+      else n.delete(g.key);
+      return n;
+    });
+    setPinned((p) => new Set([...p].filter((id) => !g.agents.some((a) => a.id === id))));
+  };
   return (
     <Row label={t("costs.filter.agents")}>
-      <Chip on={selected.size === 0} onClick={() => onChange(new Set())}>{t("costs.filter.all")}</Chip>
-      {ranked.map((a) => (
-        <Chip key={a.id} on={selected.has(a.id)} color={agentColor(ranked, a.id)}
-          onClick={() => toggle(a.id)} onDoubleClick={() => onChange(new Set([a.id]))}>
-          {a.label} <span style={{ opacity: 0.7 }}>{fmtUSD(a.measured_usd ?? 0)}</span>
-        </Chip>
-      ))}
-      {ranked.length > 1 && <span className="muted text-xs">{t("costs.filter.toggleHint")}</span>}
+      <div style={{ flex: "1 1 240px", minWidth: 0 }}>
+        <div className="flex flex-wrap items-center gap-2" style={{ marginBottom: 8 }}>
+          {all}
+          {hint}
+        </div>
+        {groups.map((g) => {
+          const name = g.name ?? t("costs.filter.noDepartment");
+          const picked = g.agents.filter((a) => selected.has(a.id)).length;
+          const expanded = open.has(g.key);
+          const shown = expanded ? g.agents
+            : g.agents.filter((a, i) => i < DEPT_CHIPS || selected.has(a.id) || pinned.has(a.id));
+          const hidden = g.agents.length - shown.length;
+          // One disclosure button, kept mounted across Enter so the focus
+          // stays on it: "+N more" while chips are hidden, "Show fewer" while
+          // all show and folding would hide one. That also holds for a folded
+          // group whose pins show every chip; "Show fewer" lets go of them.
+          const showsAll = hidden === 0;
+          const canHide = g.agents.some((a, i) => i >= DEPT_CHIPS && !selected.has(a.id));
+          const disclosure = !showsAll || canHide;
+          const rowId = `${chipsId}-${g.key || "none"}`;
+          return (
+            <div key={g.key} role="group" aria-label={name} data-department={g.key || "none"} style={{ marginBottom: 8 }}>
+              <button
+                type="button"
+                onClick={() => toggleGroup(g)}
+                aria-pressed={picked === 0 ? false : picked === g.agents.length ? true : "mixed"}
+                className="text-xs"
+                style={{
+                  display: "inline-flex", alignItems: "baseline", gap: 6, maxWidth: "100%", padding: "2px 0", marginBottom: 4,
+                  border: 0, background: "transparent", cursor: "pointer", textAlign: "left", overflowWrap: "anywhere",
+                  color: picked ? "var(--text-primary)" : "var(--text-muted)", fontWeight: 600,
+                }}
+              >
+                <span aria-hidden style={{ opacity: 0.7 }}>{picked === 0 ? "○" : picked === g.agents.length ? "●" : "◐"}</span>
+                {name} <span style={{ opacity: 0.7, fontWeight: 400, whiteSpace: "nowrap" }}>{fmtUSD(g.usd)}</span>
+              </button>
+              <div id={rowId} className="flex flex-wrap items-center gap-2">
+                {shown.map(chip)}
+                {disclosure && (
+                  <button type="button" className="muted text-xs" aria-expanded={showsAll} aria-controls={rowId}
+                    onClick={() => fold(g, !showsAll)}
+                    style={{ border: 0, background: "transparent", cursor: "pointer", padding: "4px 2px" }}>
+                    {showsAll ? t("costs.filter.fewer") : t("costs.filter.more", { n: hidden })}
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </Row>
   );
 }
