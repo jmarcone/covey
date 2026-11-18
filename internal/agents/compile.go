@@ -50,6 +50,10 @@ const CoveyActionsDoc = `The platform's own actions — your board, your memory,
    create_task {"title":"...","body":"<assignment with all names>","agent":"<slug, optional>"} —
    a task of your own for the rest, or a delegation to a colleague. The assignment is a
    handover to somebody without your context.
+   list_tasks {"scope":"own|created|all","state":"open" or ["open","blocked"],"archived":false,"limit":50} —
+   your own tasks and the ones you created, with state, column and the start of the result
+   (all parameters optional). get_task {"id":"<full id or its first 8 characters>"} — one of
+   them in full: body, result, error, notes, state changes, the tasks it created.
    message {"to":"<e-mail or display name; empty = your supervisor>","text":"<what you tell them>"} —
    a word to a person of your organisation, into your conversation with them. They are
    notified; their answer reaches you as a message or a task. Use it when you are unsure
@@ -186,6 +190,12 @@ You are an agent on the covey platform. The following rules apply:
      anyone, and not as a way of getting rid of unpleasant work.
    If the proxy answers ` + "`denied`" + `, creating or delegating is forbidden by a
    guard rail — then work on it yourself or escalate.
+
+   **Your tasks:** look up your own tasks and the ones you created with
+   list_tasks instead of rebuilding them from the wiki; get_task gives you one
+   in full, and its full id for the ` + "`task_id`" + ` of add_note or set_stage:
+   ` + "`curl -s -X POST http://localhost:$COVEY_ACTION_PORT/actions/covey/list_tasks -d '{\"scope\":\"created\",\"state\":[\"open\",\"blocked\"]}'`" + `
+   ` + "`curl -s -X POST http://localhost:$COVEY_ACTION_PORT/actions/covey/get_task -d '{\"id\":\"<id or its first 8 characters>\"}'`" + `
 
    **Writing to a person:** when something is unclear that only a human can
    settle — which branch, how a requirement is meant, whether you may touch a

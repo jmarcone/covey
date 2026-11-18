@@ -160,11 +160,17 @@ const taskCols = `id, org_id, agent_id, title, body, state, priority, origin,
 	correlation_key, runtime_session_id, resume_input, result, error, stage_id, parent_task_id,
 	archived_at, daemon_retries, created_at, updated_at, conversation_id, chat_answer, said_in_call`
 
+// scanDest lists where the columns of taskCols land, in their order — for a
+// query that selects more than the task (see agentview.go).
+func (t *Task) scanDest() []any {
+	return []any{&t.ID, &t.OrgID, &t.AgentID, &t.Title, &t.Body, &t.State, &t.Priority, &t.Origin,
+		&t.CorrelationKey, &t.RuntimeSessionID, &t.ResumeInput, &t.Result, &t.Error, &t.StageID, &t.ParentTaskID,
+		&t.ArchivedAt, &t.DaemonRetries, &t.CreatedAt, &t.UpdatedAt, &t.ConversationID, &t.ChatAnswer, &t.SaidInCall}
+}
+
 func scanTask(row pgx.Row) (Task, error) {
 	var t Task
-	err := row.Scan(&t.ID, &t.OrgID, &t.AgentID, &t.Title, &t.Body, &t.State, &t.Priority, &t.Origin,
-		&t.CorrelationKey, &t.RuntimeSessionID, &t.ResumeInput, &t.Result, &t.Error, &t.StageID, &t.ParentTaskID,
-		&t.ArchivedAt, &t.DaemonRetries, &t.CreatedAt, &t.UpdatedAt, &t.ConversationID, &t.ChatAnswer, &t.SaidInCall)
+	err := row.Scan(t.scanDest()...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return t, ErrNotFound
 	}
