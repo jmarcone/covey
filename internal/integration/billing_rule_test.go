@@ -66,13 +66,14 @@ func billedShown(t *testing.T, admin *apiClient, query string) (width string, ti
 	return w["width"].(string), tile, chart
 }
 
-// The billed tile reads the same rows per day as the chart beside it. A
-// mapping is chosen per row: a day's 1d row goes whole to the key's latest
-// holder, its 1h rows split at the hand-over. So an hourly chart beside a
-// tile over whole days — a key handed over three days ago, or yesterday
-// while the daily re-read is fresher than the hourly one — showed the
-// hand-over in the bars and not in the tile. The hour starting exactly at
-// the hand-over belongs to the new holder only.
+// The billed tile reads the same rows per day as the chart beside it, at
+// every bucket. A mapping is chosen per row: a day's 1d row goes whole to the
+// key's latest holder, its 1h rows split at the hand-over. So an hourly chart
+// beside a tile over whole days — a key handed over three days ago, or
+// yesterday while the daily re-read is fresher than the hourly one — showed
+// the hand-over in the bars and not in the tile; and the daily view gave the
+// day whole to the newer holder where the hourly one split it. The hour
+// starting exactly at the hand-over belongs to the new holder only.
 func TestBilledTileAndChartReadTheSameRows(t *testing.T) {
 	f := newBillingFixture(t, "rechnung-gleiche-zeilen")
 	admin := login(t, f.s, "admin@test.local", "admin-passwort")
@@ -93,29 +94,121 @@ func TestBilledTileAndChartReadTheSameRows(t *testing.T) {
 	f.billedRow(t, "1d", old, "apikey_old", "", 9600, now.Add(-24*time.Hour))
 	f.billedRow(t, "1d", yesterday, "apikey_new", "", 2400, now.Add(time.Second))
 
-	width, tile, chart := billedShown(t, admin, "days=5&bucket=hour")
-	if width != "1d" {
-		t.Fatalf("5-day window: width %s, want 1d", width)
-	}
-	for key, want := range map[string]float64{"key_b": 40, "key_c": 56, "key_d": 10, "key_e": 14} {
-		if math.Abs(tile[key]-want) > 1e-9 || math.Abs(chart[key]-want) > 1e-9 {
-			t.Errorf("hourly view, %s: tile %v, chart %v — want %v in both", key, tile[key], chart[key], want)
+	for _, q := range []string{"days=5&bucket=hour", "days=5&bucket=day", "days=90&bucket=week"} {
+		width, tile, chart := billedShown(t, admin, q)
+		if width != "1d" {
+			t.Fatalf("%s: width %s, want 1d", q, width)
 		}
-	}
-
-	// A daily chart takes the freshest width per day, and so does its tile.
-	_, tile, chart = billedShown(t, admin, "days=5&bucket=day")
-	for _, key := range []string{"key_b", "key_c", "key_d", "key_e"} {
-		if math.Abs(tile[key]-chart[key]) > 1e-9 {
-			t.Errorf("daily view, %s: tile %v, chart %v — want the same", key, tile[key], chart[key])
+		for key, want := range map[string]float64{"key_b": 40, "key_c": 56, "key_d": 10, "key_e": 14} {
+			if math.Abs(tile[key]-want) > 1e-9 || math.Abs(chart[key]-want) > 1e-9 {
+				t.Errorf("%s, %s: tile %v, chart %v — want %v in both, the days split at the hand-overs",
+					q, key, tile[key], chart[key], want)
+			}
 		}
-	}
-	if tile["key_c"] != 96 || tile["key_e"] != 24 {
-		t.Errorf("daily view: tile %v — want the re-read days whole with their latest holders", tile)
 	}
 }
 
-// The hourly rule takes a day's 1h rows only where they hold the whole day,
+// The reconciliation, the tile and the chart read one row set whatever the
+// bucket: a hand-over day by its hours, every other day by its freshest
+// width. The reconciliation read every day by its hours wherever they were
+// complete, while the daily and weekly views took the fresher 1d rows. The
+// 1h rows are not read again once a day leaves the hourly reach, so for
+// anything older than about three days the reconciliation showed hours the
+// page did not, and a revision of the 35-day re-read ($40 → $38 here) never
+// reached it.
+func TestReconcileReadsTheRowsOfEveryView(t *testing.T) {
+	f := newBillingFixture(t, "abgleich-jede-ansicht")
+	admin := login(t, f.s, "admin@test.local", "admin-passwort")
+	now := time.Now().UTC()
+	day := now.Truncate(24 * time.Hour).Add(-4 * 24 * time.Hour)
+	f.exec(t, `INSERT INTO credential_billing_keys (org_id, secret_key, secret_slot, api_key_id, valid_from, valid_to)
+		VALUES ($1, 'key_b', 0, 'apikey_h', $2, $3), ($1, 'key_c', 0, 'apikey_h', $3, NULL),
+			($1, 'key_s', 0, 'apikey_s', $2, NULL)`,
+		f.s.orgID, now.Add(-10*24*time.Hour), day.Add(10*time.Hour))
+	// The hours as read after the day ended, inside the hourly reach; the
+	// day re-read since, both keys revised.
+	read := day.Add(30 * time.Hour)
+	for h := 0; h < 24; h++ {
+		f.billedRow(t, "1h", day.Add(time.Duration(h)*time.Hour), "apikey_h", "", 400, read)
+	}
+	for h := 0; h < 10; h++ {
+		f.billedRow(t, "1h", day.Add(time.Duration(h)*time.Hour), "apikey_s", "", 400, read)
+	}
+	f.billedRow(t, "1d", day, "apikey_h", "", 9000, now)
+	f.billedRow(t, "1d", day, "apikey_s", "", 3800, now)
+
+	want := map[string]float64{"key_b": 40, "key_c": 56, "key_s": 38}
+	rec, err := f.s.obs.Reconcile(f.ctx, f.s.orgID, now.Add(-5*24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconciled := map[string]float64{}
+	for _, d := range rec.Days {
+		for _, m := range d.Models {
+			usd, _ := strconv.ParseFloat(m.BilledUSD, 64)
+			reconciled[d.SecretKey] += usd
+		}
+	}
+	for _, q := range []string{"days=5&bucket=hour", "days=5&bucket=day", "days=90&bucket=week"} {
+		_, tile, chart := billedShown(t, admin, q)
+		for key, usd := range want {
+			if math.Abs(tile[key]-usd) > 1e-9 || math.Abs(chart[key]-usd) > 1e-9 || math.Abs(reconciled[key]-usd) > 1e-9 {
+				t.Errorf("%s, %s: tile %v, chart %v, reconciliation %v — want %v in all three",
+					q, key, tile[key], chart[key], reconciled[key], usd)
+			}
+		}
+	}
+}
+
+// The bars of a response without ?bucket= (a daily chart) and its window (an
+// hourly one, for ?days=2) read the same rows: the bucket shapes the bars
+// only. Without it the chart took the day's fresher 1d row whole to the
+// newer holder while the tile, and the hourly chart, split the day.
+func TestBilledBarsWithoutABucketSplitLikeTheTile(t *testing.T) {
+	f := newBillingFixture(t, "rechnung-ohne-bucket")
+	admin := login(t, f.s, "admin@test.local", "admin-passwort")
+	now := time.Now().UTC()
+	yesterday := now.Truncate(24 * time.Hour).Add(-24 * time.Hour)
+	f.exec(t, `INSERT INTO credential_billing_keys (org_id, secret_key, secret_slot, api_key_id, valid_from, valid_to)
+		VALUES ($1, 'key_d', 0, 'apikey_n', $2, $3), ($1, 'key_e', 0, 'apikey_n', $3, NULL)`,
+		f.s.orgID, now.Add(-10*24*time.Hour), yesterday.Add(10*time.Hour))
+	for h := 0; h < 24; h++ {
+		f.billedRow(t, "1h", yesterday.Add(time.Duration(h)*time.Hour), "apikey_n", "", 100, now)
+	}
+	f.billedRow(t, "1d", yesterday, "apikey_n", "", 2400, now.Add(time.Second))
+
+	perDay := func(q string) (map[string]float64, any) {
+		got := admin.expect(http.MethodGet, "/api/v1/cost/billed?"+q, nil, http.StatusOK)
+		out := map[string]float64{}
+		for _, x := range got["points"].([]any) {
+			p := x.(map[string]any)
+			at, err := time.Parse(time.RFC3339Nano, p["bucket"].(string))
+			if err != nil {
+				t.Fatal(err)
+			}
+			key, ok := p["secret_key"].(string)
+			if !ok || !at.Truncate(24*time.Hour).Equal(yesterday) {
+				continue
+			}
+			usd, _ := strconv.ParseFloat(fmt.Sprint(p["billed_usd"]), 64)
+			out[key] += usd
+		}
+		w := got["window"].(map[string]any)
+		return out, []any{w["start"], w["width"], fmt.Sprint(w["totals"])}
+	}
+	hourly, hourlyWindow := perDay("days=2&bucket=hour")
+	daily, dailyWindow := perDay("days=2")
+	for key, want := range map[string]float64{"key_d": 10, "key_e": 14} {
+		if hourly[key] != want || daily[key] != want {
+			t.Errorf("yesterday, %s: hourly bars %v, bars without a bucket %v — want %v in both", key, hourly[key], daily[key], want)
+		}
+	}
+	if fmt.Sprint(hourlyWindow) != fmt.Sprint(dailyWindow) {
+		t.Errorf("window with bucket=hour %v, without a bucket %v — want the same", hourlyWindow, dailyWindow)
+	}
+}
+
+// A hand-over day is read by its hours only where they hold the whole day,
 // or at least every whole hour its 1d row does. The hours of a day are
 // complete only if an hourly read landed after the day ended and before it
 // left the hourly reach; with the poller down over that stretch the day
@@ -127,10 +220,11 @@ func TestBilledHourlyRuleSkipsIncompleteHours(t *testing.T) {
 	admin := login(t, f.s, "admin@test.local", "admin-passwort")
 	now := time.Now().UTC()
 	day := now.Truncate(24 * time.Hour).Add(-4 * 24 * time.Hour)
-	f.exec(t, `INSERT INTO credential_billing_keys (org_id, secret_key, secret_slot, api_key_id, valid_from)
-		VALUES ($1, 'key_x', 0, 'apikey_x', $2)`, f.s.orgID, now.Add(-10*24*time.Hour))
-	// The last hourly read of the day landed at 10:00; the daily re-read of
-	// yesterday has the whole day.
+	f.exec(t, `INSERT INTO credential_billing_keys (org_id, secret_key, secret_slot, api_key_id, valid_from, valid_to)
+		VALUES ($1, 'key_w', 0, 'apikey_x', $2, $3), ($1, 'key_x', 0, 'apikey_x', $3, NULL)`,
+		f.s.orgID, now.Add(-10*24*time.Hour), day.Add(5*time.Hour))
+	// Handed over at 05:00. The last hourly read of the day landed at 10:00;
+	// the daily re-read of yesterday has the whole day.
 	for h := 0; h < 10; h++ {
 		f.billedRow(t, "1h", day.Add(time.Duration(h)*time.Hour), "apikey_x", "", 400, day.Add(10*time.Hour))
 	}
@@ -138,8 +232,8 @@ func TestBilledHourlyRuleSkipsIncompleteHours(t *testing.T) {
 
 	for _, q := range []string{"days=7&bucket=hour", "days=7&bucket=day"} {
 		_, tile, chart := billedShown(t, admin, q)
-		if tile["key_x"] != 96 || chart["key_x"] != 96 {
-			t.Errorf("%s: tile %v, chart %v — want the re-read day whole (96) in both", q, tile["key_x"], chart["key_x"])
+		if tile["key_x"] != 96 || chart["key_x"] != 96 || tile["key_w"] != 0 || chart["key_w"] != 0 {
+			t.Errorf("%s: tile %v, chart %v — want the re-read day whole (96) in both, with the newer holder", q, tile, chart)
 		}
 	}
 }
@@ -308,12 +402,12 @@ func TestBilledMappingEdges(t *testing.T) {
 	}
 }
 
-// The reconciliation reads a day's rows by the hourly rule, as the hourly
-// tile does: its lines are split at the mapping's exact interval, so its bill
-// has to be too. Read by the daily rule, a hand-over day's fresher 1d row went
-// whole to the newer holder: the older one billed nothing against its lines,
-// the newer one the whole day against its share, each residual off by the
-// older holder's part although the bill matched the lines to the cent.
+// The reconciliation reads a hand-over day by its hours, as the tile does at
+// every bucket: its lines are split at the mapping's exact interval, so its
+// bill has to be too. Read by its fresher 1d row, the day went whole to the
+// newer holder: the older one billed nothing against its lines, the newer one
+// the whole day against its share, each residual off by the older holder's
+// part although the bill matched the lines to the cent.
 func TestReconcileHandOverDaySplitsLikeTheTile(t *testing.T) {
 	f := newBillingFixture(t, "abgleich-uebergabe")
 	admin := login(t, f.s, "admin@test.local", "admin-passwort")
@@ -345,6 +439,7 @@ func TestReconcileHandOverDaySplitsLikeTheTile(t *testing.T) {
 		day.Add(14*time.Hour), 2800000)
 
 	_, tile, _ := billedShown(t, admin, "days=5&bucket=hour")
+	_, daily, _ := billedShown(t, admin, "days=5&bucket=day")
 	rec, err := f.s.obs.Reconcile(f.ctx, f.s.orgID, day)
 	if err != nil {
 		t.Fatal(err)
@@ -354,8 +449,8 @@ func TestReconcileHandOverDaySplitsLikeTheTile(t *testing.T) {
 		tokens int64
 	}{"key_b": {40, 2000000}, "key_c": {56, 2800000}}
 	for key, w := range want {
-		if tile[key] != w.usd {
-			t.Errorf("hourly tile, %s: %v, want %v", key, tile[key], w.usd)
+		if tile[key] != w.usd || daily[key] != w.usd {
+			t.Errorf("tile, %s: hourly view %v, daily view %v — want %v in both", key, tile[key], daily[key], w.usd)
 		}
 		var models []observability.ReconcileModel
 		for _, d := range rec.Days {
@@ -412,14 +507,17 @@ func TestBilledHourlyRuleTruncatesTheDailyMark(t *testing.T) {
 }
 
 // An hourly tile starting mid-day decides that day's width on the whole day,
-// as the chart beside it does from the day's midnight. Deciding on the rows
-// from its start on, it saw only the day's 1h rows (the 1d row starts at
-// midnight) and took them where the chart took the fresher 1d row: the tile
-// counted hours the chart's points from the tile's start on did not have.
-func TestBilledHourlyTilePicksOnTheWholeFirstDay(t *testing.T) {
+// as the chart beside it does from the day's midnight. Where the day is read
+// from its 1d row, that row starts before the tile and counts in neither the
+// tile nor the chart's points from its start on; the tile then starts at the
+// next midnight, so its bill and its lines cover the same span. The lines
+// used to count from the hour the bill left out. Where the hours are the
+// freshest, the tile starts at its first whole hour.
+func TestBilledHourlyTileStartsWhereItsBillDoes(t *testing.T) {
 	f := newBillingFixture(t, "rechnung-erster-tag")
 	now := time.Now().UTC()
-	day := now.Truncate(24 * time.Hour).Add(-24 * time.Hour)
+	today := now.Truncate(24 * time.Hour)
+	day := today.Add(-24 * time.Hour)
 	since := day.Add(12 * time.Hour)
 	f.exec(t, `INSERT INTO credential_billing_keys (org_id, secret_key, secret_slot, api_key_id, valid_from)
 		VALUES ($1, 'key_p', 0, 'apikey_p', $2)`, f.s.orgID, now.Add(-10*24*time.Hour))
@@ -428,41 +526,61 @@ func TestBilledHourlyTilePicksOnTheWholeFirstDay(t *testing.T) {
 		f.billedRow(t, "1h", day.Add(time.Duration(h)*time.Hour), "apikey_p", "", 100, day.Add(20*time.Hour+30*time.Minute))
 	}
 	f.billedRow(t, "1d", day, "apikey_p", "", 3000, now)
+	// A line after the tile's first whole hour, before the next midnight.
+	f.line(t, observability.CredentialRef{RuntimeID: uuid.New(), SecretKey: "key_p", Kind: daemon.CredAPIKey},
+		day.Add(15*time.Hour), 1000000)
 
-	w, err := f.s.obs.BilledWindowFor(f.ctx, f.s.orgID, "hour", since, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if w.Width != "1h" || !w.Start.Equal(since) {
-		t.Fatalf("window from %v: width %s, start %v — want an hourly window from there", since, w.Width, w.Start)
-	}
-	tile := 0.0
-	for _, b := range w.Totals {
-		if b.SecretKey == "key_p" {
-			tile, _ = strconv.ParseFloat(b.BilledUSD, 64)
+	shown := func() (observability.BilledWindow, float64, float64) {
+		t.Helper()
+		w, err := f.s.obs.BilledWindowFor(f.ctx, f.s.orgID, since, now)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	series, err := f.s.obs.BilledSeries(f.ctx, f.s.orgID, "hour", since)
-	if err != nil {
-		t.Fatal(err)
-	}
-	chart, whole := 0.0, 0.0
-	for _, p := range series.Points {
-		if p.SecretKey == nil || *p.SecretKey != "key_p" {
-			continue
+		tile := 0.0
+		for _, b := range w.Totals {
+			if b.SecretKey == "key_p" {
+				tile, _ = strconv.ParseFloat(b.BilledUSD, 64)
+			}
 		}
-		usd, _ := strconv.ParseFloat(p.BilledUSD, 64)
-		if p.Bucket.Equal(day) {
-			whole += usd
+		series, err := f.s.obs.BilledSeries(f.ctx, f.s.orgID, "hour", since)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if !p.Bucket.Before(w.Start) {
+		chart := 0.0
+		for _, p := range series.Points {
+			if p.SecretKey == nil || *p.SecretKey != "key_p" || p.Bucket.Before(w.Start) {
+				continue
+			}
+			usd, _ := strconv.ParseFloat(p.BilledUSD, 64)
 			chart += usd
 		}
+		return w, tile, chart
 	}
-	if whole != 30 {
-		t.Fatalf("chart: midnight point %v — want the re-read day whole (30)", whole)
+	reported := func(w observability.BilledWindow) float64 {
+		for _, b := range w.Totals {
+			if b.SecretKey == "key_p" {
+				return b.ReportedUSD
+			}
+		}
+		return 0
 	}
-	if tile != chart {
-		t.Errorf("tile %v, chart from %v on %v — want the same", tile, w.Start, chart)
+
+	w, tile, chart := shown()
+	if w.Width != "1h" || !w.Start.Equal(today) {
+		t.Fatalf("window from %v, day read whole: width %s, start %v — want an hourly window from %v", since, w.Width, w.Start, today)
+	}
+	if tile != 0 || chart != 0 || reported(w) != 0 {
+		t.Errorf("window from %v: tile %v, chart %v, reported %v — want nothing before it in any", w.Start, tile, chart, reported(w))
+	}
+
+	// An hourly read after the daily one: the hours are the freshest.
+	f.exec(t, `UPDATE billed_cost SET fetched_at = $2 WHERE org_id = $1 AND bucket_width = '1h'`, f.s.orgID, now.Add(time.Second))
+	w, tile, chart = shown()
+	if !w.Start.Equal(since) {
+		t.Fatalf("day read by its hours: start %v, want %v", w.Start, since)
+	}
+	if tile != 9 || chart != 9 || reported(w) != 1 {
+		t.Errorf("window from %v: tile %v, chart %v, reported %v — want 9 (12:00–20:59) in both and the line beside them",
+			w.Start, tile, chart, reported(w))
 	}
 }
