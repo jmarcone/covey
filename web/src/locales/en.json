@@ -541,7 +541,7 @@
       "noRate": "No USD figure: no rate with its date was given.",
       "bothTile": "Real cost, seat + usage",
       "bothSub": "seat ≈ {{seat}} + usage {{usage}}",
-      "usageMultipleSub": "covey's list over the usage charges counted in this window",
+      "usageMultipleSub": "covey's list over the spans the counted usage charges cover ({{list}}; boundary periods pro rata by time) per counted USD",
       "noMultipleRate": "No multiple: the usage charges have no USD figure without a rate and its date.",
       "noMultipleNoCharge": "No multiple: no usage charge counted in this window.",
       "noMultipleChanged": "No multiple: the basis changed within this window.",
@@ -568,7 +568,18 @@
       "rate": "USD per {{currency}} (optional)",
       "rateDate": "Rate date",
       "note": "Note",
-      "chargeHint": "Kept in its currency. A USD figure only with a rate and its date."
+      "chargeHint": "Kept in its currency. A USD figure only with a rate and its date.",
+      "upcoming": "From {{date}}: {{basis}} (entered, not yet in effect).",
+      "apiKeyBilled": "This API key's bill is synced from Anthropic and stands beside these usage charges, separately: a charge entered here must not be that same bill, or it counts twice.",
+      "allCharges": "All usage charges of this credential",
+      "allChargesList": "All usage charges of {{name}}",
+      "allChargesEmpty": "No usage charge entered.",
+      "storedRate": "at {{rate}} USD per {{currency}} ({{date}})",
+      "errOverlap": "Another usage charge of this credential already covers part of that span: the same bill must not count twice. Delete it, or enter the span next to it.",
+      "realSeatPart": "seat part only: {{n}} points read under usage are the usage charges' money",
+      "noMultipleSpanList": "No multiple: covey ran nothing at list price over the spans the counted usage charges cover.",
+      "headlineUsage": "Usage charges, in none of these figures: {{list}}.",
+      "noUsd": "no USD figure: no rate given"
     }
   },
   "lang": {

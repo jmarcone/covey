@@ -627,10 +627,14 @@ function CredentialTiles({ f, filtered }: { f: CredentialFigures; filtered: bool
     <Tile key="rec" label={t("costs.fig.recomputed")} value={fmtUSD(f.recomputed)}
       sub={f.check != null ? t("costs.fig.priceTableCheck", { pct: pct(f.check) }) : undefined} color={SOURCE_COLOR.recomputed} />,
   ];
-  // A seat billed by usage (0151): its meter is not its money, the usage
-  // charges are (UsageTiles below).
-  if (isSeat(f) && f.basis !== "usage") {
+  // A seat billed by usage all through the window (0151): its meter is not
+  // its money, the usage charges are (below). One that changed basis keeps
+  // the real figure of the seat's part, as the server priced it.
+  const usageOnly = f.real == null && f.usage != null && f.usage.regimes.length === 1 && f.usage.regimes[0] === "usage";
+  if (isSeat(f) && !usageOnly) {
     const r = f.real;
+    // Points read under the usage basis: not the seat's, said beside it.
+    const seatPart = r && r.usagePoints > 0 ? ` · ${t("costs.basis.realSeatPart", { n: fmtNumber(r.usagePoints, 0) })}` : "";
     // The price per point the server priced the movement at, on average.
     const pp = r && r.points > 0 ? r.value / r.points : null;
     // The real figure covers the meter's span, which can begin days before
@@ -655,10 +659,10 @@ function CredentialTiles({ f, filtered }: { f: CredentialFigures; filtered: bool
         sub={sub} span={span} note={t("costs.fig.accountWideCaveat")} color={SOURCE_COLOR.real} hatched />);
     } else if (r && r.below) {
       tiles.push(<Tile key="real" label={t("costs.fig.realEstimate")} value={fmtUSDBelow(r.high)}
-        sub={t("costs.fig.realBelow")} span={span} note={t("costs.fig.accountWideCaveat")} color={SOURCE_COLOR.real} hatched />);
+        sub={t("costs.fig.realBelow") + seatPart} span={span} note={t("costs.fig.accountWideCaveat")} color={SOURCE_COLOR.real} hatched />);
     } else if (r) {
       tiles.push(<Tile key="real" label={t("costs.fig.realEstimate")} value={`≈ ${fmtUSD(r.value)}`}
-        sub={t("costs.fig.realRange", { low: fmtUSD(r.low), high: fmtUSD(r.high), pts: r.points, pp: pp != null ? fmtUSDFixed(pp, 4) : "–" })}
+        sub={t("costs.fig.realRange", { low: fmtUSD(r.low), high: fmtUSD(r.high), pts: r.points, pp: pp != null ? fmtUSDFixed(pp, 4) : "–" }) + seatPart}
         span={span} note={t("costs.fig.accountWideCaveat")} color={SOURCE_COLOR.real} hatched />);
     } else {
       tiles.push(<Tile key="real" label={t("costs.fig.realEstimate")} value="–" sub={t("costs.fig.noMeter")} color={SOURCE_COLOR.real} hatched />);
@@ -710,8 +714,10 @@ function CredentialTiles({ f, filtered }: { f: CredentialFigures; filtered: bool
   }
   // Usage charges (0151): each currency in its own, a dollar figure only
   // where every counted charge has one, never added across currencies.
+  // Shown wherever a charge counted in the window — whatever the basis at
+  // its end — and under a usage basis also when none did.
   const u = f.usage;
-  if (u && (f.basis === "usage" || f.basis === "seat_and_usage")) {
+  if (u && (u.currencies.length > 0 || f.basis === "usage" || f.basis === "seat_and_usage")) {
     if (filtered) {
       tiles.push(<Tile key="usage" label={t("costs.basis.usageTile")} value="–" sub={t("costs.basis.usageFiltered")} color={SOURCE_COLOR.real} />);
     } else if (u.currencies.length === 0) {
@@ -724,14 +730,14 @@ function CredentialTiles({ f, filtered }: { f: CredentialFigures; filtered: bool
           color={SOURCE_COLOR.real} />);
       }
       // Seat and usage together: one figure only where both are in dollars.
-      if (f.basis === "seat_and_usage" && f.real?.priced && u.usd != null) {
+      if ((f.basis === "seat_and_usage" || u.changed) && f.real?.priced && !f.real.below && u.usd != null) {
         tiles.push(<Tile key="both" label={t("costs.basis.bothTile")} value={`≈ ${fmtUSD(f.real.value + u.usd)}`}
           sub={t("costs.basis.bothSub", { seat: fmtUSD(f.real.value), usage: fmtUSD(u.usd) })} color={SOURCE_COLOR.real} hatched />);
       }
     }
     if (f.usageMultiple != null) {
       tiles.push(<Tile key="umult" label={t("costs.fig.multiple")} value={times(f.usageMultiple)}
-        sub={t("costs.basis.usageMultipleSub")} />);
+        sub={t("costs.basis.usageMultipleSub", { list: fmtUSD(f.usageList ?? 0) })} />);
     }
   }
   return <div className="flex flex-wrap gap-3 mb-2">{tiles}</div>;
@@ -746,6 +752,7 @@ function NoMultiple({ f }: { f: CredentialFigures }) {
   else if (f.noMultiple === "outside") text = t("costs.split.noMultipleOutside");
   else if (f.noMultiple === "rate") text = t("costs.basis.noMultipleRate");
   else if (f.noMultiple === "noCharge") text = t("costs.basis.noMultipleNoCharge");
+  else if (f.noMultiple === "spanList") text = t("costs.basis.noMultipleSpanList");
   else if (f.noMultiple === "basisChanged") text = t("costs.basis.noMultipleChanged");
   else if (f.noMultiple === "seatAndUsage") text = t("costs.basis.noMultipleBoth");
   else if (f.noMultiple === "unpriced") {

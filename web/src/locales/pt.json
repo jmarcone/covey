@@ -541,7 +541,7 @@
       "noRate": "Sem valor em USD: não foi indicada uma taxa com a sua data.",
       "bothTile": "Custo real, assento + uso",
       "bothSub": "assento ≈ {{seat}} + uso {{usage}}",
-      "usageMultipleSub": "lista do covey sobre as cobranças de uso contadas neste período",
+      "usageMultipleSub": "tabela do covey nos períodos dos valores de uso contados ({{list}}; períodos de fronteira pro rata no tempo) por USD contado",
       "noMultipleRate": "Sem múltiplo: sem taxa e data, as cobranças de uso não têm valor em USD.",
       "noMultipleNoCharge": "Sem múltiplo: nenhuma cobrança de uso conta neste período.",
       "noMultipleChanged": "Sem múltiplo: a base mudou dentro deste período.",
@@ -568,7 +568,18 @@
       "rate": "USD por {{currency}} (opcional)",
       "rateDate": "Data da taxa",
       "note": "Nota",
-      "chargeHint": "Fica na sua moeda. Valor em USD só com uma taxa e a sua data."
+      "chargeHint": "Fica na sua moeda. Valor em USD só com uma taxa e a sua data.",
+      "upcoming": "A partir de {{date}}: {{basis}} (registado, ainda não em vigor).",
+      "apiKeyBilled": "A fatura desta chave de API é sincronizada a partir da Anthropic e aparece à parte, ao lado destes valores de uso: um valor registado aqui não pode ser essa mesma fatura, senão conta duas vezes.",
+      "allCharges": "Todos os valores de uso desta credencial",
+      "allChargesList": "Todos os valores de uso de {{name}}",
+      "allChargesEmpty": "Nenhum valor de uso registado.",
+      "storedRate": "a {{rate}} USD por {{currency}} ({{date}})",
+      "errOverlap": "Outro valor de uso desta credencial já cobre parte desse período: a mesma fatura não pode contar duas vezes. Elimine-o ou registe o período ao lado.",
+      "realSeatPart": "só a parte do lugar: {{n}} pontos lidos sob uso são pagos pelos valores de uso",
+      "noMultipleSpanList": "Sem múltiplo: o covey não executou nada a preço de tabela nos períodos cobertos pelos valores de uso contados.",
+      "headlineUsage": "Valores de uso, em nenhum destes números: {{list}}.",
+      "noUsd": "sem valor em USD: nenhuma taxa indicada"
     }
   },
   "lang": {

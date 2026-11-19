@@ -541,7 +541,7 @@
       "noRate": "Nessun importo in USD: non è stato indicato un cambio con la sua data.",
       "bothTile": "Costo reale, posto + utilizzo",
       "bothSub": "posto ≈ {{seat}} + utilizzo {{usage}}",
-      "usageMultipleSub": "listino covey sugli addebiti d'utilizzo contati in questo periodo",
+      "usageMultipleSub": "listino covey sui periodi degli importi d'uso contati ({{list}}; periodi di confine pro rata nel tempo) per USD contato",
       "noMultipleRate": "Nessun multiplo: senza cambio e data gli addebiti d'utilizzo non hanno importo in USD.",
       "noMultipleNoCharge": "Nessun multiplo: nessun addebito d'utilizzo contato in questo periodo.",
       "noMultipleChanged": "Nessun multiplo: la base è cambiata in questo periodo.",
@@ -568,7 +568,18 @@
       "rate": "USD per {{currency}} (facoltativo)",
       "rateDate": "Data del cambio",
       "note": "Nota",
-      "chargeHint": "Resta nella sua valuta. Importo in USD solo con un cambio e la sua data."
+      "chargeHint": "Resta nella sua valuta. Importo in USD solo con un cambio e la sua data.",
+      "upcoming": "Dal {{date}}: {{basis}} (inserito, non ancora in vigore).",
+      "apiKeyBilled": "La fattura di questa chiave API è sincronizzata da Anthropic e compare separata, accanto a questi importi d'uso: un importo inserito qui non deve essere la stessa fattura, altrimenti conta due volte.",
+      "allCharges": "Tutti gli importi d'uso di questa credenziale",
+      "allChargesList": "Tutti gli importi d'uso di {{name}}",
+      "allChargesEmpty": "Nessun importo d'uso inserito.",
+      "storedRate": "a {{rate}} USD per {{currency}} ({{date}})",
+      "errOverlap": "Un altro importo d'uso di questa credenziale copre già parte di quel periodo: la stessa fattura non deve contare due volte. Eliminalo o inserisci il periodo accanto.",
+      "realSeatPart": "solo la quota del posto: {{n}} punti letti sotto l'uso sono pagati dagli importi d'uso",
+      "noMultipleSpanList": "Nessun multiplo: covey non ha eseguito nulla a prezzo di listino nei periodi coperti dagli importi d'uso contati.",
+      "headlineUsage": "Importi d'uso, non inclusi in nessuna di queste cifre: {{list}}.",
+      "noUsd": "nessun importo in USD: nessun cambio indicato"
     }
   },
   "lang": {

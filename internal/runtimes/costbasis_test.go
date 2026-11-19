@@ -64,3 +64,40 @@ func TestValidBasis(t *testing.T) {
 		}
 	}
 }
+
+// What the columns cannot hold is refused before it reaches them, as a
+// sentence (400), not as the database's error (500): NUMERIC(14,4) for the
+// amount, NUMERIC(12,6) > 0 for the rate, and a rate date of a day that was.
+func TestUsageChargeValidateColumnBounds(t *testing.T) {
+	from := time.Date(2026, 11, 18, 8, 0, 0, 0, time.UTC)
+	to := from.Add(24 * time.Hour)
+	f := func(v float64) *float64 { return &v }
+	s := func(v string) *string { return &v }
+	tomorrow := time.Now().UTC().Add(24 * time.Hour).Format("2006-01-02")
+	for name, c := range map[string]UsageCharge{
+		"largest amount": {Amount: MaxChargeAmount, Currency: "EUR", From: from, To: to},
+		"smallest rate":  {Amount: 1, Currency: "EUR", From: from, To: to, FXToUSD: f(MinFXToUSD), FXDate: s("2026-11-18")},
+		"largest rate":   {Amount: 1, Currency: "JPY", From: from, To: to, FXToUSD: f(MaxFXToUSD), FXDate: s("2026-11-18")},
+		"first day":      {Amount: 1, Currency: "EUR", From: from, To: to, FXToUSD: f(1.1), FXDate: s("2000-01-01")},
+		"tomorrow":       {Amount: 1, Currency: "EUR", From: from, To: to, FXToUSD: f(1.1), FXDate: s(tomorrow)},
+	} {
+		if err := c.Validate(); err != nil {
+			t.Errorf("%s: refused: %v", name, err)
+		}
+	}
+	for name, c := range map[string]UsageCharge{
+		"amount too large": {Amount: 1e10, Currency: "EUR", From: from, To: to},
+		"rate rounds to 0": {Amount: 1, Currency: "EUR", From: from, To: to, FXToUSD: f(4e-7), FXDate: s("2026-11-18")},
+		"rate too large":   {Amount: 1, Currency: "EUR", From: from, To: to, FXToUSD: f(1e6), FXDate: s("2026-11-18")},
+		"rate nan":         {Amount: 1, Currency: "EUR", From: from, To: to, FXToUSD: f(math.NaN()), FXDate: s("2026-11-18")},
+		"rate inf":         {Amount: 1, Currency: "EUR", From: from, To: to, FXToUSD: f(math.Inf(1)), FXDate: s("2026-11-18")},
+		"date before 2000": {Amount: 1, Currency: "EUR", From: from, To: to, FXToUSD: f(1.1), FXDate: s("1999-12-31")},
+		"date in a year":   {Amount: 1, Currency: "EUR", From: from, To: to, FXToUSD: f(1.1), FXDate: s(time.Now().UTC().AddDate(1, 0, 0).Format("2006-01-02"))},
+	} {
+		if err := c.Validate(); err == nil {
+			t.Errorf("%s: accepted", name)
+		} else if _, ok := err.(InvalidCost); !ok {
+			t.Errorf("%s: %T, want InvalidCost", name, err)
+		}
+	}
+}

@@ -541,7 +541,7 @@
       "noRate": "Geen USD-bedrag: er is geen koers met datum opgegeven.",
       "bothTile": "Echte kosten, stoel + gebruik",
       "bothSub": "stoel ≈ {{seat}} + gebruik {{usage}}",
-      "usageMultipleSub": "covey-lijstprijs per in deze periode meegetelde gebruikskosten",
+      "usageMultipleSub": "covey-lijstprijs over de perioden van de getelde gebruiksbedragen ({{list}}; randperioden naar rato van de tijd) per getelde USD",
       "noMultipleRate": "Geen veelvoud: zonder koers en datum hebben de gebruikskosten geen USD-bedrag.",
       "noMultipleNoCharge": "Geen veelvoud: in deze periode telt geen gebruikspost mee.",
       "noMultipleChanged": "Geen veelvoud: de basis is binnen deze periode gewijzigd.",
@@ -568,7 +568,18 @@
       "rate": "USD per {{currency}} (optioneel)",
       "rateDate": "Koersdatum",
       "note": "Notitie",
-      "chargeHint": "Blijft in zijn valuta. Een USD-bedrag alleen met een koers en de datum ervan."
+      "chargeHint": "Blijft in zijn valuta. Een USD-bedrag alleen met een koers en de datum ervan.",
+      "upcoming": "Vanaf {{date}}: {{basis}} (ingevoerd, nog niet van kracht).",
+      "apiKeyBilled": "De factuur van deze API-sleutel wordt vanuit Anthropic gesynchroniseerd en staat apart naast deze gebruiksbedragen: een bedrag dat hier wordt ingevoerd mag niet diezelfde factuur zijn, anders telt die dubbel.",
+      "allCharges": "Alle gebruiksbedragen van deze toegang",
+      "allChargesList": "Alle gebruiksbedragen van {{name}}",
+      "allChargesEmpty": "Geen gebruiksbedrag ingevoerd.",
+      "storedRate": "tegen {{rate}} USD per {{currency}} ({{date}})",
+      "errOverlap": "Een ander gebruiksbedrag van deze toegang dekt al een deel van die periode: dezelfde factuur mag niet dubbel tellen. Verwijder het, of voer de periode ernaast in.",
+      "realSeatPart": "alleen het stoeldeel: {{n}} punten die onder gebruik zijn afgelezen, betalen de gebruiksbedragen",
+      "noMultipleSpanList": "Geen veelvoud: covey draaide niets tegen catalogusprijs in de perioden van de getelde gebruiksbedragen.",
+      "headlineUsage": "Gebruiksbedragen, in geen van deze cijfers: {{list}}.",
+      "noUsd": "geen USD-bedrag: geen koers opgegeven"
     }
   },
   "lang": {

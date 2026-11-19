@@ -120,6 +120,10 @@ type CostCells struct {
 	// its own currency, with the part the window holds and the part a usage
 	// basis counts. Absent when there are none.
 	UsageCharges []WindowCharge `json:"usage_charges,omitempty"`
+	// Since is the window's start the charges were cut at, so a reader can
+	// tell a basis that began inside the window from one that held all
+	// along. Absent with neither a basis nor a charge, like both fields above.
+	Since *time.Time `json:"since,omitempty"`
 }
 
 // cellDepartments fills in the department of every agent in the cells. A
@@ -398,7 +402,7 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 	}
 	out.CostBases = bases
 	priced := seatPlans(plans, bases)
-	steps, coverage, err := s.meterSteps(ctx, orgID, bucket, since, priced)
+	steps, coverage, err := s.meterSteps(ctx, orgID, bucket, since, priced, bases)
 	if err != nil {
 		return out, err
 	}
@@ -409,6 +413,10 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 	}
 	if out.UsageCharges, err = s.usageChargesFor(ctx, orgID, since, time.Now(), bases); err != nil {
 		return out, err
+	}
+	if len(out.CostBases) > 0 || len(out.UsageCharges) > 0 {
+		at := since.UTC()
+		out.Since = &at
 	}
 	return out, nil
 }
@@ -445,6 +453,10 @@ type MeterStep struct {
 	// while no plan was valid are UnpricedPoints and not in USD.
 	USD            *float64 `json:"usd"`
 	UnpricedPoints float64  `json:"unpriced_points"`
+	// UsagePoints are points read while the credential's basis was usage
+	// (0151): not in USD and not unpriced either — their money is the usage
+	// charges. Absent without such a basis.
+	UsagePoints float64 `json:"usage_points,omitempty"`
 }
 
 // MeterCoverage is how well one credential's meter was read over the window,
@@ -491,6 +503,8 @@ type MeterCoverage struct {
 	// while no plan was valid are UnpricedPoints and not in USD.
 	USD            *float64 `json:"usd"`
 	UnpricedPoints float64  `json:"unpriced_points"`
+	// UsagePoints: as on the steps, summed over the window.
+	UsagePoints float64 `json:"usage_points,omitempty"`
 }
 
 // MeterSegment is one week of a credential's meter within the window.
@@ -700,8 +714,9 @@ func (s *Store) meterRows(ctx context.Context, orgID uuid.UUID, since time.Time)
 
 // meterSteps turns the readings into movement per period, per credential and
 // source, and says how well each was covered. Points of the weekly all-models
-// window are priced with the plan valid when they were read.
-func (s *Store) meterSteps(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time, plans []CredentialPlan) ([]MeterStep, []MeterCoverage, error) {
+// window are priced with the plan valid when they were read; those read while
+// the credential's basis was usage (0151) are its usage points instead.
+func (s *Store) meterSteps(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time, plans []CredentialPlan, bases []CredentialBasis) ([]MeterStep, []MeterCoverage, error) {
 	all, err := s.meterRowsAt(ctx, orgID, bucket, since)
 	if err != nil {
 		return nil, nil, err
@@ -714,7 +729,7 @@ func (s *Store) meterSteps(ctx context.Context, orgID uuid.UUID, bucket string, 
 			all[end].source == all[start].source && all[end].window == all[start].window {
 			end++
 		}
-		if st, cov, ok := meterPartition(all[start:end], since, plans); ok {
+		if st, cov, ok := meterPartition(all[start:end], since, plans, bases); ok {
 			steps = append(steps, st...)
 			coverage = append(coverage, cov)
 		}
@@ -779,7 +794,7 @@ func addUSD(sum *float64, usd float64) *float64 {
 // meterPartition is one credential × source × window: its steps per period
 // within the window, and its coverage. ok is false when nothing was read in
 // the window.
-func meterPartition(rs []meterRow, since time.Time, plans []CredentialPlan) ([]MeterStep, MeterCoverage, bool) {
+func meterPartition(rs []meterRow, since time.Time, plans []CredentialPlan, bases []CredentialBasis) ([]MeterStep, MeterCoverage, bool) {
 	first := 0
 	for first < len(rs) && rs[first].at.Before(since) {
 		first++
@@ -831,6 +846,10 @@ func meterPartition(rs []meterRow, since time.Time, plans []CredentialPlan) ([]M
 			if p, ok := planAt(plans, r.key, r.slot, r.at); ok {
 				st.USD = addUSD(st.USD, r.points*p.USDPerPoint)
 				c.USD = addUSD(c.USD, r.points*p.USDPerPoint)
+			} else if len(bases) > 0 && basisAt(bases, r.key, r.slot, r.at) == BasisUsage {
+				// Billed by usage then: the charges are these points' money.
+				st.UsagePoints += r.points
+				c.UsagePoints += r.points
 			} else {
 				st.UnpricedPoints += r.points
 				c.UnpricedPoints += r.points

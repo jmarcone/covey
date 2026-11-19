@@ -15,8 +15,10 @@ import (
 //
 //   - seat: the plan prices the meter's points (stacked.go), as before.
 //   - usage: the usage charges are the money. The plan prices nothing while
-//     this basis holds, so the meter's points read in it carry no dollars
-//     (they count as unpriced): the seat is not what was paid for them.
+//     this basis holds, so the meter's points read in it carry no dollars.
+//     They are not "unpriced" (no plan): they are usage_points, whose money
+//     is the charges — so a seat that changed basis within the window keeps
+//     the dollars of its seat steps, and says which points are the charges'.
 //   - seat_and_usage: the plan prices the meter and the charges add to it.
 //
 // A usage charge stays in its currency. Its dollar figure exists only where a
@@ -55,7 +57,9 @@ type WindowCharge struct {
 	// and on one entered without a rate.
 	FXToUSD *float64 `json:"fx_to_usd"`
 	FXDate  *string  `json:"fx_date"`
-	Note    string   `json:"note"`
+	// No note: the cells are read by every role, and a note is free text an
+	// admin wrote. The credential's own list (security roles) carries it.
+	//
 	// WindowAmount is the part of Amount over the part of [From, To) inside
 	// the window [since, now), pro rata by time, in Currency.
 	WindowAmount float64 `json:"window_amount"`
@@ -69,7 +73,9 @@ type WindowCharge struct {
 }
 
 // costBasesFor returns the organisation's bases valid at any point since
-// `since`, per credential in order of validity.
+// `since`, per credential in order of validity — one entered to start later
+// than now among them: a reader takes the basis in effect at each moment
+// (basisAt), and lists a later one as what will hold from its start.
 func (s *Store) costBasesFor(ctx context.Context, orgID uuid.UUID, since time.Time) ([]CredentialBasis, error) {
 	rows, err := s.pool.Query(ctx, `SELECT secret_key, secret_slot, basis, valid_from, valid_to
 		FROM credential_cost_bases
@@ -94,7 +100,7 @@ func (s *Store) costBasesFor(ctx context.Context, orgID uuid.UUID, since time.Ti
 // with its window and counted parts.
 func (s *Store) usageChargesFor(ctx context.Context, orgID uuid.UUID, since, now time.Time, bases []CredentialBasis) ([]WindowCharge, error) {
 	rows, err := s.pool.Query(ctx, `SELECT id, secret_key, secret_slot, amount::float8, currency, period_from, period_to,
-		fx_to_usd::float8, to_char(fx_date, 'YYYY-MM-DD'), note
+		fx_to_usd::float8, to_char(fx_date, 'YYYY-MM-DD')
 		FROM credential_usage_charges
 		WHERE org_id = $1 AND period_to > $2 AND period_from < $3
 		ORDER BY secret_key, secret_slot, period_from, created_at`, orgID, since, now)
@@ -106,12 +112,22 @@ func (s *Store) usageChargesFor(ctx context.Context, orgID uuid.UUID, since, now
 	for rows.Next() {
 		var c WindowCharge
 		if err := rows.Scan(&c.ID, &c.SecretKey, &c.SecretSlot, &c.Amount, &c.Currency, &c.From, &c.To,
-			&c.FXToUSD, &c.FXDate, &c.Note); err != nil {
+			&c.FXToUSD, &c.FXDate); err != nil {
 			return nil, err
 		}
 		out = append(out, chargeInWindow(c, since, now, bases))
 	}
 	return out, rows.Err()
+}
+
+// basisAt is the basis of a credential in effect at t; "" where none is.
+func basisAt(bases []CredentialBasis, key string, slot int, t time.Time) string {
+	for _, b := range bases {
+		if b.SecretKey == key && b.SecretSlot == slot && !t.Before(b.ValidFrom) && (b.ValidTo == nil || t.Before(*b.ValidTo)) {
+			return b.Basis
+		}
+	}
+	return ""
 }
 
 // span is a half-open interval of time; a zero end is open.

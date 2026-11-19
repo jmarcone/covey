@@ -541,7 +541,7 @@
       "noRate": "Pas de montant en USD : aucun taux avec sa date n'a été indiqué.",
       "bothTile": "Coût réel, siège + usage",
       "bothSub": "siège ≈ {{seat}} + usage {{usage}}",
-      "usageMultipleSub": "liste covey sur les montants d'usage comptés sur cette période",
+      "usageMultipleSub": "liste covey sur les périodes des montants d'usage comptés ({{list}} ; tranches en bordure au prorata du temps) par USD compté",
       "noMultipleRate": "Pas de multiple : sans taux ni date, les montants d'usage n'ont pas de montant en USD.",
       "noMultipleNoCharge": "Pas de multiple : aucun montant d'usage compté sur cette période.",
       "noMultipleChanged": "Pas de multiple : la base a changé au cours de cette période.",
@@ -568,7 +568,18 @@
       "rate": "USD par {{currency}} (facultatif)",
       "rateDate": "Date du taux",
       "note": "Note",
-      "chargeHint": "Conservé dans sa devise. Un montant en USD seulement avec un taux et sa date."
+      "chargeHint": "Conservé dans sa devise. Un montant en USD seulement avec un taux et sa date.",
+      "upcoming": "À partir du {{date}} : {{basis}} (saisi, pas encore en vigueur).",
+      "apiKeyBilled": "La facture de cette clé d'API est synchronisée depuis Anthropic et figure à part, à côté de ces montants d'usage : un montant saisi ici ne doit pas être cette même facture, sinon elle compte deux fois.",
+      "allCharges": "Tous les montants d'usage de cet accès",
+      "allChargesList": "Tous les montants d'usage de {{name}}",
+      "allChargesEmpty": "Aucun montant d'usage saisi.",
+      "storedRate": "à {{rate}} USD par {{currency}} ({{date}})",
+      "errOverlap": "Un autre montant d'usage de cet accès couvre déjà une partie de cette période : la même facture ne doit pas compter deux fois. Supprimez-le ou saisissez la période juste à côté.",
+      "realSeatPart": "part du siège seulement : {{n}} points relevés sous l'usage sont payés par les montants d'usage",
+      "noMultipleSpanList": "Pas de multiple : covey n'a rien exécuté au prix catalogue sur les périodes couvertes par les montants d'usage comptés.",
+      "headlineUsage": "Montants d'usage, inclus dans aucun de ces chiffres : {{list}}.",
+      "noUsd": "pas de montant en USD : aucun taux indiqué"
     }
   },
   "lang": {

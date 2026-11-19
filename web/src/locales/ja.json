@@ -541,7 +541,7 @@
       "noRate": "USD 換算なし: 日付付きのレートが指定されていません。",
       "bothTile": "実コスト、シート + 使用量",
       "bothSub": "シート ≈ {{seat}} + 使用量 {{usage}}",
-      "usageMultipleSub": "この期間に計上された使用料金に対する covey の定価",
+      "usageMultipleSub": "計上された使用料金の期間における covey の定価（{{list}}、境界の区間は時間で按分）÷ 計上 USD",
       "noMultipleRate": "倍率なし: 日付付きのレートがないため、使用料金に USD 換算がありません。",
       "noMultipleNoCharge": "倍率なし: この期間に計上された使用料金はありません。",
       "noMultipleChanged": "倍率なし: この期間中に課金方式が変わりました。",
@@ -568,7 +568,18 @@
       "rate": "1 {{currency}} あたりの USD（任意）",
       "rateDate": "レートの日付",
       "note": "メモ",
-      "chargeHint": "通貨はそのまま保持されます。USD 換算はレートとその日付がある場合のみです。"
+      "chargeHint": "通貨はそのまま保持されます。USD 換算はレートとその日付がある場合のみです。",
+      "upcoming": "{{date}} から: {{basis}}（登録済み、まだ有効ではありません）。",
+      "apiKeyBilled": "この API キーの請求は Anthropic から同期され、これらの使用料金とは別に並べて表示されます。ここに入力する料金がその同じ請求であってはいけません。二重に数えられます。",
+      "allCharges": "この認証情報のすべての使用料金",
+      "allChargesList": "{{name}} のすべての使用料金",
+      "allChargesEmpty": "使用料金は入力されていません。",
+      "storedRate": "{{rate}} USD / {{currency}}（{{date}}）",
+      "errOverlap": "この認証情報の別の使用料金がすでにその期間の一部をカバーしています。同じ請求を二重に数えることはできません。そちらを削除するか、隣接する期間を入力してください。",
+      "realSeatPart": "シート分のみ: 使用量課金中に読み取った {{n}} ポイントは使用料金で支払われます",
+      "noMultipleSpanList": "倍率なし: 計上された使用料金の期間に、covey は定価で何も実行していません。",
+      "headlineUsage": "使用料金（これらの数値のいずれにも含まれません）: {{list}}。",
+      "noUsd": "USD 換算なし: レート未指定"
     }
   },
   "lang": {

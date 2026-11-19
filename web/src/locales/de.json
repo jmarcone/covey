@@ -541,7 +541,7 @@
       "noRate": "Kein USD-Betrag: Es wurde kein Kurs mit Datum angegeben.",
       "bothTile": "Echte Kosten, Sitz + Nutzung",
       "bothSub": "Sitz ≈ {{seat}} + Nutzung {{usage}}",
-      "usageMultipleSub": "covey-Listenpreis je in diesem Zeitraum gezähltem Nutzungsbetrag",
+      "usageMultipleSub": "covey-Listenpreis über die Zeiträume der gezählten Nutzungsbeträge ({{list}}; Randabschnitte anteilig nach Zeit) je gezähltem USD",
       "noMultipleRate": "Kein Vielfaches: Ohne Kurs mit Datum haben die Nutzungsbeträge keinen USD-Betrag.",
       "noMultipleNoCharge": "Kein Vielfaches: In diesem Zeitraum zählt kein Nutzungsbetrag.",
       "noMultipleChanged": "Kein Vielfaches: Die Grundlage hat sich in diesem Zeitraum geändert.",
@@ -568,7 +568,18 @@
       "rate": "USD je {{currency}} (optional)",
       "rateDate": "Kursdatum",
       "note": "Notiz",
-      "chargeHint": "Bleibt in seiner Währung. Einen USD-Betrag gibt es nur mit Kurs und Datum."
+      "chargeHint": "Bleibt in seiner Währung. Einen USD-Betrag gibt es nur mit Kurs und Datum.",
+      "upcoming": "Ab {{date}}: {{basis}} (eingetragen, gilt noch nicht).",
+      "apiKeyBilled": "Die Rechnung dieses API-Schlüssels wird von Anthropic abgeglichen und steht getrennt neben diesen Nutzungsbeträgen: Ein hier eingetragener Betrag darf nicht dieselbe Rechnung sein, sonst zählt sie doppelt.",
+      "allCharges": "Alle Nutzungsbeträge dieses Zugangs",
+      "allChargesList": "Alle Nutzungsbeträge von {{name}}",
+      "allChargesEmpty": "Kein Nutzungsbetrag eingetragen.",
+      "storedRate": "zu {{rate}} USD je {{currency}} ({{date}})",
+      "errOverlap": "Ein anderer Nutzungsbetrag dieses Zugangs deckt schon einen Teil dieses Zeitraums ab: Dieselbe Rechnung darf nicht doppelt zählen. Bitte ihn löschen oder den Zeitraum daneben eintragen.",
+      "realSeatPart": "nur der Sitzanteil: {{n}} Punkte, die unter Nutzung abgelesen wurden, bezahlen die Nutzungsbeträge",
+      "noMultipleSpanList": "Kein Vielfaches: In den Zeiträumen der gezählten Nutzungsbeträge lief über covey nichts zum Listenpreis.",
+      "headlineUsage": "Nutzungsbeträge, in keiner dieser Zahlen enthalten: {{list}}.",
+      "noUsd": "kein USD-Betrag: kein Kurs angegeben"
     }
   },
   "lang": {
