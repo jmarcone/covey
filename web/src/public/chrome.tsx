@@ -82,7 +82,6 @@ export function useBoids(ref: React.RefObject<HTMLCanvasElement | null>) {
       h = canvas.height = window.innerHeight * DPR;
     };
     resize();
-    window.addEventListener("resize", resize);
 
     const N = window.innerWidth < 700 ? 55 : 110;
     const boids = Array.from({ length: N }, () => ({
@@ -107,15 +106,37 @@ export function useBoids(ref: React.RefObject<HTMLCanvasElement | null>) {
     const NEAR = (24 * DPR) ** 2;
     let raf = 0;
     let last = 0;
+    // Paints the swarm where it stands. Assigning canvas.width or .height
+    // clears the bitmap (HTML spec), so a resize has to call this when no
+    // frame is scheduled, or the paused swarm would vanish.
+    const draw = () => {
+      ctx.clearRect(0, 0, w, h);
+      ctx.strokeStyle = "rgba(178, 95, 65, 0.30)";
+      ctx.lineWidth = 1.1 * DPR;
+      ctx.lineCap = "round";
+      const s = 3.4 * DPR;
+      for (const b of boids) {
+        ctx.save();
+        ctx.translate(b.x, b.y);
+        ctx.rotate(Math.atan2(b.vy, b.vx));
+        ctx.beginPath();
+        ctx.moveTo(-s, -s * 0.65);
+        ctx.lineTo(0, 0);
+        ctx.lineTo(-s, s * 0.65);
+        ctx.stroke();
+        ctx.restore();
+      }
+    };
+
     const step = (now: number) => {
       raf = requestAnimationFrame(step);
       if (!boidsFrameDue(now, last)) return;
-      // The speeds are per 60 Hz frame; at 30 fps the swarm covers the same
-      // ground per second by stepping twice as far. A resume after a pause
-      // (last = 0) takes one ordinary step, not the length of the pause.
+      // The speeds and the steering are per 60 Hz frame; at 30 fps the swarm
+      // covers the same ground and turns as fast per second by taking k
+      // frames' worth at once. A resume after a pause (last = 0) takes one
+      // ordinary step, not the length of the pause.
       const k = last === 0 ? 1 : Math.min((now - last) / (1000 / 60), 3);
       last = now;
-      ctx.clearRect(0, 0, w, h);
       for (const b of boids) {
         let cx = 0, cy = 0, ax = 0, ay = 0, sx = 0, sy = 0, n = 0;
         for (const o of boids) {
@@ -129,16 +150,16 @@ export function useBoids(ref: React.RefObject<HTMLCanvasElement | null>) {
           }
         }
         if (n) {
-          b.vx += (cx / n - b.x) * 0.0004 + (ax / n - b.vx) * 0.045 + sx * 0.004;
-          b.vy += (cy / n - b.y) * 0.0004 + (ay / n - b.vy) * 0.045 + sy * 0.004;
+          b.vx += ((cx / n - b.x) * 0.0004 + (ax / n - b.vx) * 0.045 + sx * 0.004) * k;
+          b.vy += ((cy / n - b.y) * 0.0004 + (ay / n - b.vy) * 0.045 + sy * 0.004) * k;
         }
         const mdx = b.x - mouse.x;
         const mdy = b.y - mouse.y;
         const md2 = mdx * mdx + mdy * mdy;
         if (md2 < (150 * DPR) ** 2) {
           const md = Math.sqrt(md2) || 1;
-          b.vx += (mdx / md) * 0.5 * DPR;
-          b.vy += (mdy / md) * 0.5 * DPR;
+          b.vx += (mdx / md) * 0.5 * DPR * k;
+          b.vy += (mdy / md) * 0.5 * DPR * k;
         }
         const sp = Math.hypot(b.vx, b.vy) || 1;
         const max = 1.7 * DPR;
@@ -152,22 +173,8 @@ export function useBoids(ref: React.RefObject<HTMLCanvasElement | null>) {
         if (b.x > w + m) b.x = -m;
         if (b.y < -m) b.y = h + m;
         if (b.y > h + m) b.y = -m;
-
-        const ang = Math.atan2(b.vy, b.vx);
-        const s = 3.4 * DPR;
-        ctx.save();
-        ctx.translate(b.x, b.y);
-        ctx.rotate(ang);
-        ctx.strokeStyle = "rgba(178, 95, 65, 0.30)";
-        ctx.lineWidth = 1.1 * DPR;
-        ctx.lineCap = "round";
-        ctx.beginPath();
-        ctx.moveTo(-s, -s * 0.65);
-        ctx.lineTo(0, 0);
-        ctx.lineTo(-s, s * 0.65);
-        ctx.stroke();
-        ctx.restore();
       }
+      draw();
     };
 
     // Start or stop the loop after anything that changes whether it may run.
@@ -182,11 +189,20 @@ export function useBoids(ref: React.RefObject<HTMLCanvasElement | null>) {
         raf = 0;
       }
     };
+    // While paused no step runs, so the cleared bitmap needs this redraw.
+    const onResize = () => {
+      resize();
+      if (!raf) draw();
+    };
+    window.addEventListener("resize", onResize);
     document.addEventListener("visibilitychange", sync);
     document.addEventListener("focusin", sync);
     document.addEventListener("focusout", sync);
     window.addEventListener("focus", sync);
     window.addEventListener("blur", sync);
+    // A page that opens without focus or in the background still shows the
+    // swarm until the loop may run.
+    draw();
     sync();
 
     return () => {
@@ -196,7 +212,7 @@ export function useBoids(ref: React.RefObject<HTMLCanvasElement | null>) {
       document.removeEventListener("focusout", sync);
       window.removeEventListener("focus", sync);
       window.removeEventListener("blur", sync);
-      window.removeEventListener("resize", resize);
+      window.removeEventListener("resize", onResize);
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerleave", onLeave);
     };

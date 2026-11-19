@@ -39,9 +39,16 @@ describe("useBoids", () => {
   let caf: ReturnType<typeof vi.fn>;
   let focused: boolean;
   let hidden: boolean;
+  // The step functions the raf mock was handed, so a test can run a frame.
+  let steps: ((t: number) => void)[];
+  let ctx: Record<string, ReturnType<typeof vi.fn>>;
 
   beforeEach(() => {
-    raf = vi.fn(() => 1);
+    steps = [];
+    raf = vi.fn((cb: (t: number) => void) => {
+      steps.push(cb);
+      return steps.length;
+    });
     caf = vi.fn();
     vi.stubGlobal("requestAnimationFrame", raf);
     vi.stubGlobal("cancelAnimationFrame", caf);
@@ -51,7 +58,12 @@ describe("useBoids", () => {
     hidden = false;
     vi.spyOn(document, "hasFocus").mockImplementation(() => focused);
     vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
-    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    ctx = Object.fromEntries(
+      ["clearRect", "save", "restore", "translate", "rotate", "beginPath", "moveTo", "lineTo", "stroke"].map(
+        (k) => [k, vi.fn()],
+      ),
+    );
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx as unknown as CanvasRenderingContext2D);
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -92,6 +104,59 @@ describe("useBoids", () => {
     expect(raf).toHaveBeenCalledTimes(2);
   });
 
+  it("redraws the standing frame when a resize clears the canvas while paused", () => {
+    document.body.innerHTML = `<div class="login-card"><input id="email"/></div>`;
+    render(<PublicBackground />);
+    steps[steps.length - 1](1000);
+    document.getElementById("email")!.focus();
+    const strokes = ctx.stroke.mock.calls.length;
+    // Assigning canvas.width clears the bitmap (HTML spec); no step runs now.
+    window.dispatchEvent(new Event("resize"));
+    expect(ctx.stroke.mock.calls.length).toBeGreaterThan(strokes);
+  });
+
+  it("leaves the redraw to the next step on resize while the loop runs", () => {
+    render(<PublicBackground />);
+    const clears = ctx.clearRect.mock.calls.length;
+    window.dispatchEvent(new Event("resize"));
+    expect(ctx.clearRect.mock.calls.length).toBe(clears);
+  });
+
+  it("draws at most every other 60 Hz tick (30 fps cap in the loop)", () => {
+    render(<PublicBackground />);
+    const clears = ctx.clearRect.mock.calls.length;
+    steps[steps.length - 1](1000);
+    steps[steps.length - 1](1016.7);
+    steps[steps.length - 1](1033.4);
+    expect(ctx.clearRect.mock.calls.length - clears).toBe(2);
+  });
+
+  it("cancels the pending frame at unmount", () => {
+    const { unmount } = render(<PublicBackground />);
+    unmount();
+    expect(caf).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves no listener and no frame behind at unmount, even from a pause", () => {
+    // Signing in with Enter in a field unmounts the card while the loop is
+    // paused (raf = 0); a leaked listener would restart it on a detached canvas.
+    document.body.innerHTML = `<div class="login-card"><input id="email"/></div>`;
+    const { unmount } = render(<PublicBackground />);
+    document.getElementById("email")!.focus();
+    unmount();
+    const started = raf.mock.calls.length;
+    const cancelled = caf.mock.calls.length;
+    const strokes = ctx.stroke.mock.calls.length;
+    document.getElementById("email")!.blur();
+    document.dispatchEvent(new Event("visibilitychange"));
+    window.dispatchEvent(new Event("blur"));
+    window.dispatchEvent(new Event("focus"));
+    window.dispatchEvent(new Event("resize"));
+    expect(raf.mock.calls.length).toBe(started);
+    expect(caf.mock.calls.length).toBe(cancelled);
+    expect(ctx.stroke.mock.calls.length).toBe(strokes);
+  });
+
   it("does not start at prefers-reduced-motion", () => {
     vi.stubGlobal("matchMedia", () => ({ matches: true }));
     render(<PublicBackground />);
@@ -108,14 +173,23 @@ describe("sign-in stylesheet (#134)", () => {
     return m[1];
   };
 
-  it("never blurs the aurora, whose children move", () => {
-    expect(css).not.toMatch(/\.aurora\s*\{[^}]*filter\s*:/);
-    expect(rule(".aurora")).not.toMatch(/filter/);
+  it("never blurs the aurora or its moving circles", () => {
+    const rules = [...css.matchAll(/(?:^|\n)(\.aurora[^{,]*)\{([^}]*)\}/g)];
+    expect(rules.length).toBeGreaterThan(1);
+    for (const [, selector, body] of rules) {
+      expect(body, selector).not.toMatch(/filter\s*:/);
+    }
   });
 
   it("gives the card a static focus ring, not a spinning one", () => {
     expect(css).not.toMatch(/\.login-card::before/);
     expect(rule(".login-card:focus-within")).toMatch(/border-color/);
     expect(rule(".login-card:focus-within")).toMatch(/box-shadow/);
+  });
+
+  it("drops the card's transition at prefers-reduced-motion", () => {
+    const m = css.match(/@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}/);
+    expect(m).not.toBeNull();
+    expect(m![1]).toMatch(/\.login-card\s*\{\s*transition:\s*none/);
   });
 });
