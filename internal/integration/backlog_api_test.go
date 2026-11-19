@@ -23,6 +23,15 @@ func TestTaskVerbsOverTheAPI(t *testing.T) {
 		t.Fatalf("the task carries no id: %v", made)
 	}
 
+	// A title of blanks is as good as none (the form's "required" lets it
+	// through), and the stored title has no blanks around it.
+	admin.expect(http.MethodPost, tasks, map[string]string{"title": "   "}, http.StatusBadRequest)
+	admin.expect(http.MethodPost, tasks, map[string]string{"title": ""}, http.StatusBadRequest)
+	padded := admin.expect(http.MethodPost, tasks, map[string]string{"title": "  Aufräumen \t"}, http.StatusCreated)
+	if padded["title"] != "Aufräumen" {
+		t.Errorf("the title was stored as %q, want it trimmed", padded["title"])
+	}
+
 	admin.expectList(http.MethodGet, "/api/v1/tasks/"+id+"/transitions", nil, http.StatusOK)
 	admin.expectList(http.MethodGet, "/api/v1/tasks/"+id+"/notes", nil, http.StatusOK)
 

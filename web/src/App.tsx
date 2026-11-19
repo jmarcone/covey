@@ -1,7 +1,7 @@
-import { Suspense, lazy, useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Navigate, useLocation } from "react-router";
-import { api, setUnauthorizedHandler, type Principal } from "./api";
+import { api, isUnauthorized, setUnauthorizedHandler, type Principal } from "./api";
 import { initialLang } from "./i18n";
 import { APP_LINK_PATHS, LANGS, MAIL_LINK_PATHS, PUBLIC_ROUTES, pathOf } from "./public/routes";
 import SignedOut from "./public/SignedOut";
@@ -34,8 +34,18 @@ const imTeam = (pfad: string) => pfad === "/team" || pfad.startsWith("/team/");
 // the queries it touches, and TanStack Query refetches just those.
 function useLiveEvents(enabled: boolean) {
   const qc = useQueryClient();
+  /* A stream the browser gave up on is replaced by a new one (see onerror).
+     These three outlive one stream: the generation that makes the effect
+     run again, how many replacements in a row ended without the stream
+     opening, and whether events may have been missed in between. */
+  const [generation, setGeneration] = useState(0);
+  const failures = useRef(0);
+  const missed = useRef(false);
   useEffect(() => {
     if (!enabled) return;
+    let ended = false;
+    let replacing = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const es = new EventSource("/api/v1/events");
     const invalidate = () => {
       qc.invalidateQueries({ queryKey: ["agents"] });
@@ -72,10 +82,41 @@ function useLiveEvents(enabled: boolean) {
        the endpoint answers with 401. An EventSource does not say which of
        the two. So the UI asks: /auth/me answers it, and an expired session
        lands in its 401 without anyone having
-       to click first. */
-    es.onerror = () => void qc.refetchQueries({ queryKey: ["me"] });
-    return () => es.close();
-  }, [enabled, qc]);
+       to click first. Only that 401 ends the session (#115): while the server
+       restarts, /auth/me fails with a network error or a 502 and the query
+       keeps retrying behind the UI that stands.
+
+       The browser reconnects only after a network error. A reverse proxy
+       that answers 502 while covey restarts makes it close the stream for
+       good (readyState CLOSED), and the shell would stand without live
+       updates until a reload. So once /auth/me answers again, a closed
+       stream gets a new one — with a growing pause when that keeps failing —
+       and the first open after a gap refetches what the events would have
+       told. */
+    es.onopen = () => {
+      failures.current = 0;
+      if (!missed.current) return;
+      missed.current = false;
+      invalidate();
+    };
+    es.onerror = () => {
+      missed.current = true;
+      void qc.refetchQueries({ queryKey: ["me"] }, { cancelRefetch: false }).then(() => {
+        if (ended || replacing || es.readyState !== EventSource.CLOSED) return;
+        // A 401 leaves the query in error: the session is over, nothing to reopen.
+        if (qc.getQueryState(["me"])?.status !== "success") return;
+        replacing = true;
+        const pause = failures.current === 0 ? 0 : Math.min(1000 * 2 ** (failures.current - 1), 30_000);
+        failures.current++;
+        timer = setTimeout(() => setGeneration((g) => g + 1), pause);
+      });
+    };
+    return () => {
+      ended = true;
+      clearTimeout(timer);
+      es.close();
+    };
+  }, [enabled, qc, generation]);
 }
 
 /* The zero UUID is the server's answer to "no organisation yet":
@@ -156,11 +197,20 @@ export default function App() {
   const me = useQuery({
     queryKey: ["me"],
     queryFn: () => api<Principal>("/auth/me"),
-    retry: false,
+    /* Only a 401 says "not signed in". Anything else — a network error, a 502
+       while covey restarts — leaves the session as it was: the query retries
+       with a growing pause and the UI that stands stays (#115). */
+    retry: (_n, err) => !isUnauthorized(err),
+    /* Without data there is no stream and no focus refetch to notice that the
+       server is back, so the first load polls at a shorter cap (a blank page
+       is all there is to see meanwhile). */
+    retryDelay: (n) => Math.min(1000 * 2 ** n, qc.getQueryData(["me"]) === undefined ? 5_000 : 30_000),
     /* The common case is the tab that stays open overnight: on return the UI
        should check the session instead of walking into a 401 on
-       the first click. */
-    refetchOnWindowFocus: true,
+       the first click. Not while signed out: a query without data goes back
+       to pending when it fetches, the empty state then unmounts the login
+       form, and whatever was typed into it is gone (#115). */
+    refetchOnWindowFocus: (q) => q.state.data !== undefined,
   });
 
   useEffect(() => {
@@ -194,7 +244,11 @@ export default function App() {
      website stood here, and that was already in the HTML, so there was nothing
      to show from here. */
   if (me.isLoading) return null;
-  if (me.isError) return <Abgemeldet onLogin={anmelden} />;
+  if (me.isError && isUnauthorized(me.error)) return <Abgemeldet onLogin={anmelden} />;
+  /* No data and no 401: the server is not answering yet and the query is
+     retrying — or it is paused because the browser is offline, which is
+     neither loading nor an error (and used to run into me.data! below). */
+  if (!me.data) return null;
   /* Signed in but without a seat: since the login hangs on the account
      (FR-002), an account can exist before an organisation knows it. The shell
      would run into nothing but 409s there, so it does not get that far. */

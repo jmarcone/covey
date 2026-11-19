@@ -357,6 +357,23 @@ func (r *Registry) SetStatus(ctx context.Context, id uuid.UUID, status string) e
 	return err
 }
 
+// SetResting writes the status a waking phase ends in — killed while the kill
+// switch is on, sleeping otherwise — and returns it.
+//
+// The row decides, in the same statement, and not whoever calls: a kill or a
+// resume can land while the sandbox is still going down, and a status decided
+// before that wrote sleeping over the kill, or killed over the resume (#111).
+func (r *Registry) SetResting(ctx context.Context, id uuid.UUID) (string, error) {
+	var status string
+	err := r.pool.QueryRow(ctx, `UPDATE agents
+		SET status = CASE WHEN killed THEN $2 ELSE $3 END, updated_at = now()
+		WHERE id = $1 RETURNING status`, id, StatusKilled, StatusSleeping).Scan(&status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return status, err
+}
+
 // SetKilled flips the kill switch of a single agent (spec/06).
 func (r *Registry) SetKilled(ctx context.Context, id uuid.UUID, killed bool) error {
 	status := StatusKilled

@@ -36,9 +36,32 @@ export function Bird({
   );
 }
 
+/* The swarm is decoration, so it must never cost the page its responsiveness
+   (#134: single-digit fps and slow focus on a 4K screen). Three limits:
+   one canvas pixel per CSS pixel, at most 30 frames a second, and no frames
+   at all while nobody sees them or while the user types. */
+export const BOIDS_FPS = 30;
+
+/* The tolerance keeps a 60 Hz display (16.7 ms per tick) at 30 fps instead of
+   skipping every second tick to 20 fps. */
+export function boidsFrameDue(now: number, last: number): boolean {
+  return last === 0 || now - last >= 1000 / BOIDS_FPS - 4;
+}
+
+/* Whether a field of the sign-in card holds the focus — the moment the user
+   types, when every millisecond of main-thread time is felt. */
+export function typingInCard(active: Element | null): boolean {
+  return (
+    !!active &&
+    active.matches("input, textarea, select") &&
+    active.closest(".login-card") !== null
+  );
+}
+
 /* Living swarm (boids) on canvas: cohesion, alignment, distance —
    and soft yielding to the mouse pointer. Does not run at
-   prefers-reduced-motion. */
+   prefers-reduced-motion, in a hidden tab, in a window without focus, or
+   while a field of the card has the focus; the last frame stays standing. */
 // Since React 19 the ref type carries the null from useRef(null) — the body
 // checks it anyway before it goes to the canvas.
 export function useBoids(ref: React.RefObject<HTMLCanvasElement | null>) {
@@ -49,7 +72,9 @@ export function useBoids(ref: React.RefObject<HTMLCanvasElement | null>) {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const DPR = Math.min(window.devicePixelRatio || 1, 2);
+    // One canvas pixel per CSS pixel: at DPR 2 the canvas has four times the
+    // pixels to clear and stroke, for 0.3-opacity hairlines on a backdrop.
+    const DPR = 1;
     let w = 0;
     let h = 0;
     const resize = () => {
@@ -57,7 +82,6 @@ export function useBoids(ref: React.RefObject<HTMLCanvasElement | null>) {
       h = canvas.height = window.innerHeight * DPR;
     };
     resize();
-    window.addEventListener("resize", resize);
 
     const N = window.innerWidth < 700 ? 55 : 110;
     const boids = Array.from({ length: N }, () => ({
@@ -81,8 +105,39 @@ export function useBoids(ref: React.RefObject<HTMLCanvasElement | null>) {
     const SEE = (85 * DPR) ** 2;
     const NEAR = (24 * DPR) ** 2;
     let raf = 0;
-    const step = () => {
+    let last = 0;
+    // Paints the swarm where it stands. Assigning canvas.width or .height
+    // clears the bitmap (HTML spec), so every resize has to call this: a
+    // paused loop runs no step, and a running one may skip the next tick at
+    // the 30 fps cap, leaving an empty canvas to be painted.
+    const draw = () => {
       ctx.clearRect(0, 0, w, h);
+      ctx.strokeStyle = "rgba(178, 95, 65, 0.30)";
+      ctx.lineWidth = 1.1 * DPR;
+      ctx.lineCap = "round";
+      const s = 3.4 * DPR;
+      for (const b of boids) {
+        ctx.save();
+        ctx.translate(b.x, b.y);
+        ctx.rotate(Math.atan2(b.vy, b.vx));
+        ctx.beginPath();
+        ctx.moveTo(-s, -s * 0.65);
+        ctx.lineTo(0, 0);
+        ctx.lineTo(-s, s * 0.65);
+        ctx.stroke();
+        ctx.restore();
+      }
+    };
+
+    const step = (now: number) => {
+      raf = requestAnimationFrame(step);
+      if (!boidsFrameDue(now, last)) return;
+      // The speeds and the steering are per 60 Hz frame; at 30 fps the swarm
+      // covers the same ground and turns as fast per second by taking k
+      // frames' worth at once. A resume after a pause (last = 0) takes one
+      // ordinary step, not the length of the pause.
+      const k = last === 0 ? 1 : Math.min((now - last) / (1000 / 60), 3);
+      last = now;
       for (const b of boids) {
         let cx = 0, cy = 0, ax = 0, ay = 0, sx = 0, sy = 0, n = 0;
         for (const o of boids) {
@@ -96,52 +151,71 @@ export function useBoids(ref: React.RefObject<HTMLCanvasElement | null>) {
           }
         }
         if (n) {
-          b.vx += (cx / n - b.x) * 0.0004 + (ax / n - b.vx) * 0.045 + sx * 0.004;
-          b.vy += (cy / n - b.y) * 0.0004 + (ay / n - b.vy) * 0.045 + sy * 0.004;
+          b.vx += ((cx / n - b.x) * 0.0004 + (ax / n - b.vx) * 0.045 + sx * 0.004) * k;
+          b.vy += ((cy / n - b.y) * 0.0004 + (ay / n - b.vy) * 0.045 + sy * 0.004) * k;
         }
         const mdx = b.x - mouse.x;
         const mdy = b.y - mouse.y;
         const md2 = mdx * mdx + mdy * mdy;
         if (md2 < (150 * DPR) ** 2) {
           const md = Math.sqrt(md2) || 1;
-          b.vx += (mdx / md) * 0.5 * DPR;
-          b.vy += (mdy / md) * 0.5 * DPR;
+          b.vx += (mdx / md) * 0.5 * DPR * k;
+          b.vy += (mdy / md) * 0.5 * DPR * k;
         }
         const sp = Math.hypot(b.vx, b.vy) || 1;
         const max = 1.7 * DPR;
         const min = 0.6 * DPR;
         if (sp > max) { b.vx = (b.vx / sp) * max; b.vy = (b.vy / sp) * max; }
         else if (sp < min) { b.vx = (b.vx / sp) * min; b.vy = (b.vy / sp) * min; }
-        b.x += b.vx;
-        b.y += b.vy;
+        b.x += b.vx * k;
+        b.y += b.vy * k;
         const m = 24 * DPR;
         if (b.x < -m) b.x = w + m;
         if (b.x > w + m) b.x = -m;
         if (b.y < -m) b.y = h + m;
         if (b.y > h + m) b.y = -m;
-
-        const ang = Math.atan2(b.vy, b.vx);
-        const s = 3.4 * DPR;
-        ctx.save();
-        ctx.translate(b.x, b.y);
-        ctx.rotate(ang);
-        ctx.strokeStyle = "rgba(178, 95, 65, 0.30)";
-        ctx.lineWidth = 1.1 * DPR;
-        ctx.lineCap = "round";
-        ctx.beginPath();
-        ctx.moveTo(-s, -s * 0.65);
-        ctx.lineTo(0, 0);
-        ctx.lineTo(-s, s * 0.65);
-        ctx.stroke();
-        ctx.restore();
       }
-      raf = requestAnimationFrame(step);
+      draw();
     };
-    raf = requestAnimationFrame(step);
+
+    // Start or stop the loop after anything that changes whether it may run.
+    const sync = () => {
+      const run =
+        !document.hidden && document.hasFocus() && !typingInCard(document.activeElement);
+      if (run && !raf) {
+        last = 0;
+        raf = requestAnimationFrame(step);
+      } else if (!run && raf) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+      }
+    };
+    // Every resize clears the bitmap, paused or running, and resize events
+    // fire before the frame callbacks: a running step may not be due, so the
+    // redraw cannot be left to it.
+    const onResize = () => {
+      resize();
+      draw();
+    };
+    window.addEventListener("resize", onResize);
+    document.addEventListener("visibilitychange", sync);
+    document.addEventListener("focusin", sync);
+    document.addEventListener("focusout", sync);
+    window.addEventListener("focus", sync);
+    window.addEventListener("blur", sync);
+    // A page that opens without focus or in the background still shows the
+    // swarm until the loop may run.
+    draw();
+    sync();
 
     return () => {
       cancelAnimationFrame(raf);
-      window.removeEventListener("resize", resize);
+      document.removeEventListener("visibilitychange", sync);
+      document.removeEventListener("focusin", sync);
+      document.removeEventListener("focusout", sync);
+      window.removeEventListener("focus", sync);
+      window.removeEventListener("blur", sync);
+      window.removeEventListener("resize", onResize);
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerleave", onLeave);
     };

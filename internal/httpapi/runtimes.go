@@ -506,6 +506,160 @@ func (s *Server) handlePutCredentialPlan(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, saved)
 }
 
+// handleGetCostBasis returns how the credential's real money is formed, as
+// a history, newest first (migration 0151). Empty: the behaviour from before
+// 0151 (a seat priced by its plan, an API key by its bill).
+func (s *Server) handleGetCostBasis(w http.ResponseWriter, r *http.Request) {
+	p := principalFrom(r)
+	id, ord, ok := credentialPlace(w, r)
+	if !ok {
+		return
+	}
+	bases, err := s.Runtimes.CostBases(r.Context(), p.OrgID, id, ord)
+	if err != nil {
+		s.costErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, bases)
+}
+
+// costErr answers a cost basis or usage charge request that failed for none
+// of the reasons its handler names: "not found" as everywhere, anything else
+// a flat 500 — never the database's wording, which names columns and types
+// and says nothing about what to do.
+func (s *Server) costErr(w http.ResponseWriter, err error) {
+	if errors.Is(err, runtimes.ErrNotFound) {
+		mapErr(w, err)
+		return
+	}
+	if s.Log != nil {
+		s.Log.Error("cost basis or usage charge request failed", "err", err)
+	}
+	writeErr(w, http.StatusInternalServerError, "the cost basis or usage charges could not be read or stored")
+}
+
+// handlePutCostBasis appends a basis (seat | usage | seat_and_usage) valid
+// from valid_from (now when absent). Like the plan it never overwrites: a
+// change is a new row from a later moment, and one at the same moment is a
+// conflict.
+func (s *Server) handlePutCostBasis(w http.ResponseWriter, r *http.Request) {
+	p := principalFrom(r)
+	id, ord, ok := credentialPlace(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		Basis     string     `json:"basis"`
+		ValidFrom *time.Time `json:"valid_from"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	var from time.Time
+	if in.ValidFrom != nil {
+		from = *in.ValidFrom
+	}
+	saved, err := s.Runtimes.SetCostBasis(r.Context(), p.OrgID, id, ord, in.Basis, from)
+	var invalid runtimes.InvalidCost
+	switch {
+	case errors.As(err, &invalid):
+		writeErr(w, http.StatusBadRequest, invalid.Error())
+		return
+	case errors.Is(err, runtimes.ErrBasisExists):
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	case err != nil:
+		s.costErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, saved)
+}
+
+// handleListUsageCharges returns the credential's usage charges, latest span
+// first, each in its own currency.
+func (s *Server) handleListUsageCharges(w http.ResponseWriter, r *http.Request) {
+	p := principalFrom(r)
+	id, ord, ok := credentialPlace(w, r)
+	if !ok {
+		return
+	}
+	charges, err := s.Runtimes.UsageCharges(r.Context(), p.OrgID, id, ord)
+	if err != nil {
+		s.costErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, charges)
+}
+
+// handleAddUsageCharge stores money charged for the credential's usage over
+// [from, to): amount and currency as charged, a rate to USD only with its
+// date (fx_to_usd, fx_date), and a note.
+func (s *Server) handleAddUsageCharge(w http.ResponseWriter, r *http.Request) {
+	p := principalFrom(r)
+	id, ord, ok := credentialPlace(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		Amount   *float64   `json:"amount"`
+		Currency string     `json:"currency"`
+		From     *time.Time `json:"from"`
+		To       *time.Time `json:"to"`
+		FXToUSD  *float64   `json:"fx_to_usd"`
+		FXDate   *string    `json:"fx_date"`
+		Note     string     `json:"note"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if in.Amount == nil {
+		writeErr(w, http.StatusBadRequest, "amount is required")
+		return
+	}
+	if in.From == nil || in.To == nil {
+		writeErr(w, http.StatusBadRequest, "from and to are required")
+		return
+	}
+	saved, err := s.Runtimes.AddUsageCharge(r.Context(), p.OrgID, id, ord, runtimes.UsageCharge{
+		Amount: *in.Amount, Currency: in.Currency, From: *in.From, To: *in.To,
+		FXToUSD: in.FXToUSD, FXDate: in.FXDate, Note: in.Note,
+	})
+	var invalid runtimes.InvalidCost
+	switch {
+	case errors.As(err, &invalid):
+		writeErr(w, http.StatusBadRequest, invalid.Error())
+		return
+	case errors.Is(err, runtimes.ErrChargeOverlaps):
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	case err != nil:
+		s.costErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, saved)
+}
+
+// handleDeleteUsageCharge removes one of the credential's usage charges.
+func (s *Server) handleDeleteUsageCharge(w http.ResponseWriter, r *http.Request) {
+	p := principalFrom(r)
+	id, ord, ok := credentialPlace(w, r)
+	if !ok {
+		return
+	}
+	charge, err := uuid.Parse(r.PathValue("charge"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid charge id")
+		return
+	}
+	if err := s.Runtimes.DeleteUsageCharge(r.Context(), p.OrgID, id, ord, charge); err != nil {
+		s.costErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // handleSetBillingKey says which Anthropic API key the credential's value is
 // ({api_key_id, workspace_id}; the workspace is optional and narrows the bill
 // to it). The mapping follows the value, from when it was written until it is

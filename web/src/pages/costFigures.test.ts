@@ -257,7 +257,7 @@ describe("per credential", () => {
     expect(figs.map((f) => f.id)).toEqual([`${KEY}#1`, `${SEAT}#0`, ""]);
     const [key, seat, none] = figs;
     expect(seat.recomputed).toBe(45); // the booking without lines (7) is not measured
-    expect(seat.unattributed).toBe(7);
+    expect(seat.bookedWithoutLine).toBe(7);
     expect(seat.real?.points).toBe(4);
     expect(seat.multiple?.kind).toBe("estimate");
     expect(key.recomputed).toBe(100);
@@ -427,6 +427,31 @@ describe("per credential", () => {
     expect(billedFetchBucket(90, "week")).toBe("day");
     expect(billedFetchBucket(30, "month")).toBe("day");
     expect(billedFetchBucket(1, "day")).toBe("hour");
+  });
+
+  // Review of 3bb3dcea: at 10 h on 7 or 30 days the bill was asked for per
+  // day, so each day landed whole in one epoch-aligned 10-hour bucket and
+  // the others showed $0. A 10-hour chart takes hours at any range.
+  it("asks for the bill per hour at 10 h and spreads a day over its 10-hour buckets", () => {
+    expect(billedFetchBucket(30, "10hour")).toBe("hour");
+    expect(billedFetchBucket(7, "10hour")).toBe("hour");
+    expect(billedFetchBucket(30, "10min")).toBe("hour");
+    expect(billedFetchBucket(30, "day")).toBe("day");
+    const hour = (h: string, usd: string) => ({ bucket: `2026-11-17T${h}:00:00Z`, api_key_id: "apikey_01", workspace_id: "",
+      model: "claude-opus-5-5", secret_key: KEY, secret_slot: 1, billed_usd: usd, billed_list_usd: usd, complete: true });
+    const points = [hour("03", "1"), hour("09", "2"), hour("15", "4"), hour("21", "8")];
+    const tens = billedPerPeriod(report({ bucket: "hour", points,
+      window: { start: "2026-11-17T00:00:00Z", end: "2026-11-18T00:00:00Z", compared_until: "2026-11-18T00:00:00Z", width: "1h", totals: [] } }),
+    KEY, 1, "10hour");
+    const want = new Map<number, number>();
+    for (const p of points) {
+      const k = bucketStart(Date.parse(p.bucket), "10hour");
+      want.set(k, (want.get(k) ?? 0) + Number(p.billed_usd));
+    }
+    expect(tens).toEqual(want);
+    expect(tens.size).toBeGreaterThan(1);
+    expect([...tens.values()].reduce((a, b) => a + b, 0)).toBe(15);
+    for (const k of tens.keys()) expect(k % 36_000_000).toBe(0);
   });
 
   it("gives no dollar figure where no bill could be read, and says why", () => {

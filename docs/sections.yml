@@ -72,6 +72,7 @@ sections:
       - runner
       - workplaces
       - api-keys
+      - usage-push
       - telemetry
 
   - id: companion

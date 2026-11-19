@@ -368,6 +368,86 @@ func TestMigration0145MeterReadings(t *testing.T) {
 	plans("after up again")
 }
 
+// Migration 0151 adds the cost bases and the usage charges. Their rows are
+// entered by hand and found nowhere else, so the down keeps both tables as
+// 0145 kept credential_plans: up → down → up loses none of them, and the up
+// file run twice adds nothing.
+func TestMigration0151CostBasisKeepsRows(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := s.pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("%v\n%s", err, sql)
+		}
+	}
+	version := func() int {
+		var v int
+		if err := s.pool.QueryRow(ctx, `SELECT max(version) FROM schema_migrations`).Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	if version() < 151 {
+		t.Fatalf("schema at %d, want 0151 applied", version())
+	}
+	at := time.Date(2026, 11, 18, 8, 0, 0, 0, time.UTC)
+	exec(`INSERT INTO credential_cost_bases (org_id, secret_key, secret_slot, basis, valid_from, valid_to)
+		VALUES ($1, 'claude_code_oauth_token', 0, 'seat', $2, $3), ($1, 'claude_code_oauth_token', 0, 'usage', $3, NULL)`,
+		s.orgID, at.Add(-48*time.Hour), at)
+	exec(`INSERT INTO credential_usage_charges (id, org_id, secret_key, secret_slot, amount, currency, period_from, period_to,
+		fx_to_usd, fx_date, note) VALUES ($1, $2, 'claude_code_oauth_token', 0, 180, 'EUR', $3, $4, 1.08, '2026-11-18', 'measured')`,
+		uuid.New(), s.orgID, at, at.Add(24*time.Hour))
+	snapshot := func() string {
+		t.Helper()
+		var bases, charges string
+		if err := s.pool.QueryRow(ctx, `SELECT COALESCE(string_agg(concat_ws('|', secret_key, secret_slot, basis, valid_from, valid_to),
+			E'\n' ORDER BY valid_from), '') FROM credential_cost_bases WHERE org_id = $1`, s.orgID).Scan(&bases); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.pool.QueryRow(ctx, `SELECT COALESCE(string_agg(concat_ws('|', id, amount, currency, period_from, period_to,
+			fx_to_usd, fx_date, note), E'\n' ORDER BY period_from), '') FROM credential_usage_charges WHERE org_id = $1`, s.orgID).Scan(&charges); err != nil {
+			t.Fatal(err)
+		}
+		return bases + "\n--\n" + charges
+	}
+	before := snapshot()
+	if !strings.Contains(before, "usage") || !strings.Contains(before, "measured") {
+		t.Fatalf("the rows were not stored: %s", before)
+	}
+
+	for version() > 150 {
+		if err := db.MigrateDown(ctx, s.pool, migrations.FS); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if after := snapshot(); after != before {
+		t.Errorf("after the down migration:\n%s", diffLines(before, after))
+	}
+	if _, err := db.MigrateUp(ctx, s.pool, migrations.FS); err != nil {
+		t.Fatal(err)
+	}
+	if version() < 151 {
+		t.Fatalf("up again stopped at %d", version())
+	}
+	if after := snapshot(); after != before {
+		t.Errorf("after up again:\n%s", diffLines(before, after))
+	}
+	up, err := migrations.FS.ReadFile("0151_credential_cost_basis.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec(string(up))
+	if after := snapshot(); after != before {
+		t.Errorf("0151 run twice:\n%s", diffLines(before, after))
+	}
+	// The checks are still there: a rate without its date is refused.
+	if _, err := s.pool.Exec(ctx, `INSERT INTO credential_usage_charges (id, org_id, secret_key, amount, currency, period_from, period_to,
+		fx_to_usd) VALUES ($1, $2, 'k', 1, 'EUR', $3, $4, 1.1)`, uuid.New(), s.orgID, at, at.Add(time.Hour)); err == nil {
+		t.Error("a rate without its date was stored after up → down → up")
+	}
+}
+
 // diffLines names the lines that differ between two snapshots.
 func diffLines(want, got string) string {
 	w, g := strings.Split(want, "\n"), strings.Split(got, "\n")

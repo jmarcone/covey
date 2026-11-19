@@ -134,6 +134,14 @@ picture { display: contents; }
   --accent-solid: light-dark(#1a1d22, #2c3038);
   --on-accent: #fff;
 
+  /* Creating something is the one action with a colour of its own: blue, which
+     no state of an agent wears (clay is the working badge, red the stop, green
+     done, the grey-blue of waiting is too quiet to be an action). White on it
+     measures 6.0:1 light and 4.65:1 dark; as a fill it stands 4.8:1 to 6.0:1
+     against the three grounds in light and 3.5:1 to 4.2:1 in dark. The numbers
+     are pinned in theme.test.ts. */
+  --action-create: light-dark(#2a5bd0, #3f6fdc);
+
   /* Schatten tragen auf Papier; im Dunkeln ist der Grund schon schwarz. Sie
      bleiben, werden aber tiefer und leiser — die Trennung übernimmt dort die
      hellere Kante (--border). */
@@ -170,6 +178,37 @@ picture { display: contents; }
   --cost-recomputed: light-dark(#2f6db5, #6fa8e8);
   --cost-real: light-dark(#2e7d3e, #4fbf6a);
   --cost-billed: light-dark(#0e7a7e, #3fc1c0);
+  /* The meter's real cost split between covey and the sessions outside it
+     (#120). Every part is at least 3:1 against the card (#ffffff /
+     #1f1f22), and each has a pattern of its own, so no two neighbours are
+     told apart by hue alone: covey's green hatched at 45°; the outside
+     sessions' indigo (16.0:1 light, 8.9:1 dark) hatched at 135°, or per
+     source at an angle of each source's own; the unattributed amber (5.0:1,
+     3.2:1) cross-hatched, and 2.8:1 lighter than the indigo in the dark
+     scheme; the part not split a grey (3.9:1, 5.2:1) drawn plain with a
+     dashed edge. The tooltip names every part. */
+  --cost-outside: light-dark(#1e1b4b, #c4b5fd);
+  --cost-unsplit: light-dark(#7b8189, #8b929a);
+  --cost-unsplit-edge: light-dark(#3f444a, #d1d5db);
+  /* Unattributed movement (F3b): neither covey's agents nor the reported
+     sessions explain it, booked to nobody. */
+  --cost-unattributed: light-dark(#b45309, #c2410c);
+  /* The inks of the outside sources' stripes (#120 review, M5): each source
+     changes angle and ink from its neighbour, over a tint of its bar's own
+     colour. Indigo, fuchsia and near-black / near-white, at least 3:1
+     against the card (light 7.9 / 6.3 / 17.7, dark 5.5 / 9.3 / 15.8) and
+     apart from each other by hue and lightness. */
+  --cost-source-1: light-dark(#4338ca, #818cf8);
+  --cost-source-2: light-dark(#a21caf, #f0abfc);
+  --cost-source-3: light-dark(#18181b, #fafafa);
+  /* The outside sessions per origin (#120, their detailed view): indigo from
+     dark to light, main session to workflows (each at least 3:1 against the
+     card: light 11.4 / 6.3 / 3.3, dark 11.8 / 6.0 / 3.5); a grey where the
+     uploader did not say (4.8:1, 6.5:1). */
+  --cost-origin-main: light-dark(#312e81, #ddd6fe);
+  --cost-origin-subagent: light-dark(#4f46e5, #a78bfa);
+  --cost-origin-workflow: light-dark(#7c83f0, #6d5df0);
+  --cost-origin-unknown: light-dark(#6b7280, #9ca3af);
   /* Cost and token types: one blue family, light (cheap, plentiful) to dark
      (dear). Only for types — never for a source or an agent. */
   --cost-type-input: light-dark(#7d9fd0, #9dbbe8);
@@ -1183,14 +1222,17 @@ kbd {
   pointer-events: none;
 }
 
-/* Aurora: drei weiche, warme Farbschleier, die sehr langsam treiben.
-   Blur + Screen-Blend halten es papieren statt neonig. */
+/* Aurora: three soft, warm veils of colour that drift very slowly.
+   The softness is in the gradients (they fade over the whole circle), not in
+   a blur: a filter on the parent of moving children re-blurs the whole
+   viewport every frame, which took the sign-in page to single-digit fps on a
+   large screen (#134). The children are rasterised once; only their
+   transform moves, on the compositor. */
 .aurora {
   position: fixed;
   inset: 0;
   overflow: hidden;
   pointer-events: none;
-  filter: blur(70px) saturate(1.05);
 }
 .aurora i {
   position: absolute;
@@ -1202,7 +1244,7 @@ kbd {
   height: 46vw;
   left: -10vw;
   top: -14vw;
-  background: radial-gradient(circle, var(--tint), transparent 70%);
+  background: radial-gradient(circle closest-side, var(--tint), transparent);
   animation: aurora-a 26s ease-in-out infinite alternate;
 }
 .aurora i:nth-child(2) {
@@ -1210,7 +1252,7 @@ kbd {
   height: 38vw;
   right: -8vw;
   top: 4vw;
-  background: radial-gradient(circle, var(--tint-weak), transparent 70%);
+  background: radial-gradient(circle closest-side, var(--tint-weak), transparent);
   animation: aurora-b 32s ease-in-out infinite alternate;
 }
 .aurora i:nth-child(3) {
@@ -1218,7 +1260,7 @@ kbd {
   height: 34vw;
   left: 28vw;
   bottom: -18vw;
-  background: radial-gradient(circle, var(--tint-weak), transparent 70%);
+  background: radial-gradient(circle closest-side, var(--tint-weak), transparent);
   animation: aurora-c 38s ease-in-out infinite alternate;
 }
 @keyframes aurora-a {
@@ -1258,14 +1300,17 @@ kbd {
   to { opacity: 1; transform: none; }
 }
 
-/* Umlaufender Gradient-Rand für Karten (Hover) und Login (Fokus). */
+/* Orbiting gradient border for cards (hover). The sign-in card has none:
+   animating a registered custom property cannot run on the compositor, so
+   it repainted the border on the main thread every frame, from the moment a
+   field took the focus (#134). Its focus ring is static, see .login-card. */
 @property --ga {
   syntax: "<angle>";
   initial-value: 0deg;
   inherits: false;
 }
 .landing-feature, .login-card { position: relative; }
-.landing-feature::before, .login-card::before {
+.landing-feature::before {
   content: "";
   position: absolute;
   inset: -1px;
@@ -1286,8 +1331,7 @@ kbd {
   animation: ga-spin 3s linear infinite paused;
   pointer-events: none;
 }
-.landing-feature:hover::before,
-.login-card:focus-within::before {
+.landing-feature:hover::before {
   opacity: 1;
   animation-play-state: running;
 }
@@ -1469,8 +1513,8 @@ kbd {
     flex-direction: column;
     gap: 8px;
   }
-  /* Aurora dezenter halten, sonst dominiert sie den kleinen Screen. */
-  .aurora { filter: blur(52px); opacity: 0.8; }
+  /* Keep the aurora subtler, or it dominates the small screen. */
+  .aurora { opacity: 0.8; }
 }
 @media (min-width: 901px) and (max-width: 1100px) {
   .landing-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1484,6 +1528,15 @@ kbd {
   border-radius: 18px;
   padding: 28px 26px;
   box-shadow:
+    0 24px 48px -24px var(--shadow-md),
+    0 2px 6px var(--shadow-xs);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+/* A static ring, as the fields have: border colour plus a spread shadow. */
+.login-card:focus-within {
+  border-color: var(--clay);
+  box-shadow:
+    0 0 0 3px var(--tint-weak),
     0 24px 48px -24px var(--shadow-md),
     0 2px 6px var(--shadow-xs);
 }
@@ -1525,7 +1578,8 @@ kbd {
 @media (prefers-reduced-motion: reduce) {
   .login-mark, .login-rise, .login-flock svg, .landing-band img,
   .aurora i, .login-wordmark, .rot-word,
-  .landing-feature::before, .login-card::before { animation: none !important; }
+  .landing-feature::before { animation: none !important; }
+  .login-card { transition: none; }
   .login-mark, .login-rise { opacity: 1; transform: none; }
   .js .reveal { opacity: 1; transform: none; transition: none; }
   .landing-feature, .landing-feature-icon { transition: none; }
