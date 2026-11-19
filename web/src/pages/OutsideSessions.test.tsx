@@ -453,6 +453,35 @@ describe("the detailed view of the operator sessions", () => {
     expect(line).toContain(t("costs.outside.unpricedReadings", counted(1)));
   });
 
+  it("words readings under the usage basis as billed by usage: no dent, not unpriced, never $0 (0151)", async () => {
+    // The seat went to the usage basis at 19:00: the 19:30 reading is out of
+    // the dent and of the split, its points the usage charges'.
+    const usage = { ...step("2026-11-17T19:30:00Z", "usage", null, { points: 4 }) };
+    expect(stepKind(usage)).toBe("usage");
+    const { container } = serveView(view({ steps: [step("2026-11-17T18:30:00Z", "split", 6, { outside: 4.2 }), usage],
+      seatSums: { step_count: 2, split_steps: 1, usage_steps: 1, usage_points: 4 } }));
+    await screen.findByRole("table", { name: t("costs.outside.byModel") });
+    const line = container.querySelector(`[data-seat='${SEAT}#0']`)!.textContent!;
+    expect(line).toContain(t("costs.outside.usageReadings", counted(1)));
+    expect(line).not.toContain(t("costs.outside.unpricedReadings", counted(1)));
+    expect(line).toContain(fmtUSD(6));
+    const row = container.querySelector("[data-meter-row='usage']")!;
+    expect(row.getAttribute("data-meter-period")).toBe(String(Date.parse(H19)));
+    expect(row.textContent).toContain(t("costs.outside.usageReadings", counted(1)));
+    expect(row.textContent).not.toContain(fmtUSD(0));
+  });
+
+  it("shows a seat on usage all through with no real cost of its own: –, never $0 (0151)", async () => {
+    const usage = step("2026-11-17T19:30:00Z", "usage", null, { points: 4 });
+    const { container: all } = serveView(view({ steps: [usage],
+      seatSums: { real_usd: 0, external_real_usd: 0, covey_real_usd: 0, share: null, step_count: 1, split_steps: 0, usage_steps: 1, usage_points: 4 } }));
+    await screen.findByRole("table", { name: t("costs.outside.byModel") });
+    const only = all.querySelector(`[data-seat='${SEAT}#0']`)!.textContent!;
+    expect(only).toContain(t("costs.outside.seatNoShare", { real: "–" }));
+    expect(only).not.toContain(fmtUSD(0));
+    expect(only).not.toContain(t("costs.dent.rateUnknownSeat", { seat: `${SEAT} #0` }));
+  });
+
   it("says no reading for a source whose seat has none in a period, though another seat has one", async () => {
     const lab = VIEW_CELLS.slice(2, 3).map((c) => ({ ...c, source: "operator: lab" }));
     const { container } = serveView(view({ extra: { source: "operator: lab", key: OTHER_SEAT }, cells: [...VIEW_CELLS, ...lab],

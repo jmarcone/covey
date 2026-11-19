@@ -943,8 +943,9 @@ export type ExternalMeterStep = {
   split: boolean;
   /** outside_unpriced: the outside calls of the span all had no price, so their share is unknown. idle: a reported reading that did not move, with no call on either side.
    *  moved_without_reported_call: the meter moved with no call in the span (mostly its lag after use): split with its chunk,
-   *  or unattributed whole in a chunk with no list at all. */
-  reason?: "not_reported" | "moved_without_reported_call" | "outside_unpriced" | "unpriced" | "idle";
+   *  or unattributed whole in a chunk with no list at all. usage: read while the seat's cost basis was usage (0151): out of
+   *  the dent and of every chunk, moved or not; its points are the usage charges', neither priced nor unpriced. */
+  reason?: "not_reported" | "moved_without_reported_call" | "outside_unpriced" | "unpriced" | "idle" | "usage";
   external_real_usd: number | null;
   covey_real_usd: number | null;
   /** The step's unattributed part (F3c): its chunk's points beyond the rate, spread by points, or all of it in a chunk with no list.
@@ -972,6 +973,8 @@ export type ExternalMeterHour = {
   split_steps: number;
   unattributed_steps: number;
   unpriced_points: number;
+  /** Points of its steps under the usage basis (0151): not in real_usd, not unpriced. Absent without one. */
+  usage_points?: number;
 };
 
 /** The split's sums: per seat, and over every seat. */
@@ -1023,6 +1026,10 @@ export type ExternalMeterSums = {
   /** Steps that moved at no plan price: out of the dent, never $0. */
   unpriced_steps: number;
   unpriced_points: number;
+  /** Steps read while the seat's cost basis was usage (0151), idle ones included, and their points: out of the dent
+   *  and of the split, not unpriced (their money is the usage charges). Absent without such a basis. */
+  usage_steps?: number;
+  usage_points?: number;
   /** Linked outside calls with neither a list price nor reported_usd: not in the split. */
   unpriced_calls: number;
   unpriced_tokens: number;

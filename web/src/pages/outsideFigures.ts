@@ -1,6 +1,6 @@
 import type { TFunction } from "i18next";
 import type { CostCells, ExternalMeterStep, ExternalMeterTotal, ExternalModelCell, ExternalSource, ExternalUsage } from "../api";
-import { bucketStart, recomputedOf } from "./costFigures";
+import { bucketStart, meterPriced, recomputedOf } from "./costFigures";
 
 /* The figures of the Claude Code sessions outside covey (#120, part 3/3):
  * the overview's series and tile, and the detailed view's splits. Pure
@@ -90,13 +90,15 @@ export const emptyUnattributed = (): Unattributed => ({ usd: 0, beyond: 0, noCal
  *  reason); unattributed (not split, and the server books its movement to
  *  nobody: a chunk with no list; never $0 for either part); not split for
  *  one of UNSPLIT_REASONS (its real cost, never $0 for either part);
- *  unpriced (no plan price: out of the dent); idle (it did not move: nothing
+ *  unpriced (no plan price: out of the dent); usage (read while the seat was
+ *  billed by usage, 0151: out of the dent, its money the usage charges); idle (it did not move: nothing
  *  to split — an unsplit step of 0 points, too, as the server's
  *  unsplit_steps does not count it either). */
-export type StepKind = "split" | "unattributed" | UnsplitReason | "unpriced" | "idle";
+export type StepKind = "split" | "unattributed" | UnsplitReason | "unpriced" | "usage" | "idle";
 export function stepKind(s: ExternalMeterStep): StepKind {
   if (s.split) return "split";
   if (s.reason === "unpriced") return "unpriced";
+  if (s.reason === "usage") return "usage";
   if ((s.unattributed_real_usd ?? 0) > 0) return "unattributed";
   if (s.reason === "idle" || s.reason === "moved_without_reported_call" || s.points === 0) return "idle";
   if (s.reason === "outside_unpriced") return s.reason;
@@ -126,23 +128,24 @@ export function linkedSeats(sources: readonly ExternalSource[], source: string |
 }
 
 /** The unsplit readings of the given seats, per reason, their unattributed
- *  part, and the readings at no plan price. */
+ *  part, the readings at no plan price and those under the usage basis. */
 export function unsplitOf(steps: readonly ExternalMeterStep[], seats: Set<string>):
-  { unsplit: Unsplit; unattributed: Unattributed; unpricedSteps: number } {
+  { unsplit: Unsplit; unattributed: Unattributed; unpricedSteps: number; usageSteps: number } {
   const unsplit = emptyUnsplit();
   const unattributed = emptyUnattributed();
-  let unpricedSteps = 0;
+  let unpricedSteps = 0, usageSteps = 0;
   for (const s of steps) {
     if (!seats.has(seatOf(s))) continue;
     const k = stepKind(s);
     addUnattributed(unattributed, s, k);
     if (k === "unpriced") unpricedSteps += 1;
+    else if (k === "usage") usageSteps += 1;
     else if (k === "not_reported" || k === "outside_unpriced") {
       unsplit[k].steps += 1;
       unsplit[k].usd += s.unsplit_real_usd;
     }
   }
-  return { unsplit, unattributed, unpricedSteps };
+  return { unsplit, unattributed, unpricedSteps, usageSteps };
 }
 
 /** The "Outside covey" tile over the range. */
@@ -167,6 +170,8 @@ export type OutsideTotals = {
   noCall: Unattributed["noCall"];
   /** The readings of those seats at no plan price: out of the real cost. */
   unpricedSteps: number;
+  /** Their readings while billed by usage (0151): no dent, the usage charges are the money. */
+  usageSteps: number;
   /** Outside list price after the meter's last reading: no reading yet, no share. */
   unmeteredList: number;
 };
@@ -186,7 +191,7 @@ export type MeterShare = {
 export function meterShare(creds: readonly ExternalMeterTotal[]): MeterShare {
   const sum = (f: (c: ExternalMeterTotal) => number) => creds.reduce((a, c) => a + f(c), 0);
   const real = sum((c) => c.external_real_usd);
-  const dent = sum((c) => (c.step_count > c.unpriced_steps ? c.real_usd : 0));
+  const dent = sum((c) => (meterPriced(c) ? c.real_usd : 0));
   const splitSteps = sum((c) => c.split_steps);
   const unattributed = sum((c) => c.unattributed_real_usd ?? 0);
   const noCall = sum((c) => c.unattributed_no_call_real_usd ?? 0);
@@ -210,7 +215,7 @@ export function outsideTotals(ext: ExternalUsage | null | undefined): OutsideTot
   // covey's (L_out = 0) and says nothing about the outside sessions.
   const seats = linkedSeats(ext.sources);
   const creds = ext.meter.credentials.filter((c) => seats.has(seatOf(c)));
-  const { unsplit, unattributed, unpricedSteps } = unsplitOf(ext.meter.steps, seats);
+  const { unsplit, unattributed, unpricedSteps, usageSteps } = unsplitOf(ext.meter.steps, seats);
   return {
     list, calls, reported, unpricedTokens,
     reportedCalls: ext.cells.reduce((a, c) => a + c.reported_calls, 0),
@@ -219,6 +224,7 @@ export function outsideTotals(ext: ExternalUsage | null | undefined): OutsideTot
     unsplit,
     noCall: unattributed.noCall,
     unpricedSteps,
+    usageSteps,
     unmeteredList: creds.reduce((a, c) => a + c.unmetered_list_usd, 0),
   };
 }
@@ -340,6 +346,8 @@ export type MeterPeriod = {
   unattributed: Unattributed;
   unsplit: Unsplit;
   unpricedSteps: number;
+  /** Steps under the usage basis (0151): out of the dent, the usage charges are their money. */
+  usageSteps: number;
   idleSteps: number;
   noReading: boolean;
 };
@@ -355,7 +363,7 @@ export function meterPerPeriod(ext: { meter: ExternalUsage["meter"]; sources: Ex
     let e = by.get(p);
     if (!e) {
       e = { period: p, real: null, splitSteps: 0, outside: 0, covey: 0, unattributed: emptyUnattributed(), unsplit: emptyUnsplit(),
-        unpricedSteps: 0, idleSteps: 0, noReading: false };
+        unpricedSteps: 0, usageSteps: 0, idleSteps: 0, noReading: false };
       by.set(p, e);
     }
     return e;
@@ -378,6 +386,8 @@ export function meterPerPeriod(ext: { meter: ExternalUsage["meter"]; sources: Ex
       e.covey += s.covey_real_usd ?? 0;
     } else if (k === "unpriced") {
       e.unpricedSteps += 1;
+    } else if (k === "usage") {
+      e.usageSteps += 1;
     } else if (k === "idle") {
       e.idleSteps += 1;
     } else if (k !== "unattributed") {

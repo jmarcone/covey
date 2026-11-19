@@ -159,6 +159,9 @@ export function SubscriptionDentRow({ d, filtered }: { d: SubscriptionDent; filt
       {d.unpricedPoints > 0 && (
         <p className="muted text-xs mb-1" data-dent-unpriced>{t("costs.dent.unpricedPoints", { n: pts(d.unpricedPoints) })}</p>
       )}
+      {d.usagePoints > 0 && (
+        <p className="muted text-xs mb-1" data-dent-usage>{t("costs.dent.usagePoints", { n: pts(d.usagePoints) })}</p>
+      )}
       {d.unpricedCalls > 0 && (
         <p className="muted text-xs mb-1" data-dent-unpriced-calls>{t("costs.dent.unpricedCalls", { n: count(d.unpricedCalls) })}</p>
       )}
@@ -172,7 +175,9 @@ export function SubscriptionDentRow({ d, filtered }: { d: SubscriptionDent; filt
           {d.seats.map((s) => (
             <li key={seat(s)} data-dent-seat={seat(s)}>
               {s.real == null
-                ? (s.steps === 0 ? t("costs.dent.seatNoReading", { seat: seat(s) }) : t("costs.dent.seatNoPrice", { seat: seat(s), n: pts(s.unpricedPoints) }))
+                ? (s.steps === 0 ? t("costs.dent.seatNoReading", { seat: seat(s) })
+                  : s.usagePoints > 0 && s.unpricedPoints === 0 ? t("costs.dent.seatUsage", { seat: seat(s), n: pts(s.usagePoints) })
+                  : t("costs.dent.seatNoPrice", { seat: seat(s), n: pts(s.unpricedPoints) }))
                 : t("costs.dent.seatLine", { seat: seat(s), real: fmtUSD(s.real), pts: pts(s.points),
                   covey: fmtUSD(s.covey), outside: fmtUSD(s.outside), unattributed: fmtUSD(s.unattributed), unsplit: fmtUSD(s.unsplit) })}
               {s.sources.length === 0 && t("costs.dent.seatNoSource")}
