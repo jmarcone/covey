@@ -111,10 +111,10 @@ describe("weekly meter line", () => {
     // from the last value of the old week to the first of the new one, falling
     expect(drop[0].getAttribute("points")).toBe(`${xy(b)} ${xy(c)}`);
     expect(Number(c.getAttribute("cy"))).toBeGreaterThan(Number(b.getAttribute("cy")));
-    // solid, where the line itself is dashed: a fall is not a gap
-    expect(drop[0].getAttribute("stroke-dasharray")).toBeNull();
-    const dashed = [...ps[0].querySelectorAll("polyline[stroke-dasharray]")].map((l) => l.getAttribute("points"));
-    expect(dashed).toEqual([`${xy(a)} ${xy(b)}`, `${xy(c)} ${xy(d)}`]);
+    // the line is solid throughout; the fall is told apart by data-meter-drop, not by its dash
+    expect(ps[0].querySelector("polyline[stroke-dasharray]")).toBeNull();
+    const lines = [...ps[0].querySelectorAll("polyline[stroke='var(--cost-meter)']:not([data-meter-drop])")].map((l) => l.getAttribute("points"));
+    expect(lines).toEqual([`${xy(a)} ${xy(b)}`, `${xy(c)} ${xy(d)}`]);
     // the tooltip says where the new week begins
     fireEvent.focusIn(container.querySelector<SVGGElement>("g[data-period]")!);
     expect(screen.getByRole("tooltip").querySelector("[data-meter-readings]")!.textContent).toContain("18:40 UTC 2 % (new week)");
@@ -147,11 +147,11 @@ describe("weekly meter line", () => {
     expect(container.querySelector("svg text[fill='var(--cost-real)']")).toBeNull();
     const period = container.querySelector<SVGGElement>("g[data-period]")!;
     expect(period.getAttribute("aria-label")).not.toMatch(/→/);
-    expect(period.getAttribute("aria-label")).toContain("Weekly meter (%): 18:05 UTC 9 % · 18:50 UTC 10 %");
+    expect(period.getAttribute("aria-label")).toContain("Weekly meter: 18:05 UTC 9 % · 18:50 UTC 10 %");
     fireEvent.focusIn(period);
     const tip = screen.getByRole("tooltip");
     expect(tip.textContent).not.toMatch(/→/);
-    expect(tip.querySelector("[data-meter-readings]")!.textContent).toBe("Weekly meter (%): 18:05 UTC 9 % · 18:50 UTC 10 %");
+    expect(tip.querySelector("[data-meter-readings]")!.textContent).toBe("Weekly meter: 18:05 UTC 9 % · 18:50 UTC 10 %");
   });
 
   // 6
@@ -219,21 +219,21 @@ describe("weekly meter line: legibility", () => {
     const periods = Array.from({ length: n }, (_, i) => iso(18, i));
     return renderWithProviders(
       <BarChart title="t" periods={periods} groups={periods.map(() => bar(1))} fmtPeriod={(p) => p} fmtValue={fmtUSD} fmtAxis={fmtUSDAxis}
-        meter={{ points, label: "m", fmtAt: (s) => s }} />,
+        meter={{ points, label: "m", name: "n", fmtAt: (s) => s }} />,
     );
   };
 
-  it("casts a solid casing in the card's colour under each part's dashed line", () => {
+  it("casts a casing in the card's colour under each part's solid line", () => {
     const { container } = draw([point(10, 0, 0.2, "a"), point(20, 0, 0.8, "b"), point(30, 1, 0.5, "c")]);
     const lines = [...container.querySelectorAll("g[data-meter-part] polyline")];
     expect(lines).toHaveLength(2);
-    const [casing, dashed] = lines;
+    const [casing, line] = lines;
     expect(casing.getAttribute("stroke")).toBe("var(--surface-2)");
     expect(casing.getAttribute("stroke-width")).toBe("3.75");
-    expect(casing.getAttribute("stroke-dasharray")).toBeNull();
-    expect(casing.getAttribute("points")).toBe(dashed.getAttribute("points"));
-    expect(dashed.getAttribute("stroke")).toBe("var(--cost-meter)");
-    expect(dashed.getAttribute("stroke-dasharray")).not.toBeNull();
+    expect(casing.getAttribute("points")).toBe(line.getAttribute("points"));
+    expect(line.getAttribute("stroke")).toBe("var(--cost-meter)");
+    // dashed is the edge of a bar's "not split" part: the meter's line and its legend swatch are never dashed
+    for (const l of container.querySelectorAll("g[data-meter-part] polyline, [data-meter-legend] svg line")) expect(l.getAttribute("stroke-dasharray")).toBeNull();
   });
 
   it("draws the value labels after the line, so it never strikes one out", () => {
@@ -280,9 +280,9 @@ describe("weekly meter line: position", () => {
     const point = (pct: number, slot: number, frac: number, part = 0) => ({ at: iso(18, 19, 30), pct, slot, frac, part, reset: false });
     const { container } = renderWithProviders(
       <BarChart title="t" periods={periods} groups={periods.map(() => bar(1))} fmtPeriod={(p) => p} fmtValue={fmtUSD} fmtAxis={fmtUSDAxis}
-        meter={{ points: [point(0, 1, 0.5), point(100, 1, 0.5, 1), point(50, 0, 0.25, 2)], label: "m", fmtAt: (s) => s }} />,
+        meter={{ points: [point(0, 1, 0.5), point(100, 1, 0.5, 1), point(50, 0, 0.25, 2)], label: "m", name: "n", fmtAt: (s) => s }} />,
     );
-    const svg = container.querySelector("svg")!;
+    const svg = container.querySelector("svg[role=group]")!;
     const height = Number(svg.getAttribute("height"));
     // padT 18, padB 34, padL 64, two periods of a 120 px slot
     const padT = 18, plotH = height - 18 - 34, padL = 64, slot = 120;
@@ -332,5 +332,84 @@ describe("meterPoints", () => {
     expect(meterPoints(weeks, cov(segs), [iso(16, 0), iso(23, 0)], "week").map((p) => p.part)).toEqual([0, 0, 0]);
     expect(meterPoints(weeks, cov(segs), [iso(16, 0), iso(22, 0), iso(23, 0)], "day").map((p) => p.part)).toEqual([0, 1, 1]);
     expect(meterPoints(weeks, cov(segs), [iso(16, 0), iso(23, 0)], "day").map((p) => p.part)).toEqual([0, 1]);
+  });
+});
+
+// Design review round 2 of #170.
+describe("weekly meter: names, the $ axis and the tooltip in the scrolled view", () => {
+  beforeEach(() => { void i18n.changeLanguage("en"); });
+  const bar = (v: number): Bar[] => [{ key: "x", label: "x", color: "red", segs: [{ key: "x", label: "x", color: "red", value: v }] }];
+  const periods = Array.from({ length: 10 }, (_, i) => iso(18, i));
+  const draw = (asTable = false) => renderWithProviders(
+    <BarChart title="t" periods={periods} asTable={asTable} groups={periods.map(() => bar(1))} fmtPeriod={(p) => p} fmtValue={fmtUSD} fmtAxis={fmtUSDAxis}
+      meter={{ points: [{ at: "a", pct: 10, slot: 0, frac: 0.5, part: 0, reset: false }, { at: "b", pct: 20, slot: 9, frac: 0.5, part: 0, reset: false }],
+        label: "m (%)", name: "m", fmtAt: (x) => x }} />,
+  );
+
+  it("names the meter without a unit in the details, the label and the table; the unit stays on the axis", () => {
+    const { container } = draw();
+    expect(container.querySelector("[data-meter-title]")!.textContent).toBe("m (%)");
+    const period = container.querySelector<SVGGElement>("g[data-period]")!;
+    expect(period.getAttribute("aria-label")).toContain(" · m: a 10 %");
+    fireEvent.focusIn(period);
+    expect(screen.getByRole("tooltip").querySelector("[data-meter-readings]")!.textContent).toBe("m: a 10 %");
+    const table = draw(true).container;
+    expect(table.querySelector("[data-meter-col]")!.textContent).toBe("m");
+  });
+
+  it("draws the $ tick labels in a sticky strip of their own, first in the scroller's row, and not in the plot", () => {
+    const { container } = draw();
+    const strip = container.querySelector<SVGSVGElement>("svg[data-cost-axis]")!;
+    expect(strip.style.position).toBe("sticky");
+    expect(strip.style.left).toBe("0px");
+    expect(strip.style.background).toBe("var(--surface-2)");
+    expect(strip.style.borderRight).toBe("1px solid var(--border)");
+    expect(strip.getAttribute("width")).toBe("64");
+    expect(strip.parentElement!.firstElementChild).toBe(strip);
+    const labels = [...strip.querySelectorAll("[data-cost-tick]")].map((t) => t.textContent);
+    expect(labels.length).toBeGreaterThan(1);
+    expect(labels[0]).toBe(fmtUSDAxis(0, 1));
+    // the plot keeps its gridlines and has no tick label of its own
+    const plot = container.querySelector<SVGSVGElement>("svg[role='group']")!;
+    expect(plot.querySelectorAll("[data-cost-tick]")).toHaveLength(0);
+    expect([...plot.querySelectorAll(":scope > g > text")]).toEqual([]);
+    expect(plot.querySelectorAll("line").length).toBeGreaterThanOrEqual(labels.length);
+  });
+
+  /** The scroller of a chart: a window `view` wide, scrolled `left`. jsdom measures nothing. */
+  const scrolled = (container: HTMLElement, view: number, left: number) => {
+    const sc = container.firstElementChild as HTMLElement;
+    Object.defineProperty(sc, "clientWidth", { configurable: true, value: view });
+    Object.defineProperty(sc, "scrollLeft", { configurable: true, writable: true, value: left });
+    return sc;
+  };
+  const tipOf = (container: HTMLElement, i: number) => {
+    fireEvent.focusIn(container.querySelectorAll<SVGGElement>("g[data-period]")[i]);
+    const tip = screen.getByRole("tooltip");
+    return { left: parseFloat(tip.style.left), width: parseFloat(tip.style.width) };
+  };
+
+  it("keeps the tooltip inside the visible window, less the meter's axis, on the newest and the oldest period", () => {
+    // 390 px phone, 60 px meter axis: 330 px visible. The chart is 980 px wide.
+    const { container } = draw();
+    scrolled(container, 390, 500);
+    let t = tipOf(container, 9);
+    expect(t.left).toBeGreaterThanOrEqual(504);
+    expect(t.left + t.width).toBeLessThanOrEqual(500 + 330 - 4);
+    expect(t.width).toBe(250);
+    fireEvent.blur(container.querySelectorAll<SVGGElement>("g[data-period]")[9]);
+    scrolled(container, 390, 0);
+    t = tipOf(container, 0);
+    expect(t.left).toBeGreaterThanOrEqual(4);
+    expect(t.left + t.width).toBeLessThanOrEqual(330 - 4);
+  });
+
+  it("narrows the tooltip to a window narrower than it", () => {
+    const { container } = draw();
+    scrolled(container, 200, 300);
+    const t = tipOf(container, 5);
+    expect(t.width).toBe(140 - 8);
+    expect(t.left).toBeGreaterThanOrEqual(304);
+    expect(t.left + t.width).toBeLessThanOrEqual(300 + 140 - 4);
   });
 });

@@ -282,6 +282,7 @@
       "chartDesc": "时段合计：{{totals}}。",
       "meterCol": "计量",
       "meterLine": "每周计量（%）",
+      "meterName": "每周计量",
       "meterReset": "新的一周",
       "nothing": "无",
       "agentsTitle": "按代理（按重新计算的标价排序）",

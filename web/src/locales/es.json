@@ -282,6 +282,7 @@
       "chartDesc": "Totales del periodo: {{totals}}.",
       "meterCol": "Medidor",
       "meterLine": "Medidor semanal (%)",
+      "meterName": "Medidor semanal",
       "meterReset": "semana nueva",
       "nothing": "nada",
       "agentsTitle": "Por agente, según el precio de lista recalculado",

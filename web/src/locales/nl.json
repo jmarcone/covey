@@ -282,6 +282,7 @@
       "chartDesc": "Totalen over de periode: {{totals}}.",
       "meterCol": "Meter",
       "meterLine": "Weekmeter (%)",
+      "meterName": "Weekmeter",
       "meterReset": "nieuwe week",
       "nothing": "niets",
       "agentsTitle": "Per agent, op herberekende lijstprijs",

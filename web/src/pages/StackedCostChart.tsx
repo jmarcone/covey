@@ -491,9 +491,10 @@ function readingTexts(ps: readonly MeterPoint[], fmtAt: (iso: string) => string,
 /** The meter's line: one part per run of readings with none missing between
  *  them, a dot at each reading. Drawn only for what was measured, so a gap
  *  stays a gap. A weekly reset between two readings that exist is a fall from
- *  the old week's last value to the new week's first: a solid stroke where the
- *  line is dashed, so it reads as a drop and not as a break. Not for the
- *  pointer or a screen reader: the period's details say the same. */
+ *  the old week's last value to the new week's first, a stroke that goes down.
+ *  The line is solid: dashed is the edge of a bar's "not split" part, and a gap is
+ *  empty space, not a different stroke. Not for the pointer or a screen reader:
+ *  the period's details say the same. */
 function MeterLine({ points, x, y }: { points: readonly MeterPoint[]; x: (p: MeterPoint) => number; y: (p: MeterPoint) => number }) {
   const parts: MeterPoint[][] = [];
   for (const p of points) (parts[p.part] ??= []).push(p);
@@ -521,9 +522,9 @@ function MeterLine({ points, x, y }: { points: readonly MeterPoint[]; x: (p: Met
                 })()}
                 {w.length > 1 && (
                   <>
-                    {/* A solid casing in the card's colour under the dashes: the line keeps its contrast where it crosses a bar. */}
+                    {/* A casing in the card's colour under the line: the line keeps its contrast where it crosses a bar. */}
                     <polyline points={pts(w)} fill="none" stroke="var(--surface-2)" strokeWidth={3.75} strokeLinejoin="round" data-meter-casing />
-                    <polyline points={pts(w)} fill="none" stroke="var(--cost-meter)" strokeWidth={1.75} strokeDasharray={METER_DASH} strokeLinejoin="round" />
+                    <polyline points={pts(w)} fill="none" stroke="var(--cost-meter)" strokeWidth={1.75} strokeLinejoin="round" />
                   </>
                 )}
               </Fragment>
@@ -547,14 +548,11 @@ function MeterLine({ points, x, y }: { points: readonly MeterPoint[]; x: (p: Met
 /** More readings than this and the line's dots are drawn small and without a halo, except each part's ends. */
 const DENSE_POINTS = 48;
 
-/** The line's dash: no bar outline is dashed. */
-const METER_DASH = "6 3";
-
-/** The legend entry of the meter's line: its colour, dash and dot. */
+/** The legend entry of the meter's line: its colour and dot. */
 export function MeterSwatch() {
   return (
     <svg aria-hidden width={22} height={10} style={{ flexShrink: 0 }}>
-      <line x1={0} x2={22} y1={5} y2={5} stroke="var(--cost-meter)" strokeWidth={1.75} strokeDasharray={METER_DASH} />
+      <line x1={0} x2={22} y1={5} y2={5} stroke="var(--cost-meter)" strokeWidth={1.75} />
       <circle cx={11} cy={5} r={2.25} fill="var(--cost-meter)" />
     </svg>
   );
@@ -579,8 +577,10 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
   /** The notes' column header in the table and their label in the details. */
   notesLabel?: string;
   /** The weekly meter as a line over the periods, on a right-hand axis from 0
-   *  to 100 %: the readings, the axis's title and how a reading's time reads. */
-  meter?: { points: readonly MeterPoint[]; label: string; fmtAt: (iso: string) => string };
+   *  to 100 %: the readings, the axis's title ("Weekly meter (%)"), the meter's
+   *  name for the details and the table ("Weekly meter") and how a reading's
+   *  time reads. */
+  meter?: { points: readonly MeterPoint[]; label: string; name: string; fmtAt: (iso: string) => string };
   showX?: boolean;
   asTable?: boolean;
   /** Wider bars, for a value printed above each: the label spills over less. */
@@ -593,6 +593,8 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
   const [pinned, setPinned] = useState<number | null>(null);
   const open = pinned ?? hover;
   const scroller = useRef<HTMLDivElement>(null);
+  // A scroll re-places an open tooltip (see tipLeft); the number itself is read from the scroller.
+  const [, setScrolled] = useState(0);
 
   // The series and their totals: the <desc>, the table's last row.
   const series = useMemo(() => {
@@ -653,7 +655,7 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
               {extra.map((e) => <th key={e.key} scope="col" data-extra-col style={{ padding: "2px 8px 4px 0", fontWeight: 500 }}>{e.label}</th>)}
               {checks && <th scope="col" data-check-col style={{ padding: "2px 8px 4px 0", fontWeight: 500, textAlign: "left" }}>{t("costs.lead.colCheck")}</th>}
               {notes && <th scope="col" style={{ padding: "2px 8px 4px 0", fontWeight: 500, textAlign: "left" }}>{notesHead}</th>}
-              {meter && <th scope="col" data-meter-col style={{ padding: "2px 0 4px 0", fontWeight: 500, textAlign: "left" }}>{meter.label}</th>}
+              {meter && <th scope="col" data-meter-col style={{ padding: "2px 0 4px 0", fontWeight: 500, textAlign: "left" }}>{meter.name}</th>}
             </tr>
           </thead>
           <tbody>
@@ -704,9 +706,16 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
   // hour it is "11/17, 04:00 PM UTC", wider than a slot.
   const labelW = Math.max(84, Math.max(0, ...periods.map((p) => fmtPeriod(p).length)) * 6 + 12);
   const every = Math.max(1, Math.ceil(labelW / slot));
-  const tipW = 250;
+  // The tooltip stays inside the part of the chart in view: the scroller's
+  // window less the meter's axis, which sticks to its right edge. The details
+  // are the only place a reading's value is printed.
+  const el = scroller.current;
+  const v0 = el?.scrollLeft ?? 0;
+  const vw = (el?.clientWidth || W) - (meter ? METER_AXIS_W : 0);
+  const tipW = Math.min(250, vw - 8);
   const hx = open != null ? padL + open * slot + slot / 2 : 0;
-  const tipLeft = open == null ? 0 : Math.max(0, Math.min(hx + 16 + tipW > W ? hx - 16 - tipW : hx + 16, W - tipW));
+  const preferred = hx + 16 + tipW > v0 + vw ? hx - 16 - tipW : hx + 16;
+  const tipLeft = open == null ? 0 : Math.max(v0 + 4, Math.min(preferred, v0 + vw - tipW - 4));
   const tipId = `${uid}-tip`;
   // A hatched bar is hatched in each segment's own colour: the real cost
   // split between covey and the sessions outside it is one bar of three.
@@ -725,9 +734,19 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
   const close = () => { setPinned(null); setHover(null); };
 
   return (
-    <div ref={scroller} style={{ position: "relative", overflowX: "auto" }}>
+    <div ref={scroller} style={{ position: "relative", overflowX: "auto" }}
+      onScroll={open != null ? (e) => setScrolled(e.currentTarget.scrollLeft) : undefined}>
       <div style={{ display: "flex", width: "max-content" }}>
-      <svg width={W} height={height} style={{ display: "block", maxWidth: "none" }} role="group"
+      {/* The $ axis in a strip of its own that sticks to the left edge, like the meter's on the right: a chart opened
+          scrolled to its end still shows both scales. It stops above the x labels, so the first one is not covered. The plot
+          starts under it (its x = 0 is the strip's left). */}
+      <svg width={padL} height={height - padB + 6} aria-hidden data-cost-axis
+        style={{ display: "block", flex: "none", position: "sticky", left: 0, zIndex: 1, background: "var(--surface-2)", borderRight: "1px solid var(--border)" }}>
+        {ax.ticks.map((v, i) => (
+          <text key={i} x={padL - 8} y={y(v) + 4} textAnchor="end" fontSize={11} fill="var(--text-muted)" data-cost-tick>{fmtAxis(v, ax.step)}</text>
+        ))}
+      </svg>
+      <svg width={W} height={height} style={{ display: "block", maxWidth: "none", marginLeft: -padL }} role="group"
         aria-labelledby={`${uid}-title`} aria-describedby={`${uid}-desc`}>
         <title id={`${uid}-title`}>{title}</title>
         <desc id={`${uid}-desc`} data-desc>{desc}</desc>
@@ -740,14 +759,13 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
         {ax.ticks.map((v, i) => (
           <g key={i} aria-hidden>
             <line x1={padL} x2={W - padR} y1={y(v)} y2={y(v)} stroke="var(--border)" strokeDasharray={i === 0 ? undefined : "2 4"} />
-            <text x={padL - 8} y={y(v) + 4} textAnchor="end" fontSize={11} fill="var(--text-muted)">{fmtAxis(v, ax.step)}</text>
           </g>
         ))}
         {groups.map((bars, i) => {
           const groupW = bars.length * barW + (bars.length - 1) * gap;
           const x0 = padL + i * slot + slot / 2 - groupW / 2;
           const isOpen = open === i;
-          const label = `${fmtPeriod(periods[i] ?? "")}: ${summary(i) || t("costs.fig.nothing")}${notes?.get(i) ? ` · ${notes.get(i)}` : ""}${readingsLabel(i) ? ` · ${meter!.label}: ${readingsLabel(i)}` : ""}`;
+          const label = `${fmtPeriod(periods[i] ?? "")}: ${summary(i) || t("costs.fig.nothing")}${notes?.get(i) ? ` · ${notes.get(i)}` : ""}${readingsLabel(i) ? ` · ${meter!.name}: ${readingsLabel(i)}` : ""}`;
           return (
             <g key={periods.at(i)} tabIndex={0} role="button" aria-label={label} aria-pressed={pinned === i}
               aria-describedby={isOpen ? tipId : undefined} data-period={periods[i]}
@@ -867,9 +885,9 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
           ))}
           {notes?.get(open) && <div className="muted" style={{ fontSize: 11 }}>{notesHead}: {notes.get(open)}</div>}
           {meter && readingsAt.get(open) && (
-            // The weekly meter's readings of the period, each with its time: "Weekly meter (%): 18:05 UTC 9 % · 18:50 UTC 10 %".
+            // The weekly meter's readings of the period, each with its time: "Weekly meter: 18:05 UTC 9 % · 18:50 UTC 10 %".
             <div className="muted" data-meter-readings style={{ fontSize: 11 }}>
-              {meter.label}: {readingTexts(readingsAt.get(open)!, meter.fmtAt, t).map((x, k) => (
+              {meter.name}: {readingTexts(readingsAt.get(open)!, meter.fmtAt, t).map((x, k) => (
                 <Fragment key={k}>{k > 0 ? " · " : ""}<span style={{ whiteSpace: "nowrap" }}>{x ?? "…"}</span></Fragment>
               ))}
             </div>
@@ -1422,6 +1440,7 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
   const meterProp = useMemo(() => meterLine && {
     points: meterLine,
     label: t("costs.fig.meterLine"),
+    name: t("costs.fig.meterName"),
     fmtAt: (iso: string) => (bucket === "week" || bucket === "month" ? fmtBucket(iso, "hour") : fmtClockUTC(iso)),
   }, [meterLine, bucket, t]);
 

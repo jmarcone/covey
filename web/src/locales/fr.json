@@ -282,6 +282,7 @@
       "chartDesc": "Totaux sur la période : {{totals}}.",
       "meterCol": "Compteur",
       "meterLine": "Compteur hebdomadaire (%)",
+      "meterName": "Compteur hebdomadaire",
       "meterReset": "nouvelle semaine",
       "nothing": "rien",
       "agentsTitle": "Par agent, selon le prix catalogue recalculé",

@@ -282,6 +282,7 @@
       "chartDesc": "Summen über den Zeitraum: {{totals}}.",
       "meterCol": "Zähler",
       "meterLine": "Wochenzähler (%)",
+      "meterName": "Wochenzähler",
       "meterReset": "neue Woche",
       "nothing": "nichts",
       "agentsTitle": "Je Agent, nach nachgerechnetem Listenpreis",
