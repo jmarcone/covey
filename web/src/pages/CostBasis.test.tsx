@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Costs from "./Costs";
-import type { CostCells, CredentialBasis, MeterStep, WindowCharge } from "../api";
+import type { CostCells, CredentialBasis, ExternalMeterSums, ExternalMeterTotal, ExternalUsage, MeterStep, WindowCharge } from "../api";
 import i18n from "../i18n";
 import { mockFetch, renderWithProviders, testPrincipal, useGerman } from "../test/render";
 import { basisAt, credentialFigures, perCredentialTotals, usageFigure, type CredentialFigures } from "./costFigures";
@@ -95,6 +95,32 @@ function usageThenSeat(charges: WindowCharge[]): CostCells {
     subscription: [step("2026-11-17T18:00:00Z", 4, { usd: null, usage_points: 4 }), step("2026-11-17T19:00:00Z", 2)],
     meter: [{ ...cells().meter![0], points: 6, last_percent: 15 }],
   });
+}
+
+/** The meter split (#120) once a source names a meter: the seat's readings
+ *  all under the usage basis (0151), so none is split and none waits for a
+ *  report. sources: the outside sources linked to the seat. */
+function usageMeter(sources: string[]): ExternalUsage {
+  const zero: ExternalMeterSums = {
+    real_usd: 0, external_real_usd: 0, covey_real_usd: 0, unsplit_real_usd: 0, share: null,
+    unattributed_real_usd: 0, unattributed_points: 0, unattributed_steps: 0,
+    unattributed_no_call_real_usd: 0, unattributed_no_call_points: 0, incomplete_chunks: 0,
+    split_external_list_usd: 0, split_covey_list_usd: 0, points: 0, split_points: 0, split_external_points: 0,
+    split_covey_points: 0, split_runs: 0, split_slack_points: 0, split_slack_usd: 0, split_external_slack_points: 0,
+    split_external_slack_usd: 0, split_covey_slack_points: 0, split_covey_slack_usd: 0, point_rate: 0, point_rate_mixed: false,
+    step_count: 2, split_steps: 0, unsplit_steps: 0, outside_unpriced_steps: 0, outside_unpriced_real_usd: 0,
+    unpriced_steps: 0, unpriced_points: 0, unpriced_calls: 0, unpriced_tokens: 0, unmetered_list_usd: 0,
+    usage_steps: 2, usage_points: 4,
+  };
+  const seat: ExternalMeterTotal = { ...zero, secret_key: SEAT, secret_slot: 0, meter_source: "usage_cmd", sources,
+    hours_with_reading: 2, points_per_list_usd: null, plan_rates: [], agents: [] };
+  return {
+    sources: [{ source: "operator: home", meter_credential: sources.length > 0 ? { secret_key: SEAT, secret_slot: 0 } : { secret_key: "other", secret_slot: 0 },
+      calls: 0, list_usd: null, reported_usd: null, unpriced_tokens: 0, unpriced_calls: 0, unpriced_models: [],
+      first_at: null, last_at: null, hosts: [] }],
+    cells: [],
+    meter: { ...zero, steps: [], hours: [], credentials: [seat] },
+  } as ExternalUsage;
 }
 
 const NO_BILL = { bucket: "hour", points: [], sync: { configured: false, last_attempt_at: null, last_success_at: null,
@@ -243,6 +269,21 @@ describe("Kostengrundlage — Zahlen", () => {
     expect(f.noMultiple).toBe("spanList");
   });
 
+  it("wartet bei einem Sitz, der den ganzen Zeitraum nach Nutzung abgerechnet wird, auf keinen Bericht, und nennt das Vielfache „mindestens“, wo Sitzungen außerhalb mitlaufen (Review m3)", () => {
+    const usd = charge({ currency: "USD", amount: 8, counted_amount: 8, counted_usd: 8, from: "2026-11-17T00:00:00Z", to: "2026-11-18T00:00:00Z" });
+    const shared = { ...onUsage([usd]), external: usageMeter(["operator: home"]) };
+    let f = fig(shared);
+    expect(f.meterOnUsage).toBe(true);
+    expect(f.outsideUnreported).toBe(false);
+    expect(f.usageMultiple).toBeCloseTo(2, 9);
+    expect(f.usageShared).toEqual(["operator: home"]);
+    // No source names the seat: nothing shares it, the multiple stands as it is.
+    f = fig({ ...onUsage([usd]), external: usageMeter([]) });
+    expect(f.meterOnUsage).toBe(true);
+    expect(f.outsideUnreported).toBe(false);
+    expect(f.usageShared).toBeNull();
+  });
+
   it("schreibt für einen nicht gezählten Betrag mit Kurs „–“, nie 0,00 $", () => {
     useGerman();
     const line = chargeLine(i18n.t.bind(i18n), charge({ fx_to_usd: 1.08, fx_date: "2026-11-18", counted_amount: 0, counted_usd: 0 }));
@@ -270,6 +311,17 @@ describe("Kostengrundlage — Seite", () => {
     expect(b.querySelector("[data-no-multiple]")!.textContent).toBe(
       "Kein Vielfaches: Ohne Kurs mit Datum haben die Nutzungsbeträge keinen USD-Betrag.");
     expect(b.querySelector(`[data-charge="c1"]`)!.textContent).toMatch(/180,00 EUR · .* · voll gezählt · kein USD-Betrag: kein Kurs angegeben/);
+  });
+
+  it("zeigt bei einem geteilten Sitz auf Nutzung das Vielfache als Untergrenze mit Grund und keinen Hinweis auf fehlende Berichte (Review m3)", async () => {
+    const usd = charge({ currency: "USD", amount: 8, counted_amount: 8, counted_usd: 8, from: "2026-11-17T00:00:00Z", to: "2026-11-18T00:00:00Z" });
+    const { container } = serve({ ...onUsage([usd]), external: usageMeter(["operator: home"]) });
+    const b = await block(container);
+    const mult = within(b).getByRole("group", { name: "Listen-$ je echtem $" });
+    expect(mult.textContent).toMatch(/≥ 2,0×/);
+    expect(mult.textContent).toContain(i18n.t("costs.basis.usageMultipleShared", { sources: "operator: home" }));
+    expect(b.querySelector("[data-meter-on-usage]")!.textContent).toBe(i18n.t("costs.split.usageSeat"));
+    expect(b.querySelector("[data-outside-unreported]")).toBeNull();
   });
 
   it("zeigt mit Kurs und Datum den USD-Betrag und das Vielfache über die Zeiträume der Beträge", async () => {

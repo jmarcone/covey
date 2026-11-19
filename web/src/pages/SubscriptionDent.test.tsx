@@ -535,6 +535,40 @@ describe("Costs — the headline", () => {
     expect(row.querySelector('[data-dent-seat="seat_c #0"]')!.textContent).toMatch(/^seat_c #0: – \(30 points without a plan price\) · no outside source/);
   });
 
+  it("with every seat on usage alone: no dent, every part –, never ≈ $0.00 or \"had not reported\" (0151, review M1)", async () => {
+    const alone = seat([], { sources: ["operator: home"], step_count: 3, usage_steps: 3, usage_points: 6, point_rate: 0 });
+    const d = subscriptionDent(external([{ steps: [], total: alone }]))!;
+    expect(d.real).toBeNull();
+    expect(d.noMultiple).toBe("usage");
+    serve(cells(external([{ steps: [], total: alone }])));
+    const row = await screen.findByRole("region", { name: "The whole dent in the subscription" });
+    const total = row.querySelector("[data-dent=\"total\"]")!;
+    expect(total.textContent).toContain(i18n.t("costs.dent.noPricedReadingUsage"));
+    expect(total.textContent).not.toContain(i18n.t("costs.dent.noPricedReading"));
+    for (const k of ["covey", "outside", "unattributed"]) {
+      const p = row.querySelector(`[data-dent="${k}"]`)!;
+      expect(p.textContent).toContain("–");
+      expect(p.textContent).toContain(i18n.t("costs.dent.noPart"));
+    }
+    expect(row.textContent).not.toContain(fmtUSD(0));
+    expect(row.textContent).not.toMatch(/had not reported/);
+    expect(row.querySelector("[data-dent-no-multiple]")!.textContent).toBe(i18n.t("costs.dent.noMultipleUsage"));
+    expect(row.querySelector("[data-dent-usage]")).not.toBeNull();
+  });
+
+  it("names a seat on usage that never moved as billed by usage, and both counts for a mixed seat (0151, review m2)", async () => {
+    const still = seat([], { secret_key: "seat_u", sources: [], step_count: 2, usage_steps: 2, usage_points: 0, point_rate: 0 });
+    const mixed = seat([], { secret_key: "seat_m", sources: [], step_count: 3, usage_steps: 1, usage_points: 3,
+      unpriced_steps: 2, unpriced_points: 5, point_rate: 0 });
+    serve(cells(external([{ steps: STEPS, total: SEAT_A() }, { steps: [], total: still }, { steps: [], total: mixed }])));
+    const row = await screen.findByRole("region", { name: "The whole dent in the subscription" });
+    expect(row.querySelector('[data-dent-seat="seat_u #0"]')!.textContent)
+      .toMatch(/^seat_u #0: – \(billed by usage: 0\.0 points, their money is the usage charges\)/);
+    expect(row.querySelector('[data-dent-seat="seat_u #0"]')!.textContent).not.toMatch(/without a plan price/);
+    expect(row.querySelector('[data-dent-seat="seat_m #0"]')!.textContent)
+      .toMatch(/^seat_m #0: – \(5\.0 points without a plan price, 3\.0 billed by usage\)/);
+  });
+
   it("says how many points were billed by usage, and shows a seat on usage as – with why, not as unpriced (0151)", async () => {
     const onUsage = seat([], { secret_key: "seat_u", sources: [], step_count: 2, usage_steps: 2, usage_points: 7, point_rate: 0 });
     serve(cells(external([{ steps: STEPS, total: SEAT_A() }, { steps: [], total: onUsage }])));

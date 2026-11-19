@@ -638,6 +638,13 @@ export type CredentialFigures = {
   /** Covey's recomputed list $ over the spans the counted charges cover,
    *  where the multiple is offered; null otherwise. */
   usageList: number | null;
+  /** The outside sources that run on this credential while its usage
+   *  multiple is offered: the charges pay for their use too, so the
+   *  multiple is a lower bound ("at least"); null when none does. */
+  usageShared: string[] | null;
+  /** Every reading of its meter in the window was under the usage basis
+   *  (0151): nothing of it is split, and nothing waits for a report. */
+  meterOnUsage: boolean;
   /** The meter's real cost split between covey and the sessions outside it
    *  (#120), per chunk of readings by the chunk's list-price share; null
    *  until a source names a meter, and for a seat with no split step. */
@@ -895,7 +902,10 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
     // meter may still carry use outside covey nothing reports, and says so.
     const split = seatSplit && (seatSplit.split_steps > 0 || (seatSplit.unattributed_steps ?? 0) > 0) ? seatSplit : null;
     const unlinked = seatSplit != null && seatSplit.sources.length === 0;
-    const outsideUnreported = seatSplit != null && split == null;
+    // A seat billed by usage over the whole window has no meter split to
+    // wait for: its readings are the charges' (0151), not unreported ones.
+    const meterOnUsage = seatSplit != null && seatSplit.step_count > 0 && seatSplit.step_count === (seatSplit.usage_steps ?? 0);
+    const outsideUnreported = seatSplit != null && split == null && !meterOnUsage;
     let cov: MeterCoverage | null = null, real: RealFigure | null = null, aligned: number | null = null;
     let mult: Multiple | null = null;
     let noMultiple: CredentialFigures["noMultiple"] = null;
@@ -927,6 +937,7 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
     const usage = a.key == null ? null : usageFigure(data, a.key, a.slot!, windowEnd);
     const basis = usage?.basis ?? null;
     let usageMultiple: number | null = null, usageList: number | null = null;
+    let usageShared: string[] | null = null;
     const agentsView = sel.size > 0 || input.layout === "agents";
     if (usage && kind !== "api_key" && !agentsView && usage.regimes.some((r) => r !== "seat")) {
       mult = null;
@@ -949,6 +960,10 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
         if (!(usage.usd > 0)) noMultiple = "noCharge";
         else if (!(list >= 0.01)) noMultiple = "spanList";
         else { usageList = list; usageMultiple = list / usage.usd; noMultiple = null; }
+        // Operator sessions outside covey run on this credential too: the
+        // charges pay for their use as well, so covey's list over them is
+        // a lower bound of covey's own multiple.
+        if (usageMultiple != null && seatSplit != null && seatSplit.sources.length > 0) usageShared = [...seatSplit.sources];
       }
     }
 
@@ -1002,7 +1017,7 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
       check: reported > 0 ? ((recomputed - reported) / reported) * 100 : null,
       bookedWithoutLine, meter: cov, real, aligned, multiple: mult, noMultiple, split, unlinked, outsideUnreported, billed, bookingCheck, agents,
       listAll: all, everything,
-      basis, usage, usageMultiple, usageList,
+      basis, usage, usageMultiple, usageList, usageShared, meterOnUsage,
     });
   }
   out.sort((x, y) => (x.id === "" ? 1 : 0) - (y.id === "" ? 1 : 0) || y.recomputed - x.recomputed);
@@ -1186,8 +1201,10 @@ export type DentSeat = {
   key: string; slot: number; sources: string[];
   real: number | null; points: number; covey: number; outside: number; unattributed: number; unsplit: number;
   unpricedPoints: number; split: boolean; pointsPerList: number | null; olderPlan: number | null;
-  /** Points read while the seat was billed by usage (0151): not in the dent, not unpriced. */
+  /** Points read while the seat was billed by usage (0151): not in the dent,
+   *  not unpriced; usageSteps: those readings, idle ones included. */
   usagePoints: number;
+  usageSteps: number;
   /** The seat's readings with a span in the range. */
   steps: number;
 };
@@ -1233,8 +1250,9 @@ export type SubscriptionDent = {
   unpricedCalls: number;
   /** The outside calls' list price after the last reading: no real share yet. */
   unmeteredList: number;
-  /** Why there are no multiples: "movement" (< 3 points in the split readings), "split" (none was split). */
-  noMultiple: "movement" | "split" | null;
+  /** Why there are no multiples: "movement" (< 3 points in the split readings), "split" (none was split),
+   *  "usage" (every reading in the range was under the usage basis, 0151: there is no dent to split). */
+  noMultiple: "movement" | "split" | "usage" | null;
   /** The outside sources that name a meter. */
   sources: string[];
   seats: DentSeat[];
@@ -1358,7 +1376,11 @@ export function subscriptionDent(ext: ExternalUsage | null | undefined): Subscri
   const splitReal = m.covey_real_usd + m.external_real_usd;
   const share = (v: number) => (real > 0 ? v / real : null);
   let noMultiple: SubscriptionDent["noMultiple"] = null;
-  if (!(splitReal > 0)) noMultiple = "split";
+  // Every reading with a span under the usage basis: no dent at all, the
+  // charges are the money (0151).
+  const onUsage = !priced && (m.usage_steps ?? 0) > 0 && m.unpriced_steps === 0;
+  if (onUsage) noMultiple = "usage";
+  else if (!(splitReal > 0)) noMultiple = "split";
   // 3 points of attributed split movement; at several plan prices, the
   // dollars at the dearest point.
   else if (m.point_rate > 0 && splitReal / m.point_rate < 3 - 1e-9) noMultiple = "movement";
@@ -1398,8 +1420,8 @@ export function subscriptionDent(ext: ExternalUsage | null | undefined): Subscri
       key: c.secret_key, slot: c.secret_slot, sources: c.sources,
       real: meterPriced(c) ? c.real_usd : null, points: c.points,
       covey: c.covey_real_usd, outside: c.external_real_usd, unattributed: c.unattributed_real_usd ?? 0, unsplit: c.unsplit_real_usd,
-      unpricedPoints: c.unpriced_points, usagePoints: c.usage_points ?? 0, split: c.split_steps > 0, pointsPerList: c.points_per_list_usd ?? null,
-      olderPlan: c.points_per_list_older_plan_usd ?? null, steps: c.step_count,
+      unpricedPoints: c.unpriced_points, usagePoints: c.usage_points ?? 0, usageSteps: c.usage_steps ?? 0, split: c.split_steps > 0,
+      pointsPerList: c.points_per_list_usd ?? null, olderPlan: c.points_per_list_older_plan_usd ?? null, steps: c.step_count,
     })),
   };
 }

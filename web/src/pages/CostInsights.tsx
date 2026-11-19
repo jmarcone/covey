@@ -366,7 +366,8 @@ function MeterFigures({ f, readings }: { f: CredentialFigures; readings: UsageRe
   } else if (f.noMultiple === "outside") {
     mult = t("costs.split.noMultipleOutside");
   } else if (f.usageMultiple != null) {
-    mult = `${times(f.usageMultiple)} · ${t("costs.basis.usageMultipleSub", { list: fmtUSD(f.usageList ?? 0) })}`;
+    mult = `${f.usageShared ? "≥ " : ""}${times(f.usageMultiple)} · ${t("costs.basis.usageMultipleSub", { list: fmtUSD(f.usageList ?? 0) })}`
+      + (f.usageShared ? ` · ${t("costs.basis.usageMultipleShared", { sources: f.usageShared.join(", ") })}` : "");
   } else if (f.noMultiple === "rate") {
     mult = t("costs.basis.noMultipleRate");
   } else if (f.noMultiple === "noCharge") {
