@@ -1090,6 +1090,7 @@
       "parked": "已搁置",
       "parkedUntil": "搁置至 {{key}}",
       "reason": "原因",
+      "correlationKey": "关联键",
       "agentNotes": "智能体的备注",
       "showRecording": "这个任务的记录",
       "reschedule": "重新安排",

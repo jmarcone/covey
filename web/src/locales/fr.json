@@ -1090,6 +1090,7 @@
       "parked": "en pause",
       "parkedUntil": "en pause jusqu'à {{key}}",
       "reason": "raison",
+      "correlationKey": "clé de corrélation",
       "agentNotes": "Notes de l'agent",
       "showRecording": "Enregistrement de cette tâche",
       "reschedule": "Replanifier",
