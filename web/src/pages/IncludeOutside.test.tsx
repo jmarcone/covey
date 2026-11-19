@@ -25,6 +25,8 @@ const PP = 200 * 12 / 52 / 100;
 const H18 = "2026-11-17T18:00:00Z", H19 = "2026-11-17T19:00:00Z";
 const OP = "covey operator", SY = "projects-sylius", WORK = "operator: work", CLAIM = "AppData-Local-Temp-claim-only";
 const times = (v: number) => `${fmtNumber(v, 1)}×`;
+/** The operator's input tokens in the fixture: two cells of 1,000 plus 300,000 read from the cache. */
+const OP_IN = 2000 + 300_000;
 
 const zero: ExternalMeterSums = {
   real_usd: 0, external_real_usd: 0, covey_real_usd: 0, unsplit_real_usd: 0, share: null,
@@ -161,17 +163,18 @@ describe("the sessions outside covey on the cost page, included by default (#120
     await waitFor(() => expect(kpiParts("Reported by Claude Code")).not.toBeNull());
     // covey reported 9, the outside sessions 2.5 + 1 (sylius reported none).
     expect(kpiValue("Reported by Claude Code")).toBe(fmtUSD(9 + 3.5));
-    // Split by where they count (M6): on the meter (op, sylius) and per use (work).
+    // The outside part in three (#163, #166 F1): the covey operator, the other projects on the meter (sylius reported none),
+    // and work, billed per use, on no meter.
     expect(kpiParts("Reported by Claude Code")).toBe(
-      `covey agents ${fmtUSD(9)} · outside sessions on the meter ${fmtUSD(2.5)} (10 of 15 calls reported a cost) · per use ${fmtUSD(1)}`);
+      `covey agents (internal) ${fmtUSD(9)} · covey operator ${fmtUSD(2.5)} · other projects no reported cost · per use ${fmtUSD(1)}`);
     expect(kpiValue("Recomputed from tokens")).toBe(fmtUSD(10 + 6.5));
     expect(kpiParts("Recomputed from tokens")).toBe(
-      `covey agents ${fmtUSD(10)} · outside sessions on the meter ${fmtUSD(5)} + ${fmtCount(1000)} tokens with no list price · per use ${fmtUSD(1.5)}`);
+      `covey agents (internal) ${fmtUSD(10)} · covey operator ${fmtUSD(3)} · other projects ${fmtUSD(2)} + ${fmtCount(1000)} tokens with no list price · per use ${fmtUSD(1.5)}`);
     // Tokens: covey's 500 + 500 input, 10M cache read, 500k output; outside 4 × 1000 input, 300k cache read, 170k output.
     const coveyIn = 1000 + 10_000_000, outIn = 4000 + 300_000;
     expect(kpiValue(t("costs.inputTokens"))).toBe(fmtCount(coveyIn + outIn));
     expect(kpiParts(t("costs.inputTokens"))).toBe(
-      `covey agents ${fmtCount(coveyIn)} · outside sessions on the meter ${fmtCount(outIn - 1000)} · per use ${fmtCount(1000)}`);
+      `covey agents (internal) ${fmtCount(coveyIn)} · covey operator ${fmtCount(OP_IN)} · other projects ${fmtCount(1000)} · per use ${fmtCount(outIn - OP_IN - 1000)}`);
     expect(kpiValue(t("costs.outputTokens"))).toBe(fmtCount(500_000 + 170_000));
     expect(kpiValue(t("costs.totalTokens"))).toBe(fmtCount(coveyIn + outIn + 670_000));
     // The note names the sources with calls — never one of 0 calls.
@@ -203,12 +206,12 @@ describe("the sessions outside covey on the cost page, included by default (#120
     await waitFor(() => expect(kpiParts("Reported by Claude Code")).not.toBeNull());
   });
 
-  it("1: with agents selected they are 'plus outside sessions', never agents", async () => {
+  it("1: with agents selected they are the operator and other projects, never agents", async () => {
     serve(cells(), FULL);
     fireEvent.click(await screen.findByRole("button", { name: /^Coordinator/ }));
     await waitFor(() => expect(kpiParts("Recomputed from tokens")).toMatch(/^selected agents/));
     expect(kpiParts("Recomputed from tokens")).toBe(
-      `selected agents ${fmtUSD(10)} · plus outside sessions on the meter ${fmtUSD(5)} + ${fmtCount(1000)} tokens with no list price · per use ${fmtUSD(1.5)}`);
+      `selected agents (internal) ${fmtUSD(10)} · covey operator ${fmtUSD(3)} · other projects ${fmtUSD(2)} + ${fmtCount(1000)} tokens with no list price · per use ${fmtUSD(1.5)}`);
     expect(document.querySelector("[data-inclusion-note]")!.textContent).toMatch(/the outside sessions are not agents/);
   });
 
@@ -281,7 +284,7 @@ describe("the sessions outside covey on the cost page, included by default (#120
     const sonnet = out.find((r) => r.textContent!.includes("sonnet-5-7"))!;
     expect(sonnet.textContent).toContain("no list price");
     expect(sonnet.textContent).not.toContain(fmtUSD(0));
-    expect(document.body.textContent).toContain("covey agents");
+    expect(document.body.textContent).toContain("covey agents (internal)");
   });
 
   it("4: the seat's multiple is of everything on its meter, a lower bound, replacing “No multiple here”", async () => {
@@ -307,11 +310,11 @@ describe("the sessions outside covey on the cost page, included by default (#120
     expect(tile.textContent).toContain(`≈ ${times(12.75 / (6 * PP))}`);
     expect(tile.textContent).toContain(`at least ${times(12.75 / (8 * PP))}`);
     // Labelled apart from the tiles' pairs, which are the range's (L5).
-    expect(tile.textContent).toContain(`within the meter's readings: at token prices ${fmtUSD(12.75)} (covey agents ${fmtUSD(8.75)} · outside sessions ` +
-      `${fmtUSD(4)} (recomputed for sources without a reported cost)) over the meter's real cost ≈ ${fmtUSD(6 * PP)}`);
+    expect(tile.textContent).toContain(`within the meter's readings: at token prices ${fmtUSD(12.75)} (covey agents (internal) ${fmtUSD(8.75)} · covey operator ≈ ${fmtUSD(2.22)} · ` +
+      `other projects ≈ ${fmtUSD(1.78)} (recomputed for sources without a reported cost)) over the meter's real cost ≈ ${fmtUSD(6 * PP)}`);
     expect(tile.textContent).toContain(`at least list ÷ (real + ${fmtUSD(2 * PP)})`);
     const rec = screen.getAllByRole("group", { name: t("costs.lead.label") }).find((g) => g.closest(`[data-credential="${SEAT}#0"]`))!;
-    expect(rec.querySelector("[data-parts]")!.textContent).toMatch(/^in the range: covey agents /);
+    expect(rec.querySelector("[data-parts]")!.textContent).toMatch(/^in the range: covey agents \(internal\) /);
     expect(document.body.textContent).not.toContain("No multiple here");
     // The split multiples stay in the headline.
     expect(document.querySelector("[data-dent-multiples]")).toBeTruthy();
@@ -324,7 +327,7 @@ describe("the sessions outside covey on the cost page, included by default (#120
       if (!n) throw new Error("no note yet");
       return n;
     });
-    expect(note.textContent).toBe(`After the meter's last reading, at token prices: covey agents ${fmtUSD(0.25)} · outside sessions ${fmtUSD(0.5)}. ` +
+    expect(note.textContent).toBe(`After the meter's last reading, at token prices: covey agents (internal) ${fmtUSD(0.25)} · outside sessions ${fmtUSD(0.5)}. ` +
       "It is in the totals above; its real share is pending until the meter is read again, so it is not in the multiple.");
     // Nothing before the first reading here (the server sends no such part).
     expect(document.querySelector("[data-unmetered-note='before']")).toBeNull();
@@ -401,8 +404,8 @@ describe("the headline: all the work at token prices against the one real cost (
     serve();
     const row = await screen.findByRole("region", { name: t("costs.dent.title") });
     expect(row.querySelector("[data-head-sentence]")!.textContent).toBe(
-      `All this work on the subscription meters at token prices (as reported by Claude Code): ${fmtUSD(13.5)} = covey's agents ${fmtUSD(9)} ` +
-      `+ sessions outside covey ${fmtUSD(4.5)} (recomputed for sources without a reported cost), ` +
+      `All this work on the subscription meters at token prices (as reported by Claude Code): ${fmtUSD(13.5)} = covey agents (internal) ${fmtUSD(9)} ` +
+      `+ covey operator ${fmtUSD(2.5)} + other projects ${fmtUSD(2)} (recomputed for sources without a reported cost), ` +
       `against the real cost of the subscription for the same period: ${fmtUSD(6 * PP)} (${fmtNumber(6, 1)} points of the meter). ` +
       `→ ${fmtUSD(12.75)} ÷ ${fmtUSD(6 * PP)} ≈ ${times(12.75 / (6 * PP))}.`);
     expect(row.querySelector("[data-head-floor]")!.textContent).toBe(
@@ -536,16 +539,19 @@ describe("the #126 review of the cost page", () => {
     expect(h.outsideList).toBeNull();
     serve(data);
     const row = await screen.findByRole("region", { name: t("costs.dent.title") });
-    expect(row.querySelector("[data-head-sentence]")!.textContent).toContain(`sessions outside covey no list price (${fmtCount(1000)} tokens)`);
+    expect(row.querySelector("[data-head-sentence]")!.textContent).toContain(`covey operator no list price (${fmtCount(500)} tokens) + other projects no list price (${fmtCount(500)} tokens)`);
     const tile = await screen.findByRole("group", { name: t("costs.incl.everything") });
-    expect(tile.textContent).toContain(`outside sessions no list price (${fmtCount(1000)} tokens)`);
+    expect(tile.textContent).toContain(`other projects no list price (${fmtCount(500)} tokens)`);
     const card = await waitFor(() => {
       const c = document.querySelector(`[data-meter="${SEAT}#0"]`);
       if (!c) throw new Error("no meter card yet");
       return c;
     });
-    expect(card.textContent).toContain(`${t("costs.incl.meterListOutside")}no list price (${fmtCount(1000)} tokens)`);
-    expect(card.textContent).not.toContain(`${t("costs.incl.meterListOutside")}${fmtUSD(0)}`);
+    // The outside part in two rows (#163), each with its own tokens.
+    expect(card.textContent).toContain(`${t("costs.incl.meterListOperator")}no list price (${fmtCount(500)} tokens)`);
+    expect(card.textContent).toContain(`${t("costs.incl.meterListProjects")}no list price (${fmtCount(500)} tokens)`);
+    expect(card.textContent).not.toContain(`${t("costs.incl.meterListOperator")}${fmtUSD(0)}`);
+    expect(card.textContent).not.toContain(`${t("costs.incl.meterListProjects")}${fmtUSD(0)}`);
   });
 
   it("M4: a source with calls only before the range but a real part is listed, noted, and has a pattern of its own", async () => {
