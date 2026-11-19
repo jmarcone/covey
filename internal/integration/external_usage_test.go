@@ -522,6 +522,162 @@ func TestExternalUsageMeterShare(t *testing.T) {
 	}
 }
 
+// F3 on two seats, one of them with no linked source (#126 fixes 1 and 2).
+// Seat A is linked to "operator: home"; seat B is covey's alone. At $10 a
+// point (a $52,000 yearly plan: $1,000 a week):
+//
+//   - A, +10 points ($100) at h1:40: L_out $1.50, L_cov $1.00, so $60 to the
+//     outside sessions and $40 to covey.
+//   - B, +20 points ($200) at h1:45: no source can report on it, so L_out =
+//     0 and all $200 is covey's. Before the fix it was unsplit as "not
+//     reported", and the headline showed covey $40 beside $200 not split.
+//   - A, +1 point ($10) at h2:40: L_cov $0.10, and three outside calls of a
+//     model the list does not know, without reported_usd. L_out is unknown,
+//     not 0: unsplit (outside_unpriced), never covey's $10.
+//
+// So the dent is $310: covey $240, outside $60, not split $10.
+func TestExternalUsageMeterShareSeatWithoutSource(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	admin := login(t, s, "admin@test.local", "admin-passwort")
+	agent := s.newSupportAgent("zwei-sitze")
+	rt, err := s.runtimes.Create(ctx, s.orgID, "claude-code", "Claude", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ordA := s.seat(t, rt.ID, daemon.CredSubscription, "claude_code_oauth_token", "sitz-a", "A")
+	ordB := s.seat(t, rt.ID, daemon.CredSubscription, "claude_code_oauth_token", "sitz-b", "B")
+	h1 := time.Now().UTC().Truncate(time.Hour).Add(-4 * time.Hour)
+	h2 := h1.Add(time.Hour)
+	creds := map[int]observability.CredentialRef{}
+	for _, ord := range []int{ordA, ordB} {
+		admin.expect(http.MethodPut, fmt.Sprintf("/api/v1/runtime-instances/%s/credentials/%d/plan", rt.ID, ord),
+			map[string]any{"plan_name": "Max", "amount": 52000, "currency": "USD", "period": "year", "tax_basis": "net",
+				"valid_from": h1.Add(-48 * time.Hour)}, http.StatusOK)
+		var slot int
+		if err := s.pool.QueryRow(ctx, `SELECT secret_slot FROM runtime_credentials WHERE runtime_id=$1 AND ord=$2`,
+			rt.ID, ord).Scan(&slot); err != nil {
+			t.Fatal(err)
+		}
+		creds[ord] = observability.CredentialRef{RuntimeID: rt.ID, Ord: ord, SecretKey: "claude_code_oauth_token",
+			SecretSlot: slot, Kind: "subscription"}
+	}
+	credA, credB := creds[ordA], creds[ordB]
+	if credA.SecretSlot == credB.SecretSlot {
+		t.Fatalf("both seats on slot %d", credA.SecretSlot)
+	}
+	read := func(cred observability.CredentialRef, at time.Time, pct float64) {
+		t.Helper()
+		if err := s.obs.AddUsageReading(ctx, s.orgID, observability.MeterReading{Credential: cred,
+			Supported: true, WindowPercent: -1, WeekPercent: pct, FetchedAt: at}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read(credA, h1.Add(-30*time.Hour), 10)
+	read(credA, h1.Add(40*time.Minute), 20)
+	read(credA, h2.Add(40*time.Minute), 21)
+	read(credB, h1.Add(-30*time.Hour), 10)
+	read(credB, h1.Add(45*time.Minute), 30)
+
+	// covey's lines, Opus output at $20 per million: $1.00 on A and $2.00 on
+	// B in h1, $0.10 on A in h2.
+	f := billingFixture{s: s, ctx: ctx, agent: agent.ID, org: s.orgID}
+	f.line(t, credA, h1.Add(10*time.Minute), 50_000)
+	f.line(t, credB, h1.Add(20*time.Minute), 100_000)
+	f.line(t, credA, h2.Add(10*time.Minute), 5_000)
+
+	// Outside on A: $1.50 of Opus output in h1; in h2 three calls of an
+	// unknown model with no reported cost. The laptop has reported through
+	// h3, past every reading.
+	opus := extRow("o1", h1.Add(5*time.Minute), "claude-opus-5-5", 75_000)
+	opus["input"], opus["cache_read"], opus["cache_write_1h"] = 0, 0, 0
+	rows := []map[string]any{opus}
+	for i := 0; i < 3; i++ {
+		rows = append(rows, extRow(fmt.Sprintf("u%d", i), h2.Add(time.Duration(5+i)*time.Minute), "claude-sonnet-5-7", 1000))
+	}
+	up := extUpload("operator: home", rows...)
+	up["meter_credential"] = map[string]any{"secret_key": "claude_code_oauth_token", "secret_slot": credA.SecretSlot}
+	up["reported_through"] = map[string]any{"laptop": h1.Add(2 * time.Hour)}
+	admin.expect(http.MethodPost, externalPath, up, http.StatusOK)
+
+	nearV := func(v, want float64) bool { return math.Abs(v-want) < 1e-9 }
+	near := func(p *float64, want float64) bool { return p != nil && nearV(*p, want) }
+	m := cellsExternal(t, admin, "days=2&bucket=hour").Meter
+	if len(m.Steps) != 3 {
+		t.Fatalf("steps = %+v, want A at h1:40, B at h1:45, A at h2:40", m.Steps)
+	}
+	a1, b1, a2 := m.Steps[0], m.Steps[1], m.Steps[2]
+	if a1.SecretSlot != credA.SecretSlot || !a1.Split || !near(a1.RealUSD, 100) || !near(a1.ExternalRealUSD, 60) ||
+		!near(a1.CoveyRealUSD, 40) || !nearV(a1.ExternalListUSD, 1.5) || !nearV(a1.CoveyListUSD, 1) {
+		t.Errorf("A at h1:40 = %+v, want $100 split $60 / $40", a1)
+	}
+	if b1.SecretSlot != credB.SecretSlot || !b1.Reported || !b1.Split || b1.Reason != "" || !near(b1.RealUSD, 200) ||
+		!near(b1.ExternalRealUSD, 0) || !near(b1.CoveyRealUSD, 200) || b1.UnsplitRealUSD != 0 {
+		t.Errorf("B at h1:45 = %+v, want reported, $200 all covey's", b1)
+	}
+	if a2.SecretSlot != credA.SecretSlot || a2.Split || a2.Reason != observability.SplitOutsideUnpriced ||
+		!a2.Reported || !near(a2.RealUSD, 10) || !nearV(a2.UnsplitRealUSD, 10) || a2.CoveyRealUSD != nil ||
+		a2.ExternalListUSD != 0 || !nearV(a2.CoveyListUSD, 0.1) {
+		t.Errorf("A at h2:40 = %+v, want $10 unsplit (%s)", a2, observability.SplitOutsideUnpriced)
+	}
+
+	// The headline.
+	if !nearV(m.RealUSD, 310) || !nearV(m.CoveyRealUSD, 240) || !nearV(m.ExternalRealUSD, 60) ||
+		!nearV(m.UnsplitRealUSD, 10) || !near(m.Share, 60.0/300) {
+		t.Errorf("headline: real %v covey %v outside %v unsplit %v share %v; want 310, 240, 60, 10, 0.2",
+			m.RealUSD, m.CoveyRealUSD, m.ExternalRealUSD, m.UnsplitRealUSD, m.Share)
+	}
+	if m.SplitSteps != 2 || m.UnsplitSteps != 1 || m.OutsideUnpricedSteps != 1 || !nearV(m.OutsideUnpricedRealUSD, 10) ||
+		m.UnpricedCalls != 3 {
+		t.Errorf("steps: %d split, %d unsplit, %d outside unpriced ($%v), %d unpriced calls; want 2, 1, 1 ($10), 3",
+			m.SplitSteps, m.UnsplitSteps, m.OutsideUnpricedSteps, m.OutsideUnpricedRealUSD, m.UnpricedCalls)
+	}
+
+	// Per seat and per agent: the agent's real share is covey's part of the
+	// split steps, $40 on A and $200 on B; A's $0.10 line is unsplit.
+	if len(m.Credentials) != 2 {
+		t.Fatalf("credentials = %+v, want the two seats", m.Credentials)
+	}
+	for _, c := range m.Credentials {
+		var wantCovey, wantUnsplit, wantSplitList, wantUnsplitList float64
+		var wantSources string
+		switch c.SecretSlot {
+		case credA.SecretSlot:
+			wantCovey, wantUnsplit, wantSplitList, wantUnsplitList, wantSources = 40, 10, 1, 0.1, "operator: home"
+		case credB.SecretSlot:
+			wantCovey, wantSplitList = 200, 2
+		}
+		if strings.Join(c.Sources, ",") != wantSources || !nearV(c.CoveyRealUSD, wantCovey) || !nearV(c.UnsplitRealUSD, wantUnsplit) {
+			t.Errorf("seat %d: sources %v covey %v unsplit %v; want %q, %v, %v", c.SecretSlot, c.Sources,
+				c.CoveyRealUSD, c.UnsplitRealUSD, wantSources, wantCovey, wantUnsplit)
+		}
+		if len(c.Agents) != 1 || c.Agents[0].AgentID != agent.ID || !nearV(c.Agents[0].RealUSD, wantCovey) ||
+			!nearV(c.Agents[0].SplitListUSD, wantSplitList) || !nearV(c.Agents[0].UnsplitListUSD, wantUnsplitList) {
+			t.Errorf("seat %d agents = %+v, want real $%v, split list $%v, unsplit list $%v", c.SecretSlot, c.Agents,
+				wantCovey, wantSplitList, wantUnsplitList)
+		}
+	}
+
+	// The chart's hours: B's hour is covey's whole, A's second hour unsplit.
+	type hk struct {
+		h    time.Time
+		slot int
+	}
+	hours := map[hk]observability.ExternalMeterHour{}
+	for _, h := range m.Hours {
+		hours[hk{h.Hour, h.SecretSlot}] = h
+	}
+	if h := hours[hk{h1, credB.SecretSlot}]; h.SplitSteps != 1 || !nearV(h.CoveyRealUSD, 200) || h.UnsplitRealUSD != 0 {
+		t.Errorf("B's hour h1 = %+v, want $200 covey's", h)
+	}
+	if h := hours[hk{h1, credA.SecretSlot}]; !nearV(h.ExternalRealUSD, 60) || !nearV(h.CoveyRealUSD, 40) {
+		t.Errorf("A's hour h1 = %+v, want $60 / $40", h)
+	}
+	if h := hours[hk{h2, credA.SecretSlot}]; h.SplitSteps != 0 || !nearV(h.UnsplitRealUSD, 10) || h.CoveyRealUSD != 0 {
+		t.Errorf("A's hour h2 = %+v, want $10 unsplit", h)
+	}
+}
+
 // Criterion 7, F4: the agents' figures in /cost/cells, /cost/models and
 // /cost/org are the same with and without outside rows — byte for byte; the
 // outside series is only the new `external` field. And nothing is written to

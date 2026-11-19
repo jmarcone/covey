@@ -41,9 +41,15 @@ const zero: ExternalMeterSums = {
   split_external_list_usd: 0, split_covey_list_usd: 0, points: 0, split_points: 0, split_external_points: 0,
   split_covey_points: 0, split_runs: 0, split_slack_points: 0, split_slack_usd: 0, split_external_slack_points: 0,
   split_external_slack_usd: 0, split_covey_slack_points: 0, split_covey_slack_usd: 0, point_rate: 0, point_rate_mixed: false,
-  step_count: 0, split_steps: 0, unsplit_steps: 0, unpriced_steps: 0, unpriced_points: 0, unpriced_calls: 0,
-  unpriced_tokens: 0, unmetered_list_usd: 0,
+  step_count: 0, split_steps: 0, unsplit_steps: 0, outside_unpriced_steps: 0, outside_unpriced_real_usd: 0,
+  unpriced_steps: 0, unpriced_points: 0, unpriced_calls: 0, unpriced_tokens: 0, unmetered_list_usd: 0,
 };
+
+/** A reported step whose outside calls all had no price: unsplit
+ *  (outside_unpriced), its share unknown — never covey's whole. */
+function unpricedStep(at: string, from: string, points: number, covList: number): ExternalMeterStep {
+  return { ...step(at, from, points, false, 0, covList), reported: true, reason: "outside_unpriced" };
+}
 
 /** A seat's totals summed from its steps, with the ranges and the agents as
  *  the server computes them (given here: TestSplitSeatWebFixture pins them
@@ -64,6 +70,8 @@ function seat(steps: ExternalMeterStep[], extra: Partial<ExternalMeterTotal> = {
     split_external_points: sum((s) => s.points * share(s), split), split_covey_points: sum((s) => s.points * (1 - share(s)), split),
     split_runs: 1, split_slack_points: 1, split_slack_usd: PP, point_rate: PP,
     step_count: steps.length, split_steps: steps.filter(split).length, unsplit_steps: steps.filter((s) => !s.split && s.points > 0).length,
+    outside_unpriced_steps: steps.filter((s) => s.reason === "outside_unpriced" && s.points > 0).length,
+    outside_unpriced_real_usd: sum((s) => s.unsplit_real_usd, (s) => s.reason === "outside_unpriced"),
     ...extra,
   };
 }
@@ -197,6 +205,18 @@ describe("subscriptionDent", () => {
     expect(both.seats.find((s) => s.key === "seat_c")!.real).toBeNull();
   });
 
+  it("tells readings whose outside calls had no price from unreported ones; neither is covey's (#126 fix 2)", () => {
+    const steps = [...STEPS, unpricedStep("2026-11-17T21:40:00Z", "2026-11-17T20:40:00Z", 5, 0.1)];
+    const d = subscriptionDent(external([{ steps, total: seat(steps, { agents: AGENTS }) }]))!;
+    expect(d.unsplit.steps).toBe(2);
+    expect(d.unsplit.unpricedSteps).toBe(1);
+    expect(d.unsplit.real).toBeCloseTo(8 * PP, 9);
+    expect(d.unsplit.unpricedReal).toBeCloseTo(5 * PP, 9);
+    expect(d.covey.real).toBeCloseTo(1.075142, 6);
+    const hourly = splitPerPeriod(external([{ steps, total: seat(steps) }]), SEAT, 0, "hour");
+    expect(hourly.get(Date.parse("2026-11-17T21:00:00Z"))).toEqual({ covey: 0, outside: 0, unsplit: 5 * PP, unsplitSteps: 1, unpricedSteps: 1 });
+  });
+
   it("is absent until a source names a meter", () => {
     expect(subscriptionDent(undefined)).toBeNull();
     const e = EXT();
@@ -209,7 +229,7 @@ describe("one rule for the headline, the chart and the agents", () => {
     const ext = EXT();
     const d = subscriptionDent(ext)!;
     const hourly = splitPerPeriod(ext, SEAT, 0, "hour");
-    expect(hourly.get(Date.parse(H20))).toEqual({ covey: 0, outside: 0, unsplit: 3 * PP, unsplitSteps: 1 });
+    expect(hourly.get(Date.parse(H20))).toEqual({ covey: 0, outside: 0, unsplit: 3 * PP, unsplitSteps: 1, unpricedSteps: 0 });
     // At 10 minutes the 18:40 reading's split lands at 18:40, not at 18:00.
     const tens = splitPerPeriod(ext, SEAT, 0, "10min");
     expect(tens.has(Date.parse("2026-11-17T18:00:00Z"))).toBe(false);
@@ -320,6 +340,34 @@ describe("Costs — the headline", () => {
     const row = await screen.findByRole("region", { name: "The whole dent in the subscription" });
     expect(row.querySelector("[data-dent-unpriced]")!.textContent).toBe("30 points without a plan price are not in the dent.");
     expect(row.querySelector('[data-dent-seat="seat_c #0"]')!.textContent).toMatch(/^seat_c #0: – \(30 points without a plan price\) · no outside source/);
+  });
+
+  it("words a reading whose outside calls had no price apart, in the headline and the chart, with counts as numbers (#126 fix 2)", async () => {
+    const steps = [STEPS[0], STEPS[1], unpricedStep(STEPS[2].at, STEPS[2].from, 3, 40)];
+    serve(cells(external([{ steps, total: seat(steps, { agents: AGENTS, unpriced_calls: 1234 }) }])));
+    const row = await screen.findByRole("region", { name: "The whole dent in the subscription" });
+    const unsplit = within(row).getByRole("group", { name: "Not split" }).textContent;
+    expect(unsplit).toMatch(/readings whose outside calls had no price: 1/);
+    expect(unsplit).not.toMatch(/had not reported/);
+    expect(row.querySelector("[data-dent-unsplit]")).toBeNull();
+    expect(row.querySelector("[data-dent-unsplit-unpriced]")!.textContent).toBe(
+      `≈ ${fmtUSD(3 * PP)} of the movement fell in readings whose outside calls all had no price (1): their share is unknown, so it is split to nobody, not booked to covey's agents.`);
+    expect(row.querySelector("[data-dent-unpriced-calls]")!.textContent).toMatch(new RegExp(`^${fmtNumber(1234, 0)} outside calls`));
+    expect(fmtNumber(1234, 0)).not.toBe("1234");
+    const note = document.querySelector("[data-split-note]")!.textContent;
+    expect(note).toMatch(/in readings whose outside calls all had no price \(1\) is split to nobody/);
+    expect(note).not.toMatch(/had not reported/);
+    expect(document.querySelector('[data-split-key="unsplit"]')!.textContent).toMatch(/or their calls had no price/);
+  });
+
+  it("names both reasons when the unsplit readings have both", async () => {
+    const steps = [...STEPS, unpricedStep("2026-11-17T21:40:00Z", "2026-11-17T20:40:00Z", 5, 0.1)];
+    serve(cells(external([{ steps, total: seat(steps, { agents: AGENTS }) }])));
+    const row = await screen.findByRole("region", { name: "The whole dent in the subscription" });
+    expect(within(row).getByRole("group", { name: "Not split" }).textContent).toMatch(
+      /readings the outside sessions had not reported: 1 · readings whose outside calls had no price: 1/);
+    expect(row.querySelector("[data-dent-unsplit]")!.textContent!.startsWith(`≈ ${fmtUSD(3 * PP)} of the movement`)).toBe(true);
+    expect(row.querySelector("[data-dent-unsplit-unpriced]")!.textContent!.startsWith(`≈ ${fmtUSD(5 * PP)} of the movement`)).toBe(true);
   });
 
   it("is not on the page while no outside source names a meter", async () => {

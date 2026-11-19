@@ -699,8 +699,10 @@ export function meterSplit(ext: ExternalUsage | null | undefined, key: string, s
 }
 
 /** One period of a seat's real cost, split: covey's agents, the outside
- *  sessions, and the movement of readings they did not report. */
-export type SplitPeriod = { covey: number; outside: number; unsplit: number; unsplitSteps: number };
+ *  sessions, and the movement of readings that were not split — the outside
+ *  sessions had not reported them, or (unpricedSteps of them) their outside
+ *  calls all had no price. */
+export type SplitPeriod = { covey: number; outside: number; unsplit: number; unsplitSteps: number; unpricedSteps: number };
 
 /** The split per chart period (keyed by the period's start in ms), summed
  *  from the server's steps, each at its reading — where the real bar
@@ -710,13 +712,14 @@ export function splitPerPeriod(ext: ExternalUsage | null | undefined, key: strin
   for (const st of ext?.meter.steps ?? []) {
     if (st.secret_key !== key || st.secret_slot !== slot || st.real_usd == null) continue;
     const k = bucketStart(Date.parse(st.at), bucket);
-    const p = out.get(k) ?? { covey: 0, outside: 0, unsplit: 0, unsplitSteps: 0 };
+    const p = out.get(k) ?? { covey: 0, outside: 0, unsplit: 0, unsplitSteps: 0, unpricedSteps: 0 };
     if (st.split) {
       p.covey += st.covey_real_usd ?? 0;
       p.outside += st.external_real_usd ?? 0;
     } else if (st.real_usd > 0) {
       p.unsplit += st.unsplit_real_usd;
       p.unsplitSteps += 1;
+      if (st.reason === "outside_unpriced") p.unpricedSteps += 1;
     }
     out.set(k, p);
   }
@@ -754,7 +757,10 @@ export type SubscriptionDent = {
   covey: DentPart;
   outside: DentPart;
   together: DentPart;
-  unsplit: { real: number; share: number | null; steps: number };
+  /** unpricedSteps / unpricedReal: the part of steps / real not split
+   *  because the outside calls of the span all had no price (never covey's);
+   *  the rest the outside sessions had not reported. */
+  unsplit: { real: number; share: number | null; steps: number; unpricedSteps: number; unpricedReal: number };
   unpricedPoints: number;
   /** Outside calls with no price at all: left out of the split. */
   unpricedCalls: number;
@@ -793,7 +799,8 @@ export function subscriptionDent(ext: ExternalUsage | null | undefined): Subscri
     covey: part(m.covey_real_usd, m.split_covey_list_usd, m.split_covey_points, m.split_covey_slack_usd),
     outside: part(m.external_real_usd, m.split_external_list_usd, m.split_external_points, m.split_external_slack_usd),
     together: part(splitReal, m.split_covey_list_usd + m.split_external_list_usd, m.split_points, m.split_slack_usd),
-    unsplit: { real: m.unsplit_real_usd, share: share(m.unsplit_real_usd), steps: m.unsplit_steps },
+    unsplit: { real: m.unsplit_real_usd, share: share(m.unsplit_real_usd), steps: m.unsplit_steps,
+      unpricedSteps: m.outside_unpriced_steps, unpricedReal: m.outside_unpriced_real_usd },
     unpricedPoints: m.unpriced_points,
     unpricedCalls: m.unpriced_calls,
     unmeteredList: m.unmetered_list_usd,

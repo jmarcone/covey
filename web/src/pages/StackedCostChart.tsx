@@ -22,6 +22,7 @@ import {
   splitPerPeriod,
   stepRate,
   type CredentialFigures,
+  type SplitPeriod,
 } from "./costFigures";
 import { PlanPrice } from "./PlanPrice";
 
@@ -771,15 +772,23 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
   const splitPer = useMemo(() => {
     if (!f.split || f.secretKey == null) return null;
     const by = splitPerPeriod(data.external, f.secretKey, f.slot!, bucket);
-    return periods.map((p) => by.get(Date.parse(p)) ?? { covey: 0, outside: 0, unsplit: 0, unsplitSteps: 0 });
+    return periods.map((p) => by.get(Date.parse(p)) ?? { covey: 0, outside: 0, unsplit: 0, unsplitSteps: 0, unpricedSteps: 0 });
   }, [f.split, f.secretKey, f.slot, data.external, bucket, periods]);
+  // The unsplit part's label, by why its readings were not split: count
+  // picks the plural, n and m are the numbers as shown.
+  const unsplitLabel = (sp: SplitPeriod) => {
+    const unpriced = sp.unpricedSteps, notReported = sp.unsplitSteps - sp.unpricedSteps;
+    if (unpriced === 0) return t("costs.split.unsplitReadings", { count: notReported, n: fmtNumber(notReported, 0) });
+    if (notReported === 0) return t("costs.split.unsplitUnpricedReadings", { count: unpriced, n: fmtNumber(unpriced, 0) });
+    return t("costs.split.unsplitBoth", { count: sp.unsplitSteps, n: fmtNumber(notReported, 0), m: fmtNumber(unpriced, 0) });
+  };
   const realSegs = (i: number): Seg[] => {
     const sp = splitPer?.[i];
     if (!sp) return [{ key: "real", label: t("costs.fig.realEstimate"), color: SOURCE_COLOR.real, value: realPer[i] }];
     return [
       { key: "covey", label: t("costs.split.covey"), color: SPLIT_COLOR.covey, value: sp.covey },
       { key: "outside", label: t("costs.split.outside"), color: SPLIT_COLOR.outside, value: sp.outside },
-      { key: "unsplit", label: t("costs.split.unsplitReadings", { count: sp.unsplitSteps }),
+      { key: "unsplit", label: unsplitLabel(sp),
         color: SPLIT_COLOR.unsplit, dashed: SPLIT_COLOR.unsplitEdge, value: sp.unsplit },
     ];
   };
@@ -865,6 +874,11 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
   const kind = t(`costs.fig.kind_${f.kind || "unknown"}`);
   const plan = planLabel(f);
   const subscription = isSeat(f);
+  // The seat's split totals, split steps or not; of its unsplit readings,
+  // the ones the outside sessions had not reported (the rest had outside
+  // calls with no price at all).
+  const seatTotal = f.secretKey == null ? null : meterSplit(data.external, f.secretKey, f.slot!);
+  const splitNotReported = f.split ? f.split.unsplit_steps - f.split.outside_unpriced_steps : 0;
   // What a point was priced at, for the hour note: named only when every
   // priced step has the same rate, since an average over two plans fits no
   // bar. Without movement, the plan's own price per point.
@@ -922,11 +936,15 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
       )}
       {showReal && f.split && <p className="muted text-xs mt-1 mb-0" data-split-note>
         {t("costs.split.chartNote")}
-        {f.split.unsplit_steps > 0 && <> {t("costs.split.unsplitNote", { count: f.split.unsplit_steps, usd: fmtUSD(f.split.unsplit_real_usd) })}</>}
+        {splitNotReported > 0 && <> {t("costs.split.unsplitNote", { count: splitNotReported, n: fmtNumber(splitNotReported, 0),
+          usd: fmtUSD(f.split.unsplit_real_usd - f.split.outside_unpriced_real_usd) })}</>}
+        {f.split.outside_unpriced_steps > 0 && <> {t("costs.split.unsplitUnpricedNote", { count: f.split.outside_unpriced_steps,
+          n: fmtNumber(f.split.outside_unpriced_steps, 0), usd: fmtUSD(f.split.outside_unpriced_real_usd) })}</>}
       </p>}
       {subscription && f.outsideUnreported && <p className="muted text-xs mt-1 mb-0" data-outside-unreported>
-        {t((meterSplit(data.external, f.secretKey!, f.slot!)?.sources.length ?? 0) > 0
-          ? "costs.split.notReportedSeat" : "costs.split.mayIncludeOutside")}
+        {t(seatTotal == null || seatTotal.sources.length === 0 ? "costs.split.mayIncludeOutside"
+          : seatTotal.unsplit_steps > 0 && seatTotal.outside_unpriced_steps === seatTotal.unsplit_steps
+            ? "costs.split.unpricedSeat" : "costs.split.notReportedSeat")}
       </p>}
       {filtered && (subscription || f.kind === "api_key") && <p className="muted text-xs mt-1 mb-0">{t("costs.fig.filteredRealNote")}</p>}
 

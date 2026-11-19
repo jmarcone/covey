@@ -284,6 +284,11 @@ func (s *Store) UpsertExternalUsage(ctx context.Context, orgID uuid.UUID, source
 	}
 
 	if len(rows) > 0 {
+		// The rows are upserted, and so locked, in message_id order: two
+		// concurrent pushes of overlapping batches then take their row locks
+		// in one order and wait for each other instead of deadlocking.
+		rows = append([]ExternalRow(nil), rows...)
+		sort.SliceStable(rows, func(i, j int) bool { return rows[i].MessageID < rows[j].MessageID })
 		n := len(rows)
 		var (
 			host, session, msg, model = make([]string, n), make([]string, n), make([]string, n), make([]string, n)
@@ -354,9 +359,14 @@ func (s *Store) UpsertExternalUsage(ctx context.Context, orgID uuid.UUID, source
 		marks[host] = &at
 	}
 	if len(marks) > 0 {
+		// In host order, for the same reason as the rows: a fixed lock order.
 		hosts, ats := make([]string, 0, len(marks)), make([]*time.Time, 0, len(marks))
-		for host, at := range marks {
-			hosts, ats = append(hosts, host), append(ats, at)
+		for host := range marks {
+			hosts = append(hosts, host)
+		}
+		sort.Strings(hosts)
+		for _, host := range hosts {
+			ats = append(ats, marks[host])
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO external_usage_hosts (org_id, source, host, reported_through, pushed_at)
 			SELECT $1, $2, h.host, h.at, $5 FROM unnest($3::text[], $4::timestamptz[]) AS h(host, at)
@@ -535,11 +545,16 @@ type ExternalCell struct {
 // Why a step is not split (ExternalMeterStep.Reason).
 const (
 	// SplitNotReported: a machine of the linked sources that was active
-	// before the reading has not reported through it, or the seat has none.
+	// before the reading has not reported through it, or a linked source has
+	// no active machine.
 	SplitNotReported = "not_reported"
 	// SplitNoReportedCall: the meter moved, but neither covey nor a linked
 	// source has a call in the step's span.
 	SplitNoReportedCall = "moved_without_reported_call"
+	// SplitOutsideUnpriced: the linked sources have calls in the step's span,
+	// but none of them has a price (no list price, no reported_usd), so L_out
+	// is unknown, not 0: the step is never booked to covey.
+	SplitOutsideUnpriced = "outside_unpriced"
 	// SplitUnpriced: points no plan prices; the step is out of the dent.
 	SplitUnpriced = "unpriced"
 	// SplitIdle: a reported reading that did not move, with no call on
@@ -552,8 +567,8 @@ const (
 // hours and seats they sum to, and the whole. It is filled once a source
 // names the meter it shares; then every subscription seat with readings
 // takes part, linked or not, so that the headline holds the whole dent in
-// the meters. A seat no source names has no reported step: all of its
-// movement is unsplit.
+// the meters. A seat no source names has no outside calls to wait for: its
+// steps are split with L_out = 0, so all of its movement is covey's (F3).
 type ExternalMeter struct {
 	Steps       []ExternalMeterStep  `json:"steps"`
 	Hours       []ExternalMeterHour  `json:"hours"`
@@ -613,6 +628,11 @@ type ExternalMeterSums struct {
 	StepCount    int `json:"step_count"`
 	SplitSteps   int `json:"split_steps"`
 	UnsplitSteps int `json:"unsplit_steps"`
+	// OutsideUnpricedSteps / OutsideUnpricedRealUSD: the part of UnsplitSteps
+	// / UnsplitRealUSD whose reason is SplitOutsideUnpriced (the outside
+	// calls of the span all had no price), for the page to word apart.
+	OutsideUnpricedSteps   int     `json:"outside_unpriced_steps"`
+	OutsideUnpricedRealUSD float64 `json:"outside_unpriced_real_usd"`
 	// UnpricedSteps / UnpricedPoints: steps that moved while no plan priced
 	// the seat. They stay out of the dent whole, never as $0.
 	UnpricedSteps  int     `json:"unpriced_steps"`
@@ -643,7 +663,8 @@ type ExternalMeterStep struct {
 	ExternalListUSD float64 `json:"external_list_usd"`
 	CoveyListUSD    float64 `json:"covey_list_usd"`
 	// Reported: every active machine of the linked sources has reported
-	// through At (stepReported).
+	// through At (stepReported). A seat no source is linked to has nothing
+	// that could report on it: its steps are reported, with L_out = 0.
 	Reported bool `json:"reported"`
 	// Split: R_out and R_cov are set and add up to R. Otherwise Reason says
 	// why not, and a priced step's R is UnsplitRealUSD.
@@ -1059,6 +1080,13 @@ func (s *Store) seatSteps(ctx context.Context, orgID uuid.UUID, since time.Time,
 		return nil, cov, err
 	}
 	if len(sources) == 0 {
+		// No source is linked to the seat: no outside call can be booked on
+		// it and none is waited for. Its steps are reported with L_out = 0,
+		// so F3 books R to covey (R_out = 0) — or, when covey has no line in
+		// the span either, the step is moved_without_reported_call.
+		for i := range steps {
+			steps[i].Reported = true
+		}
 		return steps, cov, nil
 	}
 	marks, err := s.hostMarks(ctx, orgID, sources, hosts, steps)
@@ -1340,12 +1368,16 @@ func (r splitRun) tv(f func(k int) float64) float64 {
 // A step that moved at no plan price is out of the dent whole (unpriced). A
 // priced step is split when it was reported and L_out + L_cov > 0. A
 // reported step with no list on either side that moved the meter is not
-// split: neither covey nor a linked source made that movement. One that did
-// not move either (R = 0, both lists 0: an idle reading) has nothing to
-// split and is no split step (SplitIdle, #126 finding 25); it neither
-// starts nor ends a run, so the runs' ranges see through it, as the meter,
-// unmoved, does. Any other unsplit step ends the run, and a reset starts a
-// new one.
+// split: neither covey nor a linked source made that movement. A reported
+// step whose outside calls all lack a price (L_out = 0 with unpriced calls)
+// is not split either (outside_unpriced): the outside share is unknown, and
+// booking R to covey would bill it the outside sessions' work. Outside calls
+// some of which are priced stay split on the priced ones, the rest counted
+// as unpriced. One that did not move either (R = 0, both lists 0, no outside
+// call: an idle reading) has nothing to split and is no split step
+// (SplitIdle, #126 finding 25); it neither starts nor ends a run, so the
+// runs' ranges see through it, as the meter, unmoved, does. Any other
+// unsplit step ends the run, and a reset starts a new one.
 func splitSeat(seat meterSeat, sources []string, steps []shareStep) (ExternalMeterTotal, []ExternalMeterStep) {
 	tot := ExternalMeterTotal{SecretKey: seat.key, SecretSlot: seat.slot, Sources: append([]string{}, sources...),
 		Agents: []ExternalMeterAgent{}}
@@ -1412,16 +1444,29 @@ func splitSeat(seat meterSeat, sources []string, steps []shareStep) (ExternalMet
 		tot.RealUSD += r
 		tot.Points += in.Points
 		lists := in.LOut + in.LCov
+		// Outside calls in the span, none of them priced: L_out is unknown,
+		// not 0, so the step must not go to covey whole.
+		outsideUnpriced := in.LOut == 0 && in.UnpricedCalls > 0
 		switch {
-		case !in.Reported || (lists == 0 && in.Points != 0):
-			st.Reason = SplitNotReported
-			if in.Reported {
+		case !in.Reported || outsideUnpriced || (lists == 0 && in.Points != 0):
+			switch {
+			case !in.Reported:
+				st.Reason = SplitNotReported
+			case outsideUnpriced:
+				st.Reason = SplitOutsideUnpriced
+			default:
 				st.Reason = SplitNoReportedCall
 			}
 			st.UnsplitRealUSD = r
 			tot.UnsplitRealUSD += r
 			if in.Points != 0 {
 				tot.UnsplitSteps++
+			}
+			if st.Reason == SplitOutsideUnpriced {
+				tot.OutsideUnpricedRealUSD += r
+				if in.Points != 0 {
+					tot.OutsideUnpricedSteps++
+				}
 			}
 			unsplitList()
 			endRun()
@@ -1513,6 +1558,8 @@ func meterSums(totals []ExternalMeterTotal, steps []ExternalMeterStep) ExternalM
 		a.StepCount += b.StepCount
 		a.SplitSteps += b.SplitSteps
 		a.UnsplitSteps += b.UnsplitSteps
+		a.OutsideUnpricedSteps += b.OutsideUnpricedSteps
+		a.OutsideUnpricedRealUSD += b.OutsideUnpricedRealUSD
 		a.UnpricedSteps += b.UnpricedSteps
 		a.UnpricedPoints += b.UnpricedPoints
 		a.UnpricedCalls += b.UnpricedCalls

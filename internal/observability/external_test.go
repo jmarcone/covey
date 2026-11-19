@@ -495,6 +495,46 @@ func TestExternalStepUSD(t *testing.T) {
 	}
 }
 
+// A step whose outside calls all lack a price has an unknown L_out, not 0:
+// R = 3 × $0.77 = $2.31, L_cov $0.10 and 200 outside calls of a model the
+// list does not know, none with reported_usd. Booked to covey it would be
+// R_cov = $2.31; it is unsplit (outside_unpriced), split to nobody. With no
+// covey line either it is the same reason, not moved_without_reported_call;
+// a step that was not reported keeps not_reported.
+func TestSplitSeatOutsideUnpriced(t *testing.T) {
+	agent := uuid.MustParse("00000000-0000-0000-0000-0000000000a1")
+	tot, steps := splitSeat(meterSeat{"seat", 0}, []string{"src"}, []shareStep{
+		{From: tm("10:00"), At: tm("11:00"), Points: 3, Rate: rate(0.77), LCov: 0.10,
+			Agents: map[uuid.UUID]float64{agent: 0.10}, UnpricedCalls: 200, UnpricedTokens: 4_000_000, Reported: true},
+		{From: tm("11:00"), At: tm("12:00"), Points: 1, Rate: rate(0.77), UnpricedCalls: 5, Reported: true},
+		{From: tm("12:00"), At: tm("13:00"), Points: 1, Rate: rate(0.77), LCov: 0.10, UnpricedCalls: 5},
+	})
+	if s := steps[0]; s.Split || s.Reason != SplitOutsideUnpriced || !near(s.UnsplitRealUSD, 2.31) || s.CoveyRealUSD != nil {
+		t.Errorf("step 1 = %+v, want unsplit $2.31 (%s)", s, SplitOutsideUnpriced)
+	}
+	if s := steps[1]; s.Split || s.Reason != SplitOutsideUnpriced {
+		t.Errorf("step 2 (no covey line) = %+v, want %s", s, SplitOutsideUnpriced)
+	}
+	if s := steps[2]; s.Split || s.Reason != SplitNotReported {
+		t.Errorf("step 3 (not reported) = %+v, want %s", s, SplitNotReported)
+	}
+	if tot.CoveyRealUSD != 0 || tot.ExternalRealUSD != 0 || !near(tot.UnsplitRealUSD, 5*0.77) || tot.UnsplitSteps != 3 {
+		t.Errorf("covey %v outside %v unsplit %v in %d steps; want 0, 0, 3.85 in 3", tot.CoveyRealUSD,
+			tot.ExternalRealUSD, tot.UnsplitRealUSD, tot.UnsplitSteps)
+	}
+	if tot.OutsideUnpricedSteps != 2 || !near(tot.OutsideUnpricedRealUSD, 4*0.77) || tot.UnpricedCalls != 210 {
+		t.Errorf("outside unpriced %d steps $%v, %d unpriced calls; want 2, 3.08, 210", tot.OutsideUnpricedSteps,
+			tot.OutsideUnpricedRealUSD, tot.UnpricedCalls)
+	}
+	if len(tot.Agents) != 1 || tot.Agents[0].RealUSD != 0 || !near(tot.Agents[0].UnsplitListUSD, 0.10) {
+		t.Errorf("agents %+v, want no real share and $0.10 unsplit list", tot.Agents)
+	}
+	m := meterSums([]ExternalMeterTotal{tot}, steps)
+	if m.OutsideUnpricedSteps != 2 || !near(m.OutsideUnpricedRealUSD, 3.08) || m.CoveyRealUSD != 0 {
+		t.Errorf("sums: %d outside-unpriced steps $%v, covey %v", m.OutsideUnpricedSteps, m.OutsideUnpricedRealUSD, m.CoveyRealUSD)
+	}
+}
+
 // Acceptance test (E), finding 23: points no plan prices stay out of the
 // dent, counted; a seat with only such points has no dent of its own.
 func TestMeterSumsUnpricedMovement(t *testing.T) {

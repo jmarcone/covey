@@ -888,7 +888,8 @@ export type ExternalMeterStep = {
   reported: boolean;
   /** Split: the two parts are set and add up to real_usd. Otherwise reason says why not. */
   split: boolean;
-  reason?: "not_reported" | "moved_without_reported_call" | "unpriced" | "idle";
+  /** outside_unpriced: the outside calls of the span all had no price, so their share is unknown. idle: a reported reading that did not move, with no call on either side. */
+  reason?: "not_reported" | "moved_without_reported_call" | "outside_unpriced" | "unpriced" | "idle";
   external_real_usd: number | null;
   covey_real_usd: number | null;
   unsplit_real_usd: number;
@@ -943,6 +944,9 @@ export type ExternalMeterSums = {
   step_count: number;
   split_steps: number;
   unsplit_steps: number;
+  /** The part of unsplit_steps / unsplit_real_usd not split because the outside calls of the span all had no price. */
+  outside_unpriced_steps: number;
+  outside_unpriced_real_usd: number;
   /** Steps that moved at no plan price: out of the dent, never $0. */
   unpriced_steps: number;
   unpriced_points: number;

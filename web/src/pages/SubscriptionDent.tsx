@@ -12,8 +12,9 @@ import { OrgWide, Swatch } from "./StackedCostChart";
  * Every figure is the server's split (costFigures.subscriptionDent over
  * external.meter): per meter reading, over the span since the reading
  * before it, by list-price share. Movement in a reading the outside
- * sessions had not reported is split to nobody and stands as its own part —
- * it is never booked to covey whole. Points without a plan price are not in
+ * sessions had not reported, or whose outside calls all had no price, is
+ * split to nobody and stands as its own part — it is never booked to covey
+ * whole. Points without a plan price are not in
  * the dent and are counted beside it. The meters are account-wide, so the
  * whole page remains an estimate; the dent ignores the agent filter and
  * says so. */
@@ -21,6 +22,7 @@ import { OrgWide, Swatch } from "./StackedCostChart";
 const times = (v: number) => `${fmtNumber(v, 1)}×`;
 const pctOf = (v: number | null) => (v != null ? `${fmtNumber(v * 100, 0)} %` : "–");
 const pts = (v: number) => fmtNumber(v, v < 10 ? 1 : 0);
+const count = (v: number) => fmtNumber(v, 0);
 
 /** "≈ 1.1× (range 0.9× – 1.2×)"; with no upper end (the part's real cost
  *  could be 0 within the meter's whole percents), the lower bound only. */
@@ -61,6 +63,16 @@ export function SubscriptionDentRow({ d, filtered }: { d: SubscriptionDent; filt
   const sources = d.sources.join(", ");
   const seat = (s: SubscriptionDent["seats"][number]) => `${s.key} #${s.slot}`;
   const approxM = (m: RangedMultiple | null) => (m?.kind === "estimate" ? (Number.isFinite(m.high) ? `≈ ${times(m.value)}` : `≥ ${times(m.low)}`) : "–");
+  // The unsplit readings by why: the outside sessions had not reported them,
+  // or their outside calls all had no price. count picks the plural, n is
+  // the number as shown.
+  const unpricedSteps = d.unsplit.unpricedSteps;
+  const notReported = d.unsplit.steps - unpricedSteps;
+  const unsplitSub = unpricedSteps === 0
+    ? t("costs.dent.unsplitSub", { pct: pctOf(d.unsplit.share), count: notReported, n: count(notReported) })
+    : notReported === 0
+      ? t("costs.dent.unsplitSubUnpriced", { pct: pctOf(d.unsplit.share), count: unpricedSteps, n: count(unpricedSteps) })
+      : t("costs.dent.unsplitSubBoth", { pct: pctOf(d.unsplit.share), count: d.unsplit.steps, n: count(notReported), m: count(unpricedSteps) });
   return (
     <section className="card mb-4" aria-label={t("costs.dent.title")} data-dent-row>
       <div style={{ fontWeight: 600, marginBottom: 4 }}>
@@ -80,7 +92,7 @@ export function SubscriptionDentRow({ d, filtered }: { d: SubscriptionDent; filt
         <Part test="outside" label={t("costs.dent.outside")} value={`≈ ${fmtUSD(d.outside.real)}`} sub={part(d.outside)} color={SPLIT_COLOR.outside} />
         {d.unsplit.steps > 0 && (
           <Part test="unsplit" label={t("costs.dent.unsplit")} value={`≈ ${fmtUSD(d.unsplit.real)}`}
-            sub={t("costs.dent.unsplitSub", { pct: pctOf(d.unsplit.share), count: d.unsplit.steps })}
+            sub={unsplitSub}
             color={SPLIT_COLOR.unsplit} dashed={SPLIT_COLOR.unsplitEdge} />
         )}
       </div>
@@ -103,17 +115,26 @@ export function SubscriptionDentRow({ d, filtered }: { d: SubscriptionDent; filt
         </p>
       ) : (
         <p className="muted text-xs mb-1" data-dent-no-multiple>
-          {d.noMultiple === "split" ? t("costs.dent.noMultipleSplit") : t("costs.dent.noMultipleMovement", { pts: pts(tg.points) })}
+          {d.noMultiple === "split"
+            ? t(unpricedSteps > 0 && notReported === 0 ? "costs.dent.noMultipleSplitUnpriced" : "costs.dent.noMultipleSplit")
+            : t("costs.dent.noMultipleMovement", { pts: pts(tg.points) })}
         </p>
       )}
-      {d.unsplit.steps > 0 && (
-        <p className="muted text-xs mb-1" data-dent-unsplit>{t("costs.dent.unsplitNote", { usd: fmtUSD(d.unsplit.real), count: d.unsplit.steps })}</p>
+      {notReported > 0 && (
+        <p className="muted text-xs mb-1" data-dent-unsplit>
+          {t("costs.dent.unsplitNote", { usd: fmtUSD(d.unsplit.real - d.unsplit.unpricedReal), count: notReported, n: count(notReported) })}
+        </p>
+      )}
+      {unpricedSteps > 0 && (
+        <p className="muted text-xs mb-1" data-dent-unsplit-unpriced>
+          {t("costs.dent.unsplitUnpricedNote", { usd: fmtUSD(d.unsplit.unpricedReal), count: unpricedSteps, n: count(unpricedSteps) })}
+        </p>
       )}
       {d.unpricedPoints > 0 && (
         <p className="muted text-xs mb-1" data-dent-unpriced>{t("costs.dent.unpricedPoints", { n: pts(d.unpricedPoints) })}</p>
       )}
       {d.unpricedCalls > 0 && (
-        <p className="muted text-xs mb-1" data-dent-unpriced-calls>{t("costs.dent.unpricedCalls", { n: d.unpricedCalls })}</p>
+        <p className="muted text-xs mb-1" data-dent-unpriced-calls>{t("costs.dent.unpricedCalls", { count: d.unpricedCalls, n: count(d.unpricedCalls) })}</p>
       )}
       {d.unmeteredList >= 0.005 && (
         <p className="muted text-xs mb-1" data-dent-unmetered>{t("costs.dent.unmetered", { usd: fmtUSD(d.unmeteredList) })}</p>
