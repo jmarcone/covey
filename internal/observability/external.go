@@ -61,7 +61,12 @@ import (
 //     outside_unpriced or unpriced step closes it before itself and stays
 //     out of every chunk, as do a reset and a change of plan price (the
 //     points are percent of the plan's weekly limit). The last chunk may
-//     hold fewer than 5 points. Per chunk c: P_c, L_c = Σ (L_out + L_cov),
+//     hold fewer than 5 points. A run of steps with no list (moved with no
+//     call, or idle) right after a chunk that closed at its size, with
+//     nothing closing it in between, is the meter's lag after that chunk's
+//     use: it joins that chunk rather than standing as a chunk with no
+//     list; k is taken on the chunks as they closed, before this.
+//     Per chunk c: P_c, L_c = Σ (L_out + L_cov),
 //     Lo_c and Lc_c, and S_c = 2 points of slack (the two ends' whole
 //     percents and one point of lag at the end, as meterQuery reads a drop
 //     of one point as a lagging reading). Per plan price:
@@ -586,8 +591,10 @@ const (
 	// SplitNoReportedCall: the meter moved, but neither covey nor a linked
 	// source has a call in the step's span — mostly the meter's lag after
 	// use. It joins its chunk (F3c) and is split by the chunk's share like
-	// the chunk's other steps (Split is true, the reason stays); in a chunk
-	// with no list at all it is unattributed whole.
+	// the chunk's other steps (Split is true, the reason stays) — the chunk
+	// before it when it directly follows one that closed at its size. In a
+	// chunk with no list at all (no chunk next to it) it is unattributed
+	// whole.
 	SplitNoReportedCall = "moved_without_reported_call"
 	// SplitOutsideUnpriced: the linked sources have calls in the step's span,
 	// but none of them has a price (no list price, no reported_usd), so L_out
@@ -1541,6 +1548,11 @@ type meterChunk struct {
 	// unattributed: U_c; frac: U_c / P_c, the fraction of each step's
 	// movement that is unattributed (1 for a chunk with no list).
 	unattributed, frac float64
+	// follows: the chunk this one was opened right after, when that one
+	// closed at its size at the step before (nothing closed it before this
+	// step); −1 otherwise. A chunk with no list that follows one is the
+	// meter's lag after it and is folded into it (foldLag).
+	follows int
 }
 
 func (c *meterChunk) list() float64 { return c.lOut + c.lCov }
@@ -1560,32 +1572,42 @@ func (c *meterChunk) share() float64 {
 // closes it before itself and stays in none; a reset closes it before
 // itself, and so does a step that moved or has list at another plan price
 // than the chunk's (an idle step, with neither, rides along at its own
-// price). chunkOf[i] is step i's chunk, −1 for none.
+// price). chunkOf[i] is step i's chunk, −1 for none. A chunk opened right
+// after one that closed at its size, with nothing closing it in between
+// (no unsplit or unpriced step, no reset, no change of plan price), records
+// it in follows.
 func seatChunks(steps []shareStep, reasons []string) ([]int, []meterChunk) {
 	chunkOf := make([]int, len(steps))
 	var chunks []meterChunk
-	cur := -1
+	cur, sized := -1, -1
 	for i, in := range steps {
 		chunkOf[i] = -1
 		if in.Reset {
-			cur = -1
+			cur, sized = -1, -1
 		}
 		switch reasons[i] {
 		case "", SplitIdle, SplitNoReportedCall:
 		default:
-			cur = -1
+			cur, sized = -1, -1
 			continue
 		}
 		counts := reasons[i] != SplitIdle
-		if cur >= 0 && counts && in.Rate != nil {
-			if r := chunks[cur].rate; r != nil && *r != *in.Rate {
-				cur = -1
+		if counts && in.Rate != nil {
+			if cur >= 0 {
+				if r := chunks[cur].rate; r != nil && *r != *in.Rate {
+					cur = -1
+				}
+			} else if sized >= 0 {
+				if r := chunks[sized].rate; r != nil && *r != *in.Rate {
+					sized = -1
+				}
 			}
 		}
 		if cur < 0 {
-			chunks = append(chunks, meterChunk{})
+			chunks = append(chunks, meterChunk{follows: sized})
 			cur = len(chunks) - 1
 		}
+		sized = -1
 		c := &chunks[cur]
 		chunkOf[i] = cur
 		c.steps = append(c.steps, i)
@@ -1609,18 +1631,48 @@ func seatChunks(steps []shareStep, reasons []string) ([]int, []meterChunk) {
 			c.agents[id] += l
 		}
 		if c.points >= chunkMinPoints {
-			cur = -1
+			cur, sized = -1, cur
 		}
 	}
 	return chunkOf, chunks
 }
 
-// chunkRates is F3c's k per plan price and each chunk's U_c: k = min over
-// the complete chunks at that price with kPoints ≥ rateMinPoints and
-// kList > 0 of (kPoints + S_c) / kList; U_c = max(0, P_c − S_c − k·L_c), P_c
-// whole for a chunk with no list, 0 without k and for an incomplete chunk.
-// It returns the prices in the order they first appear, with k (nil when
-// none).
+// foldLag folds each chunk with no list that follows a chunk closed at its
+// size into that chunk (F3c): a run of readings that moved with no call, or
+// did not move, right after use is the meter's lag and carry, not another
+// machine. Only movement with no adjacent chunk — at the start of the range,
+// or after an unsplit or unpriced step, a reset or a change of plan price —
+// stays a chunk of its own, unattributed whole. A chain of such chunks folds
+// into the first one. It returns the chunks left and the steps' new chunk
+// indexes; k is taken before it (chunkRates), on the chunks as they closed.
+func foldLag(chunks []meterChunk, chunkOf []int) ([]meterChunk, []int) {
+	root := make([]int, len(chunks))
+	var out []meterChunk
+	for i, c := range chunks {
+		if c.list() <= 0 && c.follows >= 0 {
+			r := root[c.follows]
+			t := &out[r]
+			t.steps = append(t.steps, c.steps...)
+			t.points += c.points
+			t.incomplete = t.incomplete || c.incomplete
+			root[i] = r
+			continue
+		}
+		root[i] = len(out)
+		out = append(out, c)
+	}
+	for i, c := range chunkOf {
+		if c >= 0 {
+			chunkOf[i] = root[c]
+		}
+	}
+	return out, chunkOf
+}
+
+// chunkRates is F3c's k per plan price: min over the complete chunks at
+// that price with kPoints ≥ rateMinPoints and kList > 0 of (kPoints + S_c) /
+// kList. It returns the prices in the order they first appear, with k (nil
+// when none).
 func chunkRates(chunks []meterChunk) []ExternalMeterPlanRate {
 	var rates []ExternalMeterPlanRate
 	at := map[float64]int{}
@@ -1641,6 +1693,17 @@ func chunkRates(chunks []meterChunk) []ExternalMeterPlanRate {
 			rates[i].PointsPerListUSD = &v
 		}
 	}
+	return rates
+}
+
+// chunkUnattributed sets each chunk's U_c: max(0, P_c − S_c − k·L_c) at its
+// plan price's k, P_c whole for a chunk with no list, 0 without k and for
+// an incomplete chunk.
+func chunkUnattributed(chunks []meterChunk, rates []ExternalMeterPlanRate) {
+	at := map[float64]int{}
+	for i, r := range rates {
+		at[r.USDPerPoint] = i
+	}
 	for i := range chunks {
 		c := &chunks[i]
 		switch {
@@ -1658,7 +1721,6 @@ func chunkRates(chunks []meterChunk) []ExternalMeterPlanRate {
 			}
 		}
 	}
-	return rates
 }
 
 // rateTV is ½·TV of the steps' plan prices over a chunk, ½(r_1 +
@@ -1707,7 +1769,11 @@ func splitSeat(seat meterSeat, sources []string, steps []shareStep) (ExternalMet
 		reasons[i] = stepReason(in)
 	}
 	chunkOf, chunks := seatChunks(steps, reasons)
+	// k on the chunks as they closed at 5 points; then the lag after a chunk
+	// joins it, and U_c is taken on the chunks it left.
 	tot.PlanRates = append(tot.PlanRates, chunkRates(chunks)...)
+	chunks, chunkOf = foldLag(chunks, chunkOf)
+	chunkUnattributed(chunks, tot.PlanRates)
 	// The seat's k: the one of the latest chunk whose plan price has one.
 	for i := len(chunks) - 1; i >= 0 && tot.PointsPerListUSD == nil; i-- {
 		if r := chunks[i].rate; r != nil {

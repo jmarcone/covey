@@ -437,8 +437,9 @@ func TestSplitSeatMovedWithoutACall(t *testing.T) {
 // / L_cov 10 (agent x), then 6 points over 20 / 30 (agent y) — 10 points
 // over $100 (Lo 60, Lc 40), the clean chunk. A reading the outside sessions
 // had not reported (1 point, y $5) closes it. Chunk 2: 20 points over 50 /
-// 30 (x). Chunk 3: 10 points over L_cov 20 (y). Chunk 4: 2 points with no
-// call on either side, the last.
+// 30 (x). Chunk 3: 10 points over L_cov 20 (y). Another unreported reading
+// (1 point, y $5), then chunk 4: 2 points with no call on either side, the
+// last — with no chunk next to it, so not folded into chunk 3.
 func chunkFixture() []shareStep {
 	x, y := uuid.MustParse("00000000-0000-0000-0000-0000000000a1"), uuid.MustParse("00000000-0000-0000-0000-0000000000a2")
 	return []shareStep{
@@ -447,7 +448,8 @@ func chunkFixture() []shareStep {
 		{From: tm("09:30"), At: tm("10:30"), Points: 1, Rate: rate(1), LCov: 5, Agents: map[uuid.UUID]float64{y: 5}},
 		{From: tm("10:30"), At: tm("11:30"), Points: 20, Rate: rate(1), LOut: 50, LCov: 30, Agents: map[uuid.UUID]float64{x: 30}, Reported: true},
 		{From: tm("11:30"), At: tm("12:30"), Points: 10, Rate: rate(1), LCov: 20, Agents: map[uuid.UUID]float64{y: 20}, Reported: true},
-		{From: tm("12:30"), At: tm("13:30"), Points: 2, Rate: rate(1), Reported: true},
+		{From: tm("12:30"), At: tm("13:00"), Points: 1, Rate: rate(1), LCov: 5, Agents: map[uuid.UUID]float64{y: 5}},
+		{From: tm("13:00"), At: tm("13:30"), Points: 2, Rate: rate(1), Reported: true},
 	}
 }
 
@@ -479,6 +481,7 @@ func TestSplitSeatUnattributed(t *testing.T) {
 			{SplitNotReported, false, 0, 0, 0, 1},
 			{"", true, 7.25, 4.35, 8.4, 0},
 			{"", true, 0, 4.4, 5.6, 0},
+			{SplitNotReported, false, 0, 0, 0, 1},
 			{SplitNoReportedCall, false, 0, 0, 2, 0},
 		}
 		for i, w := range want {
@@ -495,9 +498,9 @@ func TestSplitSeatUnattributed(t *testing.T) {
 				t.Errorf("sources %v, step %d: the parts do not add up to R = %v", sources, i, *s.RealUSD)
 			}
 		}
-		if !near(tot.RealUSD, 43) || !near(tot.UnattributedRealUSD, 16) || !near(tot.UnattributedPoints, 16) ||
+		if !near(tot.RealUSD, 44) || !near(tot.UnattributedRealUSD, 16) || !near(tot.UnattributedPoints, 16) ||
 			tot.UnattributedSteps != 3 || !near(tot.UnattributedNoCallRealUSD, 2) || !near(tot.UnattributedNoCallPoints, 2) ||
-			!near(tot.UnsplitRealUSD, 1) || tot.UnsplitSteps != 1 || !near(tot.CoveyRealUSD, 12.75) || !near(tot.ExternalRealUSD, 13.25) ||
+			!near(tot.UnsplitRealUSD, 2) || tot.UnsplitSteps != 2 || !near(tot.CoveyRealUSD, 12.75) || !near(tot.ExternalRealUSD, 13.25) ||
 			!near(tot.CoveyRealUSD+tot.ExternalRealUSD+tot.UnattributedRealUSD+tot.UnsplitRealUSD, tot.RealUSD) {
 			t.Errorf("sources %v: real %v covey %v outside %v unattributed %v (%v points, %d steps, no call %v) unsplit %v (%d)", sources,
 				tot.RealUSD, tot.CoveyRealUSD, tot.ExternalRealUSD, tot.UnattributedRealUSD, tot.UnattributedPoints,
@@ -520,14 +523,14 @@ func TestSplitSeatUnattributed(t *testing.T) {
 		}
 		// The agents follow the chunks' L_cov: in chunk 1 x has 10/40 and y
 		// 30/40 of covey's $4 (per step it would be 2.4 and 1.6), then x
-		// chunk 2's 4.35 and y chunk 3's 4.4; y's $5 in the unreported step
+		// chunk 2's 4.35 and y chunk 3's 4.4; y's $5 in each unreported step
 		// is unsplit list.
 		agents := map[string]ExternalMeterAgent{}
 		for _, a := range tot.Agents {
 			agents[a.AgentID.String()[34:]] = a
 		}
 		if x, y := agents["a1"], agents["a2"]; !near(x.RealUSD, 5.35) || !near(y.RealUSD, 7.4) ||
-			!near(x.RealUSD+y.RealUSD, tot.CoveyRealUSD) || y.UnsplitListUSD != 5 || x.SplitListUSD != 40 || y.SplitListUSD != 50 {
+			!near(x.RealUSD+y.RealUSD, tot.CoveyRealUSD) || y.UnsplitListUSD != 10 || x.SplitListUSD != 40 || y.SplitListUSD != 50 {
 			t.Errorf("sources %v: agents x %+v y %+v, want real 5.35 and 7.4", sources, x, y)
 		}
 		m := meterSums([]ExternalMeterTotal{tot}, steps)
@@ -649,6 +652,69 @@ func TestSplitSeatLagFoldedIntoChunk(t *testing.T) {
 		!near(tot.CoveyRealUSD, 2.5) || !near(tot.ExternalRealUSD, 2.5) || tot.SplitRuns != 1 {
 		t.Errorf("unattributed %v (%d steps), split steps %d points %v, covey %v outside %v, chunks %d", tot.UnattributedRealUSD,
 			tot.UnattributedSteps, tot.SplitSteps, tot.SplitPoints, tot.CoveyRealUSD, tot.ExternalRealUSD, tot.SplitRuns)
+	}
+}
+
+// The meter's lag after a chunk that closed at its size (on staging, lone
+// +1 readings with no call right after use): a run of readings with no list
+// that follows it directly joins it, rather than standing as a chunk with
+// no list, unattributed whole. At $1 a point:
+//
+//   - 5 points over 2 / 2 close the chunk; +1 with no call, an idle reading,
+//     +1 with no call fold into it: 7 points at share ½, nothing
+//     unattributed (16739dd4 and 616d6c88: 2 unattributed).
+//   - with an unreported reading between, the two no-call points have no
+//     chunk next to them: unattributed whole;
+//   - at another plan price ($2) the no-call point is not that chunk's:
+//     unattributed whole ($2);
+//   - k is taken before the fold: 10 points over $100 (k 12/100), +3 with no
+//     call folded in (k would be 15/100), an unreported reading, 10 points
+//     over $50: U = 10 − 2 − 0.12 × 50 = 2 (0.5 with k after the fold); the
+//     folded chunk has U = max(0, 13 − 2 − 12) = 0, its no-call points
+//     split ½ / ½.
+func TestSplitSeatLagAfterClosedChunk(t *testing.T) {
+	at := tm("10:00")
+	mk := func(specs ...shareStep) []shareStep {
+		for i := range specs {
+			specs[i].From, specs[i].At = at.Add(time.Duration(i)*10*time.Minute), at.Add(time.Duration(i+1)*10*time.Minute)
+			if specs[i].Rate == nil {
+				specs[i].Rate = rate(1)
+			}
+		}
+		return specs
+	}
+	used := shareStep{Points: 5, LOut: 2, LCov: 2, Reported: true}
+	noCall := shareStep{Points: 1, Reported: true}
+	idle := shareStep{Reported: true}
+	unreported := shareStep{Points: 1, LCov: 1}
+
+	tot, steps := splitSeat(meterSeat{"seat", 0}, []string{"src"}, mk(used, noCall, idle, noCall))
+	if tot.UnattributedRealUSD != 0 || !near(tot.CoveyRealUSD, 3.5) || !near(tot.ExternalRealUSD, 3.5) || tot.SplitRuns != 1 ||
+		tot.SplitSteps != 3 || !steps[3].Split || steps[3].Reason != SplitNoReportedCall || !nearP(steps[3].CoveyRealUSD, 0.5) {
+		t.Errorf("folded: unattributed %v, covey %v outside %v, chunks %d, split steps %d, last %+v; want 0, 3.5, 3.5, 1, 3",
+			tot.UnattributedRealUSD, tot.CoveyRealUSD, tot.ExternalRealUSD, tot.SplitRuns, tot.SplitSteps, steps[3])
+	}
+
+	tot, _ = splitSeat(meterSeat{"seat", 0}, []string{"src"}, mk(used, unreported, noCall, noCall))
+	if !near(tot.UnattributedRealUSD, 2) || !near(tot.UnattributedNoCallRealUSD, 2) || !near(tot.CoveyRealUSD, 2.5) {
+		t.Errorf("after an unreported reading: unattributed %v (no call %v), covey %v; want 2, 2, 2.5",
+			tot.UnattributedRealUSD, tot.UnattributedNoCallRealUSD, tot.CoveyRealUSD)
+	}
+
+	otherPlan := noCall
+	otherPlan.Rate = rate(2)
+	tot, _ = splitSeat(meterSeat{"seat", 0}, []string{"src"}, mk(used, otherPlan))
+	if !near(tot.UnattributedNoCallRealUSD, 2) || !near(tot.CoveyRealUSD, 2.5) {
+		t.Errorf("at another plan price: unattributed with no call %v, covey %v; want 2, 2.5", tot.UnattributedNoCallRealUSD, tot.CoveyRealUSD)
+	}
+
+	tot, steps = splitSeat(meterSeat{"seat", 0}, []string{"src"}, mk(
+		shareStep{Points: 10, LOut: 50, LCov: 50, Reported: true}, shareStep{Points: 3, Reported: true}, unreported,
+		shareStep{Points: 10, LOut: 25, LCov: 25, Reported: true}))
+	if !nearP(tot.PointsPerListUSD, 0.12) || !near(steps[3].UnattributedPoints, 2) || steps[1].UnattributedPoints != 0 ||
+		!nearP(steps[1].ExternalRealUSD, 1.5) || !near(tot.UnattributedPoints, 2) {
+		t.Errorf("k %v, U %v / %v, folded step %+v; want 0.12, 2 in the last chunk, the folded 3 points split ½ / ½",
+			tot.PointsPerListUSD, steps[1].UnattributedPoints, steps[3].UnattributedPoints, steps[1])
 	}
 }
 
