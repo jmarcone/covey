@@ -62,6 +62,7 @@ const Audit = lazy(() => import("./pages/Audit"));
 const Templates = lazy(() => import("./pages/Templates"));
 const Setup = lazy(() => import("./pages/Setup"));
 const Costs = lazy(() => import("./pages/Costs"));
+const OutsideCosts = lazy(() => import("./pages/OutsideCosts"));
 
 
 function NavItem({
@@ -408,6 +409,7 @@ export default function AppShell({ me, onLogout }: { me: Principal; onLogout: ()
             <Route path="/voices/:id" element={<VoicePage me={me} />} />
             <Route path="/org" element={<Org me={me} />} />
             <Route path="/costs" element={<Costs me={me} />} />
+            <Route path="/costs/outside" element={<OutsideCosts />} />
             <Route path="/people/:id" element={<PersonPage me={me} />} />
             <Route path="/profile" element={<Navigate to={`/people/${me.ID}`} replace />} />
             <Route path="/inbox" element={me.TeamSurface ? <Navigate to="/team" replace /> : <Inbox me={me} />} />

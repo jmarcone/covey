@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, useSearchParams } from "react-router";
 import AgentsFrame from "./AgentsFrame";
 import { fromView, originOf, viewUrl, viewsFor } from "./views";
+import type { OrgChart } from "../../api";
 import { mockFetch, useGerman } from "../../test/render";
 
 const ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
@@ -18,6 +19,15 @@ function bar(route: string | { pathname: string; search?: string; state?: unknow
     </QueryClientProvider>,
   );
 }
+
+const chart = {
+  departments: [{ id: "dev", org_id: "o", name: "Entwicklung", description: "", color: "", leads: [], created_at: "" }],
+  humans: [],
+  agents: [
+    { id: "lead", slug: "lead", display_name: "Chefin", department_id: "dev" },
+    { id: ID, slug: "cc", display_name: "Cost Controller", department_id: "dev", supervisor_id: "lead" },
+  ],
+} as unknown as OrgChart;
 
 const switchLinks = () => within(screen.getByRole("navigation", { name: "Ansichten der Agenten" })).getAllByRole("link");
 
@@ -101,6 +111,45 @@ describe("AgentsFrame", () => {
     expect(list).not.toHaveClass("on");
   });
 
+  /* The crumb is the bar's second half. The switch is its root: its marked
+     segment leads back, so there is no "Agents" step of its own, and the
+     agent's page below draws no path of its own either. */
+  describe("the organisation path", () => {
+    const withChart = () =>
+      mockFetch({ [`/api/v1/agents/${ID}`]: { id: ID, display_name: "Cost Controller" }, "/api/v1/org/chart": chart });
+    const crumb = () => screen.findByRole("navigation", { name: "Organisationspfad" });
+
+    it("follows the switch and ends in the agent, with one request for the chart", async () => {
+      const netz = withChart();
+      bar({ pathname: `/agents/${ID}`, state: fromView("list") });
+      const pfad = await crumb();
+      await within(pfad).findByRole("link", { name: "Entwicklung" });
+      expect(within(pfad).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Entwicklung", "Chefin", "Cost Controller"]);
+      expect(pfad.previousElementSibling).toBe(screen.getByRole("navigation", { name: "Ansichten der Agenten" }));
+      expect(netz.calls.filter((c) => c.includes("/org/chart"))).toHaveLength(1);
+    });
+
+    it("has no second Agents root next to the switch", async () => {
+      withChart();
+      bar({ pathname: `/agents/${ID}`, state: fromView("list") });
+      await within(await crumb()).findByRole("link", { name: "Entwicklung" });
+      expect(screen.queryByRole("link", { name: "Agenten" })).not.toBeInTheDocument();
+      expect(screen.getAllByRole("link").map((a) => a.textContent)).toEqual(["Büro", "Liste", "Entwicklung", "Chefin"]);
+    });
+
+    it("leads the department step to the office the page came from", async () => {
+      withChart();
+      bar({ pathname: `/agents/${ID}`, state: fromView("office") });
+      expect(await screen.findByRole("link", { name: "Entwicklung" })).toHaveAttribute("href", "/?dept=dev");
+    });
+
+    it("never leads the department step to the office without the team surface", async () => {
+      withChart();
+      bar({ pathname: `/agents/${ID}`, state: fromView("office") }, false);
+      expect(await screen.findByRole("link", { name: "Entwicklung" })).toHaveAttribute("href", "/agents?dept=dev");
+    });
+  });
+
   it("shows no crumb on a view", () => {
     bar("/agents");
     expect(screen.queryByText("/")).not.toBeInTheDocument();
@@ -122,6 +171,18 @@ describe("views", () => {
     expect(viewUrl("list")).toBe("/agents");
     sessionStorage.setItem("covey.agents.url.list", "/agents?sort=name");
     expect(viewUrl("list")).toBe("/agents?sort=name");
+  });
+
+  // A department id belongs to one organisation, and the tab outlives a switch of it.
+  it("remembers no ?dept= of either view, but the other filters", () => {
+    bar("/?dept=dev&x=1").unmount();
+    expect(viewUrl("office")).toBe("/?x=1");
+    bar("/?dept=dev").unmount();
+    expect(viewUrl("office")).toBe("/");
+    bar("/agents?dept=dev&sort=name").unmount();
+    expect(viewUrl("list")).toBe("/agents?sort=name");
+    bar("/agents?dept=dev");
+    expect(viewUrl("list")).toBe("/agents");
   });
 
   it("reads the origin from the router state", () => {
