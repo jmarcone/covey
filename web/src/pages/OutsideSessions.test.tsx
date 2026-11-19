@@ -2,11 +2,20 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { fireEvent, screen, within } from "@testing-library/react";
 import Costs from "./Costs";
 import OutsideCosts from "./OutsideCosts";
-import type { CostCells, ExternalMeterSums, ExternalModelCell, ExternalModelUsage, ExternalUsage } from "../api";
+import type {
+  CostCells,
+  ExternalMeterStep,
+  ExternalMeterSums,
+  ExternalMeterTotal,
+  ExternalModelCell,
+  ExternalModelUsage,
+  ExternalUsage,
+} from "../api";
 import i18n from "../i18n";
 import { fmtCount, fmtNumber, fmtUSD } from "../format";
 import { mockFetch, renderWithProviders } from "../test/render";
-import { bucketOptions, outsideTotals, splitBy, originOf, TOKEN_KINDS } from "./outsideFigures";
+import { listLine } from "./OutsideSessions";
+import { bucketOptions, outsideTotals, splitBy, stepKind, originOf, TOKEN_KINDS } from "./outsideFigures";
 
 // #120, part C and the detailed view: the Claude Code sessions outside covey
 // on the cost page. Pinned here (criterion 9 and the human's two comments):
@@ -14,11 +23,16 @@ import { bucketOptions, outsideTotals, splitBy, originOf, TOKEN_KINDS } from "./
 // the tile shows the API's figures; 10 min stops at 2 days and 10 h at 30,
 // each with a reason; Real and Billed are off at 10 min; combined, the total
 // says it includes the outside sessions and the agents' own figure stays;
-// the detailed view's splits add up to its total.
+// the detailed view's splits add up to its total. Where the server has no
+// figure (null), the page never shows $0: a reading not split names its
+// reason, a period without a list price says so.
 
 const SEAT = "claude_code_oauth_token";
-const H18 = "2026-11-17T18:00:00Z", H19 = "2026-11-17T19:00:00Z";
+const OTHER_SEAT = "other_oauth_token";
+const H18 = "2026-11-17T18:00:00Z", H19 = "2026-11-17T19:00:00Z", H20 = "2026-11-17T20:00:00Z";
 const t = (k: string, o: Record<string, unknown> = {}) => i18n.t(k, o) as string;
+/** count picks the plural, n is the number as shown. */
+const counted = (v: number) => ({ count: v, n: fmtNumber(v, 0) });
 
 function sums(over: Partial<ExternalMeterSums> = {}): ExternalMeterSums {
   return {
@@ -26,29 +40,71 @@ function sums(over: Partial<ExternalMeterSums> = {}): ExternalMeterSums {
     split_external_list_usd: 12.5, split_covey_list_usd: 5.4, points: 13, split_points: 13, split_external_points: 9.1,
     split_covey_points: 3.9, split_runs: 1, split_slack_points: 1, split_slack_usd: 0.46, split_external_slack_points: 0.7,
     split_external_slack_usd: 0.32, split_covey_slack_points: 0.3, split_covey_slack_usd: 0.14, point_rate: 0.46,
-    point_rate_mixed: false, step_count: 2, split_steps: 2, unsplit_steps: 0, unpriced_steps: 0, unpriced_points: 0,
-    unpriced_calls: 0, unpriced_tokens: 0, unmetered_list_usd: 0, ...over,
+    point_rate_mixed: false, step_count: 2, split_steps: 2, unsplit_steps: 0, outside_unpriced_steps: 0, outside_unpriced_real_usd: 0,
+    unpriced_steps: 0, unpriced_points: 0, unpriced_calls: 0, unpriced_tokens: 0, unmetered_list_usd: 0, ...over,
   };
 }
 
-function external(): ExternalUsage {
-  const src = (source: string, list: number, linked: boolean, unpriced: number) => ({
-    source, meter_credential: linked ? { secret_key: SEAT, secret_slot: 0 } : null, calls: 30, list_usd: list, reported_usd: null,
-    unpriced_tokens: unpriced, unpriced_calls: unpriced > 0 ? 1 : 0, unpriced_models: unpriced > 0 ? ["claude-sonnet-5-7"] : [],
+type Kind = "split" | NonNullable<ExternalMeterStep["reason"]>;
+
+/** One meter reading of a seat, as the server sends it: split (real into
+ *  outside and covey), or not, for a reason. */
+function step(at: string, kind: Kind, real: number | null, opt: { key?: string; outside?: number; points?: number } = {}): ExternalMeterStep {
+  const split = kind === "split";
+  const out = opt.outside ?? 0;
+  return {
+    at, from: new Date(Date.parse(at) - 3_600_000).toISOString(), secret_key: opt.key ?? SEAT, secret_slot: 0,
+    points: opt.points ?? (kind === "idle" ? 0 : 2), reset: false, real_usd: real,
+    external_list_usd: split ? 1 : 0, covey_list_usd: split ? 1 : 0,
+    reported: kind !== "not_reported", split, reason: split ? undefined : kind,
+    external_real_usd: split ? out : null, covey_real_usd: split ? (real ?? 0) - out : null,
+    unsplit_real_usd: split || kind === "unpriced" || kind === "idle" ? 0 : real ?? 0,
+  };
+}
+
+/** A seat's sums, with the sources linked to it. */
+function seat(key: string, sources: string[], over: Partial<ExternalMeterSums> = {}): ExternalMeterTotal {
+  return { ...sums(over), secret_key: key, secret_slot: 0, meter_source: "usage_cmd", sources, hours_with_reading: 2, agents: [] };
+}
+
+/** The outside usage of /cost/cells. unpriced: every outside call has no
+ *  list price (a model the list does not know). */
+function external({ unpriced = false } = {}): ExternalUsage {
+  const src = (source: string, list: number, linked: boolean, unpricedTokens: number) => ({
+    source, meter_credential: linked ? { secret_key: SEAT, secret_slot: 0 } : null, calls: 30,
+    list_usd: unpriced ? null : list, reported_usd: null,
+    unpriced_tokens: unpriced ? 3000 : unpricedTokens, unpriced_calls: unpriced ? 30 : unpricedTokens > 0 ? 1 : 0,
+    unpriced_models: unpriced || unpricedTokens > 0 ? ["claude-sonnet-5-7"] : [],
     first_at: H18, last_at: H19, hosts: [],
   });
   const cell = (period: string, source: string, origin: string | null, list: number) => ({
-    period, source, origin, calls: 10, list_usd: list, measured: { cache_read: list }, reported_usd: null, reported_calls: 0,
-    tokens: { cache_read: 1000 }, unpriced_tokens: 0, unpriced_calls: 0,
+    period, source, origin, calls: 10, list_usd: unpriced ? null : list, measured: (unpriced ? {} : { cache_read: list }) as Record<string, number>,
+    reported_usd: null, reported_calls: 0, tokens: { cache_read: 1000 }, unpriced_tokens: unpriced ? 1000 : 0, unpriced_calls: unpriced ? 10 : 0,
   });
   return {
     sources: [src("operator: home", 12.5, true, 2060), src("operator: work", 3.25, false, 0)],
     cells: [cell(H18, "operator: home", "main", 8), cell(H19, "operator: home", "subagent", 4.5), cell(H19, "operator: work", null, 3.25)],
-    meter: { ...sums(), steps: [], hours: [], credentials: [] },
+    // The linked seat: one split reading and one the outside sessions had
+    // not reported. A seat no source names is all covey's; a reading not
+    // split there says nothing about the outside sessions.
+    meter: {
+      ...sums({ real_usd: 13.7, covey_real_usd: 6.8, unsplit_real_usd: 2.7, share: 4.2 / 11, unsplit_steps: 2 }),
+      steps: [
+        step("2026-11-17T18:30:00Z", "split", 6, { outside: 4.2 }),
+        step("2026-11-17T19:30:00Z", "not_reported", 1.5),
+        step("2026-11-17T18:40:00Z", "split", 5, { key: OTHER_SEAT }),
+        step("2026-11-17T19:40:00Z", "moved_without_reported_call", 1.2, { key: OTHER_SEAT }),
+      ],
+      hours: [],
+      credentials: [
+        seat(SEAT, ["operator: home"], { real_usd: 7.5, unsplit_steps: 1, unsplit_real_usd: 1.5 }),
+        seat(OTHER_SEAT, [], { real_usd: 6.2, external_real_usd: 0, covey_real_usd: 5, share: 0, unsplit_steps: 1, unsplit_real_usd: 1.2 }),
+      ],
+    },
   };
 }
 
-function cells(): CostCells {
+function cells(ext: ExternalUsage = external()): CostCells {
   const cell = (period: string, agent: string, output: number) => ({ period, agent_id: agent, secret_key: SEAT, secret_slot: 0,
     credential_kind: "subscription", reported_usd: output, measured: { output }, engine_usd: output, tokens: { output: output * 50_000 } });
   return {
@@ -57,7 +113,7 @@ function cells(): CostCells {
     types: ["cache_read", "cache_write", "input", "output", "web_search", "unpriced", "unattributed"],
     cells: [cell(H18, "a1", 3), cell(H19, "a1", 4)],
     subscription: [], meter: [], plans: [], bookings: [],
-    external: external(),
+    external: ext,
   };
 }
 
@@ -96,15 +152,31 @@ describe("the operator sessions on the cost page (#120)", () => {
     expect(outsideTile()).toBeTruthy();
   });
 
-  it("puts the API's figures on the tile: list total, real share and %, unpriced tokens", async () => {
+  it("puts the API's figures on the tile: list total, real share and % of the linked seats, unpriced tokens", async () => {
     serveCosts();
     const tile = await screen.findByRole("group", { name: t("costs.outside.tile") });
-    const ext = external();
-    const o = outsideTotals(ext)!;
+    const o = outsideTotals(external())!;
     expect(o.list).toBeCloseTo(12.5 + 3.25, 9);
     expect(within(tile).getByText(fmtUSD(12.5 + 3.25))).toBeTruthy();
-    expect(within(tile).getByText(t("costs.outside.realShare", { usd: fmtUSD(ext.meter.external_real_usd), pct: `${fmtNumber(0.7 * 100, 1)} %` }))).toBeTruthy();
+    expect(within(tile).getByText(t("costs.outside.tileSub", counted(60)))).toBeTruthy();
+    // The share is of the seat a source names (4.2 of 6), not of every
+    // seat (4.2 of 11): the unlinked seat is all covey's.
+    expect(o.share).toBeCloseTo(0.7, 12);
+    expect(within(tile).getByText(t("costs.outside.realShare", { usd: fmtUSD(4.2), pct: `${fmtNumber(0.7 * 100, 1)} %` }))).toBeTruthy();
     expect(within(tile).getByText(t("costs.outside.unpriced", { n: fmtCount(2060) }))).toBeTruthy();
+  });
+
+  it("counts only the readings of seats a source names, one line per reason, in the singular for one", async () => {
+    serveCosts();
+    const tile = await screen.findByRole("group", { name: t("costs.outside.tile") });
+    const o = outsideTotals(external())!;
+    expect(o.unsplit.not_reported).toEqual({ steps: 1, usd: 1.5 });
+    expect(o.unsplit.moved_without_reported_call.steps).toBe(0);
+    const line = t("costs.outside.unsplit_not_reported", { ...counted(1), usd: fmtUSD(1.5) });
+    expect(line).toContain("1 reading not reported");
+    expect(within(tile).getByText(line)).toBeTruthy();
+    expect(tile.textContent).not.toContain(fmtUSD(1.2));
+    expect(t("costs.outside.unsplit_not_reported", { ...counted(2), usd: fmtUSD(3) })).toContain("2 readings");
   });
 
   it("changes the total only when combined, says so, and leaves the agents' own figure alone", async () => {
@@ -125,6 +197,39 @@ describe("the operator sessions on the cost page (#120)", () => {
     fireEvent.click(screen.getByRole("button", { name: t("costs.outside.modeApart") }));
     expect(screen.queryByRole("group", { name: t("costs.outside.combinedTotal") })).toBeNull();
     expect(agentsKpi()).toBe(before);
+  });
+
+  it("never shows $0 for outside calls without a list price: the tile, the combined total and the chart say so", async () => {
+    const { container } = serveCosts(cells(external({ unpriced: true })));
+    const tile = await screen.findByRole("group", { name: t("costs.outside.tile") });
+    expect(within(tile).getByText(t("costs.outside.noPrice"))).toBeTruthy();
+    expect(tile.querySelector("[data-value]")!.textContent).toBe("–");
+
+    const section = container.querySelector("[data-outside]") as HTMLElement;
+    expect(section.querySelector("[data-outside-unpriced-note]")!.textContent).toBe(t("costs.outside.chartUnpriced"));
+    fireEvent.click(within(section).getByRole("button", { name: t("costs.fig.showAsTable") }));
+    const table = within(section).getByRole("table");
+    const rows = within(table).getAllByRole("row").filter((r) => r.closest("tbody"));
+    expect(rows.length).toBe(2);
+    for (const r of rows) {
+      expect(r.textContent).toContain(t("costs.outside.noPrice"));
+      expect(r.textContent).not.toContain(fmtUSD(0));
+    }
+
+    fireEvent.click(within(section).getByRole("button", { name: t("costs.outside.modeCombined") }));
+    const combined = screen.getByRole("group", { name: t("costs.outside.combinedTotal") });
+    expect(within(combined).getByText(t("costs.outside.combinedSubNoPrice", { agents: fmtUSD(7) }))).toBeTruthy();
+    expect(combined.textContent).not.toContain(t("costs.outside.combinedSub", { outside: fmtUSD(0), agents: fmtUSD(7) }));
+    for (const r of within(within(section).getByRole("table")).getAllByRole("row").filter((r) => r.closest("tbody"))) {
+      expect(r.textContent).toContain(t("costs.outside.chartNoPriceCombined"));
+    }
+  });
+
+  it("tells no calls from no list price", () => {
+    expect(listLine(i18n.t, null, 0)).toBe(t("costs.outside.noCalls"));
+    expect(listLine(i18n.t, null, 3)).toBe(t("costs.outside.noPrice"));
+    expect(listLine(i18n.t, 1.5, 1)).toBe(t("costs.outside.tileSub", counted(1)));
+    expect(listLine(i18n.t, 1.5, 1)).toContain("1 model call");
   });
 
   it("offers 10 min up to 2 days and 10 h up to 30 days, each disabled beyond with a reason", async () => {
@@ -178,13 +283,15 @@ describe("the operator sessions on the cost page (#120)", () => {
 
 // --- The detailed view -----------------------------------------------------------
 
-function mc(period: string, origin: string | null, model: string, toks: [number, number, number, number, number], priced = true): ExternalModelCell {
+function mc(period: string, origin: string | null, model: string, toks: [number, number, number, number, number], priced = true,
+  reported: { usd: number; calls: number } | null = null): ExternalModelCell {
   const price: Record<string, number> = { input: 4, output: 20, cache_read: 0.2, cache_write_5m: 5, cache_write_1h: 8 };
   const tokens = Object.fromEntries(TOKEN_KINDS.map((k, i) => [k, toks[i]]));
   const typeUSD = priced ? Object.fromEntries(TOKEN_KINDS.map((k) => [k, tokens[k] * price[k] / 1e6])) : {};
   const list = priced ? Object.values(typeUSD).reduce((a, v) => a + v, 0) : null;
   return { period, source: "operator: home", origin, model, calls: 3, list_usd: list, measured: {}, type_usd: typeUSD,
-    reported_usd: null, reported_calls: 0, tokens, unpriced_tokens: priced ? 0 : toks.reduce((a, v) => a + v, 0), unpriced_calls: priced ? 0 : 3 };
+    reported_usd: reported?.usd ?? null, reported_calls: reported?.calls ?? 0, tokens,
+    unpriced_tokens: priced ? 0 : toks.reduce((a, v) => a + v, 0), unpriced_calls: priced ? 0 : 3 };
 }
 
 const VIEW_CELLS = [
@@ -194,15 +301,19 @@ const VIEW_CELLS = [
   mc(H19, null, "claude-sonnet-5-7", [10, 50, 2_000, 0, 0], false),
 ];
 
-function view(): ExternalModelUsage {
+function view(over: { steps?: ExternalMeterStep[]; cells?: ExternalModelCell[]; seatSources?: string[]; source?: string | null } = {}): ExternalModelUsage {
   const ext = external();
   return {
-    bucket: "hour", since: "2026-11-17T00:00:00Z", source: null, sources: ext.sources,
+    bucket: "hour", since: "2026-11-17T00:00:00Z", source: over.source ?? null, sources: ext.sources,
     models: [{ model: "claude-opus-5-5", priced: true }, { model: "claude-sonnet-5-5", priced: true }, { model: "claude-sonnet-5-7", priced: false }],
-    cells: VIEW_CELLS,
-    meter: { ...sums(), steps: [], hours: [], credentials: [{ ...sums(), secret_key: SEAT, secret_slot: 0, meter_source: "usage_cmd",
-      sources: ["operator: home"], hours_with_reading: 2, agents: [] }] },
+    cells: over.cells ?? VIEW_CELLS,
+    meter: { ...sums(), steps: over.steps ?? [], hours: [], credentials: [seat(SEAT, over.seatSources ?? ["operator: home"])] },
   };
+}
+
+function serveView(v: ExternalModelUsage, route = "/costs/outside?days=1&bucket=hour") {
+  mockFetch({ "/api/v1/cost/external-usage": v });
+  return renderWithProviders(<OutsideCosts />, { route, path: "/costs/outside" });
 }
 
 describe("the detailed view of the operator sessions", () => {
@@ -228,8 +339,7 @@ describe("the detailed view of the operator sessions", () => {
   });
 
   it("shows the tables, their totals and the unpriced tokens on the page", async () => {
-    mockFetch({ "/api/v1/cost/external-usage": view() });
-    renderWithProviders(<OutsideCosts />, { route: "/costs/outside?days=1&bucket=hour", path: "/costs/outside" });
+    serveView(view({ steps: [step("2026-11-17T18:30:00Z", "split", 6, { outside: 4.2 })] }));
     const models = await screen.findByRole("table", { name: t("costs.outside.byModel") });
     const origins = screen.getByRole("table", { name: t("costs.outside.byOrigin") });
     const total = splitBy(VIEW_CELLS, (c) => c.model).total.list!;
@@ -245,9 +355,21 @@ describe("the detailed view of the operator sessions", () => {
     expect(real.textContent).toContain(t("costs.outside.ofMeter", { pct: `${fmtNumber(70, 1)} %` }));
   });
 
+  it("shows the calls that carried their own reported cost, with plurals", async () => {
+    const withReported = [...VIEW_CELLS.slice(0, 3), mc(H19, null, "claude-sonnet-5-7", [10, 50, 2_000, 0, 0], false, { usd: 0.3, calls: 2 })];
+    serveView(view({ cells: withReported }));
+    const models = await screen.findByRole("table", { name: t("costs.outside.byModel") });
+    const tile = screen.getByRole("group", { name: t("costs.fig.reported") });
+    expect(tile.textContent).toContain(fmtUSD(0.3));
+    expect(within(tile).getByText(t("costs.outside.reportedCalls", counted(2)))).toBeTruthy();
+    expect(t("costs.outside.reportedCalls", counted(2))).toContain("2 calls");
+    const row = models.querySelector("[data-row='claude-sonnet-5-7'] [data-reported]")!;
+    expect(row.textContent).toBe(fmtUSD(0.3) + t("costs.outside.callsShort", counted(2)));
+    expect(t("costs.outside.callsShort", counted(1))).toBe("1 call");
+  });
+
   it("states a period without a meter reading instead of showing 0", async () => {
-    mockFetch({ "/api/v1/cost/external-usage": view() });
-    const { container } = renderWithProviders(<OutsideCosts />, { route: "/costs/outside?days=1&bucket=hour", path: "/costs/outside" });
+    const { container } = serveView(view());
     await screen.findByRole("table", { name: t("costs.outside.byModel") });
     const rows = container.querySelectorAll("[data-meter-row='no-reading']");
     expect(rows.length).toBe(2);
@@ -255,5 +377,95 @@ describe("the detailed view of the operator sessions", () => {
       expect(r.textContent).toContain(t("costs.outside.noReading"));
       expect(r.textContent).not.toContain(fmtUSD(0));
     }
+  });
+
+  it("words every reason a reading was not split, and never shows $0 for its parts", async () => {
+    const at = (h: number, m: number) => `2026-11-17T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00Z`;
+    const steps = [
+      step(at(17, 40), "split", 2, { outside: 1.4 }),
+      step(at(18, 20), "not_reported", 1.5),
+      step(at(18, 50), "not_reported", 0.5),
+      step(at(19, 20), "moved_without_reported_call", 0.9),
+      step(at(20, 20), "outside_unpriced", 0.46),
+      step(at(21, 20), "unpriced", null),
+      step(at(22, 20), "idle", 0),
+      step(at(23, 20), "split", 1, { outside: 0.25 }),
+      step(at(23, 40), "outside_unpriced", 0.3),
+    ];
+    expect(steps.map(stepKind)).toEqual(["split", "not_reported", "not_reported", "moved_without_reported_call",
+      "outside_unpriced", "unpriced", "idle", "split", "outside_unpriced"]);
+    const { container } = serveView(view({ steps }));
+    await screen.findByRole("table", { name: t("costs.outside.byModel") });
+    const row = (h: number) => {
+      const rows = [...container.querySelectorAll<HTMLTableRowElement>("[data-meter-table] tbody tr")];
+      return rows.find((r) => r.getAttribute("data-meter-period") === String(Date.parse(at(h, 0))))!;
+    };
+    const cellsOf = (h: number) => [...row(h).querySelectorAll("td")].map((c) => c.textContent);
+    const kind = (h: number) => row(h).getAttribute("data-meter-row");
+
+    expect(kind(17)).toBe("split");
+    expect(cellsOf(17).slice(0, 3)).toEqual([fmtUSD(2), fmtUSD(1.4), fmtUSD(0.6)]);
+
+    // Not reported, twice in one hour: their real cost, no part, the plural.
+    expect(kind(18)).toBe("unsplit");
+    expect(cellsOf(18)).toEqual([fmtUSD(2), "–", "–", t("costs.outside.unsplit_not_reported", { ...counted(2), usd: fmtUSD(2) })]);
+    // Moved with no reported call: the bug was Outside $0.00 / covey $0.00.
+    expect(kind(19)).toBe("unsplit");
+    expect(cellsOf(19)).toEqual([fmtUSD(0.9), "–", "–",
+      t("costs.outside.unsplit_moved_without_reported_call", { ...counted(1), usd: fmtUSD(0.9) })]);
+    expect(kind(20)).toBe("unsplit");
+    expect(cellsOf(20)).toEqual([fmtUSD(0.46), "–", "–",
+      t("costs.outside.unsplit_outside_unpriced", { ...counted(1), usd: fmtUSD(0.46) })]);
+    // No plan price: no real cost at all, counted.
+    expect(kind(21)).toBe("unpriced");
+    expect(cellsOf(21)).toEqual(["–", "–", "–", t("costs.outside.unpricedReadings", counted(1))]);
+    // Idle: neither split nor unsplit.
+    expect(kind(22)).toBe("idle");
+    expect(cellsOf(22).slice(1)).toEqual(["–", "–", t("costs.outside.idleHere")]);
+    // Split and not split in one hour: the split part, and the rest named.
+    expect(kind(23)).toBe("partial");
+    expect(cellsOf(23)).toEqual([fmtUSD(1.3), fmtUSD(0.25), fmtUSD(0.75),
+      t("costs.outside.unsplit_outside_unpriced", { ...counted(1), usd: fmtUSD(0.3) })]);
+    for (const h of [18, 19, 20, 21]) expect(cellsOf(h).slice(1, 3).join()).not.toContain(fmtUSD(0));
+
+    // The seat line counts them per reason, as the rows do.
+    const seatLine = container.querySelector(`[data-seat='${SEAT}#0']`)!.textContent!;
+    expect(seatLine).toContain(t("costs.outside.unsplit_not_reported", { ...counted(2), usd: fmtUSD(2) }));
+    expect(seatLine).toContain(t("costs.outside.unsplit_moved_without_reported_call", { ...counted(1), usd: fmtUSD(0.9) }));
+    expect(seatLine).toContain(t("costs.outside.unsplit_outside_unpriced", { ...counted(2), usd: fmtUSD(0.76) }));
+    expect(seatLine).toContain(t("costs.outside.unpricedReadings", counted(1)));
+  });
+
+  it("gives a period whose calls had no list price no bar and says so", async () => {
+    const onlyUnpriced = [...VIEW_CELLS, mc(H20, "main", "claude-sonnet-5-7", [10, 50, 2_000, 0, 0], false)];
+    serveView(view({ cells: onlyUnpriced }));
+    await screen.findByRole("table", { name: t("costs.outside.byModel") });
+    fireEvent.click(screen.getByRole("button", { name: t("costs.fig.showAsTable") }));
+    const chart = screen.getByRole("table", { name: t("costs.outside.chartTitle") });
+    const rows = within(chart).getAllByRole("row").filter((r) => r.closest("tbody"));
+    expect(rows.length).toBe(3);
+    const last = rows[2];
+    expect(last.textContent).toContain(t("costs.outside.noPrice"));
+    expect(last.textContent).not.toContain(fmtUSD(0));
+  });
+
+  it("with ?source=, says the meter share covers the other sources on the meter", async () => {
+    serveView(view({ source: "operator: home", seatSources: ["operator: home", "operator: lab"],
+      steps: [step("2026-11-17T18:30:00Z", "split", 6, { outside: 4.2 })] }),
+    "/costs/outside?days=1&bucket=hour&source=operator%3A%20home");
+    await screen.findByRole("table", { name: t("costs.outside.byModel") });
+    const real = screen.getByRole("group", { name: t("costs.outside.meterShare") });
+    expect(within(real).getByText(t("costs.outside.tileOtherSources", { sources: "operator: lab" }))).toBeTruthy();
+    expect(screen.getByText(t("costs.outside.sourceNote"))).toBeTruthy();
+  });
+
+  it("with ?source= of a source that names no meter, says so on the tile", async () => {
+    serveView(view({ source: "operator: work", cells: VIEW_CELLS.map((c) => ({ ...c, source: "operator: work" })) }),
+      "/costs/outside?days=1&bucket=hour&source=operator%3A%20work");
+    await screen.findByRole("table", { name: t("costs.outside.byModel") });
+    const real = screen.getByRole("group", { name: t("costs.outside.meterShare") });
+    expect(within(real).getByText(t("costs.outside.noMeterSource"))).toBeTruthy();
+    expect(real.querySelector("[data-value]")!.textContent).toBe("–");
+    expect(screen.getByText(t("costs.outside.perUse"))).toBeTruthy();
   });
 });
