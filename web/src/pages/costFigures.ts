@@ -370,9 +370,11 @@ export function bucketStart(ms: number, bucket: string): number {
  *  and for a window the bill knows per hour (within 48 h), else UTC days —
  *  both cut cleanly at the billed window's start and add up into any
  *  coarser chart bucket. Weeks are never asked for: a billed week can start
- *  before the window. */
+ *  before the window. A 10-hour (or 10-minute) chart takes hours at any
+ *  range: a UTC day does not fit into epoch-aligned 10-hour buckets, so each
+ *  day's bill would land whole in one of them and the others show $0. */
 export function billedFetchBucket(days: number, bucket: string): "hour" | "day" {
-  return bucket === "hour" || days <= 2 ? "hour" : "day";
+  return bucket === "hour" || bucket === "10hour" || bucket === "10min" || days <= 2 ? "hour" : "day";
 }
 
 /** The bill of one credential per chart period (keyed by the period's start

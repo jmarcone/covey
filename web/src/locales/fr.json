@@ -505,7 +505,12 @@
       "tileOtherSources": "de tout le compteur : il inclut ses autres sources ({{sources}}), pas seulement cette source",
       "combinedSubNoPrice": "pas de prix catalogue pour les sessions de l'opérateur (aucun de leurs appels n'en avait) ; agents de covey : {{agents}}",
       "combinedSubNoCalls": "aucun appel des sessions de l'opérateur sur la période ; agents de covey : {{agents}}",
-      "chartNoPriceCombined": "sessions de l'opérateur : pas de prix catalogue"
+      "chartNoPriceCombined": "sessions de l'opérateur : pas de prix catalogue",
+      "combinedSubSelected": "inclut {{outside}} des sessions de l'opérateur hors de covey ; agents sélectionnés : {{agents}}",
+      "combinedSubNoPriceSelected": "pas de prix catalogue pour les sessions de l'opérateur (aucun de leurs appels n'en avait) ; agents sélectionnés : {{agents}}",
+      "combinedSubNoCallsSelected": "aucun appel des sessions de l'opérateur sur la période ; agents sélectionnés : {{agents}}",
+      "agentsPartSelected": "agents sélectionnés (prix catalogue)",
+      "typePricedOnly": "* Les dollars par type de token ne couvrent que les appels avec prix ; les nombres de tokens au-dessus incluent les appels sans prix catalogue."
     }
   },
   "lang": {

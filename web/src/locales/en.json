@@ -505,7 +505,12 @@
       "tileOtherSources": "of the whole meter: it includes the other sources on it ({{sources}}), not this source alone",
       "combinedSubNoPrice": "no list price for the operator sessions (none of their calls had one); covey's agents: {{agents}}",
       "combinedSubNoCalls": "no calls by the operator sessions in the period; covey's agents: {{agents}}",
-      "chartNoPriceCombined": "operator sessions: no list price"
+      "chartNoPriceCombined": "operator sessions: no list price",
+      "combinedSubSelected": "includes {{outside}} by operator sessions outside covey; selected agents: {{agents}}",
+      "combinedSubNoPriceSelected": "no list price for the operator sessions (none of their calls had one); selected agents: {{agents}}",
+      "combinedSubNoCallsSelected": "no calls by the operator sessions in the period; selected agents: {{agents}}",
+      "agentsPartSelected": "selected agents (list price)",
+      "typePricedOnly": "* The dollars per token type cover the priced calls only; the token counts above them include the calls without a list price."
     }
   },
   "lang": {

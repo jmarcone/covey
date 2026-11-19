@@ -505,7 +505,12 @@
       "tileOtherSources": "z całego licznika: obejmuje inne jego źródła ({{sources}}), nie tylko to źródło",
       "combinedSubNoPrice": "brak ceny katalogowej dla sesji operatora (żadne z ich wywołań jej nie miało); agenci covey: {{agents}}",
       "combinedSubNoCalls": "brak wywołań sesji operatora w okresie; agenci covey: {{agents}}",
-      "chartNoPriceCombined": "sesje operatora: brak ceny katalogowej"
+      "chartNoPriceCombined": "sesje operatora: brak ceny katalogowej",
+      "combinedSubSelected": "obejmuje {{outside}} sesji operatora poza covey; wybrani agenci: {{agents}}",
+      "combinedSubNoPriceSelected": "brak ceny katalogowej dla sesji operatora (żadne z ich wywołań jej nie miało); wybrani agenci: {{agents}}",
+      "combinedSubNoCallsSelected": "brak wywołań sesji operatora w okresie; wybrani agenci: {{agents}}",
+      "agentsPartSelected": "wybrani agenci (cena katalogowa)",
+      "typePricedOnly": "* Dolary według typu tokenów obejmują tylko wywołania z ceną; liczby tokenów nad nimi obejmują też wywołania bez ceny katalogowej."
     }
   },
   "lang": {

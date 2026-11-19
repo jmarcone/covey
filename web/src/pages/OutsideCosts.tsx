@@ -84,7 +84,11 @@ function SplitTable({ title, rows, total, label, color, test }: {
   const { t } = useTranslation();
   const th: React.CSSProperties = { padding: "4px 8px 6px 0", fontWeight: 500, whiteSpace: "nowrap", textAlign: "right" };
   const td: React.CSSProperties = { padding: "3px 8px 3px 0", textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" };
-  const money = (r: SplitRow, k: string) => (r.typeUSD[k] != null ? fmtUSD(r.typeUSD[k]) : "–");
+  // The $ per type cover the priced calls only, while the token counts above
+  // them include the unpriced ones: such a figure carries a mark, and the
+  // footnote under the tables says what it means.
+  const money = (r: SplitRow, k: string) => (r.typeUSD[k] == null ? "–"
+    : r.unpricedTokens > 0 ? <span data-priced-only>{fmtUSD(r.typeUSD[k])}*</span> : fmtUSD(r.typeUSD[k]));
   const row = (r: SplitRow, head: React.ReactNode, isTotal = false) => (
     <tr key={r.key} data-row={isTotal ? undefined : r.key} data-total={isTotal || undefined}
       style={{ borderTop: `1px solid ${isTotal ? "var(--border-strong)" : "var(--border)"}`, fontWeight: isTotal ? 600 : 400 }}>
@@ -237,7 +241,8 @@ export default function OutsideCosts() {
             ))}
           </div>
           <BarChart title={t("costs.outside.chartTitle")} periods={series.map((p) => p.period)} groups={groups}
-            fmtPeriod={fmtPeriod} fmtValue={fmtUSD} fmtAxis={fmtUSDAxis} asTable={asTable} notes={chartNotes} />
+            fmtPeriod={fmtPeriod} fmtValue={fmtUSD} fmtAxis={fmtUSDAxis} asTable={asTable} notes={chartNotes}
+            notesLabel={t("costs.outside.colNote")} />
           {unpricedModels.length > 0 && <p className="muted text-xs mt-1 mb-0">{t("costs.outside.chartUnpriced")}</p>}
         </div>
 
@@ -246,6 +251,7 @@ export default function OutsideCosts() {
           <p className="muted text-xs mb-2">{t("costs.outside.tokensHint")}</p>
           <SplitTable test="model" title={t("costs.outside.byModel")} rows={models.rows} total={models.total} label={(k) => k} color={modelColor} />
           <SplitTable test="origin" title={t("costs.outside.byOrigin")} rows={origins.rows} total={origins.total} label={originLabel} color={(k) => ORIGIN_COLOR[k]} />
+          {models.total.unpricedTokens > 0 && <p className="muted text-xs mt-2 mb-0" data-priced-only-note>{t("costs.outside.typePricedOnly")}</p>}
         </div>
 
         <div className="card mb-4" data-outside-meter>
@@ -257,9 +263,13 @@ export default function OutsideCosts() {
             {seats.map((c) => (
               <p key={`${c.secret_key}#${c.secret_slot}`} className="text-sm mb-1" data-seat={`${c.secret_key}#${c.secret_slot}`}>
                 <b>{c.secret_key} #{c.secret_slot}</b>{" · "}
-                {c.share != null
-                  ? t("costs.outside.seatLine", { real: fmtUSD(c.real_usd), outside: fmtUSD(c.external_real_usd), pct: pct(c.share), covey: fmtUSD(c.covey_real_usd) })
-                  : t("costs.outside.seatNoShare", { real: fmtUSD(c.real_usd) })}
+                {(() => {
+                  // Every reading at no plan price: no real cost, not $0.
+                  const realText = c.step_count - c.unpriced_steps === 0 ? "–" : fmtUSD(c.real_usd);
+                  return c.share != null
+                    ? t("costs.outside.seatLine", { real: realText, outside: fmtUSD(c.external_real_usd), pct: pct(c.share), covey: fmtUSD(c.covey_real_usd) })
+                    : t("costs.outside.seatNoShare", { real: realText });
+                })()}
                 {(() => {
                   const s = seatSteps(c);
                   return [...unsplitLines(t, s.unsplit),
@@ -290,13 +300,17 @@ export default function OutsideCosts() {
                     // figure for either part, never $0. Each reason says so.
                     const unsplitN = unsplitSteps(r.unsplit);
                     const cell = (v: number) => (r.splitSteps > 0 ? fmtUSD(v) : "–");
-                    const notes = r.noReading ? [t("costs.outside.noReading")] : [
+                    // No reading on one seat while another seat has one in
+                    // the period: both are said.
+                    const anyStep = r.splitSteps + unsplitN + r.unpricedSteps + r.idleSteps > 0;
+                    const notes = [
+                      ...(r.noReading ? [t("costs.outside.noReading")] : []),
                       ...unsplitLines(t, r.unsplit),
                       ...(r.unpricedSteps > 0 ? [t("costs.outside.unpricedReadings", counted(r.unpricedSteps))] : []),
                       ...(r.splitSteps === 0 && unsplitN === 0 && r.unpricedSteps === 0 && r.idleSteps > 0 ? [t("costs.outside.idleHere")] : []),
                     ];
                     const note = notes.join(" · ");
-                    const kind = r.noReading ? "no-reading"
+                    const kind = !anyStep ? "no-reading"
                       : r.splitSteps > 0 ? (unsplitN > 0 ? "partial" : "split")
                       : unsplitN > 0 ? "unsplit" : r.unpricedSteps > 0 ? "unpriced" : "idle";
                     return (

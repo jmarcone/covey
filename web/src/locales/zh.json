@@ -505,7 +505,12 @@
       "tileOtherSources": "针对整个计量器：包含其上的其他来源（{{sources}}），而不只是此来源",
       "combinedSubNoPrice": "操作员会话没有标价（其调用均无标价）；covey 的代理：{{agents}}",
       "combinedSubNoCalls": "该时段操作员会话没有调用；covey 的代理：{{agents}}",
-      "chartNoPriceCombined": "操作员会话：无标价"
+      "chartNoPriceCombined": "操作员会话：无标价",
+      "combinedSubSelected": "包含 covey 之外的操作员会话 {{outside}}；所选代理：{{agents}}",
+      "combinedSubNoPriceSelected": "操作员会话没有标价（其调用均无标价）；所选代理：{{agents}}",
+      "combinedSubNoCallsSelected": "该时段操作员会话没有调用；所选代理：{{agents}}",
+      "agentsPartSelected": "所选代理（标价）",
+      "typePricedOnly": "* 按 token 类型的美元金额只涵盖有价格的调用；其上方的 token 数量也包括没有标价的调用。"
     }
   },
   "lang": {
