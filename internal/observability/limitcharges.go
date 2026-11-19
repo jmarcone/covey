@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"time"
 
@@ -16,10 +17,13 @@ import (
 // readings, step rule and reset rule as the weekly meter (meterQuery), but
 // money in its own currency, never the weekly plan's dollars.
 //
-// The money is a usage charge of kind "meter" in the cells, one per
-// credential × window × limit, beside the charges entered by hand: counted
-// where a usage basis (usage, seat_and_usage) held when the reading was
-// taken, like every usage charge, and listed but counted nowhere otherwise.
+// A credential has one limit at a time (it names the window it reads). The
+// money is a usage charge of kind "meter" in the cells, one per credential ×
+// limit row, beside the charges entered by hand: counted where a usage basis
+// (usage, seat_and_usage) held when the reading was taken, like every usage
+// charge, and listed but counted nowhere otherwise. Where a limit holds, the
+// meter IS the money: a charge entered by hand over that time is listed, its
+// part superseded, and not counted again (usageChargesFor).
 
 // UsageLimit is a credential's monthly usage limit, valid over
 // [ValidFrom, ValidTo).
@@ -136,31 +140,67 @@ func meterLimitCharges(rows []meterRow, since time.Time, limits []UsageLimit, ba
 		}
 		byLimit := map[time.Time]*acc{}
 		var order []time.Time
+		// spent is the month's spend at each reading: its utilisation × the
+		// limit valid when it was read (utilisation is a share of the limit
+		// in force), and a step is the rise of its running maximum within
+		// the month — so a step across a limit change is u2·L2 − u1·L1, not
+		// Δu × L2, and a lagging reading adds nothing. A reading without a
+		// limit names no money.
+		// Where the reading before had no limit (one entered in mid-month),
+		// its spend is read at this reading's limit: the month's spend
+		// before the limit is not this limit's step.
+		var prevSpent, prevTop float64
+		prevPriced := false
 		for i, r := range rs {
-			if r.at.Before(since) || i == 0 {
+			l, ok := limitAt(limits, k.key, k.slot, k.window, r.at)
+			newMonth := i > 0 && r.week != rs[i-1].week
+			if i == 0 || newMonth {
+				prevSpent, prevTop, prevPriced = 0, 0, true
+			}
+			spent := 0.0
+			if ok {
+				spent = r.pct * l.Amount / 100
+				if !prevPriced {
+					prevSpent, prevPriced = prevTop*l.Amount/100, true
+				}
+			}
+			step := 0.0
+			if i > 0 && ok {
+				step = max(0, spent-prevSpent)
+			}
+			prevTop = max(prevTop, r.pct)
+			if ok {
+				prevSpent = max(prevSpent, spent)
+			} else {
+				prevPriced = false
+			}
+			if !ok || i == 0 || !r.at.After(since) {
 				continue
 			}
-			l, ok := limitAt(limits, k.key, k.slot, k.window, r.at)
-			if !ok {
-				continue
+			from, share := rs[i-1].at, 1.0
+			if from.Before(since) {
+				// The step's span (from, at] began before the range: the
+				// range holds its part, pro rata by time, like a charge.
+				share = float64(r.at.Sub(since)) / float64(r.at.Sub(from))
+				from = since
 			}
 			a, ok := byLimit[l.ValidFrom]
 			if !ok {
 				zero, zeroC := 0.0, 0.0
 				a = &acc{c: WindowCharge{Kind: ChargeKindMeter, SecretKey: k.key, SecretSlot: k.slot,
-					Currency: l.Currency, From: rs[i-1].at, To: r.at, FXToUSD: l.FXToUSD, FXDate: l.FXDate,
+					Currency: l.Currency, From: from, To: r.at, FXToUSD: l.FXToUSD, FXDate: l.FXDate,
 					WindowKind: k.window, LimitAmount: l.Amount, Points: &zero, CountedPoints: &zeroC},
 					segments: map[int64]bool{}}
 				byLimit[l.ValidFrom] = a
 				order = append(order, l.ValidFrom)
 			}
 			a.c.To = r.at
-			amount := r.points * l.Amount / 100
-			*a.c.Points += r.points
+			amount, points := step*share, r.points*share
+			*a.c.Points += points
 			a.c.Amount += amount
 			a.c.WindowAmount += amount
 			if b := basisAt(bases, k.key, k.slot, r.at); b == BasisUsage || b == BasisSeatAndUsage {
-				*a.c.CountedPoints += r.points
+				*a.c.CountedPoints += points
 				a.c.CountedAmount += amount
 				a.segments[r.week] = true
 			}
@@ -168,9 +208,10 @@ func meterLimitCharges(rows []meterRow, since time.Time, limits []UsageLimit, ba
 		for _, from := range order {
 			a := byLimit[from]
 			c := a.c
-			n := float64(len(a.segments))
-			perPoint := c.LimitAmount / 100
-			low, high := max(0, *c.CountedPoints-n)*perPoint, (*c.CountedPoints+n)*perPoint
+			// The meter shows whole percents: each month segment of the
+			// counted movement is known to ±1 point of the limit.
+			slack := float64(len(a.segments)) * c.LimitAmount / 100
+			low, high := max(0, c.CountedAmount-slack), c.CountedAmount+slack
 			c.CountedLow, c.CountedHigh = &low, &high
 			if c.Currency == "USD" {
 				usd := c.CountedAmount
@@ -212,4 +253,37 @@ func sortCharges(cs []WindowCharge) {
 		}
 		return a.From.Before(b.From)
 	})
+}
+
+// ErrNoCredential: no credential of the organisation at that place.
+var ErrNoCredential = errors.New("no credential of this organisation at that runtime and position")
+
+// AddManualReading files a meter reading a person read off the provider —
+// Claude Code's /usage screen, or the rate_limit_event a one-line
+// `claude -p … --output-format stream-json --verbose` prints — for the
+// credential at a place: source manual, the window it names, the
+// utilisation in percent, read at fetchedAt. A seat whose meter covey's own
+// runs read only while they run gets its before and after readings this way.
+// The same reading filed twice is kept once.
+func (s *Store) AddManualReading(ctx context.Context, orgID, runtimeID uuid.UUID, ord int, window string, pct float64,
+	resetsAt *time.Time, fetchedAt time.Time) error {
+	var ok bool
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM runtime_credentials rc JOIN runtimes r ON r.id = rc.runtime_id
+		WHERE r.org_id = $1 AND rc.runtime_id = $2 AND rc.ord = $3)`, orgID, runtimeID, ord).Scan(&ok); err != nil {
+		return err
+	}
+	if !ok {
+		return ErrNoCredential
+	}
+	_, err := s.pool.Exec(ctx, `INSERT INTO usage_readings (org_id, runtime_id, credential_ord, secret_key, secret_slot,
+		credential_kind, source, window_kind, supported, window_percent, week_percent, resets_at, status, stale,
+		fetched_at, received_at)
+		SELECT r.org_id, rc.runtime_id, rc.ord, rc.secret_key, rc.secret_slot, rc.kind, 'manual', $4::text, true,
+			CASE WHEN $4::text LIKE 'five\_hour%' THEN $5::float8 END,
+			CASE WHEN $4::text NOT LIKE 'five\_hour%' THEN $5::float8 END,
+			$6, '', false, $7, now()
+		FROM runtime_credentials rc JOIN runtimes r ON r.id = rc.runtime_id
+		WHERE r.org_id = $1 AND rc.runtime_id = $2 AND rc.ord = $3
+		ON CONFLICT DO NOTHING`, orgID, runtimeID, ord, window, pct, resetsAt, fetchedAt)
+	return err
 }

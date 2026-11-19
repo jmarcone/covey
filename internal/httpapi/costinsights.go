@@ -2,9 +2,13 @@ package httpapi
 
 import (
 	"errors"
+	"math"
 	"net/http"
+	"regexp"
 	"strconv"
 	"time"
+
+	"github.com/google/uuid"
 
 	"covey/internal/observability"
 	"covey/internal/orchestrator"
@@ -202,4 +206,61 @@ func (s *Server) handleBillingKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"days": billingKeysDays, "keys": keys, "mappings": maps})
+}
+
+// meterWindow is a provider window name as Claude Code prints it.
+var meterWindow = regexp.MustCompile(`^[a-z][a-z0-9_]{0,39}$`)
+
+// handleAddUsageReading files a meter reading a person read off the provider
+// (source manual): {runtime_id, ord, window_kind, percent, resets_at,
+// fetched_at?}. percent is the utilisation in percent (78 for 0.78);
+// resets_at is required — without it a lower reading would read as a new
+// month (or week); fetched_at, when the figure was read, defaults to now and
+// may not lie ahead.
+func (s *Server) handleAddUsageReading(w http.ResponseWriter, r *http.Request) {
+	p := principalFrom(r)
+	var in struct {
+		RuntimeID  uuid.UUID  `json:"runtime_id"`
+		Ord        *int       `json:"ord"`
+		WindowKind string     `json:"window_kind"`
+		Percent    *float64   `json:"percent"`
+		ResetsAt   *time.Time `json:"resets_at"`
+		FetchedAt  *time.Time `json:"fetched_at"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	switch {
+	case in.RuntimeID == uuid.Nil || in.Ord == nil || *in.Ord < 0:
+		writeErr(w, http.StatusBadRequest, "runtime_id and ord name the credential")
+		return
+	case !meterWindow.MatchString(in.WindowKind):
+		writeErr(w, http.StatusBadRequest, "window_kind must be a meter window such as overage or seven_day")
+		return
+	case in.Percent == nil || math.IsNaN(*in.Percent) || *in.Percent < 0 || *in.Percent > 1000:
+		writeErr(w, http.StatusBadRequest, "percent must be the utilisation in percent, 0 to 1000")
+		return
+	case in.ResetsAt == nil || in.ResetsAt.IsZero():
+		writeErr(w, http.StatusBadRequest, "resets_at is required: the reset the provider names (resetsAt)")
+		return
+	}
+	at := time.Now()
+	if in.FetchedAt != nil {
+		if in.FetchedAt.After(at.Add(5 * time.Minute)) {
+			writeErr(w, http.StatusBadRequest, "fetched_at may not lie ahead")
+			return
+		}
+		at = *in.FetchedAt
+	}
+	err := s.Obs.AddManualReading(r.Context(), p.OrgID, in.RuntimeID, *in.Ord, in.WindowKind, *in.Percent, in.ResetsAt, at.UTC())
+	if errors.Is(err, observability.ErrNoCredential) {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if err != nil {
+		mapErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
 }

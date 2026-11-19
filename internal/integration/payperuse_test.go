@@ -102,7 +102,8 @@ func TestOverageIsMonthlyMeter(t *testing.T) {
 // A monthly usage limit (0152) prices the monthly meter in its own currency:
 // real spend = Δutilisation × limit, counted under the usage basis, with a
 // rate only where one was given. An export is listed beside it, never counted,
-// and may cover the same time as a charge.
+// and may cover the same time as a charge; a charge entered by hand where the
+// limit holds is superseded by the meter.
 func TestUsageLimitPricesMonthlyMeter(t *testing.T) {
 	s := newStack(t)
 	ctx := context.Background()
@@ -140,6 +141,22 @@ func TestUsageLimitPricesMonthlyMeter(t *testing.T) {
 			ResetsAt: time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC), FetchedAt: r.at}); err != nil {
 			t.Fatalf("reading %d: %v", i, err)
 		}
+	}
+
+	// A reading entered by hand (source manual) for the credential at its
+	// place; none for a place without a credential.
+	month := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
+	if err := s.obs.AddManualReading(ctx, s.orgID, rt.ID, ord+7, "overage", 81, &month, since.Add(90*time.Minute)); !errors.Is(err, observability.ErrNoCredential) {
+		t.Errorf("manual reading at an empty place: %v", err)
+	}
+	if err := s.obs.AddManualReading(ctx, s.orgID, rt.ID, ord, "overage", 81, &month, since.Add(90*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	var manual int
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM usage_readings WHERE org_id = $1 AND source = 'manual'
+		AND window_kind = 'overage' AND week_percent = 81 AND secret_key = 'claude_code_oauth_token' AND credential_kind = 'subscription'`,
+		s.orgID).Scan(&manual); err != nil || manual != 1 {
+		t.Errorf("manual readings = %d (%v), want 1", manual, err)
 	}
 
 	// Usage exports: one beside a charge over the same span; two exports
@@ -184,23 +201,29 @@ func TestUsageLimitPricesMonthlyMeter(t *testing.T) {
 	if meter == nil || export == nil || charge == nil {
 		t.Fatalf("charges: %+v", cells.UsageCharges)
 	}
+	// 78 → 80 spans ten days and an hour, of which one hour lies in the range
+	// (pro rata, like a charge); 80 → 83 lies wholly in it. 4 EUR a point.
+	share := 1.0 / (10*24 + 1)
+	want := 2*share*4 + 3*4.0
 	if meter.Currency != "EUR" || meter.WindowKind != "overage" || meter.LimitAmount != 400 ||
-		meter.Points == nil || *meter.Points != 5 || meter.CountedPoints == nil || *meter.CountedPoints != 5 {
+		meter.Points == nil || !near(*meter.Points, 2*share+3) || meter.CountedPoints == nil || !near(*meter.CountedPoints, 2*share+3) {
 		t.Errorf("meter charge: %+v", *meter)
 	}
-	if !near(meter.CountedAmount, 20) || !near(meter.WindowAmount, 20) || meter.CountedUSD == nil || !near(*meter.CountedUSD, 21.6) {
-		t.Errorf("meter money: counted %v window %v usd %v; want 20 EUR = 21.60 USD", meter.CountedAmount, meter.WindowAmount, meter.CountedUSD)
+	if !near(meter.CountedAmount, want) || !near(meter.WindowAmount, want) || meter.CountedUSD == nil || !near(*meter.CountedUSD, want*1.08) {
+		t.Errorf("meter money: counted %v window %v; want %v EUR at 1.08", meter.CountedAmount, meter.WindowAmount, want)
 	}
-	if meter.CountedLow == nil || meter.CountedHigh == nil || !near(*meter.CountedLow, 16) || !near(*meter.CountedHigh, 24) {
-		t.Errorf("meter range: %v..%v, want 16..24 (one month segment, ±1 point)", meter.CountedLow, meter.CountedHigh)
+	if meter.CountedLow == nil || meter.CountedHigh == nil || !near(*meter.CountedLow, want-4) || !near(*meter.CountedHigh, want+4) {
+		t.Errorf("meter range: %v..%v, want ±4 EUR (one month segment, ±1 point)", meter.CountedLow, meter.CountedHigh)
 	}
-	if !meter.From.Equal(since.Add(-10*24*time.Hour)) || !meter.To.Equal(since.Add(2*time.Hour)) {
-		t.Errorf("meter span %v..%v", meter.From, meter.To)
+	if !meter.From.Equal(since) || !meter.To.Equal(since.Add(2*time.Hour)) {
+		t.Errorf("meter span %v..%v, want the range's start to the last reading", meter.From, meter.To)
 	}
 	if export.CountedAmount != 0 || export.CountedUSD != nil || !near(export.WindowAmount, 21) {
 		t.Errorf("export counted: %+v", *export)
 	}
-	if !near(charge.CountedAmount, 10) {
-		t.Errorf("charge beside the export: counted %v, want 10", charge.CountedAmount)
+	// The hand-entered charge lies where the limit holds: the meter is that
+	// time's money, so the charge is listed and superseded, not counted twice.
+	if charge.CountedAmount != 0 || !near(charge.SupersededAmount, 10) {
+		t.Errorf("charge under the limit: counted %v, superseded %v; want 0 and 10", charge.CountedAmount, charge.SupersededAmount)
 	}
 }

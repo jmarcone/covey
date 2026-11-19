@@ -1,7 +1,7 @@
 -- Pay-per-token seats (Enterprise, usage billed against a monthly limit).
 --
 -- (1) credential_usage_limits: the money limit a credential's monthly meter
--- counts against. Claude Code reports such a seat's meter in band as a window
+-- counts against — one at a time per credential, naming the window it reads. Claude Code reports such a seat's meter in band as a window
 -- of its own (rateLimitType "overage", resetting on the first of the month),
 -- utilisation 0..1 of the limit. With a limit, a point of that window is
 -- amount/100 in the limit's currency: real spend = Δutilisation × limit.

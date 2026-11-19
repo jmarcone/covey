@@ -737,6 +737,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/cost/models", s.rbac(anyRole, s.handleModelUsage))
 	mux.Handle("GET /api/v1/cost/subscription", s.rbac(anyRole, s.handleUsageReadings))
 	mux.Handle("GET /api/v1/cost/usage-readings", s.rbac(anyRole, s.handleUsageReadings))
+	// A reading a person read off the provider (source manual): the before and
+	// after of a seat whose meter covey's runs read only while they run.
+	mux.Handle("POST /api/v1/cost/usage-readings", s.rbac(securityRoles, s.handleAddUsageReading))
 	mux.Handle("GET /api/v1/cost/cells", s.rbac(anyRole, s.handleCostCells))
 	// Billed money (0146): what Anthropic charged, read with the organisation's
 	// anthropic_admin_key by the control plane. No endpoint returns the key.

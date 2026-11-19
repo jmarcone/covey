@@ -414,13 +414,13 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 	if out.External, err = s.externalFor(ctx, orgID, bucket, since, coverage, priced, bases); err != nil {
 		return out, err
 	}
-	now := time.Now()
-	if out.UsageCharges, err = s.usageChargesFor(ctx, orgID, since, now, bases); err != nil {
-		return out, err
-	}
-	// A monthly usage limit (0152) turns its meter's movement into money.
+	// A monthly usage limit (0152) turns its meter's movement into money,
+	// and where one holds a charge entered by hand is not counted again.
 	limits, err := s.usageLimitsFor(ctx, orgID, since)
 	if err != nil {
+		return out, err
+	}
+	if out.UsageCharges, err = s.usageChargesFor(ctx, orgID, since, time.Now(), bases, limits); err != nil {
 		return out, err
 	}
 	if len(limits) > 0 {

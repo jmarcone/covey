@@ -26,24 +26,24 @@ func charge(amount float64, currency string, from, to time.Time) WindowCharge {
 func TestChargeEURWithAndWithoutRate(t *testing.T) {
 	since, now := t0.Add(-48*time.Hour), t0.Add(48*time.Hour)
 	bases := []CredentialBasis{basis(BasisUsage, t0.Add(-72*time.Hour), nil)}
-	c := chargeInWindow(charge(180, "EUR", t0, t0.Add(24*time.Hour)), since, now, bases)
+	c := chargeInWindow(charge(180, "EUR", t0, t0.Add(24*time.Hour)), since, now, bases, nil)
 	if c.WindowAmount != 180 || c.CountedAmount != 180 || c.CountedUSD != nil {
 		t.Errorf("without a rate: window %v counted %v usd %v; want 180, 180, none", c.WindowAmount, c.CountedAmount, c.CountedUSD)
 	}
 	rate, day := 1.08, "2026-11-18"
 	in := charge(180, "EUR", t0, t0.Add(24*time.Hour))
 	in.FXToUSD, in.FXDate = &rate, &day
-	c = chargeInWindow(in, since, now, bases)
+	c = chargeInWindow(in, since, now, bases, nil)
 	if c.CountedUSD == nil || !near(*c.CountedUSD, 194.4) || c.CountedAmount != 180 {
 		t.Errorf("with a rate: counted %v usd %v; want 180 and 194.40", c.CountedAmount, c.CountedUSD)
 	}
 	// A rate without its date is no rate.
 	in.FXDate = nil
-	if c = chargeInWindow(in, since, now, bases); c.CountedUSD != nil {
+	if c = chargeInWindow(in, since, now, bases, nil); c.CountedUSD != nil {
 		t.Errorf("a rate without its date gave %v dollars", *c.CountedUSD)
 	}
 	// A USD charge is its own dollar figure.
-	c = chargeInWindow(charge(50, "USD", t0, t0.Add(time.Hour)), since, now, bases)
+	c = chargeInWindow(charge(50, "USD", t0, t0.Add(time.Hour)), since, now, bases, nil)
 	if c.CountedUSD == nil || *c.CountedUSD != 50 {
 		t.Errorf("USD charge: usd %v, want 50", c.CountedUSD)
 	}
@@ -54,12 +54,12 @@ func TestChargeEURWithAndWithoutRate(t *testing.T) {
 func TestChargeProRataInWindow(t *testing.T) {
 	bases := []CredentialBasis{basis(BasisSeatAndUsage, t0.Add(-72*time.Hour), nil)}
 	// The window starts 6 h into the charge: 18 of 24 hours.
-	c := chargeInWindow(charge(180, "EUR", t0, t0.Add(24*time.Hour)), t0.Add(6*time.Hour), t0.Add(48*time.Hour), bases)
+	c := chargeInWindow(charge(180, "EUR", t0, t0.Add(24*time.Hour)), t0.Add(6*time.Hour), t0.Add(48*time.Hour), bases, nil)
 	if !near(c.WindowAmount, 135) || !near(c.CountedAmount, 135) {
 		t.Errorf("window starting inside: %v / %v, want 135", c.WindowAmount, c.CountedAmount)
 	}
 	// Now is 12 h into the charge: half of it.
-	c = chargeInWindow(charge(180, "EUR", t0, t0.Add(24*time.Hour)), t0.Add(-time.Hour), t0.Add(12*time.Hour), bases)
+	c = chargeInWindow(charge(180, "EUR", t0, t0.Add(24*time.Hour)), t0.Add(-time.Hour), t0.Add(12*time.Hour), bases, nil)
 	if !near(c.WindowAmount, 90) || !near(c.CountedAmount, 90) {
 		t.Errorf("charge still running: %v / %v, want 90", c.WindowAmount, c.CountedAmount)
 	}
@@ -70,10 +70,10 @@ func TestChargeProRataInWindow(t *testing.T) {
 func TestChargeCountsUnderAUsageBasisOnly(t *testing.T) {
 	since, now := t0.Add(-48*time.Hour), t0.Add(48*time.Hour)
 	ch := charge(240, "EUR", t0, t0.Add(24*time.Hour))
-	if c := chargeInWindow(ch, since, now, nil); c.WindowAmount != 240 || c.CountedAmount != 0 || c.CountedUSD != nil {
+	if c := chargeInWindow(ch, since, now, nil, nil); c.WindowAmount != 240 || c.CountedAmount != 0 || c.CountedUSD != nil {
 		t.Errorf("no basis: window %v counted %v; want 240 listed, 0 counted", c.WindowAmount, c.CountedAmount)
 	}
-	if c := chargeInWindow(ch, since, now, []CredentialBasis{basis(BasisSeat, since, nil)}); c.CountedAmount != 0 {
+	if c := chargeInWindow(ch, since, now, []CredentialBasis{basis(BasisSeat, since, nil)}, nil); c.CountedAmount != 0 {
 		t.Errorf("seat basis counted %v", c.CountedAmount)
 	}
 	// seat until t0+6h, usage until t0+18h, seat_and_usage after: 6 h are
@@ -83,12 +83,12 @@ func TestChargeCountsUnderAUsageBasisOnly(t *testing.T) {
 		basis(BasisUsage, t0.Add(6*time.Hour), tp(t0.Add(18*time.Hour))),
 		basis(BasisSeatAndUsage, t0.Add(18*time.Hour), nil),
 	}
-	if c := chargeInWindow(ch, since, now, bases); c.WindowAmount != 240 || !near(c.CountedAmount, 180) {
+	if c := chargeInWindow(ch, since, now, bases, nil); c.WindowAmount != 240 || !near(c.CountedAmount, 180) {
 		t.Errorf("mixed bases: window %v counted %v; want 240, 180", c.WindowAmount, c.CountedAmount)
 	}
 	// Another credential's basis counts nothing here.
 	other := []CredentialBasis{{SecretKey: "home", Basis: BasisUsage, ValidFrom: since}}
-	if c := chargeInWindow(ch, since, now, other); c.CountedAmount != 0 {
+	if c := chargeInWindow(ch, since, now, other, nil); c.CountedAmount != 0 {
 		t.Errorf("another credential's basis counted %v", c.CountedAmount)
 	}
 }

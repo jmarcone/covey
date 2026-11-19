@@ -31,7 +31,9 @@ type UsageLimit struct {
 	Ord        *int       `json:"ord"`
 	SecretKey  string     `json:"secret_key"`
 	SecretSlot int        `json:"secret_slot"`
-	// WindowKind is the meter window the limit belongs to (overage).
+	// WindowKind is the meter window the limit reads (overage). A credential
+	// has one limit at a time: a new one closes the one before, whatever
+	// window it named.
 	WindowKind string `json:"window_kind"`
 	// Amount per month in Currency; FXToUSD/FXDate a rate a person gave and
 	// its day, both or neither, never on USD.
