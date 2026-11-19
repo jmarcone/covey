@@ -264,3 +264,168 @@ func TestReadPlacesFilesWhateverTheRoot(t *testing.T) {
 		}
 	}
 }
+
+func callLine(id, ts, extra string) string {
+	return `{"type":"assistant","timestamp":"` + ts + `","message":{"id":"` + id +
+		`","model":"claude-opus-5-5","usage":{"input_tokens":1,"output_tokens":2` + extra + `}}}`
+}
+
+// The place comes from the position below the root only: a directory called
+// subagents above the root must not turn main sessions into subagent calls
+// (#145 review).
+func TestPlaceUsesThePositionBelowTheRoot(t *testing.T) {
+	base := filepath.Join(t.TempDir(), "subagents", "workflows")
+	root := filepath.Join(base, "projects")
+	writeFile(t, filepath.Join(root, "-p", "s1.jsonl"), callLine("m-main", "2026-11-18T10:00:00Z", ""))
+	writeFile(t, filepath.Join(root, "-p", "s1", "subagents", "agent-a.jsonl"), callLine("m-sub", "2026-11-18T10:00:00Z", ""))
+	writeFile(t, filepath.Join(root, "-p", "s1", "subagents", "workflows", "wf", "agent-b.jsonl"), callLine("m-wf", "2026-11-18T10:00:00Z", ""))
+	// too deep to be either: a main session by the file name
+	writeFile(t, filepath.Join(root, "-p", "s1", "subagents", "x", "y", "agent-c.jsonl"), callLine("m-deep", "2026-11-18T10:00:00Z", ""))
+	rows, _, err := Read([]string{root}, "h", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][2]string{"m-main": {"s1", OriginMain}, "m-sub": {"s1", OriginSubagent}, "m-wf": {"s1", OriginWorkflow}, "m-deep": {"agent-c", OriginMain}}
+	for _, r := range rows {
+		if w := want[r.MessageID]; r.SessionID != w[0] || r.Origin != w[1] {
+			t.Errorf("%s: %q %q, want %q %q", r.MessageID, r.SessionID, r.Origin, w[0], w[1])
+		}
+	}
+	if len(rows) != len(want) {
+		t.Fatalf("%d rows", len(rows))
+	}
+	// the session folder as root: the session is the folder's name
+	rows, _, _ = Read([]string{filepath.Join(root, "-p", "s1")}, "h", time.Time{})
+	for _, r := range rows {
+		if r.MessageID == "m-sub" && r.SessionID != "s1" {
+			t.Errorf("session folder as root: %+v", r)
+		}
+	}
+}
+
+func TestReadFailsOnARootWithoutTranscripts(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+	writeFile(t, filepath.Join(a, "s.jsonl"), callLine("m", "2026-11-18T10:00:00Z", ""))
+	if _, _, err := Read([]string{a, b}, "h", time.Time{}); err == nil || !strings.Contains(err.Error(), "no *.jsonl") {
+		t.Fatalf("an empty second root: %v", err)
+	}
+}
+
+func TestReadReportsSymlinkedDirectories(t *testing.T) {
+	root, other := t.TempDir(), t.TempDir()
+	writeFile(t, filepath.Join(root, "s.jsonl"), callLine("m1", "2026-11-18T10:00:00Z", ""))
+	writeFile(t, filepath.Join(other, "t.jsonl"), callLine("m2", "2026-11-18T10:00:00Z", ""))
+	if err := os.Symlink(other, filepath.Join(root, "linked")); err != nil {
+		t.Skip("no symlinks:", err)
+	}
+	rows, st, err := Read([]string{root}, "h", time.Time{})
+	if err != nil || len(rows) != 1 || len(st.Symlinks) != 1 {
+		t.Fatalf("rows %d, symlinks %v, %v", len(rows), st.Symlinks, err)
+	}
+}
+
+// A line with a usage that cannot be read is counted; only the last line of a
+// file touched in the last 30 minutes is taken for a reply still being written.
+func TestReadCountsUnreadableLines(t *testing.T) {
+	dir := t.TempDir()
+	good := callLine("m1", "2026-11-18T10:00:00Z", "")
+	mid := filepath.Join(dir, "mid.jsonl")
+	writeFile(t, mid, good, `{"type":"assistant","message":{"usage":{"input_tok`, callLine("m2", "2026-11-18T10:01:00Z", ""))
+	tail := filepath.Join(dir, "tail.jsonl")
+	writeFile(t, tail, callLine("m3", "2026-11-18T10:02:00Z", ""), `{"type":"assistant","message":{"usage":{"input_tok`)
+
+	_, st, err := Read([]string{dir}, "h", time.Time{})
+	if err != nil || st.Skipped != 2 || st.Suspect != 1 {
+		t.Fatalf("fresh files: %+v %v", st, err)
+	}
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(tail, old, old); err != nil {
+		t.Fatal(err)
+	}
+	_, st, _ = Read([]string{dir}, "h", time.Time{})
+	if st.Skipped != 2 || st.Suspect != 2 {
+		t.Fatalf("old file with a broken last line: %+v", st)
+	}
+	// no id, no usable timestamp: skipped too, never silently
+	writeFile(t, filepath.Join(dir, "bad.jsonl"),
+		`{"type":"assistant","timestamp":"2026-11-18T10:00:00Z","message":{"model":"m","usage":{"input_tokens":1}}}`,
+		`{"type":"assistant","timestamp":"soon","message":{"id":"x","model":"m","usage":{"input_tokens":1}}}`,
+		good)
+	_, st, _ = Read([]string{dir}, "h", time.Time{})
+	if st.Skipped != 4 || st.Suspect != 4 {
+		t.Fatalf("lines without id or timestamp: %+v", st)
+	}
+}
+
+// Equal output: the earlier timestamp wins, so a file added later never moves
+// a row already sent.
+func TestDedupTieKeepsTheEarlierCopy(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.jsonl"), callLine("m", "2026-11-18T10:00:01Z", ""))
+	writeFile(t, filepath.Join(dir, "b.jsonl"), callLine("m", "2026-11-18T10:00:02Z", ""))
+	rows, _, _ := Read([]string{dir}, "h", time.Time{})
+	if len(rows) != 1 || rows[0].TS.Second() != 1 {
+		t.Fatalf("%+v", rows)
+	}
+	// the same ts in two files: the smaller path
+	writeFile(t, filepath.Join(dir, "a.jsonl"), callLine("m", "2026-11-18T10:00:05Z", `,"cache_read_input_tokens":1`))
+	writeFile(t, filepath.Join(dir, "b.jsonl"), callLine("m", "2026-11-18T10:00:05Z", `,"cache_read_input_tokens":2`))
+	rows, _, _ = Read([]string{dir}, "h", time.Time{})
+	if len(rows) != 1 || rows[0].CacheRead != 1 {
+		t.Fatalf("%+v", rows)
+	}
+	// more output still wins
+	writeFile(t, filepath.Join(dir, "b.jsonl"), strings.Replace(callLine("m", "2026-11-18T10:00:09Z", ""), `"output_tokens":2`, `"output_tokens":3`, 1))
+	rows, _, _ = Read([]string{dir}, "h", time.Time{})
+	if len(rows) != 1 || rows[0].Output != 3 {
+		t.Fatalf("%+v", rows)
+	}
+}
+
+// Parity with the script: an explicit null 5-minute write is 0, an absent one
+// is the rest of cache_creation_input_tokens; an empty model and the other ISO
+// timestamp forms are calls too.
+func TestReadAcceptsWhatTheScriptAccepts(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "s.jsonl"),
+		callLine("null5m", "2026-11-18T10:00:00Z", `,"cache_creation_input_tokens":70,"cache_creation":{"ephemeral_5m_input_tokens":null,"ephemeral_1h_input_tokens":20}`),
+		callLine("null1h", "2026-11-18T10:00:01Z", `,"cache_creation_input_tokens":70,"cache_creation":{"ephemeral_5m_input_tokens":5,"ephemeral_1h_input_tokens":null}`),
+		callLine("naive", "2026-11-18T10:00:02.5", ""),
+		callLine("space", "2026-11-18 10:00:03+01:00", ""),
+		strings.Replace(callLine("nomodel", "2026-11-18T10:00:04Z", ""), `"model":"claude-opus-5-5",`, "", 1),
+	)
+	rows, st, err := Read([]string{dir}, "h", time.Time{})
+	if err != nil || st.Skipped != 0 {
+		t.Fatalf("%+v %v", st, err)
+	}
+	by := map[string]Row{}
+	for _, r := range rows {
+		by[r.MessageID] = r
+	}
+	if r := by["null5m"]; r.CacheWrite5m != 0 || r.CacheWrite1h != 20 {
+		t.Errorf("null 5m: %+v", r)
+	}
+	if r := by["null1h"]; r.CacheWrite5m != 5 || r.CacheWrite1h != 0 {
+		t.Errorf("null 1h: %+v", r)
+	}
+	if len(by) != 5 || by["nomodel"].Model != UnknownModel || by["naive"].TS.Nanosecond() != 500_000_000 ||
+		by["space"].TS.Hour() != 9 {
+		t.Errorf("rows %+v", by)
+	}
+}
+
+// A call the intake would refuse is held back and counted, not sent.
+func TestReadHoldsBackCallsOutsideTheIntakeBounds(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "s.jsonl"),
+		callLine("ok", "2026-11-18T10:00:00Z", ""),
+		callLine("huge", "2026-11-18T10:00:01Z", `,"cache_read_input_tokens":1000000001`),
+		callLine("max", "2026-11-18T10:00:02Z", `,"cache_read_input_tokens":1000000000`),
+		callLine("neg", "2026-11-18T10:00:03Z", `,"cache_read_input_tokens":-1`),
+		callLine(strings.Repeat("x", 257), "2026-11-18T10:00:04Z", ""),
+	)
+	rows, st, _ := Read([]string{dir}, "h", time.Time{})
+	if len(rows) != 2 || st.Invalid != 3 || len(st.InvalidWhy) != 3 {
+		t.Fatalf("rows %d, %+v", len(rows), st)
+	}
+}

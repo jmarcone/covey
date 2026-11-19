@@ -7,6 +7,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
+	neturl "net/url"
 	"os"
 	"runtime"
 	"sort"
@@ -22,13 +24,27 @@ import (
 // transcripts are and needs neither database nor master key.
 //
 //	covey usage push DIR... --source LABEL [--url URL] [--host NAME]
-//	    [--meter-secret KEY[:SLOT]] [--since RFC3339] [--key-file PATH]
-//	    [--dry-run] [--json]
+//	    [--meter-secret KEY[:SLOT]] [--since RFC3339] [--complete]
+//	    [--key-file PATH] [--dry-run] [--json]
+//
+// The reported_through watermark says that every call of this host for this
+// source up to a time is in the push; covey books a meter reading's unsent
+// remainder to itself once all hosts claim past it. So the watermark is sent
+// only with --complete (the directories hold every transcript of this host),
+// and never when --since, a symlinked directory, an unreadable line or a
+// held-back call means the push may lack calls.
 //
 // The API key comes from COVEY_API_KEY or --key-file, never from argv.
+// usageStderr gets the warnings; a variable so tests can read it.
+var usageStderr io.Writer = os.Stderr
+
+// watermarkMargin is left between the run's time and the claim, for replies
+// still being written and for clock skew.
+const watermarkMargin = 15 * time.Minute
+
 func runUsage(args []string, stdout io.Writer, getenv func(string) string) error {
 	if len(args) == 0 || args[0] != "push" {
-		return errors.New("usage: covey usage push DIR... --source LABEL [--url URL] [--host NAME] [--meter-secret KEY[:SLOT]] [--since RFC3339] [--key-file PATH] [--dry-run] [--json]")
+		return errors.New("usage: covey usage push DIR... --source LABEL [--url URL] [--host NAME] [--meter-secret KEY[:SLOT]] [--since RFC3339] [--complete] [--key-file PATH] [--dry-run] [--json]")
 	}
 	fs := flag.NewFlagSet("covey usage push", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -36,7 +52,8 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 	url := fs.String("url", "", "covey install, e.g. http://localhost:8494 (default $COVEY_URL)")
 	host := fs.String("host", "", "host name stored on every row (default: this machine's)")
 	meter := fs.String("meter-secret", "", "subscription credential sharing the meter, KEY or KEY:SLOT")
-	since := fs.String("since", "", "only calls at or after this time (RFC 3339)")
+	since := fs.String("since", "", "only calls at or after this time (RFC 3339); no reported_through is sent")
+	complete := fs.Bool("complete", false, "the directories hold every Claude Code transcript of this host for this source; only then is reported_through sent")
 	keyFile := fs.String("key-file", "", "file holding the API key (must not be group- or world-readable)")
 	dry := fs.Bool("dry-run", false, "print what would be sent, send nothing")
 	asJSON := fs.Bool("json", false, "with --dry-run: print the totals as JSON")
@@ -84,8 +101,8 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 	if h == "" {
 		h, _ = os.Hostname()
 	}
-	if h == "" || len(h) > 256 {
-		return errors.New("covey usage push: --host is required (1-256 bytes) when the host name is unknown")
+	if h == "" || !usagepush.ValidText(h) {
+		return errors.New("covey usage push: --host is required (1-256 bytes of UTF-8, no NUL) when the host name is unknown")
 	}
 
 	// A real push checks its URL and key before reading anything.
@@ -98,6 +115,7 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 		if base == "" {
 			return errors.New("covey usage push: --url or COVEY_URL is required")
 		}
+		warnPlainHTTP(usageStderr, base)
 		k, err := apiKey(*keyFile, getenv)
 		if err != nil {
 			return err
@@ -105,15 +123,41 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 		key = k
 	}
 
-	// The watermark: every call of this host up to here is in the files read
-	// now. Five minutes are left as a margin for a reply still being written.
-	through := map[string]time.Time{h: time.Now().UTC().Add(-5 * time.Minute).Truncate(time.Second)}
 	rows, st, err := usagepush.Read(dirs, h, sinceT)
 	if err != nil {
-		return err
+		return fmt.Errorf("covey usage push: %w", err)
 	}
-	if st.Files == 0 {
-		return fmt.Errorf("covey usage push: no *.jsonl transcripts under %s", strings.Join(dirs, ", "))
+	for _, p := range st.Symlinks {
+		fmt.Fprintf(usageStderr, "warning: %s is a symlinked directory; it is not followed, so calls below it are not read\n", p)
+	}
+
+	// The watermark claims that every call of this host up to its time is in
+	// the push. It is sent only when nothing can be missing.
+	var why []string
+	if !*complete {
+		why = append(why, "--complete is not given, so the directories are not claimed to hold every transcript of this host; the meter split waits until a --complete push")
+	}
+	if *since != "" {
+		why = append(why, "--since leaves older calls out")
+	}
+	if len(st.Symlinks) > 0 {
+		why = append(why, fmt.Sprintf("%d symlinked directories were not followed", len(st.Symlinks)))
+	}
+	if st.Suspect > 0 {
+		why = append(why, fmt.Sprintf("%d lines with a usage could not be read (not just a last line still being written)", st.Suspect))
+	}
+	if st.Invalid > 0 {
+		why = append(why, fmt.Sprintf("%d calls are held back, out of the intake's bounds", st.Invalid))
+	}
+	var through map[string]time.Time
+	if len(why) == 0 {
+		through = map[string]time.Time{h: time.Now().UTC().Add(-watermarkMargin).Truncate(time.Second)}
+	}
+	for _, w := range why {
+		fmt.Fprintf(stdout, "no reported_through sent: %s\n", w)
+	}
+	for _, w := range st.InvalidWhy {
+		fmt.Fprintf(stdout, "held back: %s\n", w)
 	}
 	// The intake refuses a ts later than now + 5 min. Calls stamped ahead of
 	// this clock wait for a later run rather than fail the whole batch.
@@ -139,18 +183,22 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 			enc.SetIndent("", "  ")
 			return enc.Encode(struct {
 				usagepush.Summary
-				Files     int `json:"files"`
-				Copies    int `json:"streamed_copies_dropped"`
-				Synthetic int `json:"synthetic_left_out"`
-				Skipped   int `json:"lines_skipped"`
-			}{sum, st.Files, st.Copies, st.Synthetic, st.Skipped})
+				Files     int        `json:"files"`
+				Copies    int        `json:"streamed_copies_dropped"`
+				Synthetic int        `json:"synthetic_left_out"`
+				Skipped   int        `json:"lines_skipped"`
+				Held      int        `json:"calls_held_back"`
+				Through   *time.Time `json:"reported_through,omitempty"`
+			}{sum, st.Files, st.Copies, st.Synthetic, st.Skipped, st.Invalid, throughOf(through, h)})
 		}
 		fmt.Fprintf(stdout, "dry run, nothing sent: %d calls from %d files (%d streamed copies dropped, %d placeholders left out, %d lines skipped)\n",
 			len(rows), st.Files, st.Copies, st.Synthetic, st.Skipped)
 		if len(rows) > 0 {
 			fmt.Fprintf(stdout, "%s .. %s\n", sum.First.Format(time.RFC3339), sum.Last.Format(time.RFC3339))
 		}
-		fmt.Fprintf(stdout, "reported_through %s: %s\n", h, through[h].Format(time.RFC3339))
+		if through != nil {
+			fmt.Fprintf(stdout, "reported_through %s: %s\n", h, through[h].Format(time.RFC3339))
+		}
 		printTotals(stdout, "all", &sum.All)
 		for _, group := range []map[string]*usagepush.Totals{sum.ByOrigin, sum.ByModel} {
 			for _, k := range sortedKeys(group) {
@@ -164,6 +212,8 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 	if err != nil {
 		return err
 	}
+	fmt.Fprintf(stdout, "read %d calls from %d files (%d streamed copies dropped, %d placeholders left out, %d lines skipped)\n",
+		len(rows), st.Files, st.Copies, st.Synthetic, st.Skipped)
 	c := usagepush.Client{BaseURL: base, Key: key}
 	var tot usagepush.Result
 	for i, b := range batches {
@@ -183,6 +233,30 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 	fmt.Fprintf(stdout, "sent %d calls in %d requests: %d new, %d updated, %d unchanged\n",
 		tot.Received, len(batches), tot.Inserted, tot.Updated, tot.Unchanged)
 	return nil
+}
+
+func throughOf(m map[string]time.Time, h string) *time.Time {
+	if t, ok := m[h]; ok {
+		return &t
+	}
+	return nil
+}
+
+// warnPlainHTTP warns when the key and the counts would cross a network
+// unencrypted: an http:// URL to a host that is not this machine.
+func warnPlainHTTP(w io.Writer, raw string) {
+	u, err := neturl.Parse(raw)
+	if err != nil || u.Scheme != "http" {
+		return
+	}
+	host := u.Hostname()
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return
+	}
+	fmt.Fprintf(w, "warning: %s is plain http to a host that is not this machine; the API key and the counts travel unencrypted, use https\n", u.Redacted())
 }
 
 // apiKey reads the key from --key-file or COVEY_API_KEY. A key file others can
