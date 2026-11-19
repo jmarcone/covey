@@ -4,7 +4,7 @@ title: Kosten & Token
 description: 'Womit die Kostenseite führt und wie man sie liest: die ganze Arbeit zu Tokenpreisen, die eine echte Kostenzahl des Abonnements, das eine Vielfache und die Claude-Code-Sitzungen außerhalb von covey, die standardmäßig mitzählen. Wie die echten Kosten aus dem Zähler des Anbieters geschätzt werden, wie die Rechnung eines API-Schlüssels gelesen und abgeglichen wird und was die Seite noch nicht zählt.'
 faq:
   - q: Welche Zahl führt die Seite, und warum gibt es weitere Dollarbeträge?
-    a: 'Eine Listenpreis-Zahl führt: die ganze Arbeit des Zeitraums zu Tokenpreisen, wie von Claude Code gemeldet. Die anderen beantworten andere Fragen. „Echte Kosten (Schätzung)“ ist, was ein Abo-Platz von seinem Wochenkontingent verbraucht hat, „Von Anthropic berechnet“ ist, was ein API-Schlüssel gekostet hat, und coveys eigene Preistabelle erscheint nur als Differenzzeile unter der führenden Zahl oder als eigene Zahl hinter „Mit coveys Preistabelle vergleichen“. Die Blöcke der Zugangsdaten addieren nie über Zugangsdaten hinweg; die Kopfzeile addiert die Abo-Zähler, und die Tabelle je Modell hat Zeilen, die alle Abo-Zugänge und alle API-Schlüssel summieren (siehe *Filter*).'
+    a: 'Eine Listenpreis-Zahl führt: die ganze Arbeit des Zeitraums zu Tokenpreisen, wie von Claude Code gemeldet. Die anderen beantworten andere Fragen. „Echte Kosten (Schätzung)“ ist, was ein Abo-Platz von seinem Wochenkontingent verbraucht hat, „Von Anthropic berechnet“ ist, was ein API-Schlüssel gekostet hat, und coveys eigene Preistabelle erscheint als Differenzzeile unter der führenden Zahl, als eigene Zahl in Kacheln und Diagramm hinter „Mit coveys Preistabelle vergleichen“ und als Spalte „Nachgerechnet“ der Tabelle je Modell, die standardmäßig an ist. Die Blöcke der Zugangsdaten addieren nie über Zugangsdaten hinweg; die Kopfzeile addiert die Abo-Zähler, und die Tabelle je Modell hat Zeilen, die alle Abo-Zugänge und alle API-Schlüssel summieren (siehe *Filter*).'
   - q: Zählt die Seite meine eigenen Claude-Code-Sitzungen außerhalb von covey?
     a: 'Ja, sobald sie mit covey usage push gesendet wurden. Sie sind standardmäßig in jeder Zahl enthalten, immer als außerhalb von covey gekennzeichnet, und der Chip „nur covey“ nimmt sie aus Kacheln, Diagramm und Tabellen heraus. Die Kopfzeile zeigt weiter den ganzen Verbrauch. Siehe *Sitzungen außerhalb von covey*.'
   - q: Was bedeutet das Vielfache?
@@ -50,7 +50,8 @@ Aufruf bepreist.
 - coveys eigene Preistabelle ist nur eine Prüfung. Weicht sie um mehr als 1 % und
   mehr als 0,50 $ von der führenden Zahl ab, sagt es eine Zeile unter der Zahl
   (*coveys eigene Preistabelle ergibt … % weniger/mehr, als Claude Code gemeldet
-  hat*). *Mit coveys Preistabelle vergleichen* (auch `?prices=recomputed`) zeigt
+  hat*). Die Tabelle je Modell ist die Ausnahme: Sie hat eine eigene Spalte
+  *Nachgerechnet*, standardmäßig an (siehe *Filter*). *Mit coveys Preistabelle vergleichen* (auch `?prices=recomputed`) zeigt
   *Von Claude Code gemeldet* und *Aus Tokens nachgerechnet* als eigene Zahlen, in
   den Kacheln, im Diagramm und in seinen Tabellen. Eine Lücke dazwischen heißt,
   dass ein Preis abweicht, nicht die Tokens.
@@ -148,9 +149,10 @@ Quelle gepusht hat, erscheint nichts von ihr.
   `/costs/outside`: Listenpreis über die Zeit, je Quelle, je Modell, Hauptsitzung
   gegen Subagenten und Workflows, Tokens je Art mit ihren Dollar und der Anteil
   jeder Quelle am Abo-Zähler. Jede Rolle darf sie lesen.
-- **Quellen nach Nutzung.** Eine Quelle auf keinem Abo-Zähler wird nach Nutzung
-  abgerechnet: Ihre Arbeit steckt in den Kacheln und steht in der Kopfzeile
-  gesondert, einen echten Anteil hat sie nicht.
+- **Quellen ohne Zähler.** Eine Quelle auf keinem Abo-Zähler, den die Seite liest
+  (Abrechnung je Nutzung, oder verknüpft mit einem Zugang ohne Zeilen oder
+  Ablesungen im Zeitraum): Ihre Arbeit steckt in den Kacheln und steht in der
+  Kopfzeile gesondert, einen echten Anteil hat sie nicht.
 - **Nutzung, die niemand meldet.** Zählernutzung, die keine Quelle meldet, steht als
   *Nicht zugeordnet* da und wird nie covey gebucht (siehe oben).
 
@@ -218,15 +220,20 @@ der Grundlage, die dann galt.
 |---|---|---|
 | **Sitzpreis** (Standard) | Der Tarifpreis des Platzes. | Die Bewegung des Zählers wird wie oben bewertet. |
 | **Nutzung** | Was der Platz für seine Nutzung berechnet bekam. | Seine Zählerpunkte sind aus den echten Kosten und dem Vielfachen heraus (*Nach Nutzung abgerechnet: Der Zähler ist nicht das Geld*). |
-| **Sitzpreis und Nutzung** | Beides. | Der Teil des Platzes kommt aus dem Zähler, die Nutzungsbeträge stehen daneben. |
+| **Sitzpreis und Nutzung** | Beides. | Der Teil des Platzes kommt aus dem Zähler, die Nutzungsbeträge stehen daneben. Mit einer USD-Zahl für die Beträge und bewerteten echten Kosten zeigt der Block außerdem *Echte Kosten, Sitz + Nutzung*: Sitz plus Nutzung, in Dollar, mit der Unterzeile *Sitz ≈ $X + Nutzung $Y*. Zugangsdaten, deren Grundlage sich im Zeitraum geändert hat, zeigen sie auch. |
 
 Nutzungsbeträge werden von Hand im Block der Zugangsdaten eingetragen
 (*Nutzungsbetrag hinzufügen*: Betrag, Währung, von, bis, optional ein USD-Kurs mit
 Datum). Ein Betrag behält seine Währung, und eine USD-Zahl und ein Nutzungs-Vielfaches
-(coveys Liste über die Beträge) gibt es nur mit ausdrücklichem Kurs. Beträge stehen
-neben den echten Kosten, je Währung, werden nie zu ihnen oder über Währungen
-hinweg addiert und zählen nur für die Zeit, in der die Zugangsdaten eine
-Nutzungsgrundlage haben. Bei einem API-Schlüssel wird die Rechnung abgeglichen und
+gibt es nur mit ausdrücklichem Kurs. Das Nutzungs-Vielfache zählt coveys Liste nur
+über die Zeiträume, die die gezählten Beträge abdecken (Randabschnitte anteilig
+nach Zeit), mit *≥*, wo Sitzungen außerhalb von covey dieselben Zugangsdaten
+nutzen. Beträge stehen neben den echten Kosten, je Währung, und werden nie über
+Währungen hinweg addiert; zu den echten Kosten des Platzes werden sie nur in der
+einen Kachel *Echte Kosten, Sitz + Nutzung* addiert, und nur in USD. Sie zählen nur
+für die Zeit, in der die Zugangsdaten eine Nutzungsgrundlage haben. Die Kopfzeile
+lässt Nutzungsbeträge weiter aus: Sie nennt sie neben den echten Kosten, in
+keiner ihrer Zahlen. Bei einem API-Schlüssel wird die Rechnung abgeglichen und
 steht neben ihnen: Ein hier eingetragener Betrag darf nicht dieselbe Rechnung sein,
 und sich überschneidende Beträge werden abgelehnt. *Kostengrundlage festlegen* und
 *Nutzungsbetrag hinzufügen* dürfen Organisationsadmins und die Sicherheitsrolle;

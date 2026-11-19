@@ -4,7 +4,7 @@ title: Cost & Tokens
 description: 'What the cost page leads with and how to read it: all the work at token prices, the one real cost of the subscription, the one multiple, and the Claude Code sessions outside covey that are counted by default. How the real cost is estimated from the provider''s meter, how the bill of an API key is read and reconciled, and what the page does not count yet.'
 faq:
   - q: Which figure leads the page, and why are there other dollar figures?
-    a: 'One list-price figure leads: all the work in the period at token prices, as reported by Claude Code. The others answer different questions. Real cost (estimate) is what a subscription seat used of its weekly allowance, Billed by Anthropic is what an API key was charged, and covey''s own price table shows up only as a difference line under the lead figure, or as its own figure behind Compare with covey''s price table. The credential blocks never add up across credentials; the headline adds the subscription meters, and the per-model table has rows that sum all subscription seats and all API keys (see *Filters*).'
+    a: 'One list-price figure leads: all the work in the period at token prices, as reported by Claude Code. The others answer different questions. Real cost (estimate) is what a subscription seat used of its weekly allowance, Billed by Anthropic is what an API key was charged, and covey''s own price table shows up as a difference line under the lead figure, as its own figure in the tiles and the chart behind Compare with covey''s price table, and as the Recomputed column of the per-model table, which is on by default. The credential blocks never add up across credentials; the headline adds the subscription meters, and the per-model table has rows that sum all subscription seats and all API keys (see *Filters*).'
   - q: Does the page count my own Claude Code sessions outside covey?
     a: 'Yes, once they are pushed with covey usage push. They are included by default in every figure, always labelled as outside covey, and the covey only chip leaves them out of the tiles, the chart and the tables. The headline still shows the whole dent. See *Sessions outside covey*.'
   - q: What does the multiple mean?
@@ -46,6 +46,8 @@ Claude Code)*: the work of the whole period, from every source, priced per call.
 - covey's own price table is only a check. Where it differs from the lead
   figure by more than 1 % and more than $0.50, a line under the figure says so
   (*covey's own price table gives … % less/more than Claude Code reported*).
+  The per-model table is the exception: it has its own *Recomputed* column, on
+  by default (see *Filters*).
   *Compare with covey's price table* (also `?prices=recomputed`) shows
   *Reported by Claude Code* and *Recomputed from tokens* as figures of their
   own, in the tiles, the chart and its tables. A gap between them means a
@@ -136,8 +138,9 @@ shows.
   list price over time, per source, per model, main session against subagents
   and workflows, tokens per type with their dollars, and each source's share of
   the subscription meter. Every role can read it.
-- **Per-use sources.** A source on no subscription meter is billed per use: its
-  work is in the tiles and named apart in the headline, and has no real share.
+- **Sources on no meter.** A source on no subscription meter the page reads
+  (billed per use, or linked to a seat with nothing in the range): its work is
+  in the tiles and named apart in the headline, and has no real share.
 - **Use nobody reports.** Meter use that no source reports is shown as
   *Unattributed* and is never booked to covey (see above).
 
@@ -200,14 +203,19 @@ then.
 |---|---|---|
 | **Seat price** (the default) | The plan price of the seat. | The meter's movement is priced as above. |
 | **Usage** | What the seat was charged for its use. | Its meter points are out of the real cost and the multiple (*Billed by usage: the meter is not the money*). |
-| **Seat price and usage** | Both. | The seat's part comes from the meter, the usage charges stand beside it. |
+| **Seat price and usage** | Both. | The seat's part comes from the meter, the usage charges stand beside it. With a USD figure for the charges and a priced real cost, the block also shows *Real cost, seat + usage*: seat plus usage, in dollars, with the sub-line *seat ≈ $X + usage $Y*. A credential whose basis changed in the window shows it too. |
 
 Usage charges are entered by hand on the credential's block (*Add usage charge*:
 amount, currency, from, to, optional USD rate with its date). A charge keeps its
-own currency, and a USD figure and a usage multiple (covey's list over the
-charges) appear only with an explicit rate. Charges stand beside the real cost,
-per currency, never added to it or across currencies, and count only for the time
-the credential has a usage basis. For an API key the bill is synced and stands
+own currency, and a USD figure and a usage multiple appear only with an explicit
+rate. The usage multiple counts covey's list only over the spans the counted
+charges cover (boundary periods pro rata by time), with *≥* where sessions
+outside covey share the credential. Charges stand beside the real cost, per
+currency, and are never added across currencies; they are added to the seat's
+real cost only in the one tile *Real cost, seat + usage*, and only in USD. They
+count only for the time the credential has a usage basis. The headline still
+leaves usage charges out: it lists them beside the real cost, in none of its
+figures. For an API key the bill is synced and stands
 beside them: a charge entered here must not be that same bill, and overlapping
 charges are refused. *Set cost basis* and *Add usage charge* are for
 organisation admins and the security role; every role reads the line *Charged by:
