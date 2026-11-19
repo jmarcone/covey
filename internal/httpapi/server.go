@@ -694,6 +694,14 @@ func (s *Server) Handler() http.Handler {
 	// subscription meter's points cost, never for a budget.
 	mux.Handle("GET /api/v1/runtime-instances/{id}/credentials/{ord}/plan", s.rbac(securityRoles, s.handleGetCredentialPlan))
 	mux.Handle("PUT /api/v1/runtime-instances/{id}/credentials/{ord}/plan", s.rbac(securityRoles, s.handlePutCredentialPlan))
+	// How the credential's real money is formed (0151, #120): by the seat
+	// price, by usage charges, or both — dated like the plan; and the usage
+	// charges entered by hand, each in its own currency.
+	mux.Handle("GET /api/v1/runtime-instances/{id}/credentials/{ord}/cost-basis", s.rbac(securityRoles, s.handleGetCostBasis))
+	mux.Handle("PUT /api/v1/runtime-instances/{id}/credentials/{ord}/cost-basis", s.rbac(securityRoles, s.handlePutCostBasis))
+	mux.Handle("GET /api/v1/runtime-instances/{id}/credentials/{ord}/usage-charges", s.rbac(securityRoles, s.handleListUsageCharges))
+	mux.Handle("POST /api/v1/runtime-instances/{id}/credentials/{ord}/usage-charges", s.rbac(securityRoles, s.handleAddUsageCharge))
+	mux.Handle("DELETE /api/v1/runtime-instances/{id}/credentials/{ord}/usage-charges/{charge}", s.rbac(securityRoles, s.handleDeleteUsageCharge))
 	// Which Anthropic API key the credential's value is (0146): what joins
 	// the bill to the runs.
 	mux.Handle("PATCH /api/v1/runtime-instances/{id}/credentials/{ord}/billing-key", s.rbac(securityRoles, s.handleSetBillingKey))
