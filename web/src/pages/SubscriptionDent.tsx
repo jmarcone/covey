@@ -1,8 +1,8 @@
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { fmtNumber, fmtUSD } from "../format";
-import { SPLIT_COLOR } from "./costSources";
-import type { DentPart, FloorMultiple, SubscriptionDent } from "./costFigures";
+import { SPLIT_COLOR, SPLIT_HATCH } from "./costSources";
+import type { DentPart, FloorMultiple, Headline, SubscriptionDent } from "./costFigures";
 import { OrgWide, Swatch } from "./StackedCostChart";
 
 /* The headline of the Costs page once Claude Code sessions outside covey
@@ -49,14 +49,14 @@ const count = (v: number) => fmtNumber(v, 0);
 /** A lower bound: "≥ 1.1×". */
 const atLeast = (m: FloorMultiple | null) => (m ? `≥ ${times(m.low)}` : "–");
 
-function Part({ label, value, sub, color, dashed, test }: {
-  label: string; value: string; sub: string; color?: string; dashed?: string; test: string;
+function Part({ label, value, sub, color, dashed, hatch, test }: {
+  label: string; value: string; sub: string; color?: string; dashed?: string; hatch?: number; test: string;
 }) {
   return (
     <div role="group" aria-label={label} data-dent={test}
       style={{ padding: "10px 14px", borderRadius: 8, border: "1px solid var(--border)", minWidth: 170, flex: "1 1 170px" }}>
       <div className="muted text-xs" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        {color && <Swatch color={color} hatched dashed={dashed} />}
+        {color && <Swatch color={color} hatched dashed={dashed} hatch={hatch} />}
         {label}
       </div>
       <div style={{ fontSize: 20, fontWeight: 600, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>{value}</div>
@@ -65,7 +65,59 @@ function Part({ label, value, sub, color, dashed, test }: {
   );
 }
 
-export function SubscriptionDentRow({ d, filtered }: { d: SubscriptionDent; filtered: boolean }) {
+/** The headline's sentence (#120, the human's core): all the work at token
+ *  prices against the one real cost of the subscription, and one multiple —
+ *  the estimate and its floor. */
+function HeadlineSentence({ h }: { h: Headline }) {
+  const { t } = useTranslation();
+  const parts = { list: fmtUSD(h.list), covey: fmtUSD(h.coveyList), outside: fmtUSD(h.outsideList) };
+  const sentence = h.real == null ? t("costs.dent.head.noReal", parts)
+    : h.multiple == null ? t("costs.dent.head.sentenceNoMultiple", { ...parts, real: fmtUSD(h.real) })
+    : t(h.points != null ? "costs.dent.head.sentence" : "costs.dent.head.sentenceNoPoints", {
+      ...parts, real: fmtUSD(h.real), pts: pts(h.points ?? 0), metered: fmtUSD(h.metered), x: times(h.multiple) });
+  const outsideReported = h.outsideReported == null ? t("costs.incl.noReported")
+    : h.outsideReportedCalls > 0 && h.outsideReportedCalls < h.outsideCalls
+      ? t("costs.incl.reportedOf", { usd: fmtUSD(h.outsideReported), n: count(h.outsideReportedCalls), m: count(h.outsideCalls) })
+      : fmtUSD(h.outsideReported);
+  return (
+    <div className="mb-3" data-head>
+      <p className="text-sm mb-1" style={{ fontWeight: 600 }} data-head-sentence>{sentence}</p>
+      {h.floor != null && (
+        <p className="text-sm mb-1" data-head-floor>
+          {t("costs.dent.head.floor", { floor: times(h.floor), metered: fmtUSD(h.metered), high: fmtUSD(h.real! + h.slack) })}
+        </p>
+      )}
+      {h.why === "movement" && <p className="muted text-xs mb-1" data-head-no-multiple>{t("costs.dent.head.noMultipleMovement", { pts: pts(h.points ?? 0) })}</p>}
+      {h.why === "unpriced" && h.real != null && <p className="muted text-xs mb-1" data-head-no-multiple>{t("costs.dent.head.noMultipleUnpriced", { n: pts(h.unpricedPoints) })}</p>}
+      {h.unmetered >= 0.005 && (
+        <p className="muted text-xs mb-1" data-head-unmetered>
+          {t("costs.dent.head.unmetered", { list: fmtUSD(h.list), unmetered: fmtUSD(h.unmetered), metered: fmtUSD(h.metered) })}
+        </p>
+      )}
+      <p className="muted text-xs mb-1" data-head-reported>
+        {t("costs.dent.head.reported", { reported: fmtUSD(h.reported), covey: fmtUSD(h.coveyReported), outside: outsideReported })}
+        {" "}{t("costs.dent.head.primary")}
+      </p>
+      {h.sources.length > 0 && (
+        <ul className="muted text-xs mb-1" aria-label={t("costs.dent.head.sourcesTitle")} data-head-sources style={{ paddingLeft: 16 }}>
+          {h.sources.map((s) => (
+            <li key={s.source} data-head-source={s.source}>
+              {t("costs.dent.head.source", { source: s.source, list: s.list != null ? fmtUSD(s.list) : t("costs.incl.noList") })}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+export function SubscriptionDentRow({ d, filtered, h = null, sourceParts = [] }: {
+  d: SubscriptionDent; filtered: boolean;
+  /** The headline: all the work at token prices against the one real cost. */
+  h?: Headline | null;
+  /** The outside part per source (the server's source_parts), for the estimate below. */
+  sourceParts?: { source: string; list_usd: number; real_usd: number }[];
+}) {
   const { t } = useTranslation();
   // Points are one unit only at one point price: then each part's points
   // stand beside its dollars, else the dollars carry the row alone.
@@ -103,7 +155,11 @@ export function SubscriptionDentRow({ d, filtered }: { d: SubscriptionDent; filt
         {t("costs.dent.title")}
         {filtered && <OrgWide />}
       </div>
-      <p className="muted text-xs mb-3" style={{ maxWidth: 760 }}>{t("costs.dent.hint")}</p>
+      {h && <HeadlineSentence h={h} />}
+      {/* The per-party real shares are an estimate: a detail, collapsed. */}
+      <details className="mb-1" data-dent-detail>
+      <summary className="text-sm" style={{ cursor: "pointer" }}>{t("costs.dent.head.splitSummary")}</summary>
+      <p className="muted text-xs mb-3 mt-2" style={{ maxWidth: 760 }}>{t("costs.dent.hint")}</p>
       <div className="flex flex-wrap gap-3 mb-3">
         {d.real == null ? (
           // No reading has a plan price: no figure, never ≈ $0.00.
@@ -115,12 +171,12 @@ export function SubscriptionDentRow({ d, filtered }: { d: SubscriptionDent; filt
         {/* Estimates, per chunk (F3c): the bounds are on the multiples and
             on the unattributed part beyond the rate. */}
         <Part test="covey" label={t("costs.dent.covey")} value={`≈ ${fmtUSD(d.covey.real)}`} sub={part(d.covey)} color={SPLIT_COLOR.covey} />
-        <Part test="outside" label={t("costs.dent.outside")} value={`≈ ${fmtUSD(d.outside.real)}`} sub={part(d.outside)} color={SPLIT_COLOR.outside} />
+        <Part test="outside" label={t("costs.dent.outside")} value={`≈ ${fmtUSD(d.outside.real)}`} sub={part(d.outside)} color={SPLIT_COLOR.outside} hatch={SPLIT_HATCH.outside} />
         <Part test="unattributed" label={t("costs.dent.unattributed")} value={`≈ ${fmtUSD(un.real)}`}
           sub={d.points != null
             ? t("costs.dent.unattributedSubPoints", { pct: pctOf(un.share), pts: pts(un.points), parts: unParts.join(" · ") })
             : t("costs.dent.unattributedSub", { pct: pctOf(un.share), parts: unParts.join(" · ") })}
-          color={SPLIT_COLOR.unattributed} />
+          color={SPLIT_COLOR.unattributed} hatch={SPLIT_HATCH.unattributed} />
         {d.unsplit.steps > 0 && (
           <Part test="unsplit" label={t("costs.dent.unsplit")} value={`≈ ${fmtUSD(d.unsplit.real)}`}
             sub={unsplitSub}
@@ -197,6 +253,16 @@ export function SubscriptionDentRow({ d, filtered }: { d: SubscriptionDent; filt
           ))}
         </ul>
       )}
+      {sourceParts.some((p) => p.list_usd > 0 || p.real_usd > 0) && (
+        <ul className="muted text-xs mb-1" aria-label={t("costs.dent.head.sourcesRealTitle")} data-dent-source-parts style={{ paddingLeft: 16 }}>
+          {sourceParts.filter((p) => p.list_usd > 0 || p.real_usd > 0).map((p) => (
+            <li key={p.source} data-dent-source-part={p.source}>
+              {t("costs.dent.head.sourceReal", { source: p.source, usd: fmtUSD(p.real_usd), list: fmtUSD(p.list_usd) })}
+            </li>
+          ))}
+        </ul>
+      )}
+      </details>
       <p className="muted text-xs mb-0" style={{ fontStyle: "italic" }}>{t("costs.dent.caveat")}</p>
     </section>
   );

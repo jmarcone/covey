@@ -184,12 +184,12 @@ describe("the operator sessions on the cost page (#120)", () => {
     expect(o.list).toBeCloseTo(12.5 + 3.25, 9);
     expect(within(tile).getByText(fmtUSD(12.5 + 3.25))).toBeTruthy();
     expect(within(tile).getByText(t("costs.outside.tileSub", counted(60)))).toBeTruthy();
-    // The share is of the dent of the seat a source names (4.2 of 7.5, its
-    // reading not reported included: F3b), not of every seat (4.2 of 13.7):
-    // the unlinked seat is all covey's. It is an estimate (≈, F3c).
-    expect(o.meter.share).toBeCloseTo(4.2 / 7.5, 12);
-    expect(o.meter.dent).toBeCloseTo(7.5, 12);
-    expect(within(tile).getByText(t("costs.outside.realShare", { usd: fmtUSD(4.2), pct: pct(4.2 / 7.5) }))).toBeTruthy();
+    // The outside part is of the seat a source names (4.2), and its share is
+    // of the whole dent, every seat's (4.2 of 13.7), as the headline's is
+    // (#120 review: one denominator). It is an estimate (≈, F3c).
+    expect(o.meter.share).toBeCloseTo(4.2 / 13.7, 12);
+    expect(o.meter.dent).toBeCloseTo(13.7, 12);
+    expect(within(tile).getByText(t("costs.outside.realShare", { usd: fmtUSD(4.2), pct: pct(4.2 / 13.7) }))).toBeTruthy();
     expect(t("costs.outside.realShare", { usd: "$1", pct: "1 %" })).toContain("≈ $1");
     // Beside the share, what unattributed use is — none measured on this seat.
     expect(within(tile).getByText(t("costs.outside.unattributedNone"))).toBeTruthy();
@@ -207,11 +207,12 @@ describe("the operator sessions on the cost page (#120)", () => {
     serveCosts(cells(ext));
     const tile = await screen.findByRole("group", { name: t("costs.outside.tile") });
     const o = outsideTotals(ext)!;
-    expect(o.meter.share).toBeCloseTo(4.2 / 8, 12);
+    // Of the whole dent: the linked seat's 8 and the other seat's 6.2.
+    expect(o.meter.share).toBeCloseTo(4.2 / 14.2, 12);
     expect(o.meter.unattributed).toBeCloseTo(0.5, 12);
     expect(o.noCall).toEqual({ steps: 1, usd: 0.5 });
     expect(o.unsplit.not_reported).toEqual({ steps: 1, usd: 1.5 });
-    expect(within(tile).getByText(t("costs.outside.realShare", { usd: fmtUSD(4.2), pct: pct(4.2 / 8) }))).toBeTruthy();
+    expect(within(tile).getByText(t("costs.outside.realShare", { usd: fmtUSD(4.2), pct: pct(4.2 / 14.2) }))).toBeTruthy();
     const sentence = t("costs.dent.unattributedSentence", { usd: fmtUSD(0.5) });
     expect(sentence).toContain("another machine on the same account");
     expect(within(tile).getByText(sentence)).toBeTruthy();
@@ -653,8 +654,11 @@ describe("the detailed view of the operator sessions", () => {
       `≥ ${fmtUSD(0)}`, "–", ""]);
     const seatLine = container.querySelector(`[data-seat='${SEAT}#0']`)!.textContent!;
     expect(seatLine).not.toContain(t("costs.outside.noCall", { ...counted(1), usd: fmtUSD(1) }));
+    // The seat has no rate (k): never "beyond the rate: at least $0.00",
+    // but "no rate yet", as the headline says (F3c review).
     expect(seatLine).toContain(t("costs.outside.seatLine", { real: fmtUSD(7), outside: fmtUSD(4.9), pct: pct(0.7), covey: fmtUSD(2.1),
-      unattributed: t("costs.dent.unattributedBeyond", { usd: fmtUSD(0) }) }));
+      unattributed: t("costs.dent.unattributedNoRate") }));
+    expect(seatLine).not.toContain(t("costs.dent.unattributedBeyond", { usd: fmtUSD(0) }));
     // A chunk with use not in its list price: its parts are approximate.
     const note = t("costs.dent.incompleteNote", { n: "1" });
     expect(seatLine).toContain(note);
@@ -678,13 +682,19 @@ describe("the detailed view of the operator sessions", () => {
   });
 
   it("with ?source=, says the meter share covers the other sources on the meter", async () => {
-    serveView(view({ source: "operator: home", seatSources: ["operator: home", "operator: lab"],
-      steps: [step("2026-11-17T18:30:00Z", "split", 6, { outside: 4.2 })] }),
-    "/costs/outside?days=1&bucket=hour&source=operator%3A%20home");
+    // lab has calls on the same seat; a project folder with no usage (claim
+    // only, 0 calls) is on the seat too, and is never named (#120).
+    const v = view({ source: "operator: home", seatSources: ["operator: home", "operator: lab", "AppData-Local-Temp-claim-only"],
+      steps: [step("2026-11-17T18:30:00Z", "split", 6, { outside: 4.2 })] });
+    v.sources = [...v.sources, { ...v.sources[0], source: "operator: lab" },
+      { ...v.sources[0], source: "AppData-Local-Temp-claim-only", calls: 0, list_usd: null, reported_usd: null }];
+    serveView(v, "/costs/outside?days=1&bucket=hour&source=operator%3A%20home");
     await screen.findByRole("table", { name: t("costs.outside.byModel") });
     const real = screen.getByRole("group", { name: t("costs.outside.meterShare") });
     expect(within(real).getByText(t("costs.outside.tileOtherSources", { sources: "operator: lab" }))).toBeTruthy();
     expect(screen.getByText(t("costs.outside.sourceNote"))).toBeTruthy();
+    // Not in the source chips, the tile or the seat line.
+    expect(document.body.textContent).not.toContain("AppData-Local-Temp-claim-only");
   });
 
   it("with ?source= of a source that names no meter, says so on the tile", async () => {

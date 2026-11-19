@@ -6,7 +6,7 @@ import { api, type ExternalModelUsage } from "../api";
 import { exact, fmtBucket, fmtCount, fmtNumber, fmtUSD, fmtUSDAxis } from "../format";
 import { Seg } from "./Costs";
 import { rateLine } from "./SubscriptionDent";
-import { BarChart, Chip, Swatch, type Bar } from "./StackedCostChart";
+import { BarChart, Chip, Swatch, hostsBehindText, type Bar } from "./StackedCostChart";
 import {
   FigureTile, OUTSIDE_COLOR, counted, incompleteLines, listLine, listValue, noCallLines, unattributedHalves, unattributedLine, unsplitLines,
 } from "./OutsideSessions";
@@ -27,6 +27,8 @@ import {
   perPeriodBy,
   rangeOptions,
   splitBy,
+  listedSource,
+  hostsBehind,
   type SplitRow,
 } from "./outsideFigures";
 
@@ -178,7 +180,10 @@ export default function OutsideCosts() {
   // With one source chosen, the share is still the whole meter's (the steps
   // carry no list price per source, so it cannot be narrowed honestly): the
   // tile names the other sources on the same seats.
-  const otherSources = source == null ? [] : [...new Set(seats.flatMap((c) => c.sources))].filter((s) => s !== source).sort();
+  // Only sources with calls in the range are named (a project folder with
+  // no usage sends claim-only requests: 0 calls).
+  const listed = useMemo(() => new Set((data?.sources ?? []).filter(listedSource).map((s) => s.source)), [data]);
+  const otherSources = source == null ? [] : [...new Set(seats.flatMap((c) => c.sources))].filter((s) => s !== source && listed.has(s)).sort();
   const seatSteps = (c: { secret_key: string; secret_slot: number }) =>
     unsplitOf(data?.meter.steps ?? [], new Set([`${c.secret_key}#${c.secret_slot}`]));
   const unpricedModels = (data?.models ?? []).filter((m) => !m.priced).map((m) => m.model);
@@ -201,16 +206,21 @@ export default function OutsideCosts() {
       <div className="flex flex-wrap items-center gap-2 mb-4" role="group" aria-label={t("costs.outside.source")}>
         <span className="muted text-xs" style={{ width: 84 }}>{t("costs.outside.source")}</span>
         <Chip on={source == null} onClick={() => set({ source: null })}>{t("costs.outside.sourceAll")}</Chip>
-        {(data?.sources ?? []).map((s) => (
+        {(data?.sources ?? []).filter((s) => listedSource(s) || s.source === source).map((s) => (
           <Chip key={s.source} on={source === s.source} onClick={() => set({ source: s.source })}>
             {s.source} <span style={{ opacity: 0.7 }}>{s.list_usd != null ? fmtUSD(s.list_usd) : "–"}</span>
           </Chip>
         ))}
       </div>
 
-      {q.isError ? <p className="muted">{t("costs.outside.loadError")}</p> : !data ? null : cells.length === 0 ? (
+      {q.isError ? <p className="muted">{t("costs.outside.loadError")}</p> : !data ? null : cells.length === 0 && seats.length === 0 ? (
         <div className="card muted text-sm" style={{ padding: "40px 0", textAlign: "center" }}>{t("costs.outside.empty")}</div>
       ) : <>
+        {/* No outside call in the range, but a seat they share has a dent:
+            the meter section still shows it (#120 review). */}
+        {cells.length === 0 ? (
+          <div className="card muted text-sm mb-4" data-outside-empty style={{ padding: "24px 0", textAlign: "center" }}>{t("costs.outside.empty")}</div>
+        ) : <>
         <div className="flex flex-wrap gap-3 mb-4" data-outside-tiles>
           <FigureTile test="list" label={t("costs.outside.colList")} color={OUTSIDE_COLOR}
             value={listValue(models.total.list)}
@@ -268,6 +278,8 @@ export default function OutsideCosts() {
           {models.total.unpricedTokens > 0 && <p className="muted text-xs mt-2 mb-0" data-priced-only-note>{t("costs.outside.typePricedOnly")}</p>}
         </div>
 
+        </>}
+
         <div className="card mb-4" data-outside-meter>
           <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.outside.meterTitle")}</div>
           <p className="muted text-xs mb-2" style={{ maxWidth: 760 }}>{t("costs.outside.meterHint")}</p>
@@ -284,7 +296,10 @@ export default function OutsideCosts() {
                   const priced = c.step_count - c.unpriced_steps > 0;
                   const realText = priced ? fmtUSD(c.real_usd) : "–";
                   const sh = meterShare([c]);
-                  const unattributed = unattributedHalves(t, sh, sh.share != null).join(", ");
+                  // "beyond the rate" at $0 only where the seat has a rate to measure it by.
+                  // Without k, and nothing moved with no call: "no rate yet", as the headline says.
+                  const halves = unattributedHalves(t, sh, sh.share != null && c.points_per_list_usd != null);
+                  const unattributed = halves.length > 0 ? halves.join(", ") : t("costs.dent.unattributedNoRate");
                   return sh.share != null
                     ? t("costs.outside.seatLine", { real: realText, outside: fmtUSD(c.external_real_usd), pct: pct(sh.share),
                       covey: fmtUSD(c.covey_real_usd), unattributed })
@@ -299,7 +314,11 @@ export default function OutsideCosts() {
                     .map((l, i) => <span key={i} data-seat-unsplit> · {l}</span>);
                 })()}
                 {c.unmetered_list_usd > 0 && <> · {t("costs.outside.unmetered", { usd: fmtUSD(c.unmetered_list_usd) })}</>}
-                <span className="muted"> · {t("costs.outside.seatSources", { sources: c.sources.join(", ") })}</span>
+                {(() => {
+                  const hs = hostsBehind(data, c.secret_key, c.secret_slot).filter((h) => listed.has(h.source));
+                  return hs.length > 0 ? <span data-hosts-behind> · {hostsBehindText(t, hs)}</span> : null;
+                })()}
+                <span className="muted"> · {t("costs.outside.seatSources", { sources: c.sources.filter((x) => listed.has(x)).join(", ") })}</span>
                 {/* The seat's rate (F3c's k at its latest plan price): what the part beyond the rate is measured by. */}
                 {c.step_count > c.unpriced_steps && c.split_steps > 0 && (
                   <span className="muted text-xs" style={{ display: "block" }} data-seat-rate>

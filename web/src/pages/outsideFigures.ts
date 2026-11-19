@@ -51,8 +51,6 @@ export function rangeOptions(t: TFunction) {
   return RANGES.map((r) => ({ v: r.v, label: r.v === 1 ? t("costs.range24h") : t("costs.rangeDays", { count: r.v }) }));
 }
 
-/** The meter and the bill are read per hour: no real or billed figure at 10 minutes. */
-export const belowMeter = (bucket: string) => bucket === "10min";
 
 // --- The overview -------------------------------------------------------------
 
@@ -183,10 +181,12 @@ export type MeterShare = {
   unattributed: number; beyond: number; noCall: number; incomplete: number;
 };
 
-export function meterShare(creds: readonly ExternalMeterTotal[]): MeterShare {
+export function meterShare(creds: readonly ExternalMeterTotal[], wholeDent?: number): MeterShare {
   const sum = (f: (c: ExternalMeterTotal) => number) => creds.reduce((a, c) => a + f(c), 0);
   const real = sum((c) => c.external_real_usd);
-  const dent = sum((c) => (c.step_count > c.unpriced_steps ? c.real_usd : 0));
+  // The overview's share is of the whole dent, as the headline's is (#120
+  // review); the detailed view's per-seat share is of its seat's.
+  const dent = wholeDent ?? sum((c) => (c.step_count > c.unpriced_steps ? c.real_usd : 0));
   const splitSteps = sum((c) => c.split_steps);
   const unattributed = sum((c) => c.unattributed_real_usd ?? 0);
   const noCall = sum((c) => c.unattributed_no_call_real_usd ?? 0);
@@ -215,7 +215,7 @@ export function outsideTotals(ext: ExternalUsage | null | undefined): OutsideTot
     list, calls, reported, unpricedTokens,
     reportedCalls: ext.cells.reduce((a, c) => a + c.reported_calls, 0),
     linked: seats.size > 0,
-    meter: meterShare(creds),
+    meter: meterShare(creds, ext.meter.credentials.reduce((a, c) => a + (c.step_count > c.unpriced_steps ? c.real_usd : 0), 0)),
     unsplit,
     noCall: unattributed.noCall,
     unpricedSteps,
@@ -252,6 +252,173 @@ export function agentsPerPeriod(data: CostCells | undefined, selected: Set<strin
 /** The series is on by default in the org-wide view, off once the page is
  *  narrowed to agents; the user's own choice wins in either. */
 export const outsideDefaultOn = (filtered: boolean) => !filtered;
+
+// --- Included on the Costs page, by default and always labelled ----------------
+//
+// The human's question (#120): if all the work on the subscription is
+// counted for the period — covey's agents and the operator's own sessions —
+// what would it have cost by token consumption and by Claude Code's own
+// reports, against what the subscription really cost? So the page's tiles,
+// cost chart and tables include the sessions outside covey by default,
+// each figure labelled with its two parts; "covey only" shows the agents
+// alone, as before. The agents' own figures (/cost/cells' cells, /cost/models)
+// are never changed: the outside part is added on the page from the
+// `external` field and the external-usage endpoint, and named wherever it
+// is added.
+
+/** A source the page lists: one with calls (or list price) in the range. The
+ *  uploader pushes one source per project folder, and a folder with
+ *  transcripts but no usage sends claim-only requests: a source of 0 calls
+ *  is in the API, never in a sub-line, a series, a row or a source list. */
+export const listedSource = (s: Pick<ExternalSource, "calls" | "list_usd">) => s.calls > 0 || s.list_usd != null;
+
+/** The sources the page lists, by name. */
+export const listedSources = (ext: ExternalUsage | null | undefined): ExternalSource[] =>
+  (ext?.sources ?? []).filter(listedSource).sort((a, b) => a.source.localeCompare(b.source));
+
+/** The URL parameter of the "covey only" choice: ?only=covey. */
+export const COVEY_ONLY_PARAM = "only";
+export const COVEY_ONLY_VALUE = "covey";
+
+/** The outside sessions' figures beside the agents' in the tiles: list
+ *  price (null when no call was priced — never $0), Claude Code's reported
+ *  cost (null when no call carried one) and the calls that did, tokens per
+ *  type over every call, priced or not, and the tokens of models with no
+ *  list price. Over every source, or the given ones. */
+export type OutsideKpis = {
+  sources: string[];
+  calls: number;
+  list: number | null;
+  reported: number | null;
+  reportedCalls: number;
+  tokens: Record<string, number>;
+  unpricedTokens: number;
+};
+
+export function outsideKpis(ext: ExternalUsage | null | undefined, only?: ReadonlySet<string>): OutsideKpis | null {
+  const sources = listedSources(ext).filter((s) => !only || only.has(s.source));
+  if (!ext || sources.length === 0) return null;
+  const names = new Set(sources.map((s) => s.source));
+  const out: OutsideKpis = { sources: [...names].sort(), calls: 0, list: null, reported: null, reportedCalls: 0, tokens: {}, unpricedTokens: 0 };
+  for (const s of sources) {
+    out.calls += s.calls;
+    if (s.list_usd != null) out.list = (out.list ?? 0) + s.list_usd;
+    if (s.reported_usd != null) out.reported = (out.reported ?? 0) + s.reported_usd;
+    out.unpricedTokens += s.unpriced_tokens;
+  }
+  for (const c of ext.cells) {
+    if (!names.has(c.source)) continue;
+    out.reportedCalls += c.reported_calls;
+    for (const [k, v] of Object.entries(c.tokens ?? {})) out.tokens[k] = (out.tokens[k] ?? 0) + v;
+  }
+  return out;
+}
+
+/** One source in one chart period: list price (null when none of its calls
+ *  had one), reported cost (null when no call carried one), its calls, and
+ *  the list price per cost type, as the agents' cells carry it. */
+export type SourcePeriod = { period: string; calls: number; list: number | null; reported: number | null; measured: Record<string, number>; tokens: Record<string, number> };
+
+/** Per source, per chart period (keyed by the period's start in ms): the
+ *  cells of /cost/cells' external field, which are cut at the chart's bucket. */
+export function sourcesPerPeriod(ext: ExternalUsage | null | undefined): Map<string, Map<number, SourcePeriod>> {
+  const out = new Map<string, Map<number, SourcePeriod>>();
+  for (const c of ext?.cells ?? []) {
+    let by = out.get(c.source);
+    if (!by) out.set(c.source, (by = new Map()));
+    const k = Date.parse(c.period);
+    const e = by.get(k) ?? { period: c.period, calls: 0, list: null, reported: null, measured: {}, tokens: {} };
+    e.calls += c.calls;
+    if (c.list_usd != null) e.list = (e.list ?? 0) + c.list_usd;
+    if (c.reported_usd != null) e.reported = (e.reported ?? 0) + c.reported_usd;
+    for (const [t, v] of Object.entries(c.measured ?? {})) e.measured[t] = (e.measured[t] ?? 0) + v;
+    for (const [t, v] of Object.entries(c.tokens ?? {})) e.tokens[t] = (e.tokens[t] ?? 0) + v;
+    by.set(k, e);
+  }
+  return out;
+}
+
+/** The sources that name this seat's meter, by name. */
+export function seatSources(ext: ExternalUsage | null | undefined, key: string, slot: number): ExternalSource[] {
+  return listedSources(ext).filter((s) => s.meter_credential?.secret_key === key && s.meter_credential.secret_slot === slot);
+}
+
+/** The sources whose seat has no block of its own on the page (`seats`: the
+ *  blocks' ids, key#slot): billed per use, or linked to a seat the window
+ *  has neither lines nor readings for. */
+export function sourcesWithoutSeat(ext: ExternalUsage | null | undefined, seats: ReadonlySet<string>): ExternalSource[] {
+  return listedSources(ext).filter((s) => !s.meter_credential || !seats.has(seatOf(s.meter_credential)));
+}
+
+/** A source's hatch on the page: one pattern per source, the same in every
+ *  block, the legend and the tooltip; 1 and up (0 is a hatched bar's own). */
+export function sourceHatch(ext: ExternalUsage | null | undefined, source: string): number {
+  const names = listedSources(ext).map((s) => s.source);
+  const i = names.indexOf(source);
+  return 1 + ((i < 0 ? 0 : i) % 5);
+}
+
+/** The outside part of a seat's real cost per chart period, per source (the
+ *  server's source_parts of each split step, placed at its reading). Empty
+ *  while the server sends no parts. */
+export function sourceRealPerPeriod(ext: ExternalUsage | null | undefined, key: string, slot: number, bucket: string): Map<number, Map<string, number>> {
+  const out = new Map<number, Map<string, number>>();
+  for (const st of ext?.meter.steps ?? []) {
+    if (st.secret_key !== key || st.secret_slot !== slot || !st.split || !st.source_parts) continue;
+    const k = bucketStart(Date.parse(st.at), bucket);
+    const by = out.get(k) ?? new Map<string, number>();
+    for (const p of st.source_parts) by.set(p.source, (by.get(p.source) ?? 0) + p.real_usd);
+    out.set(k, by);
+  }
+  return out;
+}
+
+/** A machine of a seat's sources that had not reported through the seat's
+ *  latest reading left unsplit as not reported: through when it last said
+ *  (null: it never did). */
+export type HostBehind = { source: string; host: string; through: string | null };
+
+export function hostsBehind(ext: Pick<ExternalUsage, "sources" | "meter"> | null | undefined, key: string, slot: number): HostBehind[] {
+  let at = -Infinity;
+  for (const st of ext?.meter.steps ?? []) {
+    if (st.secret_key === key && st.secret_slot === slot && !st.split && st.reason === "not_reported") at = Math.max(at, Date.parse(st.at));
+  }
+  if (at === -Infinity) return [];
+  const out: HostBehind[] = [];
+  for (const s of ext!.sources) {
+    if (!listedSource(s) || s.meter_credential?.secret_key !== key || s.meter_credential.secret_slot !== slot) continue;
+    for (const h of s.hosts ?? []) {
+      if (h.reported_through == null || Date.parse(h.reported_through) < at) out.push({ source: s.source, host: h.host, through: h.reported_through });
+    }
+  }
+  return out.sort((a, b) => a.source.localeCompare(b.source) || a.host.localeCompare(b.host));
+}
+
+/** One row per source and model for the per-model table, from the
+ *  external-usage endpoint's cells. */
+export type OutsideModelRow = {
+  source: string; model: string; calls: number; list: number | null; reported: number | null;
+  output: number; cacheRead: number; cacheWrite5m: number; cacheWrite1h: number; unpricedTokens: number;
+};
+
+export function outsideModelRows(cells: readonly ExternalModelCell[]): OutsideModelRow[] {
+  const by = new Map<string, OutsideModelRow>();
+  for (const c of cells) {
+    const k = `${c.source}\u0000${c.model}`;
+    const r = by.get(k) ?? { source: c.source, model: c.model, calls: 0, list: null, reported: null, output: 0, cacheRead: 0,
+      cacheWrite5m: 0, cacheWrite1h: 0, unpricedTokens: 0 };
+    r.calls += c.calls;
+    if (c.list_usd != null) r.list = (r.list ?? 0) + c.list_usd;
+    if (c.reported_usd != null) r.reported = (r.reported ?? 0) + c.reported_usd;
+    r.output += c.tokens.output ?? 0;
+    r.cacheRead += c.tokens.cache_read ?? 0;
+    r.cacheWrite5m += c.tokens.cache_write_5m ?? 0;
+    r.cacheWrite1h += c.tokens.cache_write_1h ?? 0;
+    r.unpricedTokens += c.unpriced_tokens;
+    by.set(k, r);
+  }
+  return [...by.values()].sort((a, b) => a.source.localeCompare(b.source) || (b.list ?? -1) - (a.list ?? -1) || a.model.localeCompare(b.model));
+}
 
 // --- The detailed view ----------------------------------------------------------
 

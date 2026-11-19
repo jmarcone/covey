@@ -72,7 +72,8 @@ export const unattributedLine = (t: T, usd: number) =>
 
 /** The unattributed part's two halves in #126's words: beyond the rate (at
  *  least) and moved with no call (≈). withBeyond: name the part beyond the
- *  rate even at $0 (a split seat or period, where it is a figure). */
+ *  rate even at $0 — only on a split seat that has k, a rate to measure it
+ *  by; without k "beyond the rate: at least $0" would claim a measurement. */
 export function unattributedHalves(t: T, h: { beyond: number; noCall: number }, withBeyond: boolean): string[] {
   return [
     ...(withBeyond || h.beyond > 0 ? [t("costs.dent.unattributedBeyond", { usd: fmtUSD(h.beyond) })] : []),

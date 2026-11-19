@@ -900,7 +900,13 @@ export type ExternalMeterStep = {
   unattributed_real_usd: number;
   unattributed_points: number;
   unsplit_real_usd: number;
+  /** A split step's outside part per source (its share of the chunk's outside list); absent otherwise. */
+  source_parts?: ExternalMeterSourcePart[];
 };
+
+/** One outside source's part of the split movement: its list over the split steps, and
+ *  Σ step outside real × its share of each chunk's outside list. The parts add up to the outside part. */
+export type ExternalMeterSourcePart = { source: string; list_usd: number; real_usd: number };
 
 /** One UTC hour of one seat: the sums of the steps placed in it. */
 export type ExternalMeterHour = {
@@ -920,6 +926,7 @@ export type ExternalMeterHour = {
   split_steps: number;
   unattributed_steps: number;
   unpriced_points: number;
+  source_parts?: ExternalMeterSourcePart[];
 };
 
 /** The split's sums: per seat, and over every seat. */
@@ -976,6 +983,10 @@ export type ExternalMeterSums = {
   unpriced_tokens: number;
   /** Outside list price after the seat's last reading: no real share yet. */
   unmetered_list_usd: number;
+  /** covey's list price on the seat after its last reading: no real share yet either. */
+  unmetered_covey_list_usd?: number;
+  /** The outside part per source; a seat lists every source linked to it. */
+  source_parts?: ExternalMeterSourcePart[];
 };
 
 /** One agent's part of covey's share of a seat (the split steps only, by its share of each chunk's covey list). */

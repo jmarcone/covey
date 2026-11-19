@@ -1,19 +1,20 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { api, ApiError, type IndicatorReport, type Principal, type RunCost } from "../api";
 import { exact, fmtBucket, fmtCount, fmtUSD } from "../format";
 import { PriceList } from "../components/PriceList";
 import { CostInsights } from "./CostInsights";
-import { credentialFigures, subscriptionDent } from "./costFigures";
+import { credentialFigures, headline, subscriptionDent } from "./costFigures";
 import { SubscriptionDentRow } from "./SubscriptionDent";
 import { canSetPlan } from "./PlanPrice";
 import { OutsideOverview } from "./OutsideSessions";
-import { RANGES, bucketOptions, rangeOptions } from "./outsideFigures";
+import { COVEY_ONLY_PARAM, COVEY_ONLY_VALUE, RANGES, bucketOptions, listedSources, outsideKpis, rangeOptions } from "./outsideFigures";
 import {
   AgentFilter,
   BUCKET_MS,
+  Chip,
   CostExplorer,
   OrgWide,
   SOURCE_COLOR,
@@ -21,6 +22,8 @@ import {
   TokenExplorer,
   TYPE_COLOR,
   cellTotals,
+  inclLine,
+  outsideMoney,
   useBilled,
   useCostCells,
   useUsageReadings,
@@ -39,15 +42,17 @@ type Metric = "cost" | "tokens";
 
 // --- KPI tiles ---------------------------------------------------------------
 
-function Kpi({ label, value, sub, color }: { label: string; value: string; sub?: string; color?: string }) {
+function Kpi({ label, value, sub, color, parts }: { label: string; value: string; sub?: string; color?: string; parts?: string }) {
   return (
-    <div className="card" style={{ flex: 1, minWidth: 150 }}>
+    <div className="card" data-kpi={label} style={{ flex: 1, minWidth: 150 }}>
       <div className="muted text-xs" style={{ display: "flex", alignItems: "center", gap: 6 }}>
         {color && <Swatch color={color} />}
         {label}
       </div>
-      <div style={{ fontSize: 24, fontWeight: 600, marginTop: 2 }}>{value}</div>
+      <div data-kpi-value style={{ fontSize: 24, fontWeight: 600, marginTop: 2 }}>{value}</div>
       {sub && <div className="muted text-xs" style={{ marginTop: 2 }}>{sub}</div>}
+      {/* Included, the figure's two parts, always named (#120). */}
+      {parts && <div className="muted text-xs" data-parts style={{ marginTop: 2 }}>{parts}</div>}
     </div>
   );
 }
@@ -63,9 +68,16 @@ export function Seg<T extends string | number>({
   options: { v: T; label: string; disabled?: boolean; title?: string }[];
   onChange: (v: T) => void;
 }) {
+  // A disabled option says why in visible text under the switch, and is
+  // described by it (not by its title alone, which a touch screen or a
+  // keyboard never shows).
+  const uid = useId().replace(/[^a-zA-Z0-9_-]/g, "");
+  const reasons = [...new Set(options.filter((o) => o.disabled && o.title).map((o) => o.title!))];
+  const reasonId = (title?: string) => (title && reasons.includes(title) ? `${uid}-r${reasons.indexOf(title)}` : undefined);
   return (
-    /* One option per agent grows past any width with a large fleet: the
-       control scrolls inside itself rather than widening the page (#463). */
+    <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-end", maxWidth: "100%" }}>
+    {/* One option per agent grows past any width with a large fleet: the
+       control scrolls inside itself rather than widening the page (#463). */}
     <div style={{ display: "inline-flex", gap: 2, maxWidth: "100%", overflowX: "auto", scrollbarWidth: "thin", background: "var(--surface-1)", border: "0.5px solid var(--border)", borderRadius: 8, padding: 2 }}>
       {options.map((o) => {
         const active = o.v === value;
@@ -76,6 +88,7 @@ export function Seg<T extends string | number>({
             aria-pressed={active}
             disabled={o.disabled}
             title={o.title}
+            aria-describedby={o.disabled ? reasonId(o.title) : undefined}
             style={{
               border: "none",
               flexShrink: 0,
@@ -96,6 +109,10 @@ export function Seg<T extends string | number>({
         );
       })}
     </div>
+    {reasons.map((r, i) => (
+      <span key={r} id={`${uid}-r${i}`} className="muted" data-seg-reason style={{ fontSize: 11, marginTop: 2, textAlign: "right" }}>{r}</span>
+    ))}
+    </span>
   );
 }
 
@@ -111,7 +128,7 @@ export function Seg<T extends string | number>({
  *  in every turn. Whoever misses that optimizes the output length and
  *  wonders why nothing happens. The tokens are the lines' own, over every
  *  model, so they are the calls the dollars above are made of. */
-function TokenMix({ tokens }: { tokens: Record<string, number> }) {
+function TokenMix({ tokens, split }: { tokens: Record<string, number>; split?: string }) {
   const { t } = useTranslation();
   const parts = [
     { key: "cache_read", value: tokens.cache_read ?? 0 },
@@ -140,6 +157,7 @@ function TokenMix({ tokens }: { tokens: Record<string, number> }) {
           </span>
         </div>
       ))}
+      {split && <p className="muted text-xs mt-2 mb-0" data-parts>{split}</p>}
     </div>
   );
 }
@@ -212,6 +230,16 @@ export default function Costs({ me }: { me?: Principal }) {
   // organisation, any combination for the charts and the KPIs; exactly one
   // also narrows the cards below to that agent.
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // The sessions outside covey are included by default and labelled
+  // everywhere (#120); ?only=covey shows covey's agents alone, as before.
+  const [params, setParams] = useSearchParams();
+  const coveyOnly = params.get(COVEY_ONLY_PARAM) === COVEY_ONLY_VALUE;
+  const setCoveyOnly = (v: boolean) => setParams((prev) => {
+    const n = new URLSearchParams(prev);
+    if (v) n.set(COVEY_ONLY_PARAM, COVEY_ONLY_VALUE);
+    else n.delete(COVEY_ONLY_PARAM);
+    return n;
+  }, { replace: true });
   const scope = selected.size === 1 ? [...selected][0] : "org";
   const cells = useCostCells(days, bucket);
   const billed = useBilled(days, bucket);
@@ -269,20 +297,37 @@ export default function Costs({ me }: { me?: Principal }) {
   // the same the tiles show without an agent filter.
   const orgFigures = useMemo(() => (cells.data ? credentialFigures({
     cells: cells.data, billed: billed.data, bucketMs: BUCKET_MS[bucket] ?? BUCKET_MS.day, windowEnd: new Date(),
-  }) : []), [cells.data, billed.data, bucket]);
+    includeOutside: !coveyOnly && listedSources(cells.data.external).length > 0,
+  }) : []), [cells.data, billed.data, bucket, coveyOnly]);
 
   // The whole dent in the subscription meters, split between covey's agents
   // and the sessions outside covey (#120): null until a source names a meter.
   const dent = useMemo(() => subscriptionDent(cells.data?.external), [cells.data]);
+  const head = useMemo(() => headline(cells.data), [cells.data]);
 
   // KPIs over the same lines as the charts, narrowed by the same filter.
   const totals = useMemo(() => cellTotals(cells.data, selected), [cells.data, selected]);
-  const tok = totals.tokens;
-  const input = (tok.input ?? 0) + (tok.cache_read ?? 0) + (tok.cache_write_5m ?? 0) + (tok.cache_write_1h ?? 0);
+  // The outside sessions with calls in the range; null for covey only or none.
+  const ext = cells.data?.external;
+  const sourcesListed = useMemo(() => listedSources(ext), [ext]);
+  const outside = useMemo(() => (coveyOnly ? null : outsideKpis(ext)), [ext, coveyOnly]);
+  const included = outside != null ? ext! : null;
+  const filtered = selected.size > 0;
+  const coveyTok = totals.tokens;
+  const tok = useMemo(() => {
+    if (!outside) return coveyTok;
+    const m: Record<string, number> = { ...coveyTok };
+    for (const [k, v] of Object.entries(outside.tokens)) m[k] = (m[k] ?? 0) + v;
+    return m;
+  }, [coveyTok, outside]);
+  const inputOf = (x: Record<string, number>) => (x.input ?? 0) + (x.cache_read ?? 0) + (x.cache_write_5m ?? 0) + (x.cache_write_1h ?? 0);
+  const input = inputOf(tok);
   // The hit rate: what was read from the cache, of all input. A cache write
   // is a miss that pays extra to be a hit next time, not a hit.
   const cached = tok.cache_read ?? 0;
   const output = tok.output ?? 0;
+  const parts = (covey: string, out: string) => (outside ? inclLine(t, filtered, covey, out) : undefined);
+  const tokParts = (f: (x: Record<string, number>) => number) => parts(fmtCount(f(coveyTok)), fmtCount(f(outside?.tokens ?? {})));
 
   const agentList = cells.data?.agents ?? [];
   const scopeName =
@@ -312,20 +357,36 @@ export default function Costs({ me }: { me?: Principal }) {
         <AgentFilter agents={agentList} selected={selected} onChange={setSelected} />
       </div>
 
+      {/* The sessions outside covey: in every figure below by default, each
+          figure naming its parts; "covey only" leaves them out (#120). */}
+      {sourcesListed.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 mb-4" data-inclusion>
+          <Chip on={coveyOnly} onClick={() => setCoveyOnly(!coveyOnly)} title={t("costs.incl.coveyOnlyTitle")}>{t("costs.incl.coveyOnly")}</Chip>
+          <span className="muted text-xs" data-inclusion-note style={{ maxWidth: 760 }}>
+            {t(coveyOnly ? "costs.incl.coveyOnlyNote" : filtered ? "costs.incl.includedNoteSelected" : "costs.incl.includedNote",
+              { sources: sourcesListed.map((s) => s.source).join(", ") })}
+          </span>
+        </div>
+      )}
+
       {/* The headline: what the subscription really paid, and for whom. */}
-      {dent && <SubscriptionDentRow d={dent} filtered={selected.size > 0} />}
+      {dent && <SubscriptionDentRow d={dent} filtered={selected.size > 0} h={head}
+        sourceParts={(cells.data?.external?.meter.source_parts ?? []).filter((p) => listedSources(cells.data?.external).some((s) => s.source === p.source))} />}
 
       {/* KPIs: over every credential, dollars and tokens of the same lines. */}
       <div className="flex flex-wrap gap-3 mb-4">
-        <Kpi label={t("costs.fig.reported")} value={fmtUSD(totals.reported)} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.reported} />
-        <Kpi label={t("costs.fig.recomputed")} value={fmtUSD(totals.recomputed)} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.recomputed} />
+        <Kpi label={t("costs.fig.reported")} value={fmtUSD(totals.reported + (outside?.reported ?? 0))} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.reported}
+          parts={outside ? parts(fmtUSD(totals.reported), outsideMoney(t, outside, "reported")) : undefined} />
+        <Kpi label={t("costs.fig.recomputed")} value={fmtUSD(totals.recomputed + (outside?.list ?? 0))} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.recomputed}
+          parts={outside ? parts(fmtUSD(totals.recomputed), outsideMoney(t, outside, "list")) : undefined} />
         <Kpi
           label={t("costs.inputTokens")}
           value={fmtCount(input)}
           sub={t("costs.cachedShare", { pct: input > 0 ? Math.round((cached / input) * 100) : 0 })}
+          parts={tokParts(inputOf)}
         />
-        <Kpi label={t("costs.outputTokens")} value={fmtCount(output)} sub={exact(output)} />
-        <Kpi label={t("costs.totalTokens")} value={fmtCount(input + output)} />
+        <Kpi label={t("costs.outputTokens")} value={fmtCount(output)} sub={exact(output)} parts={tokParts((x) => x.output ?? 0)} />
+        <Kpi label={t("costs.totalTokens")} value={fmtCount(input + output)} parts={tokParts((x) => inputOf(x) + (x.output ?? 0))} />
       </div>
 
       {/* Chart */}
@@ -339,9 +400,10 @@ export default function Costs({ me }: { me?: Principal }) {
           />
         </div>
         {metric === "cost" ? (
-          <CostExplorer data={cells.data} billed={billed.data} readings={readings.data ?? []} canSetPlan={canSetPlan(me?.Role ?? "")} selected={selected} bucket={bucket} fmtPeriod={fmtPeriod} />
+          <CostExplorer data={cells.data} billed={billed.data} readings={readings.data ?? []} canSetPlan={canSetPlan(me?.Role ?? "")} selected={selected} bucket={bucket} fmtPeriod={fmtPeriod}
+            outside={included} />
         ) : (
-          <TokenExplorer data={cells.data} selected={selected} fmtPeriod={fmtPeriod} />
+          <TokenExplorer data={cells.data} selected={selected} fmtPeriod={fmtPeriod} outside={included} />
         )}
       </div>
 
@@ -362,7 +424,7 @@ export default function Costs({ me }: { me?: Principal }) {
         <div className="card">
           <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.mix.title")}</div>
           <p className="muted text-xs mb-3">{t("costs.mix.hint")}</p>
-          <TokenMix tokens={tok} />
+          <TokenMix tokens={tok} split={tokParts((x) => inputOf(x) + (x.output ?? 0))} />
         </div>
         <div className="card" style={{ gridColumn: "span 1" }}>
           <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.runs.title")}{scope === "org" && selected.size > 0 && <OrgWide />}</div>
@@ -374,7 +436,7 @@ export default function Costs({ me }: { me?: Principal }) {
       {/* Cost insights: per model as Claude Code reported it, and the
           subscription meter per credential. The model lines follow the agent
           filter; what is per credential stays org-wide and says so. */}
-      <CostInsights days={days} figures={orgFigures} agents={selected} />
+      <CostInsights days={days} figures={orgFigures} agents={selected} outside={included} />
     </div>
   );
 }

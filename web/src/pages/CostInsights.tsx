@@ -2,13 +2,14 @@ import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
-import { api, type ModelUsageReport, type ModelUsageRow, type UsageReading } from "../api";
+import { api, type ExternalModelUsage, type ExternalUsage, type ModelUsageReport, type ModelUsageRow, type UsageReading } from "../api";
 import { fmtBucket, fmtCount, fmtNumber, fmtUSD, fmtUSDBelow, fmtUSDFixed } from "../format";
 import { DEFAULT_SOURCES, SOURCES, SOURCE_INFO, isPerModel, modelFigure, sourceHint, sourceLabel, type Source } from "./costSources";
 import { isSeat, perCredentialTotals, scopeFigure, type SourceTotal } from "./costFigures";
 import { Chip } from "./StackedCostChart";
 import { usableReadings, type CredentialFigures } from "./costFigures";
-import { OrgWide, SOURCE_COLOR, Swatch, useUsageReadings } from "./StackedCostChart";
+import { OrgWide, OutsideMark, SOURCE_COLOR, Swatch, useUsageReadings } from "./StackedCostChart";
+import { listedSources, outsideModelRows, sourceHatch, type OutsideModelRow } from "./outsideFigures";
 
 /* Cost insights.
  *
@@ -57,7 +58,11 @@ function saveColumns(cols: Source[]) {
   try { window.localStorage.setItem(COLS_KEY, JSON.stringify(cols)); } catch { /* private mode */ }
 }
 
-function ModelTable({ rep, figures, agents }: { rep: ModelUsageReport; figures: CredentialFigures[]; agents: ReadonlySet<string> }) {
+function ModelTable({ rep, figures, agents, outside = null }: {
+  rep: ModelUsageReport; figures: CredentialFigures[]; agents: ReadonlySet<string>;
+  /** The sessions outside covey per source and model, included (#120); null: covey only. */
+  outside?: { ext: ExternalUsage; rows: OutsideModelRow[] } | null;
+}) {
   const { t } = useTranslation();
   const [chosen, setChosen] = useState<Source[]>(loadColumns);
   const per = useMemo(() => perCredentialTotals(figures), [figures]);
@@ -138,7 +143,17 @@ function ModelTable({ rep, figures, agents }: { rep: ModelUsageReport; figures: 
     ? c.spans.map((x) => `${x.id}: ${fmtBucket(x.from.toISOString(), "hour")} – ${fmtBucket(x.to.toISOString(), "hour")}`) : [];
 
   const credentialRows = visible.filter((c) => !isPerModel(c) && perBy[c] != null);
-  if (rows.length === 0 && credentialRows.length === 0 && offered.every(isPerModel)) return <div className="muted text-sm">{t("costs.empty")}</div>;
+  // The outside sessions: a row per source and model, marked, and a total
+  // with them under covey's own (#120). A model with no list price shows
+  // its tokens and "no list price", never $0.
+  const outRows = outside?.rows ?? [];
+  const outCell = (c: Source, r: OutsideModelRow) => {
+    if (!isPerModel(c)) return { text: "–", title: perCredential };
+    if (c === "reported") return { text: r.reported != null ? fmtUSD(r.reported) : t("costs.incl.noReported"), title: undefined };
+    return { text: r.list != null ? fmtUSD(r.list) : t("costs.incl.noList"), title: undefined };
+  };
+  const outTotal = (c: Source) => outRows.reduce((a, r) => a + ((c === "reported" ? r.reported : r.list) ?? 0), 0);
+  if (rows.length === 0 && outRows.length === 0 && credentialRows.length === 0 && offered.every(isPerModel)) return <div className="muted text-sm">{t("costs.empty")}</div>;
   // A column that gives some model line a figure of another source's price.
   const fallsBack = visible.some((c) => isPerModel(c) && rows.some((r) => modelFigure(c, r) === null));
 
@@ -151,6 +166,11 @@ function ModelTable({ rep, figures, agents }: { rep: ModelUsageReport; figures: 
     notes.push(t("costs.insights.priceTableCheck", { pct: `${check >= 0 ? "+" : ""}${fmtNumber(check, 2)}` }));
   }
   if (unpriced > 0) notes.push(t("costs.insights.unpriced", { count: unpriced }));
+  if (outRows.length > 0) {
+    notes.push(t("costs.incl.modelsNote"));
+    const unpricedOut = outRows.reduce((a, r) => a + r.unpricedTokens, 0);
+    if (unpricedOut > 0) notes.push(t("costs.incl.modelsUnpriced", { n: fmtCount(unpricedOut) }));
+  }
   if (rep.runs_without_breakdown > 0) {
     // Runs without a model record have no agent here: the figure is the whole organisation's.
     notes.push(<>{t("costs.insights.without", { count: rep.runs_without_breakdown, usd: fmtUSD(rep.usd_without_breakdown) })}{filtered && <OrgWide />}</>);
@@ -190,7 +210,7 @@ function ModelTable({ rep, figures, agents }: { rep: ModelUsageReport; figures: 
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 && (
+            {rows.length === 0 && outRows.length === 0 && (
               <tr data-empty style={{ borderTop: "1px solid var(--border)" }}>
                 <td style={td} colSpan={6 + visible.length} className="muted">{t("costs.empty")}</td>
               </tr>
@@ -224,10 +244,39 @@ function ModelTable({ rep, figures, agents }: { rep: ModelUsageReport; figures: 
               </tr>
             )}
             <tr data-total style={{ borderTop: "1px solid var(--border)", fontWeight: 600 }}>
-              <td style={td} colSpan={6}>{t(fallsBack ? "costs.insights.totalWithUnpriced" : "costs.insights.total")}</td>
+              <td style={td} colSpan={6}>
+                {outRows.length > 0
+                  ? t(filtered ? "costs.incl.subtotalSelected" : "costs.incl.subtotal")
+                  : t(fallsBack ? "costs.insights.totalWithUnpriced" : "costs.insights.total")}
+              </td>
               {/* the real cost and the bill have rows of their own */}
               {visible.map((c) => <td key={c} data-col={c} style={num}>{isPerModel(c) ? fmtUSD(modelTotal(c)) : ""}</td>)}
             </tr>
+            {outRows.map((r) => (
+              <tr key={`out/${r.source}/${r.model}`} data-outside-row={r.source} style={{ borderTop: "1px solid var(--border)" }}>
+                <td style={td}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <Swatch color={SOURCE_COLOR.recomputed} hatch={sourceHatch(outside!.ext, r.source)} /> {r.source}
+                  </span>
+                  <OutsideMark />
+                </td>
+                <td style={td}>{shortModel(r.model)}</td>
+                <td style={num} title={t("costs.incl.callsTitle", { n: fmtNumber(r.calls, 0) })}>{fmtNumber(r.calls, 0)}</td>
+                <td style={num}>{fmtCount(r.output)}</td>
+                <td style={num}>{fmtCount(r.cacheRead)}</td>
+                <td style={num} title={`5m ${fmtCount(r.cacheWrite5m)} · 1h ${fmtCount(r.cacheWrite1h)}`}>{fmtCount(r.cacheWrite5m + r.cacheWrite1h)}</td>
+                {visible.map((c) => {
+                  const x = outCell(c, r);
+                  return <td key={c} data-col={c} style={num} title={x.title}>{x.text}</td>;
+                })}
+              </tr>
+            ))}
+            {outRows.length > 0 && (
+              <tr data-incl-total style={{ borderTop: "1px solid var(--border-strong)", fontWeight: 600 }}>
+                <td style={td} colSpan={6}>{t(filtered ? "costs.incl.totalSelected" : "costs.incl.total")}</td>
+                {visible.map((c) => <td key={c} data-col={c} style={num}>{isPerModel(c) ? fmtUSD(modelTotal(c) + outTotal(c)) : ""}</td>)}
+              </tr>
+            )}
             {credentialRows.map((c) => {
               const total = perBy[c]!;
               return (
@@ -274,7 +323,15 @@ function MeterFigures({ f, readings }: { f: CredentialFigures; readings: UsageRe
   else real = `≈ ${fmtUSD(r.value)} · ${t("costs.fig.realRange", { low: fmtUSD(r.low), high: fmtUSD(r.high), pts: r.points, pp: fmtUSDFixed(r.value / r.points, 4) })}`;
 
   let mult: string;
-  if (f.multiple?.kind === "estimate") {
+  const e = f.everything;
+  if (e) {
+    // Included (#120): the multiple of everything on the meter.
+    mult = e.multiple && e.estimate != null
+      ? `≈ ${times(e.estimate)} · ${t("costs.incl.everythingFloor", { floor: times(e.multiple.low) })} · ${t("costs.incl.everythingShort")}`
+      : e.why === "movement" ? t("costs.incl.everythingMovement", { pts: fmtNumber(e.points, 0) })
+      : e.why === "unpriced" ? t("costs.incl.everythingUnpriced", { n: fmtNumber(e.unpricedPoints, 0) })
+      : t("costs.incl.everythingNoList");
+  } else if (f.multiple?.kind === "estimate") {
     mult = `≈ ${times(f.multiple.value)} · ${t("costs.fig.multipleRange", { low: times(f.multiple.low), high: times(f.multiple.high) })}`;
   } else if (f.noMultiple === "unpriced") {
     mult = r && r.unpricedPoints > 0 ? t("costs.fig.noMultipleUnpriced", { n: r.unpricedPoints, m: r.points }) : t("costs.fig.noMultipleNoPlan");
@@ -305,7 +362,8 @@ function MeterFigures({ f, readings }: { f: CredentialFigures; readings: UsageRe
       }))}
       {row(t("costs.fig.realEstimate"), real, SOURCE_COLOR.real, true)}
       {row(t("costs.insights.meterList"), f.aligned != null ? fmtUSD(f.aligned) : "–", SOURCE_COLOR.recomputed)}
-      {row(t("costs.fig.multiple"), mult)}
+      {e && row(t("costs.incl.meterListOutside"), fmtUSD(e.outsideList), SOURCE_COLOR.recomputed)}
+      {row(e ? t("costs.incl.everything") : t("costs.fig.multiple"), mult)}
       <p className="muted text-xs mt-1 mb-0">
         {five
           ? t("costs.insights.fiveHour", { pct: five.window_percent, at: fmtBucket(five.fetched_at, "hour") })
@@ -323,13 +381,30 @@ const times = (v: number) => (Number.isFinite(v) ? `${fmtNumber(v, 1)}×` : "∞
  *  whole organisation — the same the tiles show without an agent filter —
  *  while the model table follows `agents`, the page's agent filter (empty:
  *  all agents). */
-export function CostInsights({ days, figures, agents = NO_AGENTS }: { days: number; figures: CredentialFigures[]; agents?: ReadonlySet<string> }) {
+export function CostInsights({ days, figures, agents = NO_AGENTS, outside = null }: {
+  days: number; figures: CredentialFigures[]; agents?: ReadonlySet<string>;
+  /** The sessions outside covey, included (#120); null: covey only. */
+  outside?: ExternalUsage | null;
+}) {
   const { t } = useTranslation();
   const models = useQuery({
     queryKey: ["cost", "models", days],
     queryFn: () => api<ModelUsageReport>(`/cost/models?days=${days}`),
     refetchInterval: 30000,
   });
+  // Per source and model, from the outside sessions' own read (the agents'
+  // /cost/models stays theirs alone).
+  const outsideModels = useQuery({
+    queryKey: ["cost", "external-usage", days, "day", null],
+    queryFn: () => api<ExternalModelUsage>(`/cost/external-usage?days=${days}&bucket=day`),
+    refetchInterval: 30000,
+    enabled: outside != null,
+  });
+  const outsideRows = useMemo(() => {
+    if (!outside || !outsideModels.data) return null;
+    const names = new Set(listedSources(outside).map((s) => s.source));
+    return { ext: outside, rows: outsideModelRows(outsideModels.data.cells.filter((c) => names.has(c.source))) };
+  }, [outside, outsideModels.data]);
   const readings = useUsageReadings(days);
   const rs = useMemo(() => readings.data ?? [], [readings.data]);
   const filtered = agents.size > 0;
@@ -340,7 +415,7 @@ export function CostInsights({ days, figures, agents = NO_AGENTS }: { days: numb
       <div className="card" style={{ gridColumn: "1 / -1" }}>
         <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.insights.modelsTitle")}</div>
         <p className="muted text-xs mb-3">{t("costs.insights.modelsHint")}</p>
-        {models.data ? <ModelTable rep={models.data} figures={figures} agents={agents} /> : <div className="muted text-sm">…</div>}
+        {models.data ? <ModelTable rep={models.data} figures={figures} agents={agents} outside={outsideRows} /> : <div className="muted text-sm">…</div>}
       </div>
       <div className="card">
         <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.insights.meterTitle")}{filtered && <OrgWide />}</div>

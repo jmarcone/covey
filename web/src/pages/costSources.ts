@@ -60,6 +60,11 @@ export const SOURCE_COLOR: Record<Source, string> = {
  *  outside sessions did not report, split to nobody — drawn plain with a
  *  dashed edge (unsplitEdge) rather than hatched, so it tells from covey's
  *  part by its pattern too. */
+/** The split parts' patterns (HATCH_ANGLES in StackedCostChart): covey's
+ *  the real bar's own 45°, the outside sessions' 135°, the unattributed part
+ *  cross-hatched; the unsplit part is plain with a dashed edge. */
+export const SPLIT_HATCH = { outside: 1, unattributed: 6 } as const;
+
 export const SPLIT_COLOR = {
   covey: "var(--cost-real)",
   outside: "var(--cost-outside)",

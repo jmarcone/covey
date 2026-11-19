@@ -419,6 +419,9 @@ export type AgentFigure = {
   /** Why realShare is null although the seat is priced: "unsplit", the
    *  agent ran only in steps that were not split. */
   realWhy: "unsplit" | null;
+  /** Its lines on the seat fall only in a reading's span that began before
+   *  the range: a real share, no list price in the range. */
+  beforeWindow: boolean;
 };
 
 export type CredentialFigures = {
@@ -452,6 +455,10 @@ export type CredentialFigures = {
    *  (#120), per chunk of readings by the chunk's list-price share; null
    *  until a source names a meter, and for a seat with no split step. */
   split: ExternalMeterTotal | null;
+  /** No source names this seat: split (when it is) between covey's agents
+   *  and the unattributed part only, and its meter may carry use outside
+   *  covey nothing reports. */
+  unlinked: boolean;
   /** Sources name a meter, but no source names this seat, or its machines
    *  have not reported through any of its readings: its meter may carry use
    *  outside covey, so covey's figures on it are bounds. */
@@ -460,7 +467,68 @@ export type CredentialFigures = {
   /** Bookings of an older daemon's running totals (legacy, cumulative). */
   bookingCheck: BookingBasis[];
   agents: AgentFigure[];
+  /** Every agent's recomputed list $ on the credential, the agent filter aside. */
+  listAll: number;
+  /** With the outside sessions included (the page's default, #120): the
+   *  multiple of everything on this meter, on a seat a source names; null
+   *  otherwise, and narrowed to agents. */
+  everything: EverythingMultiple | null;
 };
+
+/** List $ per real $ of everything on one meter (#120): covey's agents, the
+ *  outside sessions and the unattributed movement — the list price of covey
+ *  and the outside sessions over the meter's priced readings, over its whole
+ *  real cost in them. A lower bound: list / (real + slack), the slack the
+ *  whole percents leave (one point per week at the dearest rate); unpriced
+ *  outside calls are not in the list, and use nobody reported is in the real
+ *  cost. List price after the last reading has no real cost yet: it is in the
+ *  page's totals and stands beside the multiple (unmetered). */
+export type EverythingMultiple = {
+  coveyList: number;
+  outsideList: number;
+  real: number;
+  slack: number;
+  points: number;
+  multiple: FloorMultiple | null;
+  /** list / real: the estimate beside the floor; null with no multiple. */
+  estimate: number | null;
+  /** Why there is none: "movement" (< 3 points), "unpriced" (points without a plan price), "list" (no list price). */
+  why: "movement" | "unpriced" | "list" | null;
+  unpricedPoints: number;
+  /** List price after the last reading (or with no reading): no real share yet. Null where the server does not say. */
+  unmeteredCovey: number | null;
+  unmeteredOutside: number;
+};
+
+/** The multiple of everything on a seat's meter; null for a seat no source names. */
+export function everythingOnMeter(ext: ExternalUsage | null | undefined, key: string, slot: number): EverythingMultiple | null {
+  const seat = meterSplit(ext, key, slot);
+  if (!seat || seat.sources.length === 0) return null;
+  let coveyList = 0, outsideList = 0, resets = 0;
+  for (const st of ext!.meter.steps) {
+    if (st.secret_key !== key || st.secret_slot !== slot || st.real_usd == null) continue;
+    coveyList += st.covey_list_usd;
+    outsideList += st.external_list_usd;
+    if (st.reset) resets += 1;
+  }
+  // The real cost is the meter's movement over the whole span: known to ±2
+  // points in total (whole percents at both ends and a point of lag), one
+  // more per weekly reset — not per chunk.
+  const slack = (2 + resets) * seat.point_rate;
+  const real = seat.real_usd;
+  let why: EverythingMultiple["why"] = null;
+  if (seat.unpriced_points > 0) why = "unpriced";
+  else if (seat.points < 3) why = "movement";
+  else if (!(coveyList + outsideList >= 0.01) || !(real > 0)) why = "list";
+  return {
+    coveyList, outsideList, real, slack, points: seat.points,
+    multiple: why == null ? { kind: "floor", low: (coveyList + outsideList) / (real + slack) } : null,
+    estimate: why == null ? (coveyList + outsideList) / real : null,
+    why, unpricedPoints: seat.unpriced_points,
+    unmeteredCovey: seat.unmetered_covey_list_usd ?? null,
+    unmeteredOutside: seat.unmetered_list_usd,
+  };
+}
 
 export type FigureInput = {
   cells: CostCells;
@@ -473,6 +541,9 @@ export type FigureInput = {
   agents?: ReadonlySet<string>;
   /** "agents": the per-agent layout, no multiple. */
   layout?: "combined" | "agents";
+  /** The outside sessions are included (the page's default): a seat a source
+   *  names gets the multiple of everything on its meter. */
+  includeOutside?: boolean;
 };
 
 export const SUSPECT_BASES = ["legacy", "cumulative"];
@@ -527,13 +598,14 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
     const kind = a.kind || (plan ? "subscription" : "");
 
     const seatSplit = a.key == null ? null : meterSplit(data.external, a.key, a.slot!);
-    // A seat no source names has nobody to share it with: the server books
-    // its movement to covey (L_out = 0), but the meter is account-wide and
-    // may still carry use outside covey, so covey's figures stay bounds.
-    // A linked seat whose only movement is unattributed (chunks that moved
-    // with no call, F3c) is split too: nobody's, never covey's.
-    const split = seatSplit && seatSplit.sources.length > 0
-      && (seatSplit.split_steps > 0 || (seatSplit.unattributed_steps ?? 0) > 0) ? seatSplit : null;
+    // One rule for the headline and the seat (#120 review): a seat with a
+    // split reading or unattributed movement is split as the server split it
+    // (F3c) — a linked seat between covey's agents, the outside sessions and
+    // the unattributed part, a seat no source names between covey's agents
+    // and the unattributed part (L_out = 0). The latter is `unlinked`: its
+    // meter may still carry use outside covey nothing reports, and says so.
+    const split = seatSplit && (seatSplit.split_steps > 0 || (seatSplit.unattributed_steps ?? 0) > 0) ? seatSplit : null;
+    const unlinked = seatSplit != null && seatSplit.sources.length === 0;
     const outsideUnreported = seatSplit != null && split == null;
     let cov: MeterCoverage | null = null, real: RealFigure | null = null, aligned: number | null = null;
     let mult: Multiple | null = null;
@@ -545,14 +617,14 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
         aligned = cov.measured_usd ?? null;
       }
       if (sel.size > 0 || input.layout === "agents") noMultiple = "agents";
-      else if (split) noMultiple = "outside";
+      else if (split && !unlinked) noMultiple = "outside";
       else if (!cov || !real || aligned == null) noMultiple = "meter";
       else if (!real.priced) noMultiple = "unpriced";
       else if (real.points < 3) noMultiple = "movement";
       else mult = multipleOf(aligned, real);
       // covey's list over a movement that may hold unreported outside use:
       // covey's real is at most the whole, so its multiple at least this.
-      if (mult && outsideUnreported) mult = { kind: "floor", low: mult.low };
+      if (mult && (outsideUnreported || unlinked)) mult = { kind: "floor", low: mult.low };
     }
 
     const billed = a.key != null && kind === "api_key" ? billedFigure(input.billed, a.key, a.slot!, windowEnd) : null;
@@ -578,15 +650,33 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
         realShare,
         realBound: outsideUnreported ? "upTo" : "estimate",
         realWhy,
+        beforeWindow: false,
       };
     }).sort((x, y) => y.recomputed - x.recomputed);
+    // An agent whose lines on a split seat fall only in a reading's span
+    // that began before the range has a real share and no line here: a row
+    // of its own, so the agents add up to covey's part (#120 review).
+    if (split) {
+      for (const sa of split.agents) {
+        if (per.has(sa.agent_id) || !inScope(sa.agent_id) || !(sa.split_list_usd > 0)) continue;
+        agents.push({
+          id: sa.agent_id, label: labels.get(sa.agent_id)?.label ?? sa.agent_id, reported: 0, recomputed: 0, gapPct: null,
+          share: null, realShare: sa.real_usd, realBound: "estimate", realWhy: null, beforeWindow: true,
+        });
+      }
+    }
 
     const bookingCheck = (data.bookings ?? []).filter((b) => credId(b.secret_key, b.secret_slot) === id && SUSPECT_BASES.includes(b.basis));
+    // Everything on the meter: only org-wide, in the combined layout, as
+    // covey's own multiple is.
+    const everything = input.includeOutside && a.key != null && kind !== "api_key" && sel.size === 0 && input.layout !== "agents"
+      ? everythingOnMeter(data.external, a.key, a.slot!) : null;
     out.push({
       id, secretKey: a.key, slot: a.slot, kind, plan,
       reported, recomputed,
       check: reported > 0 ? ((recomputed - reported) / reported) * 100 : null,
-      bookedWithoutLine, meter: cov, real, aligned, multiple: mult, noMultiple, split, outsideUnreported, billed, bookingCheck, agents,
+      bookedWithoutLine, meter: cov, real, aligned, multiple: mult, noMultiple, split, unlinked, outsideUnreported, billed, bookingCheck, agents,
+      listAll: all, everything,
     });
   }
   out.sort((x, y) => (x.id === "" ? 1 : 0) - (y.id === "" ? 1 : 0) || y.recomputed - x.recomputed);
@@ -807,6 +897,88 @@ export type SubscriptionDent = {
   seats: DentSeat[];
 };
 
+/** The headline (#120, the human's core): all the work on the subscription
+ *  meters at token prices — covey's agents and the sessions outside covey on
+ *  those meters, recomputed from tokens (the primary figure) and as Claude
+ *  Code reported it — against the ONE real cost, the meters' movement × the
+ *  price per point, and one multiple. The per-party real shares are an
+ *  estimate apart (SubscriptionDent).
+ *
+ *  list: the range's list price (the tiles' figures, on these seats);
+ *  metered: the list price within the meters' readings (the steps' spans),
+ *  the part the multiple divides; unmetered: after the last reading, no real
+ *  cost yet. The multiple ≈ metered / real, at least metered / (real +
+ *  slack), the slack 2 points per seat (one more per reset) at its price:
+ *  the whole range's truncation and lag, not per chunk. Use nobody reported
+ *  only raises the multiple of the known work. */
+export type Headline = {
+  list: number; coveyList: number; outsideList: number;
+  reported: number; coveyReported: number; outsideReported: number | null;
+  outsideCalls: number; outsideReportedCalls: number; outsideUnpricedTokens: number;
+  /** The listed sources on these seats (calls in the range), with their list price. */
+  sources: { source: string; list: number | null; reported: number | null; calls: number }[];
+  metered: number;
+  unmetered: number;
+  /** null: no reading has a plan price. */
+  real: number | null;
+  /** null: seats at different point prices. */
+  points: number | null;
+  slack: number;
+  multiple: number | null;
+  floor: number | null;
+  why: "movement" | "unpriced" | "list" | null;
+  unpricedPoints: number;
+};
+
+export function headline(cells: CostCells | null | undefined): Headline | null {
+  const ext = cells?.external;
+  const m = ext?.meter;
+  if (!cells || !m || m.credentials.length === 0) return null;
+  const seats = new Set(m.credentials.map((c) => credId(c.secret_key, c.secret_slot)));
+  let coveyList = 0, coveyReported = 0;
+  for (const c of cells.cells) {
+    if (!seats.has(credId(c.secret_key, c.secret_slot))) continue;
+    coveyList += recomputedOf(c);
+    coveyReported += c.engine_usd ?? 0;
+  }
+  const own = ext!.sources.filter((s) => (s.calls > 0 || s.list_usd != null) && s.meter_credential
+    && seats.has(credId(s.meter_credential.secret_key, s.meter_credential.secret_slot)))
+    .sort((a, b) => a.source.localeCompare(b.source));
+  const names = new Set(own.map((s) => s.source));
+  let outsideList = 0, outsideReported: number | null = null, outsideCalls = 0, outsideReportedCalls = 0, outsideUnpricedTokens = 0;
+  for (const s of own) {
+    outsideList += s.list_usd ?? 0;
+    if (s.reported_usd != null) outsideReported = (outsideReported ?? 0) + s.reported_usd;
+    outsideCalls += s.calls;
+    outsideUnpricedTokens += s.unpriced_tokens;
+  }
+  for (const c of ext!.cells) if (names.has(c.source)) outsideReportedCalls += c.reported_calls;
+  let metered = 0, resets = 0;
+  for (const st of m.steps) {
+    if (st.real_usd == null) continue;
+    metered += st.covey_list_usd + st.external_list_usd;
+    if (st.reset) resets += 1;
+  }
+  const unmetered = m.credentials.reduce((a, c) => a + c.unmetered_list_usd + (c.unmetered_covey_list_usd ?? 0), 0);
+  const priced = m.credentials.some((c) => c.step_count > c.unpriced_steps);
+  const real = priced ? m.real_usd : null;
+  const moved = m.credentials.filter((c) => c.points > 0);
+  const slack = moved.reduce((a, c) => a + 2 * c.point_rate, 0) + resets * m.point_rate;
+  let why: Headline["why"] = null;
+  if (real == null || m.unpriced_points > 0) why = "unpriced";
+  else if (m.points < 3 || m.point_rate_mixed && real / Math.max(m.point_rate, 1e-12) < 3) why = "movement";
+  else if (!(metered >= 0.01) || !(real > 0)) why = "list";
+  return {
+    list: coveyList + outsideList, coveyList, outsideList,
+    reported: coveyReported + (outsideReported ?? 0), coveyReported, outsideReported, outsideCalls, outsideReportedCalls, outsideUnpricedTokens,
+    sources: own.map((s) => ({ source: s.source, list: s.list_usd, reported: s.reported_usd, calls: s.calls })),
+    metered, unmetered, real, points: m.point_rate_mixed ? null : m.points, slack,
+    multiple: why == null ? metered / real! : null,
+    floor: why == null ? metered / (real! + slack) : null,
+    why, unpricedPoints: m.unpriced_points,
+  };
+}
+
 export function subscriptionDent(ext: ExternalUsage | null | undefined): SubscriptionDent | null {
   const m = ext?.meter;
   if (!m || m.credentials.length === 0) return null;
@@ -827,7 +999,10 @@ export function subscriptionDent(ext: ExternalUsage | null | undefined): Subscri
     if (noMultiple == null && r > 0 && list >= 0.01) mult = { kind: "floor", low: list / (r + slack) };
     return { real: r, share: share(r), points, list, multiple: mult };
   };
-  const sources = [...new Set(m.credentials.flatMap((c) => c.sources))].sort();
+  // Named only with calls in the range: a project folder with no usage
+  // sends claim-only requests (0 calls), and the page never lists those.
+  const active = new Set((ext?.sources ?? []).filter((s) => s.calls > 0 || s.list_usd != null).map((s) => s.source));
+  const sources = [...new Set(m.credentials.flatMap((c) => c.sources))].filter((s) => active.has(s)).sort();
   const pricedSeat = (c: ExternalMeterTotal) => c.step_count > c.unpriced_steps;
   return {
     real: priced ? real : null,

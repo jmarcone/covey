@@ -153,6 +153,14 @@ const escapeRe = (v: string) => v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const U_EXT = (extra: Partial<ExternalMeterTotal> = {}) => external([{ steps: U_STEPS, total: U_SEAT(extra) }]);
 
+/** STEPS on a seat no source names: reported with L_out = 0, all covey's
+ *  but for 1 point of the 19:40 reading beyond the rate (unattributed). */
+const UNLINKED_STEPS = () => STEPS.map((s, i) => step(s.at, s.from, s.points, true, 0, s.covey_list_usd, SEAT, i === 1 ? 1 : 0));
+const UNLINKED_SEAT = (b: ExternalMeterStep[]) => seat(b, { sources: [], agents: [
+  { agent_id: "a1", split_list_usd: 141, real_usd: 8 * PP * 141 / 343, unsplit_list_usd: 0 },
+  { agent_id: "a2", split_list_usd: 202, real_usd: 8 * PP * 202 / 343, unsplit_list_usd: 0 },
+] });
+
 /** The cost cells of one seat over three hours, with the meter's steps. */
 function cells(ext: ExternalUsage | undefined, points = [4, 2, 3]): CostCells {
   const periods = [H18, H19, H20];
@@ -342,21 +350,43 @@ describe("one rule for the headline, the chart and the agents", () => {
     expect(perCredentialTotals([before]).real!.recomputed).toBe(343);
   });
 
-  it("keeps covey-only bounds on a seat no source names, never ≈ $0.00 (finding 9)", () => {
-    // Seat A carries the link; no source names this seat, so the server
-    // returns its steps reported with L_out = 0: all covey's (#126 fix 1).
-    const b = STEPS.map((s) => step(s.at, s.from, s.points, true, 0, s.covey_list_usd));
-    const ext = external([{ steps: b, total: seat(b, { sources: [] }) }]);
+  it("splits a seat no source names as the server does: covey's agents and the unattributed part, no outside part (#120 review)", () => {
+    // No source names this seat, so the server returns its steps reported
+    // with L_out = 0 (#126 fix 1): covey's after the chunk's unattributed
+    // part — here 1 point of the 19:40 reading. The seat block uses that
+    // split, as the headline does, never "≤ share × R" of the whole.
+    const b = UNLINKED_STEPS();
+    const ext = external([{ steps: b, total: UNLINKED_SEAT(b) }]);
     const [s] = credentialFigures({ cells: cells(ext), bucketMs: 3600_000, windowEnd: new Date("2026-11-17T21:00:00Z") });
-    expect(s.split).toBeNull();
-    expect(s.outsideUnreported).toBe(true);
+    expect(s.split).not.toBeNull();
+    expect(s.unlinked).toBe(true);
+    expect(s.outsideUnreported).toBe(false);
     expect(s.noMultiple).not.toBe("outside");
+    // covey's list over the whole movement is still a lower bound there.
     expect(s.multiple?.kind).toBe("floor");
     for (const a of s.agents) {
-      expect(a.realBound).toBe("upTo");
+      expect(a.realBound).toBe("estimate");
       expect(a.realShare).toBeGreaterThan(0);
     }
-    expect(s.agents.reduce((a, x) => a + x.realShare!, 0)).toBeCloseTo(s.real!.value, 9);
+    // The agents add up to the server's covey part: the whole less the unattributed point.
+    expect(s.split!.covey_real_usd).toBeCloseTo(8 * PP, 9);
+    expect(s.agents.reduce((a, x) => a + x.realShare!, 0)).toBeCloseTo(s.split!.covey_real_usd, 9);
+    // The chart's real bar: covey and unattributed, nothing outside.
+    const by = splitPerPeriod(ext, SEAT, 0, "hour");
+    expect(by.get(Date.parse(H19))!.unattributed).toBeCloseTo(PP, 9);
+    expect([...by.values()].every((p) => p.outside === 0 && p.unsplit === 0)).toBe(true);
+  });
+
+  it("gives an agent whose lines lie only before the range a row of its own, so the agents add up to covey's part (#120 review)", () => {
+    const ext = EXT();
+    ext.meter.credentials[0] = { ...ext.meter.credentials[0], agents: [...AGENTS,
+      { agent_id: "a9", split_list_usd: 12, real_usd: 0.05, unsplit_list_usd: 0 }] };
+    const [s] = credentialFigures({ cells: cells(ext), bucketMs: 3600_000, windowEnd: new Date("2026-11-17T21:00:00Z") });
+    const a9 = s.agents.find((a) => a.id === "a9")!;
+    expect(a9.beforeWindow).toBe(true);
+    expect(a9.realShare).toBe(0.05);
+    expect(a9.recomputed).toBe(0);
+    expect(s.agents.reduce((a, x) => a + (x.realShare ?? 0), 0)).toBeCloseTo(0.413440 + 0.661702 + 0.05, 9);
   });
 
   it("keeps covey-only bounds on a linked seat whose only reported reading is idle, never ≈ $0.00 (finding 25)", () => {
@@ -540,6 +570,12 @@ describe("Costs — the headline", () => {
     serve(cells(EXT()));
     await screen.findByRole("region", { name: "The whole dent in the subscription" });
     expect(document.querySelector("[data-split-note]")!.textContent).toMatch(/≈ .* in readings the outside sessions had not reported \(1\) is split to nobody/);
+    // By default the seat shows the multiple of everything on its meter
+    // (#120); "covey only" gives today's view: no multiple, the split ones
+    // in the headline.
+    expect(screen.getByRole("group", { name: "List $ per real $ — everything on this meter" })).toBeTruthy();
+    expect(document.querySelector("[data-no-multiple]")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "covey only" }));
     expect(document.querySelector("[data-no-multiple]")!.textContent).toMatch(/The split multiples are in the headline/);
     const shares = [...document.querySelectorAll("[data-real-share]")].map((e) => e.textContent);
     expect(shares).toEqual(expect.arrayContaining([`≈ ${fmtUSD(0.413440)}`, `≈ ${fmtUSD(0.661702)}`]));
@@ -556,15 +592,27 @@ describe("Costs — the headline", () => {
     expect(tip18.textContent).toMatch(/Sessions outside covey/);
   });
 
-  it("never claims outside sessions share a seat no source names (finding 9)", async () => {
-    const b = STEPS.map((s) => step(s.at, s.from, s.points, true, 0, s.covey_list_usd));
-    serve(cells(external([{ steps: b, total: seat(b, { sources: [] }) }])));
+  it("never claims outside sessions share a seat no source names (finding 9), and splits it as the headline does (#120 review)", async () => {
+    const b = UNLINKED_STEPS();
+    const ext = external([{ steps: b, total: UNLINKED_SEAT(b) }]);
+    // The one source is billed per use: it names no meter.
+    ext.sources[0] = { ...ext.sources[0], meter_credential: null };
+    serve(cells(ext));
     await screen.findByRole("region", { name: "The whole dent in the subscription" });
     expect(document.body.textContent).not.toMatch(/share this meter/);
-    expect(document.querySelector("[data-split-note]")).toBeNull();
-    expect(document.querySelector("[data-outside-unreported]")!.textContent).toMatch(/No outside source reports on this meter/);
+    // The real bar is split as the server split it: covey's agents and the
+    // unattributed point, and the note says no outside source names the meter.
+    expect(document.querySelector("[data-split-note]")!.textContent).toMatch(/^No outside source names this meter/);
+    expect(document.querySelector("[data-outside-unreported]")!.textContent).toMatch(/^No outside source reports on this meter, but it may carry use outside covey/);
     const shares = [...document.querySelectorAll("[data-real-share]")].map((e) => e.textContent);
-    expect(shares.every((v) => v!.startsWith("≤ "))).toBe(true);
+    expect(shares).toEqual([`≈ ${fmtUSD(8 * PP * 202 / 343)}`, `≈ ${fmtUSD(8 * PP * 141 / 343)}`]);
     expect(shares).not.toContain(`≈ ${fmtUSD(0)}`);
+    const bar = document.querySelector(`[data-period="${H19}"]`)!;
+    fireEvent.focus(bar);
+    const tip = await screen.findByRole("tooltip");
+    expect(tip.textContent).toMatch(/Unattributed/);
+    expect(tip.textContent).not.toMatch(/outside covey/);
+    // The per-use source stands in a block of its own, marked, with no real cost.
+    expect(document.querySelector("[data-outside-block]")!.textContent).toMatch(/operator: home/);
   });
 });
