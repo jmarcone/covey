@@ -101,17 +101,23 @@ func TestProjectsLabelsEachFolder(t *testing.T) {
 		"C--Users-marco-projects-testusage": {"m1"},
 		"c--Users-marco-projects-auction":   {"m2"},
 		"C--Users-marco-projects-auction":   {"m3"}, // the same directory on Windows
-		"C--Users-marco-AppData-Local-Temp": nil,    // transcripts cleaned up
+		"C--Users-marco-AppData-Local-Temp": nil,    // only memory/: no source
+		"D--work-cleaned-up":                nil,    // no source, so its unknown home does not matter
 	})
-	ps, err := Projects([]string{root}, LabelRules{Labels: map[string]string{"C--Users-marco-projects-testusage": "covey operator"}})
+	// a transcript without any call is a source (it claims, with no calls)
+	writeFile(t, filepath.Join(root, "C--Users-marco-projects-quiet", "s.jsonl"), `{"type":"user","message":{"content":"hi"}}`)
+	ps, err := Projects([]string{root}, LabelRules{Labels: map[string]string{
+		"C--Users-marco-projects-testusage": "covey operator",
+		"C--Users-marco-AppData-Local-Temp": "temp", // a label for a folder without transcripts is no error
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(sources(ps), "|"); got != "AppData-Local-Temp|covey operator|projects-auction" {
+	if got := strings.Join(sources(ps), "|"); got != "covey operator|projects-auction|projects-quiet" {
 		t.Fatalf("sources %s", got)
 	}
-	if len(ps[2].Paths) != 2 {
-		t.Errorf("C-- and c-- of one directory are one project: %+v", ps[2])
+	if len(ps[1].Paths) != 2 {
+		t.Errorf("C-- and c-- of one directory are one project: %+v", ps[1])
 	}
 
 	// --source is a prefix
@@ -119,7 +125,7 @@ func TestProjectsLabelsEachFolder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(sources(ps), "|"); got != "home: AppData-Local-Temp|home: covey operator|home: projects-auction" {
+	if got := strings.Join(sources(ps), "|"); got != "home: covey operator|home: projects-auction|home: projects-quiet" {
 		t.Fatalf("sources %s", got)
 	}
 
@@ -178,8 +184,10 @@ func TestReadProjects(t *testing.T) {
 	root := projectsRoot(t, map[string][]string{
 		"-home-u-a": {"a1", "both"},
 		"-home-u-b": {"b1", "both"},
-		"-home-u-c": nil,
+		"-home-u-d": nil, // no transcripts: no source
 	})
+	// c has a transcript without any call: a source with no rows
+	writeFile(t, filepath.Join(root, "-home-u-c", "s.jsonl"), `{"type":"user","message":{"content":"hi"}}`)
 	// a broken line in b, written long ago: b's problem, not a's
 	bad := filepath.Join(root, "-home-u-b", "old.jsonl")
 	writeFile(t, bad, `{"type":"assistant","message":{"usage":{"input_tok`, "{}")
@@ -208,7 +216,7 @@ func TestReadProjects(t *testing.T) {
 	if ids(a.Rows) != "a1" || ids(b.Rows) != "b1,both" || a.Elsewhere != 1 || b.Elsewhere != 0 {
 		t.Errorf("a %s (%d), b %s (%d)", ids(a.Rows), a.Elsewhere, ids(b.Rows), b.Elsewhere)
 	}
-	if a.Stats.Suspect != 0 || b.Stats.Suspect != 1 || len(c.Rows) != 0 || c.Stats.Files != 0 {
+	if a.Stats.Suspect != 0 || b.Stats.Suspect != 1 || len(c.Rows) != 0 || c.Stats.Files != 1 {
 		t.Errorf("stats a %+v b %+v c %+v", a.Stats, b.Stats, c.Stats)
 	}
 	for _, r := range append(a.Rows, b.Rows...) {

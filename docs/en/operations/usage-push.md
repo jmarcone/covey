@@ -130,11 +130,17 @@ covey usage push ~/.claude/projects --source-per-project --complete --host home-
   claims: it is one whole project folder, read whole, so it is complete by
   construction. A symlinked directory, an unreadable line or a held-back call
   withholds only the claim of the folder it is in; `--since` and a missing
-  `--complete` withhold every claim. With `--complete` a project folder
-  without transcripts (Claude Code cleaned them up, only `memory/` is left)
-  sends a claim without calls, so that its last claim does not hold the meter
-  split back. Name the whole `~/.claude/projects`, so that both spellings of
-  a Windows folder are read.
+  `--complete` withhold every claim. A folder with transcripts but no call
+  in them still sends its claim (a request without calls). Name the whole
+  `~/.claude/projects`, so that both spellings of a Windows folder are read.
+- A project folder without any `*.jsonl` file (only `memory/` is there) is
+  no source: it is skipped, needs no label, and nothing is sent for it.
+- **Cleanup:** Claude Code deletes transcripts after `cleanupPeriodDays`
+  (default 30). Once all of a project's transcripts are gone, its folder is
+  skipped and its source stops claiming. covey counts the host of that
+  source as active for up to seven days after its last push, so the meter
+  readings of that window wait as "not reported" until the week has passed.
+  Raising `cleanupPeriodDays` makes this rarer.
 - A call found in two project folders is sent once, with the folder holding
   its better copy.
 - `--dry-run` adds one line per source: calls, tokens, and whether it would

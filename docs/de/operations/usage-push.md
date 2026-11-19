@@ -146,11 +146,20 @@ covey usage push ~/.claude/projects --source-per-project --complete --host home-
   schon dadurch vollständig. Ein Verzeichnis-Symlink, eine unlesbare Zeile
   oder ein zurückgehaltener Aufruf verhindert nur die Behauptung des Ordners,
   in dem er liegt; `--since` und ein fehlendes `--complete` verhindern jede
-  Behauptung. Mit `--complete` sendet ein Projektordner ohne Transkripte
-  (Claude Code hat sie aufgeräumt, nur `memory/` ist übrig) eine Behauptung
-  ohne Aufrufe, damit seine letzte Behauptung die Aufteilung des Zählers
-  nicht aufhält. Das ganze `~/.claude/projects` nennen, damit beide
-  Schreibweisen eines Windows-Ordners gelesen werden.
+  Behauptung. Ein Ordner mit Transkripten, aber ohne Aufruf darin sendet
+  seine Behauptung trotzdem (einen Request ohne Aufrufe). Das ganze
+  `~/.claude/projects` nennen, damit beide Schreibweisen eines
+  Windows-Ordners gelesen werden.
+- Ein Projektordner ganz ohne `*.jsonl`-Datei (nur `memory/` liegt darin)
+  ist keine Quelle: Er wird übersprungen, braucht kein Label, und für ihn
+  wird nichts gesendet.
+- **Aufräumen:** Claude Code löscht Transkripte nach `cleanupPeriodDays`
+  (Standard 30). Sind alle Transkripte eines Projekts weg, wird sein Ordner
+  übersprungen, und seine Quelle behauptet nicht mehr. covey zählt den
+  Rechner dieser Quelle bis zu sieben Tage nach ihrem letzten Push als
+  aktiv; die Zählerstände dieses Zeitraums warten deshalb als „nicht
+  gemeldet“, bis die Woche vorbei ist. Ein höheres `cleanupPeriodDays` macht
+  das seltener.
 - Ein Aufruf, der in zwei Projektordnern steht, wird einmal gesendet, mit dem
   Ordner, der die bessere Kopie hat.
 - `--dry-run` zeigt zusätzlich eine Zeile je Quelle: Aufrufe, Tokens und ob

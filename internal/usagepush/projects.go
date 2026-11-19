@@ -128,16 +128,23 @@ var uuidName = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}
 // Projects lists the project folders below the roots and gives each its
 // source. A root that holds transcripts or session folders directly is one
 // project folder; any other root holds one project per top-level directory
-// (a symlinked one is followed, as a named root is). A root without any
-// *.jsonl below it is an error, as for Read.
+// (a symlinked one is followed, as a named root is). A folder without any
+// *.jsonl below it (only memory/ left, or its transcripts cleaned up) is no
+// source: it is skipped, needs no label and sends nothing. A root without
+// any *.jsonl below it is an error, as for Read.
 func Projects(roots []string, rules LabelRules) ([]Project, error) {
 	type folder struct{ name, path string }
 	var found []folder
 	seen := map[string]bool{}
+	skipped := map[string]bool{} // folder keys without transcripts
 	add := func(name, path string) {
 		key := path
 		if r, err := filepath.EvalSymlinks(path); err == nil {
 			key = r
+		}
+		if !hasTranscript(key) {
+			skipped[folderKey(name)] = true
+			return
 		}
 		if !seen[key] {
 			seen[key] = true
@@ -204,6 +211,9 @@ func Projects(roots []string, rules LabelRules) ([]Project, error) {
 	for f, l := range rules.Labels {
 		k := folderKey(f)
 		if groups[k] == nil {
+			if skipped[k] {
+				continue // no transcripts, nothing to label
+			}
 			return nil, fmt.Errorf("--label %s: no such project folder under the named directories", f)
 		}
 		if prev, ok := labels[k]; ok && prev != l {

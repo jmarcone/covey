@@ -16,8 +16,9 @@ const (
 )
 
 // projectsTree makes the ~/.claude/projects of a user "tester" on Windows
-// with three project folders: a (a main session and its subagent), b (a call
-// and a line broken long ago) and c (memory only, its transcripts cleaned up).
+// with four project folders: a (a main session and its subagent), b (a call
+// and a line broken long ago), c (a transcript without any call) and d
+// (memory only, its transcripts cleaned up: no source).
 func projectsTree(t *testing.T) string {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "Users", "tester", ".claude", "projects")
@@ -42,14 +43,15 @@ func projectsTree(t *testing.T) string {
 	write(bad, `{"type":"assistant","message":{"usage":{"input_tok`, "{}")
 	old := time.Now().Add(-time.Hour)
 	os.Chtimes(bad, old, old)
-	write(filepath.Join(root, "C--Users-tester-projects-c", "memory", "MEMORY.md"), "notes")
+	write(filepath.Join(root, "C--Users-tester-projects-c", sessB+".jsonl"), `{"type":"user","message":{"content":"hi"}}`)
+	write(filepath.Join(root, "C--Users-tester-projects-d", "memory", "MEMORY.md"), "notes")
 	return root
 }
 
 // --source-per-project: each project folder is pushed as its own source, with
-// its own claim. A problem in one folder withholds that folder's claim only;
-// a folder without transcripts still claims, so that an old claim of it does
-// not hold the meter split back.
+// its own claim. A problem in one folder withholds that folder's claim only.
+// A folder with transcripts but no call still claims; a folder without any
+// transcript is no source and sends nothing.
 func TestUsagePushPerProjectClaimsPerSource(t *testing.T) {
 	root := projectsTree(t)
 	label := "C--Users-tester-projects-a=covey operator"
@@ -167,8 +169,15 @@ func TestUsagePushPerProjectDryRun(t *testing.T) {
 		t.Errorf("%v %s", err, out.String())
 	}
 
-	// an unknown home directory in a folder name is refused, not sent
+	// a folder without transcripts is no source: its unknown home is no error
 	if err := os.MkdirAll(filepath.Join(root, "D--work-z", sessA), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := runUsage([]string{"push", root, "--source-per-project", "--dry-run"}, &bytes.Buffer{}, func(string) string { return "" }); err != nil {
+		t.Fatalf("empty folder: %v", err)
+	}
+	// with a transcript it is a source, and its unknown home is refused, not sent
+	if err := os.WriteFile(filepath.Join(root, "D--work-z", sessA+".jsonl"), []byte("{}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	err = runUsage([]string{"push", root, "--source-per-project", "--dry-run"}, &bytes.Buffer{}, func(string) string { return "" })
