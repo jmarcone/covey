@@ -345,7 +345,9 @@ function MeterFigures({ f, readings }: { f: CredentialFigures; readings: UsageRe
   else real = `≈ ${fmtUSD(r.value)} · ${t("costs.fig.realRange", { low: fmtUSD(r.low), high: fmtUSD(r.high), pts: r.points, pp: fmtUSDFixed(r.value / r.points, 4) })}${seatPart}`;
 
   let mult: string;
-  const e = f.everything;
+  // On a seat billed by usage (0151) no multiple of the meter stands for
+  // everything on it: the usage multiple's rules below do.
+  const e = f.everything?.why === "usage" ? null : f.everything;
   if (e) {
     // Included (#120): the multiple of everything on the meter.
     mult = e.multiple && e.estimate != null

@@ -696,9 +696,13 @@ export type EverythingMultiple = {
   multiple: FloorMultiple | null;
   /** list / real: the estimate beside the floor; null with no multiple. */
   estimate: number | null;
-  /** Why there is none: "movement" (< 3 points), "unpriced" (points without a plan price), "list" (no list price). */
-  why: "movement" | "unpriced" | "list" | null;
+  /** Why there is none: "movement" (< 3 points), "unpriced" (points without a plan price), "list" (no list price),
+   *  "usage" (a basis other than the seat held in the range, 0151: the meter is not, or not all, the money; the
+   *  credential's usage multiple and its rules stand instead). */
+  why: "movement" | "unpriced" | "list" | "usage" | null;
   unpricedPoints: number;
+  /** Points read while the seat was billed by usage (0151): in neither the real cost nor the list it divides. */
+  usagePoints: number;
   /** List price after the last reading (or with no reading): no real share yet. Null where the server does not say. */
   unmeteredCovey: number | null;
   unmeteredOutside: number;
@@ -722,14 +726,16 @@ function slackRate(plans: readonly CredentialPlan[], fallback: number) {
  *  lag, whether or not it moved — and 2 more per weekly reset, which loses
  *  the closed week's end truncation and its lag. At each seat's price per
  *  point. The headline and each seat's multiple of everything use this one
- *  rule, so they agree. */
+ *  rule, so they agree. A reading under the usage basis (0151) is in no
+ *  real cost, so it brings no slack: a seat read only under it has none. */
 export function meterSlack(seats: readonly ExternalMeterTotal[], steps: readonly ExternalMeterStep[],
   rateOf: (c: ExternalMeterTotal) => number, hasList: (c: ExternalMeterTotal) => boolean = () => false): number {
   let slack = 0;
   for (const c of seats) {
+    if (c.step_count > 0 && (c.usage_steps ?? 0) === c.step_count) continue;
     let resets = 0, list = false;
     for (const st of steps) {
-      if (st.secret_key !== c.secret_key || st.secret_slot !== c.secret_slot) continue;
+      if (st.secret_key !== c.secret_key || st.secret_slot !== c.secret_slot || st.reason === "usage") continue;
       if (st.reset) resets += 1;
       if (st.covey_list_usd + st.external_list_usd > 0) list = true;
     }
@@ -753,13 +759,16 @@ export function inRange(st: Pick<ExternalMeterStep, "from" | "at">, since: numbe
  *  it), the part after the last reading (the server's, no real cost yet),
  *  the part in readings with no plan price (those steps' lists, the one
  *  straddling the range's start by time), and the rest, `metered`: the list
- *  within the priced readings in the range — what the multiple divides. So
- *  range = metered + unmetered + unpriced, in each party; a reading's span
- *  that began before the range brings none of its earlier list in. */
+ *  within the priced readings in the range — what the multiple divides. The
+ *  readings taken while the seat was billed by usage (0151) are a part of
+ *  their own, `usage`: no real cost of the meter, their money is the usage
+ *  charges. So range = metered + unmetered + unpriced + usage, in each party;
+ *  a reading's span that began before the range brings none of its earlier
+ *  list in. */
 export type SeatLists = {
-  covey: { range: number; metered: number; unmetered: number; unpriced: number };
+  covey: { range: number; metered: number; unmetered: number; unpriced: number; usage: number };
   /** range null: the listed sources on the seat had calls, none with a list price. */
-  outside: { range: number | null; metered: number; unmetered: number; unpriced: number; calls: number; unpricedTokens: number };
+  outside: { range: number | null; metered: number; unmetered: number; unpriced: number; usage: number; calls: number; unpricedTokens: number };
 };
 
 export function seatLists(cells: CostCells, seat: ExternalMeterTotal): SeatLists {
@@ -777,18 +786,24 @@ export function seatLists(cells: CostCells, seat: ExternalMeterTotal): SeatLists
   }
   if (outside == null && calls === 0) outside = 0;
   const since = cells.since ? Date.parse(cells.since) : null;
-  let unpricedCovey = 0, unpricedOutside = 0;
+  let unpricedCovey = 0, unpricedOutside = 0, usageCovey = 0, usageOutside = 0;
   for (const st of ext?.meter.steps ?? []) {
     if (st.secret_key !== seat.secret_key || st.secret_slot !== seat.secret_slot || st.real_usd != null) continue;
     const f = inRange(st, since);
-    unpricedCovey += st.covey_list_usd * f;
-    unpricedOutside += st.external_list_usd * f;
+    if (st.reason === "usage") {
+      usageCovey += st.covey_list_usd * f;
+      usageOutside += st.external_list_usd * f;
+    } else {
+      unpricedCovey += st.covey_list_usd * f;
+      unpricedOutside += st.external_list_usd * f;
+    }
   }
   const unmeteredCovey = seat.unmetered_covey_list_usd ?? 0, unmeteredOutside = seat.unmetered_list_usd;
   return {
-    covey: { range: covey, metered: Math.max(0, covey - unmeteredCovey - unpricedCovey), unmetered: unmeteredCovey, unpriced: unpricedCovey },
-    outside: { range: outside, metered: Math.max(0, (outside ?? 0) - unmeteredOutside - unpricedOutside), unmetered: unmeteredOutside,
-      unpriced: unpricedOutside, calls, unpricedTokens },
+    covey: { range: covey, metered: Math.max(0, covey - unmeteredCovey - unpricedCovey - usageCovey), unmetered: unmeteredCovey,
+      unpriced: unpricedCovey, usage: usageCovey },
+    outside: { range: outside, metered: Math.max(0, (outside ?? 0) - unmeteredOutside - unpricedOutside - usageOutside), unmetered: unmeteredOutside,
+      unpriced: unpricedOutside, usage: usageOutside, calls, unpricedTokens },
   };
 }
 
@@ -807,7 +822,9 @@ export function everythingOnMeter(cells: CostCells | null | undefined, key: stri
   const slack = meterSlack([seat], ext!.meter.steps, slackRate(cells.plans ?? [], ext!.meter.point_rate), seatHasList(cells));
   const real = seat.real_usd;
   let why: EverythingMultiple["why"] = null;
-  if (seat.unpriced_points > 0) why = "unpriced";
+  // Every reading under the usage basis (0151): the meter is not the money.
+  if (seat.step_count > 0 && (seat.usage_steps ?? 0) === seat.step_count) why = "usage";
+  else if (seat.unpriced_points > 0) why = "unpriced";
   else if (seat.points < 3) why = "movement";
   else if (!(coveyList + outsideList >= 0.01) || !(real > 0)) why = "list";
   // The floor's numerator: the server's list without what began before
@@ -818,7 +835,7 @@ export function everythingOnMeter(cells: CostCells | null | undefined, key: stri
     real, slack, points: seat.points, floorList,
     multiple: why == null ? { kind: "floor", low: floorList / (real + slack) } : null,
     estimate: why == null ? (coveyList + outsideList) / real : null,
-    why, unpricedPoints: seat.unpriced_points,
+    why, unpricedPoints: seat.unpriced_points, usagePoints: seat.usage_points ?? 0,
     unmeteredCovey: seat.unmetered_covey_list_usd ?? null,
     unmeteredOutside: seat.unmetered_list_usd,
   };
@@ -1009,8 +1026,16 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
     const bookingCheck = (data.bookings ?? []).filter((b) => credId(b.secret_key, b.secret_slot) === id && SUSPECT_BASES.includes(b.basis));
     // Everything on the meter: org-wide whatever the agent filter or the
     // layout (the page says so under a filter, #120 review L2).
-    const everything = input.includeOutside && a.key != null && kind !== "api_key"
+    let everything = input.includeOutside && a.key != null && kind !== "api_key"
       ? everythingOnMeter(data, a.key, a.slot!) : null;
+    // A seat billed by usage within the range (0151): the meter's movement
+    // is not, or not all, its money, so no multiple of the meter stands for
+    // everything on it. The credential's usage multiple stands instead, by
+    // its own rules: covey's list over the counted charges, "at least" where
+    // the outside sessions on it share the charges, or why there is none.
+    if (everything && usage && usage.regimes.some((r) => r !== "seat")) {
+      everything = { ...everything, multiple: null, estimate: null, why: "usage" };
+    }
     out.push({
       id, secretKey: a.key, slot: a.slot, kind, plan,
       reported, recomputed,
@@ -1273,7 +1298,14 @@ export type SubscriptionDent = {
  *  in readings with no plan price. The multiple ≈ metered / real, at least
  *  metered / (real + slack), the slack meterSlack's: the whole range's
  *  truncation and lag, not per chunk. Use nobody reported only raises the
- *  multiple of the known work. */
+ *  multiple of the known work.
+ *
+ *  A seat's time on the usage basis (0151) is out of the real cost and of
+ *  metered: its readings' list is the part `usage` (list = metered +
+ *  unmetered + unpriced + usage), its points usagePoints, and the headline
+ *  names the seats so left out. Their money is the usage charges, which
+ *  stand beside it per currency, each in its own (usageCharges) — never
+ *  added to the real cost, across currencies, or converted. */
 export type Headline = {
   list: number; coveyList: number;
   /** null: the sessions on the meters had calls, none with a list price — never $0. */
@@ -1297,8 +1329,17 @@ export type Headline = {
   floorList: number;
   multiple: number | null;
   floor: number | null;
-  why: "movement" | "unpriced" | "list" | null;
+  /** "usage": no reading has a plan price because every one was taken while billed by usage (0151). */
+  why: "movement" | "unpriced" | "list" | "usage" | null;
   unpricedPoints: number;
+  /** The list of the readings taken while billed by usage (0151): in list, not in metered. */
+  usage: number;
+  /** Their points: not in real. */
+  usagePoints: number;
+  /** The seats with such readings in the range ("key #slot"): left out of real for that time. */
+  usageSeats: string[];
+  /** The counted usage charges of these seats, per currency in its own; null when none counts in the range. */
+  usageCharges: UsageCurrency[] | null;
 };
 
 export function headline(cells: CostCells | null | undefined): Headline | null {
@@ -1323,8 +1364,8 @@ export function headline(cells: CostCells | null | undefined): Headline | null {
   }
   for (const c of ext!.cells) if (names.has(c.source)) outsideReportedCalls += c.reported_calls;
   // The list in its parts, per seat (seatLists): range = metered +
-  // unmetered + unpriced, in each party and so in the whole.
-  let coveyList = 0, outsideList: number | null = null, metered = 0, unmetered = 0, unpriced = 0;
+  // unmetered + unpriced + usage, in each party and so in the whole.
+  let coveyList = 0, outsideList: number | null = null, metered = 0, unmetered = 0, unpriced = 0, usage = 0;
   for (const c of m.credentials) {
     const l = seatLists(cells, c);
     coveyList += l.covey.range;
@@ -1332,7 +1373,13 @@ export function headline(cells: CostCells | null | undefined): Headline | null {
     metered += l.covey.metered + l.outside.metered;
     unmetered += l.covey.unmetered + l.outside.unmetered;
     unpriced += l.covey.unpriced + l.outside.unpriced;
+    usage += l.covey.usage + l.outside.usage;
   }
+  // The seats left out of the real cost while billed by usage, and the
+  // charges that are that time's money: per currency, as the server counted
+  // them, never summed across currencies.
+  const usageSeats = m.credentials.filter((c) => (c.usage_steps ?? 0) > 0).map((c) => `${c.secret_key} #${c.secret_slot}`);
+  const counted = usageCurrencies((cells.usage_charges ?? []).filter((c) => seats.has(credId(c.secret_key, c.secret_slot))));
   if (outsideList == null && outsideCalls === 0) outsideList = 0;
   const pu = listed.filter((s) => !s.meter_credential);
   const perUse = pu.length === 0 ? null : {
@@ -1347,7 +1394,8 @@ export function headline(cells: CostCells | null | undefined): Headline | null {
   const slack = meterSlack(m.credentials, m.steps, slackRate(cells.plans ?? [], m.point_rate), seatHasList(cells));
   const floorList = m.floor_list_usd ?? metered;
   let why: Headline["why"] = null;
-  if (real == null || m.unpriced_points > 0) why = "unpriced";
+  if (real == null) why = m.unpriced_points === 0 && (m.usage_steps ?? 0) > 0 ? "usage" : "unpriced";
+  else if (m.unpriced_points > 0) why = "unpriced";
   else if (m.points < 3 || m.point_rate_mixed && real / Math.max(m.point_rate, 1e-12) < 3) why = "movement";
   else if (!(metered >= 0.01) || !(real > 0)) why = "list";
   return {
@@ -1358,6 +1406,7 @@ export function headline(cells: CostCells | null | undefined): Headline | null {
     multiple: why == null ? metered / real! : null,
     floorList, floor: why == null ? floorList / (real! + slack) : null,
     why, unpricedPoints: m.unpriced_points,
+    usage, usagePoints: m.usage_points ?? 0, usageSeats, usageCharges: counted.length > 0 ? counted : null,
   };
 }
 

@@ -4,6 +4,7 @@ import { fmtNumber, fmtUSD } from "../format";
 import { SPLIT_COLOR, SPLIT_HATCH } from "./costSources";
 import type { DentPart, FloorMultiple, Headline, SubscriptionDent } from "./costFigures";
 import { OrgWide, Swatch, outsideMoney } from "./StackedCostChart";
+import { usageList } from "./CostBasis";
 
 /* The headline of the Costs page once Claude Code sessions outside covey
  * report on a subscription meter (#120): the whole dent in the meters over
@@ -75,7 +76,7 @@ function HeadlineSentence({ h }: { h: Headline }) {
   const outside = outsideMoney(t, { calls: h.outsideCalls, list: h.outsideList, reported: h.outsideReported,
     reportedCalls: h.outsideReportedCalls, unpricedTokens: h.outsideUnpricedTokens }, "list");
   const parts = { list: fmtUSD(h.list), covey: fmtUSD(h.coveyList), outside };
-  const sentence = h.real == null ? t("costs.dent.head.noReal", parts)
+  const sentence = h.real == null ? t(h.why === "usage" ? "costs.dent.head.noRealUsage" : "costs.dent.head.noReal", parts)
     : h.multiple == null ? t("costs.dent.head.sentenceNoMultiple", { ...parts, real: fmtUSD(h.real) })
     : t(h.points != null ? "costs.dent.head.sentence" : "costs.dent.head.sentenceNoPoints", {
       ...parts, real: fmtUSD(h.real), pts: pts(h.points ?? 0), metered: fmtUSD(h.metered), x: times(h.multiple) });
@@ -93,6 +94,20 @@ function HeadlineSentence({ h }: { h: Headline }) {
       )}
       {h.why === "movement" && <p className="muted text-xs mb-1" data-head-no-multiple>{t("costs.dent.head.noMultipleMovement", { pts: pts(h.points ?? 0) })}</p>}
       {h.why === "unpriced" && h.real != null && <p className="muted text-xs mb-1" data-head-no-multiple>{t("costs.dent.head.noMultipleUnpriced", { n: pts(h.unpricedPoints) })}</p>}
+      {/* A seat's time on the usage basis (0151): out of the real cost and of
+          the list the multiple divides, said with the seats; their money, the
+          usage charges, beside it per currency in its own — never added to
+          the real cost, across currencies, or converted. */}
+      {h.usageSeats.length > 0 && (
+        <p className="text-sm mb-1" data-head-usage>
+          {t("costs.dent.head.usageOut", { seats: h.usageSeats.join(", "), n: pts(h.usagePoints), list: fmtUSD(h.usage) })}
+        </p>
+      )}
+      {h.usageCharges ? (
+        <p className="text-sm mb-1" data-head-usage-charges>{t("costs.dent.head.usageCharges", { list: usageList(t, h.usageCharges) })}</p>
+      ) : h.usageSeats.length > 0 && (
+        <p className="muted text-xs mb-1" data-head-usage-charges>{t("costs.dent.head.usageNoCharge")}</p>
+      )}
       {/* list = metered + unmetered + unpriced: the multiple divides only the first (M2). */}
       {(h.unmetered >= 0.005 || h.unpriced >= 0.005) && (
         <p className="muted text-xs mb-1" data-head-unmetered>

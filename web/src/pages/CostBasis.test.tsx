@@ -5,8 +5,8 @@ import Costs from "./Costs";
 import type { CostCells, CredentialBasis, ExternalMeterSums, ExternalMeterTotal, ExternalUsage, MeterStep, WindowCharge } from "../api";
 import i18n from "../i18n";
 import { mockFetch, renderWithProviders, testPrincipal, useGerman } from "../test/render";
-import { basisAt, credentialFigures, perCredentialTotals, usageFigure, type CredentialFigures } from "./costFigures";
-import { chargeLine, CostBasisPanel } from "./CostBasis";
+import { basisAt, credentialFigures, headline, perCredentialTotals, usageFigure, type CredentialFigures } from "./costFigures";
+import { chargeLine, CostBasisPanel, usageList } from "./CostBasis";
 
 // How a credential's real money is formed (0151, #120): a seat billed by
 // usage shows its usage charges, each in its own currency, and a dollar figure
@@ -284,6 +284,43 @@ describe("Kostengrundlage — Zahlen", () => {
     expect(f.usageShared).toBeNull();
   });
 
+  // On the include-by-default page (#120): everything on a meter billed by
+  // usage has no multiple of the meter; the usage multiple's rules stand.
+  it("gibt „alles auf diesem Zähler“ bei einem Sitz auf Nutzung die Regeln des Nutzungs-Vielfachen", () => {
+    const usd = charge({ currency: "USD", amount: 8, counted_amount: 8, counted_usd: 8, from: "2026-11-17T00:00:00Z", to: "2026-11-18T00:00:00Z" });
+    const incl = (data: CostCells) => credentialFigures({ cells: data, bucketMs: 3600_000, windowEnd: END, includeOutside: true })[0];
+    let f = incl({ ...onUsage([usd]), external: usageMeter(["operator: home"]) });
+    expect(f.everything).toMatchObject({ why: "usage", multiple: null, estimate: null, usagePoints: 4 });
+    expect(f.usageMultiple).toBeCloseTo(2, 9);
+    expect(f.usageShared).toEqual(["operator: home"]);
+    // Without a rate: no multiple at all, and the usage rule says why.
+    f = incl({ ...onUsage([charge()]), external: usageMeter(["operator: home"]) });
+    expect(f.everything?.why).toBe("usage");
+    expect(f.noMultiple).toBe("rate");
+    // Seat → usage in the window: the basis changed, no multiple either.
+    f = incl({ ...seatThenUsage([usd]), external: usageMeter(["operator: home"]) });
+    expect(f.everything?.why).toBe("usage");
+    expect(f.noMultiple).toBe("basisChanged");
+  });
+
+  it("nennt in der Überschrift die nach Nutzung abgerechneten Sitze und ihre Beträge je Währung, nie zusammengezählt", () => {
+    const eur = charge();
+    const usd = charge({ id: "c2", currency: "USD", amount: 8, counted_amount: 8, counted_usd: 8, from: "2026-11-16T00:00:00Z", to: "2026-11-17T00:00:00Z" });
+    const h = headline({ ...onUsage([eur, usd]), external: usageMeter(["operator: home"]) })!;
+    expect(h.real).toBeNull();
+    expect(h.why).toBe("usage");
+    expect(h.multiple).toBeNull();
+    expect(h.usageSeats).toEqual([`${SEAT} #0`]);
+    expect(h.usagePoints).toBe(4);
+    expect(h.usageCharges).toEqual([
+      { currency: "EUR", counted: 180, usd: null, charges: 1 },
+      { currency: "USD", counted: 8, usd: 8, charges: 1 },
+    ]);
+    // A charge of a credential on no meter of the headline is not its.
+    const other = charge({ id: "c3", secret_key: "other", currency: "GBP" });
+    expect(headline({ ...onUsage([eur, other]), external: usageMeter(["operator: home"]) })!.usageCharges!.map((c) => c.currency)).toEqual(["EUR"]);
+  });
+
   it("schreibt für einen nicht gezählten Betrag mit Kurs „–“, nie 0,00 $", () => {
     useGerman();
     const line = chargeLine(i18n.t.bind(i18n), charge({ fx_to_usd: 1.08, fx_date: "2026-11-18", counted_amount: 0, counted_usd: 0 }));
@@ -322,6 +359,32 @@ describe("Kostengrundlage — Seite", () => {
     expect(mult.textContent).toContain(i18n.t("costs.basis.usageMultipleShared", { sources: "operator: home" }));
     expect(b.querySelector("[data-meter-on-usage]")!.textContent).toBe(i18n.t("costs.split.usageSeat"));
     expect(b.querySelector("[data-outside-unreported]")).toBeNull();
+  });
+
+  it("zeigt bei „alles auf diesem Zähler“ auf Nutzung kein Vielfaches des Zählers, sondern das Nutzungs-Vielfache (#120)", async () => {
+    const usd = charge({ currency: "USD", amount: 8, counted_amount: 8, counted_usd: 8, from: "2026-11-17T00:00:00Z", to: "2026-11-18T00:00:00Z" });
+    const { container } = serve({ ...onUsage([usd]), external: usageMeter(["operator: home"]) });
+    const b = await block(container);
+    expect(within(b).queryByRole("group", { name: i18n.t("costs.incl.everything") })).toBeNull();
+    expect(b.querySelector("[data-everything-why]")).toBeNull();
+    expect(b.textContent).not.toContain(i18n.t("costs.incl.everythingMovement", { pts: "0" }));
+    expect(within(b).getByRole("group", { name: "Listen-$ je echtem $" }).textContent).toMatch(/≥ 2,0×/);
+  });
+
+  it("zeigt in der Überschrift die Nutzungsbeträge der Sitze je Währung neben den echten Kosten", async () => {
+    const eur = charge();
+    const usd = charge({ id: "c2", currency: "USD", amount: 8, counted_amount: 8, counted_usd: 8, from: "2026-11-16T00:00:00Z", to: "2026-11-17T00:00:00Z" });
+    const data = { ...onUsage([eur, usd]), external: usageMeter(["operator: home"]) };
+    serve(data);
+    const line = await waitFor(() => {
+      const l = document.querySelector("[data-head-usage-charges]");
+      if (!l) throw new Error("no headline yet");
+      return l;
+    });
+    expect(line.textContent).toBe(i18n.t("costs.dent.head.usageCharges", { list: usageList(i18n.t.bind(i18n), headline(data)!.usageCharges!) }));
+    expect(line.textContent).toMatch(/180,00 EUR \(kein USD-Betrag: kein Kurs angegeben\) · 8,00 \$/);
+    expect(line.textContent).not.toMatch(/188/);
+    expect(document.querySelector("[data-head-usage]")!.textContent).toMatch(new RegExp(`${SEAT} #0: 4,0 Punkte`));
   });
 
   it("zeigt mit Kurs und Datum den USD-Betrag und das Vielfache über die Zeiträume der Beträge", async () => {

@@ -1014,8 +1014,9 @@ function CredentialTiles({ f, filtered, narrowed, out }: {
 /** Why there is no multiple, in words. */
 function NoMultiple({ f }: { f: CredentialFigures }) {
   const { t } = useTranslation();
-  if (f.everything) {
-    // The multiple of everything on the meter replaces covey's own.
+  if (f.everything && f.everything.why !== "usage") {
+    // The multiple of everything on the meter replaces covey's own. On a
+    // seat billed by usage (0151) the usage multiple's rules stand instead.
     const e = f.everything;
     if (!e.why) return null;
     const text = e.why === "movement" ? t("costs.incl.everythingMovement", { pts: fmtNumber(e.points, 0) })

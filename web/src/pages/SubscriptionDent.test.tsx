@@ -5,7 +5,7 @@ import type { CostCells, ExternalMeterAgent, ExternalMeterStep, ExternalMeterSum
 import i18n from "../i18n";
 import { fmtNumber, fmtUSD } from "../format";
 import { mockFetch, renderWithProviders } from "../test/render";
-import { credentialFigures, perCredentialTotals, splitPerPeriod, subscriptionDent } from "./costFigures";
+import { credentialFigures, headline, perCredentialTotals, seatLists, splitPerPeriod, subscriptionDent } from "./costFigures";
 
 // #120, the headline: once Claude Code sessions outside covey report on a
 // subscription meter, the page shows the whole dent in the meters, split
@@ -550,10 +550,54 @@ describe("Costs — the headline", () => {
       expect(p.textContent).toContain("–");
       expect(p.textContent).toContain(i18n.t("costs.dent.noPart"));
     }
-    expect(row.textContent).not.toContain(fmtUSD(0));
+    // The dent's figures: never ≈ $0.00 (the headline above may list a
+    // source's $0.00 of list price: that is a list, not a real cost).
+    expect(row.querySelector("[data-dent-detail]")!.textContent).not.toContain(fmtUSD(0));
     expect(row.textContent).not.toMatch(/had not reported/);
     expect(row.querySelector("[data-dent-no-multiple]")!.textContent).toBe(i18n.t("costs.dent.noMultipleUsage"));
     expect(row.querySelector("[data-dent-usage]")).not.toBeNull();
+    // The headline: no real cost because every reading was billed by usage,
+    // not because of a missing plan price; the seat named as left out.
+    expect(row.querySelector("[data-head-sentence]")!.textContent).toMatch(/every reading in the range was taken while the seat was billed by usage/);
+    expect(row.querySelector("[data-head-sentence]")!.textContent).not.toMatch(/no reading in the range has a plan price/);
+    expect(row.querySelector("[data-head-usage]")!.textContent).toMatch(/^Left out of the real cost and of the multiple: .*\(claude_code_oauth_token #0: 6\.0 points/);
+    expect(row.querySelector("[data-head-usage-charges]")!.textContent).toBe(i18n.t("costs.dent.head.usageNoCharge"));
+    expect(row.querySelector("[data-head-no-multiple]")).toBeNull();
+  });
+
+  it("keeps a seat's time on the usage basis out of the real cost and of the list the multiple divides, and names it (0151)", async () => {
+    // STEPS with the 20:40 reading (3 points, covey's $40) taken while the
+    // seat was billed by usage: the server prices none of it and splits
+    // none of it (reason usage).
+    const usageStep: ExternalMeterStep = { ...STEPS[2], reported: true, split: false, reason: "usage", real_usd: null,
+      external_real_usd: null, covey_real_usd: null, unattributed_real_usd: 0, unattributed_points: 0, unsplit_real_usd: 0 };
+    const steps = [STEPS[0], STEPS[1], usageStep];
+    const total = seat(steps, { agents: AGENTS, points: 6, real_usd: 6 * PP, unsplit_steps: 0, unsplit_real_usd: 0,
+      usage_steps: 1, usage_points: 3, points_per_list_usd: 7 / 758 });
+    const data = cells(external([{ steps, total }]));
+    const l = seatLists(data, total);
+    expect(l.covey.usage).toBeCloseTo(40, 9);
+    expect(l.covey.unpriced).toBe(0);
+    expect(l.covey.metered).toBeCloseTo(303, 9);
+    const h = headline(data)!;
+    // R and Xm: the seat's priced readings only; X: all of it, in its parts.
+    expect(h.real).toBeCloseTo(6 * PP, 9);
+    expect(h.usage).toBeCloseTo(40, 9);
+    expect(h.unpriced).toBe(0);
+    expect(h.metered).toBeCloseTo(303 + 455, 9);
+    expect(h.list).toBeCloseTo(h.metered + h.unmetered + h.unpriced + h.usage, 9);
+    expect(h.multiple).toBeCloseTo(758 / (6 * PP), 9);
+    expect(h.why).toBeNull();
+    expect(h.usageSeats).toEqual(["claude_code_oauth_token #0"]);
+    expect(h.usagePoints).toBe(3);
+    expect(h.usageCharges).toBeNull();
+    // Without the basis the same reading is a not-reported one, in Xm.
+    expect(headline(cells(EXT()))!.metered).toBeCloseTo(343 + 455, 9);
+    serve(data);
+    const row = await screen.findByRole("region", { name: "The whole dent in the subscription" });
+    expect(row.querySelector("[data-head-usage]")!.textContent).toBe(i18n.t("costs.dent.head.usageOut",
+      { seats: "claude_code_oauth_token #0", n: "3.0", list: fmtUSD(40) }));
+    expect(row.querySelector("[data-head-unmetered]")).toBeNull();
   });
 
   it("names a seat on usage that never moved as billed by usage, and both counts for a mixed seat (0151, review m2)", async () => {
