@@ -557,9 +557,10 @@ const (
 	SplitOutsideUnpriced = "outside_unpriced"
 	// SplitUnpriced: points no plan prices; the step is out of the dent.
 	SplitUnpriced = "unpriced"
-	// SplitIdle: a reported reading that did not move, with no call on
-	// either side: nothing to split. It is neither a split nor an unsplit
-	// step, and the run of split steps goes on through it.
+	// SplitIdle: a reported reading that did not move, with no priced call
+	// on either side: nothing to split. It is neither a split nor an unsplit
+	// step, and the run of split steps goes on through it at the run's
+	// share and its own price; without a plan its $ coefficient is 0.
 	SplitIdle = "idle"
 )
 
@@ -1373,11 +1374,12 @@ func (r splitRun) tv(f func(k int) float64) float64 {
 // is not split either (outside_unpriced): the outside share is unknown, and
 // booking R to covey would bill it the outside sessions' work. Outside calls
 // some of which are priced stay split on the priced ones, the rest counted
-// as unpriced. One that did not move either (R = 0, both lists 0, no outside
-// call: an idle reading) has nothing to split and is no split step
-// (SplitIdle, #126 finding 25); it neither starts nor ends a run, so the
-// runs' ranges see through it, as the meter, unmoved, does. Any other
-// unsplit step ends the run, and a reset starts a new one.
+// as unpriced. One that did not move either (R = 0, both lists 0, no priced
+// outside call: an idle reading) has nothing to split and is no split step
+// (SplitIdle, #126 finding 25); it neither starts nor ends a run. Inside a
+// run the ranges see through it at its own price with the share before it:
+// the plan's rate, and without a plan a $ coefficient of 0 (#126 finding
+// 26). Any other unsplit step ends the run, and a reset starts a new one.
 func splitSeat(seat meterSeat, sources []string, steps []shareStep) (ExternalMeterTotal, []ExternalMeterStep) {
 	tot := ExternalMeterTotal{SecretKey: seat.key, SecretSlot: seat.slot, Sources: append([]string{}, sources...),
 		Agents: []ExternalMeterAgent{}}
@@ -1474,6 +1476,19 @@ func splitSeat(seat meterSeat, sources []string, steps []shareStep) (ExternalMet
 			endRun()
 		case lists == 0:
 			st.Reason = SplitIdle
+			// Inside a run its sub-point movement still counts, at its own
+			// price (#126 finding 26): the share before it, so the points
+			// ranges stay, and the plan's rate or 0 without one, so the $
+			// ranges do not take the neighbours' price for it. At the run's
+			// own price it changes no range; before a run it adds nothing.
+			if len(run.share) > 0 {
+				rate := 0.0
+				if in.Rate != nil {
+					rate = *in.Rate
+				}
+				run.share = append(run.share, run.share[len(run.share)-1])
+				run.rate = append(run.rate, rate)
+			}
 		default:
 			share := in.LOut / lists
 			rOut := r * share

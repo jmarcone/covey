@@ -451,6 +451,47 @@ func TestSplitSeatRangeWithoutAPlan(t *testing.T) {
 	}
 }
 
+// #126 finding 26: an idle reading inside a run is seen through at its own
+// price, not its neighbours'. 2 pts @ $4 (L_out 3, L_cov 1), 0 pts without a
+// plan and no list, 2 pts @ $4 (L_out 1, L_cov 3): the idle step keeps the
+// share before it (0.75) at rate 0, so rates 4, 0, 4 → ½(4 + 4 + 4 + 4) = 8,
+// the outside part's 3, 0, 1 → ½(3 + 3 + 1 + 1) = 4, covey's 1, 0, 3 → 4;
+// the points ranges stay 1 and 0.75. With a plan of its own the idle step is
+// priced at it: rates 4, 6, 4 → ½(4 + 2 + 2 + 4) = 6, outside 3, 4.5, 1 →
+// ½(3 + 1.5 + 3.5 + 1) = 4.5, covey 1, 1.5, 3 → ½(1 + 0.5 + 1.5 + 3) = 3. At
+// the run's own price it changes nothing: 4, 3, 3, as if skipped.
+func TestSplitSeatIdleInARunAtItsPrice(t *testing.T) {
+	for _, c := range []struct {
+		name                string
+		rate                *float64
+		whole, outside, cov float64
+	}{
+		{"no plan", nil, 8, 4, 4},
+		{"a plan of its own", rate(6), 6, 4.5, 3},
+		{"the run's plan", rate(4), 4, 3, 3},
+	} {
+		tot, steps := splitSeat(meterSeat{"seat", 0}, []string{"src"}, []shareStep{
+			{From: tm("10:00"), At: tm("11:00"), Points: 2, Rate: rate(4), LOut: 3, LCov: 1, Reported: true},
+			{From: tm("11:00"), At: tm("12:00"), Points: 0, Rate: c.rate, Reported: true},
+			{From: tm("12:00"), At: tm("13:00"), Points: 2, Rate: rate(4), LOut: 1, LCov: 3, Reported: true},
+		})
+		if s := steps[1]; s.Split || s.Reason != SplitIdle {
+			t.Errorf("%s: the idle step = %+v, want not split (%s)", c.name, s, SplitIdle)
+		}
+		if tot.SplitSteps != 2 || tot.SplitRuns != 1 || tot.UnsplitSteps != 0 {
+			t.Errorf("%s: %d split steps, %d runs, %d unsplit; want 2, 1, 0", c.name, tot.SplitSteps, tot.SplitRuns, tot.UnsplitSteps)
+		}
+		if !near(tot.SplitSlackUSD, c.whole) || !near(tot.SplitExternalSlackUSD, c.outside) || !near(tot.SplitCoveySlackUSD, c.cov) {
+			t.Errorf("%s: slack whole %v outside %v covey %v, want %v, %v, %v", c.name,
+				tot.SplitSlackUSD, tot.SplitExternalSlackUSD, tot.SplitCoveySlackUSD, c.whole, c.outside, c.cov)
+		}
+		if !near(tot.SplitSlackPoints, 1) || !near(tot.SplitExternalSlackPoints, 0.75) || !near(tot.SplitCoveySlackPoints, 0.75) {
+			t.Errorf("%s: slack points %v outside %v covey %v, want 1, 0.75, 0.75", c.name,
+				tot.SplitSlackPoints, tot.SplitExternalSlackPoints, tot.SplitCoveySlackPoints)
+		}
+	}
+}
+
 // Decision 4 of part A and the lists' edges (cost-controller, part A finding
 // 2): a reading that did not move gives R = 0 even without a plan, split as
 // 0 / 0 — not unpriced — when outside calls ran; a step with outside calls
