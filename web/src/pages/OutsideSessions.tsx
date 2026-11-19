@@ -11,6 +11,7 @@ import {
   outsidePerPeriod,
   outsideTotals,
   type OutsideTotals,
+  type Unattributed,
   type Unsplit,
 } from "./outsideFigures";
 
@@ -56,20 +57,35 @@ export function unsplitLines(t: T, u: Unsplit): string[] {
     .map((r) => t(`costs.outside.unsplit_${r}`, { ...counted(u[r].steps), usd: fmtUSD(u[r].usd) }));
 }
 
+/** The readings that moved with no reported call on either side: their real
+ *  cost is unattributed whole (F3b), booked to nobody. */
+export function noCallLines(t: T, n: Unattributed["noCall"]): string[] {
+  return n.steps > 0 ? [t("costs.outside.noCall", { ...counted(n.steps), usd: fmtUSD(n.usd) })] : [];
+}
+
+/** Where a share is shown, one line on the unattributed part: its amount and
+ *  what it is (#126's sentence), or that none was measured and what it would
+ *  be. */
+export const unattributedLine = (t: T, usd: number) =>
+  usd > 0 ? t("costs.dent.unattributedSentence", { usd: fmtUSD(usd) }) : t("costs.outside.unattributedNone");
+
 /** The list price over a range: the figure, or why there is none — no call
  *  at all, or calls none of which had a list price (never $0). */
 export const listValue = (list: number | null) => (list != null ? fmtUSD(list) : "–");
 export const listLine = (t: T, list: number | null, calls: number) =>
   calls === 0 ? t("costs.outside.noCalls") : list == null ? t("costs.outside.noPrice") : t("costs.outside.tileSub", counted(calls));
 
-/** The lines under the outside figures: their real share of the meter (F3),
- *  readings not split, work after the last reading, reported costs, unpriced tokens. */
+/** The lines under the outside figures: their real share of the meter (F3b:
+ *  at most, of the dent) and the unattributed part beside it, readings that
+ *  moved with no call, readings not split, work after the last reading,
+ *  reported costs, unpriced tokens. */
 export function outsideLines(t: T, o: OutsideTotals): string[] {
   const lines: string[] = [];
+  const m = o.meter;
   if (!o.linked) lines.push(t("costs.outside.noMeterLinked"));
-  else if (o.share != null) lines.push(t("costs.outside.realShare", { usd: fmtUSD(o.real), pct: pct(o.share) }));
-  else lines.push(t("costs.outside.noShare"));
-  lines.push(...unsplitLines(t, o.unsplit));
+  else if (m.share != null) lines.push(t("costs.outside.realShare", { usd: fmtUSD(m.real), pct: pct(m.share) }), unattributedLine(t, m.unattributed));
+  else lines.push(t("costs.outside.noShare"), ...(m.unattributed > 0 ? [unattributedLine(t, m.unattributed)] : []));
+  lines.push(...noCallLines(t, o.noCall), ...unsplitLines(t, o.unsplit));
   if (o.unpricedSteps > 0) lines.push(t("costs.outside.unpricedReadings", counted(o.unpricedSteps)));
   if (o.unmeteredList > 0) lines.push(t("costs.outside.unmetered", { usd: fmtUSD(o.unmeteredList) }));
   if (o.reported != null && o.reportedCalls > 0) lines.push(t("costs.outside.reportedLine", { ...counted(o.reportedCalls), usd: fmtUSD(o.reported) }));
