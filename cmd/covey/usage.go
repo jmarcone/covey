@@ -26,6 +26,8 @@ import (
 //	covey usage push DIR... --source LABEL [--url URL] [--host NAME]
 //	    [--meter-secret KEY[:SLOT]] [--since RFC3339] [--complete]
 //	    [--key-file PATH] [--dry-run] [--json]
+//	covey usage push DIR... --source-per-project [--source PREFIX]
+//	    [--home-prefix HOME]... [--label FOLDER=LABEL]... [the flags above]
 //
 // The reported_through watermark says that every call of this host for this
 // source up to a time is in the push; covey books a meter reading's unsent
@@ -34,17 +36,42 @@ import (
 // and never when --since, a symlinked directory, an unreadable line or a
 // held-back call means the push may lack calls.
 //
+// With --source-per-project each Claude Code project folder is a source of
+// its own, labelled by its folder name without the home directory, and the
+// watermark is claimed per source: a source is one whole folder, so with
+// --complete it is complete by construction, and a problem in one folder
+// withholds that folder's claim only. No path is ever sent, only the label.
+//
 // The API key comes from COVEY_API_KEY or --key-file, never from argv.
 // usageStderr gets the warnings; a variable so tests can read it.
 var usageStderr io.Writer = os.Stderr
 
+// multiFlag is a flag that may be given several times.
+type multiFlag []string
+
+func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
+func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
+
+// pushSource is what one source sends.
+type pushSource struct {
+	name      string
+	rows      []usagepush.Row
+	st        usagepush.Stats
+	elsewhere int
+	through   map[string]time.Time
+}
+
 func runUsage(args []string, stdout io.Writer, getenv func(string) string) error {
 	if len(args) == 0 || args[0] != "push" {
-		return errors.New("usage: covey usage push DIR... --source LABEL [--url URL] [--host NAME] [--meter-secret KEY[:SLOT]] [--since RFC3339] [--complete] [--key-file PATH] [--dry-run] [--json]")
+		return errors.New("usage: covey usage push DIR... (--source LABEL | --source-per-project [--source PREFIX] [--home-prefix HOME]... [--label FOLDER=LABEL]...) [--url URL] [--host NAME] [--meter-secret KEY[:SLOT]] [--since RFC3339] [--complete] [--key-file PATH] [--dry-run] [--json]")
 	}
 	fs := flag.NewFlagSet("covey usage push", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	source := fs.String("source", "", "label for these sessions, e.g. \"operator: home\" (1-64 characters)")
+	source := fs.String("source", "", "label for these sessions, e.g. \"operator: home\" (1-64 characters); with --source-per-project an optional prefix, \"PREFIX: <label>\"")
+	perProject := fs.Bool("source-per-project", false, "each Claude Code project folder (a top-level directory under DIR, or DIR itself when it is one) is a source of its own, labelled by its folder name without the home directory")
+	var homes, labelArgs multiFlag
+	fs.Var(&homes, "home-prefix", "with --source-per-project: the home directory to strip from the folder names, as a path (C:\\Users\\me, /home/me) or encoded (C--Users-me); repeatable; default: read from each folder name")
+	fs.Var(&labelArgs, "label", "with --source-per-project: FOLDER=LABEL labels one project folder; repeatable")
 	url := fs.String("url", "", "covey install, e.g. http://localhost:8494 (default $COVEY_URL)")
 	host := fs.String("host", "", "host name stored on every row and claimed in reported_through (default: this machine's; WSL2 reports the Windows name, so give each transcript store its own, e.g. home-win and home-wsl)")
 	meter := fs.String("meter-secret", "", "subscription credential sharing the meter, KEY or KEY:SLOT")
@@ -70,8 +97,39 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 	if len(dirs) == 0 {
 		return errors.New("covey usage push: name at least one transcripts directory")
 	}
-	if s := strings.TrimSpace(*source); s == "" || len([]rune(s)) > 64 {
-		return errors.New("covey usage push: --source is required, 1-64 characters")
+	src := strings.TrimSpace(*source)
+	var rules usagepush.LabelRules
+	if *perProject {
+		if src != "" && !usagepush.ValidSource(src) {
+			return errors.New("covey usage push: --source must be 1-64 characters of UTF-8 without NUL")
+		}
+		rules.Prefix = src
+		for _, v := range homes {
+			p, err := usagepush.HomePrefix(v)
+			if err != nil {
+				return fmt.Errorf("covey usage push: %w", err)
+			}
+			rules.Homes = append(rules.Homes, p)
+		}
+		rules.Labels = map[string]string{}
+		for _, v := range labelArgs {
+			f, l, ok := strings.Cut(v, "=")
+			f, l = strings.TrimSpace(f), strings.TrimSpace(l)
+			if !ok || f == "" || l == "" {
+				return fmt.Errorf("covey usage push: --label %q: want FOLDER=LABEL", v)
+			}
+			if _, dup := rules.Labels[f]; dup {
+				return fmt.Errorf("covey usage push: --label %s given twice", f)
+			}
+			rules.Labels[f] = l
+		}
+	} else {
+		if !usagepush.ValidSource(src) {
+			return errors.New("covey usage push: --source is required, 1-64 characters")
+		}
+		if len(homes) > 0 || len(labelArgs) > 0 {
+			return errors.New("covey usage push: --home-prefix and --label need --source-per-project")
+		}
 	}
 	var sinceT time.Time
 	if *since != "" {
@@ -119,23 +177,31 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 		key = k
 	}
 
-	rows, st, err := usagepush.Read(dirs, h, sinceT)
-	if err != nil {
-		return fmt.Errorf("covey usage push: %w", err)
-	}
-	for _, p := range st.Symlinks {
-		fmt.Fprintf(usageStderr, "warning: %s is a symlinked directory; it is not followed, so calls below it are not read\n", p)
+	var srcs []*pushSource
+	if *perProject {
+		ps, err := usagepush.Projects(dirs, rules)
+		if err != nil {
+			return fmt.Errorf("covey usage push: %w", err)
+		}
+		reads, err := usagepush.ReadProjects(ps, h, sinceT)
+		if err != nil {
+			return fmt.Errorf("covey usage push: %w", err)
+		}
+		for _, r := range reads {
+			srcs = append(srcs, &pushSource{name: r.Source, rows: r.Rows, st: r.Stats, elsewhere: r.Elsewhere})
+		}
+	} else {
+		rows, st, err := usagepush.Read(dirs, h, sinceT)
+		if err != nil {
+			return fmt.Errorf("covey usage push: %w", err)
+		}
+		srcs = []*pushSource{{name: src, rows: rows, st: st}}
 	}
 
-	for _, p := range st.Unread {
-		fmt.Fprintf(usageStderr, "warning: %s is not a regular file and cannot be read\n", p)
-	}
-	for _, p := range st.Other {
-		fmt.Fprintf(usageStderr, "warning: %s is neither a regular file nor a directory; it is left out\n", p)
-	}
-
-	// The watermark claims that every call of this host up to its time is in
-	// the push. It is sent only when nothing can be missing.
+	// The watermark claims that every call of this host for a source up to
+	// its time is in the push. It is sent only when nothing can be missing:
+	// --complete and --since decide for every source, what a read found for
+	// its own source only.
 	var why []string
 	if !*complete {
 		why = append(why, "--complete is not given, so the directories are not claimed to hold every transcript of this host; the meter split waits until a --complete push")
@@ -143,6 +209,193 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 	if *since != "" {
 		why = append(why, "--since leaves older calls out")
 	}
+	// With --dry-run --json, stdout holds the JSON only; the notes go to stderr.
+	info := stdout
+	if *dry && *asJSON {
+		info = usageStderr
+	}
+	for _, w := range why {
+		fmt.Fprintf(info, "no reported_through sent: %s\n", w)
+	}
+	claimAt := time.Now().UTC().Add(-usagepush.WatermarkMargin).Truncate(time.Second)
+	listed := func(label string, items []string, total int) {
+		for _, it := range items {
+			fmt.Fprintf(info, "%s: %s\n", label, it)
+		}
+		if total > len(items) {
+			fmt.Fprintf(info, "%s: and %d more\n", label, total-len(items))
+		}
+	}
+	// The intake refuses a ts later than now + 5 min. Calls stamped ahead of
+	// this clock wait for a later run rather than fail the whole batch.
+	held, elsewhere := 0, 0
+	limit := time.Now().Add(4 * time.Minute)
+	var all []usagepush.Row
+	var st usagepush.Stats
+	for _, s := range srcs {
+		for _, p := range s.st.Symlinks {
+			fmt.Fprintf(usageStderr, "warning: %s is a symlinked directory; it is not followed, so calls below it are not read\n", p)
+		}
+		for _, p := range s.st.Unread {
+			fmt.Fprintf(usageStderr, "warning: %s is not a regular file and cannot be read\n", p)
+		}
+		for _, p := range s.st.Other {
+			fmt.Fprintf(usageStderr, "warning: %s is neither a regular file nor a directory; it is left out\n", p)
+		}
+		own := sourceProblems(s.st)
+		for _, w := range own {
+			if *perProject {
+				fmt.Fprintf(info, "no reported_through sent for %q: %s\n", s.name, w)
+			} else {
+				fmt.Fprintf(info, "no reported_through sent: %s\n", w)
+			}
+		}
+		if len(why) == 0 && len(own) == 0 {
+			s.through = map[string]time.Time{h: claimAt}
+		}
+		listed("unreadable line", s.st.SuspectAt, s.st.Suspect)
+		listed("held back", s.st.InvalidWhy, s.st.Invalid)
+		kept := s.rows[:0]
+		for _, r := range s.rows {
+			if r.TS.After(limit) {
+				held++
+				continue
+			}
+			kept = append(kept, r)
+		}
+		s.rows = kept
+		all = append(all, s.rows...)
+		elsewhere += s.elsewhere
+		st.Files += s.st.Files
+		st.Copies += s.st.Copies
+		st.Synthetic += s.st.Synthetic
+		st.Skipped += s.st.Skipped
+		st.Invalid += s.st.Invalid
+	}
+	if held > 0 {
+		fmt.Fprintf(info, "%d calls are stamped more than 4 min ahead of this clock; they wait for a later run\n", held)
+	}
+	if elsewhere > 0 {
+		fmt.Fprintf(info, "%d calls are in more than one project folder; each is sent once\n", elsewhere)
+	}
+	if *dry {
+		sum := usagepush.Summarize(all)
+		if *asJSON {
+			type sourceJSON struct {
+				Source  string           `json:"source"`
+				Totals  usagepush.Totals `json:"totals"`
+				Through *time.Time       `json:"reported_through,omitempty"`
+			}
+			out := struct {
+				usagepush.Summary
+				Files     int          `json:"files"`
+				Copies    int          `json:"streamed_copies_dropped"`
+				Synthetic int          `json:"synthetic_left_out"`
+				Skipped   int          `json:"lines_skipped"`
+				Held      int          `json:"calls_held_back"`
+				Through   *time.Time   `json:"reported_through,omitempty"`
+				Sources   []sourceJSON `json:"sources,omitempty"`
+			}{Summary: sum, Files: st.Files, Copies: st.Copies, Synthetic: st.Synthetic, Skipped: st.Skipped, Held: st.Invalid}
+			if *perProject {
+				for _, s := range srcs {
+					out.Sources = append(out.Sources, sourceJSON{s.name, usagepush.Summarize(s.rows).All, throughOf(s.through, h)})
+				}
+			} else {
+				out.Through = throughOf(srcs[0].through, h)
+			}
+			enc := json.NewEncoder(stdout)
+			enc.SetIndent("", "  ")
+			return enc.Encode(out)
+		}
+		fmt.Fprintf(stdout, "dry run, nothing sent: %d calls from %d files (%d streamed copies dropped, %d placeholders left out, %d lines skipped)\n",
+			len(all), st.Files, st.Copies, st.Synthetic, st.Skipped)
+		if len(all) > 0 {
+			fmt.Fprintf(stdout, "%s .. %s\n", sum.First.Format(time.RFC3339), sum.Last.Format(time.RFC3339))
+		}
+		if !*perProject && srcs[0].through != nil {
+			fmt.Fprintf(stdout, "reported_through %s: %s\n", h, claimAt.Format(time.RFC3339))
+		}
+		printTotals(stdout, "all", &sum.All)
+		for _, group := range []map[string]*usagepush.Totals{sum.ByOrigin, sum.ByModel} {
+			for _, k := range sortedKeys(group) {
+				printTotals(stdout, k, group[k])
+			}
+		}
+		if *perProject {
+			fmt.Fprintf(stdout, "%d sources:\n", len(srcs))
+			for _, s := range srcs {
+				t := usagepush.Summarize(s.rows).All
+				claim := "no reported_through"
+				if s.through != nil {
+					claim = "reported_through " + h + ": " + claimAt.Format(time.RFC3339)
+				}
+				fmt.Fprintf(stdout, "  source %-40q calls %6d  input %12d  output %12d  cache_read %14d  cache_write_5m %12d  cache_write_1h %12d  %s\n",
+					s.name, t.Rows, t.Input, t.Output, t.CacheRead, t.CacheWrite5m, t.CacheWrite1h, claim)
+			}
+		}
+		return nil
+	}
+
+	type sourceBatches struct {
+		s       *pushSource
+		batches [][]byte
+	}
+	var plan []sourceBatches
+	nBatches := 0
+	for _, s := range srcs {
+		b, err := usagepush.Batches(s.name, m, s.rows, s.through)
+		if err != nil {
+			return err
+		}
+		plan = append(plan, sourceBatches{s, b})
+		nBatches += len(b)
+	}
+	fmt.Fprintf(stdout, "read %d calls from %d files (%d streamed copies dropped, %d placeholders left out, %d lines skipped)\n",
+		len(all), st.Files, st.Copies, st.Synthetic, st.Skipped)
+	c := usagepush.Client{BaseURL: base, Key: key}
+	var tot usagepush.Result
+	done := 0
+	for _, p := range plan {
+		var sub usagepush.Result
+		for i, b := range p.batches {
+			r, err := c.Post(context.Background(), b)
+			if err != nil {
+				if done > 0 {
+					fmt.Fprintf(stdout, "accepted before the failure: %d calls in %d requests: %d new, %d updated, %d unchanged\n",
+						tot.Received+sub.Received, done, tot.Inserted+sub.Inserted, tot.Updated+sub.Updated, tot.Unchanged+sub.Unchanged)
+				}
+				if *perProject {
+					return fmt.Errorf("source %q: batch %d of %d: %w", p.s.name, i+1, len(p.batches), err)
+				}
+				return fmt.Errorf("batch %d of %d: %w", i+1, len(p.batches), err)
+			}
+			done++
+			sub.Received += r.Received
+			sub.Inserted += r.Inserted
+			sub.Updated += r.Updated
+			sub.Unchanged += r.Unchanged
+		}
+		if *perProject && len(p.batches) > 0 {
+			claim := ""
+			if p.s.through != nil {
+				claim = ", reported_through " + claimAt.Format(time.RFC3339)
+			}
+			fmt.Fprintf(stdout, "  %q: %d calls in %d requests: %d new, %d updated, %d unchanged%s\n",
+				p.s.name, sub.Received, len(p.batches), sub.Inserted, sub.Updated, sub.Unchanged, claim)
+		}
+		tot.Received += sub.Received
+		tot.Inserted += sub.Inserted
+		tot.Updated += sub.Updated
+		tot.Unchanged += sub.Unchanged
+	}
+	fmt.Fprintf(stdout, "sent %d calls in %d requests: %d new, %d updated, %d unchanged\n",
+		tot.Received, nBatches, tot.Inserted, tot.Updated, tot.Unchanged)
+	return nil
+}
+
+// sourceProblems says why a read may lack calls of its source.
+func sourceProblems(st usagepush.Stats) []string {
+	var why []string
 	if len(st.Symlinks) > 0 {
 		why = append(why, fmt.Sprintf("%d symlinked directories were not followed", len(st.Symlinks)))
 	}
@@ -155,97 +408,7 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 	if st.Invalid > 0 {
 		why = append(why, fmt.Sprintf("%d calls are held back, out of the intake's bounds", st.Invalid))
 	}
-	var through map[string]time.Time
-	if len(why) == 0 {
-		through = map[string]time.Time{h: time.Now().UTC().Add(-usagepush.WatermarkMargin).Truncate(time.Second)}
-	}
-	for _, w := range why {
-		fmt.Fprintf(stdout, "no reported_through sent: %s\n", w)
-	}
-	listed := func(label string, items []string, total int) {
-		for _, it := range items {
-			fmt.Fprintf(stdout, "%s: %s\n", label, it)
-		}
-		if total > len(items) {
-			fmt.Fprintf(stdout, "%s: and %d more\n", label, total-len(items))
-		}
-	}
-	listed("unreadable line", st.SuspectAt, st.Suspect)
-	listed("held back", st.InvalidWhy, st.Invalid)
-	// The intake refuses a ts later than now + 5 min. Calls stamped ahead of
-	// this clock wait for a later run rather than fail the whole batch.
-	held := 0
-	if limit := time.Now().Add(4 * time.Minute); len(rows) > 0 {
-		kept := rows[:0]
-		for _, r := range rows {
-			if r.TS.After(limit) {
-				held++
-				continue
-			}
-			kept = append(kept, r)
-		}
-		rows = kept
-	}
-	if held > 0 {
-		fmt.Fprintf(stdout, "%d calls are stamped more than 4 min ahead of this clock; they wait for a later run\n", held)
-	}
-	if *dry {
-		sum := usagepush.Summarize(rows)
-		if *asJSON {
-			enc := json.NewEncoder(stdout)
-			enc.SetIndent("", "  ")
-			return enc.Encode(struct {
-				usagepush.Summary
-				Files     int        `json:"files"`
-				Copies    int        `json:"streamed_copies_dropped"`
-				Synthetic int        `json:"synthetic_left_out"`
-				Skipped   int        `json:"lines_skipped"`
-				Held      int        `json:"calls_held_back"`
-				Through   *time.Time `json:"reported_through,omitempty"`
-			}{sum, st.Files, st.Copies, st.Synthetic, st.Skipped, st.Invalid, throughOf(through, h)})
-		}
-		fmt.Fprintf(stdout, "dry run, nothing sent: %d calls from %d files (%d streamed copies dropped, %d placeholders left out, %d lines skipped)\n",
-			len(rows), st.Files, st.Copies, st.Synthetic, st.Skipped)
-		if len(rows) > 0 {
-			fmt.Fprintf(stdout, "%s .. %s\n", sum.First.Format(time.RFC3339), sum.Last.Format(time.RFC3339))
-		}
-		if through != nil {
-			fmt.Fprintf(stdout, "reported_through %s: %s\n", h, through[h].Format(time.RFC3339))
-		}
-		printTotals(stdout, "all", &sum.All)
-		for _, group := range []map[string]*usagepush.Totals{sum.ByOrigin, sum.ByModel} {
-			for _, k := range sortedKeys(group) {
-				printTotals(stdout, k, group[k])
-			}
-		}
-		return nil
-	}
-
-	batches, err := usagepush.Batches(strings.TrimSpace(*source), m, rows, through)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(stdout, "read %d calls from %d files (%d streamed copies dropped, %d placeholders left out, %d lines skipped)\n",
-		len(rows), st.Files, st.Copies, st.Synthetic, st.Skipped)
-	c := usagepush.Client{BaseURL: base, Key: key}
-	var tot usagepush.Result
-	for i, b := range batches {
-		r, err := c.Post(context.Background(), b)
-		if err != nil {
-			if i > 0 {
-				fmt.Fprintf(stdout, "accepted before the failure: %d calls in %d requests: %d new, %d updated, %d unchanged\n",
-					tot.Received, i, tot.Inserted, tot.Updated, tot.Unchanged)
-			}
-			return fmt.Errorf("batch %d of %d: %w", i+1, len(batches), err)
-		}
-		tot.Received += r.Received
-		tot.Inserted += r.Inserted
-		tot.Updated += r.Updated
-		tot.Unchanged += r.Unchanged
-	}
-	fmt.Fprintf(stdout, "sent %d calls in %d requests: %d new, %d updated, %d unchanged\n",
-		tot.Received, len(batches), tot.Inserted, tot.Updated, tot.Unchanged)
-	return nil
+	return why
 }
 
 func throughOf(m map[string]time.Time, h string) *time.Time {

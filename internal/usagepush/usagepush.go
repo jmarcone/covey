@@ -210,6 +210,12 @@ func parseTS(s string) (time.Time, bool) {
 // left out (zero since keeps everything). A root without any *.jsonl is an
 // error, even when another root has files.
 func Read(roots []string, host string, since time.Time) ([]Row, Stats, error) {
+	return read(roots, host, since, true)
+}
+
+// read is Read; with needFiles false a root without any *.jsonl gives no rows
+// rather than an error (a project folder whose transcripts were cleaned up).
+func read(roots []string, host string, since time.Time, needFiles bool) ([]Row, Stats, error) {
 	var st Stats
 	type kept struct {
 		row  Row
@@ -237,7 +243,7 @@ func Read(roots []string, host string, since time.Time) ([]Row, Stats, error) {
 		if err != nil {
 			return nil, st, fmt.Errorf("read %s: %w", root, err)
 		}
-		if len(files) == 0 {
+		if len(files) == 0 && needFiles {
 			return nil, st, fmt.Errorf("no *.jsonl transcripts under %s", root)
 		}
 		sort.Strings(files)
