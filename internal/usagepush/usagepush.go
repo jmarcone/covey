@@ -285,12 +285,15 @@ func Read(roots []string, host string, since time.Time) ([]Row, Stats, error) {
 				if prev, ok := seen[m.ID]; ok {
 					st.Copies++
 					// The copy with the most output wins. On equal output the
-					// earlier timestamp, then the smaller path, then the first
-					// line: adding a file never moves a row already sent,
-					// unless it holds a better copy.
+					// later timestamp, as the script keeps the later copy (the
+					// streamed message's last line, nearest to when the meter
+					// counts it), then the larger path, then the later line:
+					// the choice does not depend on the order files are read
+					// in, so a push of more files moves no row unless a file
+					// holds a better copy.
 					better := r.Output > prev.row.Output
 					if r.Output == prev.row.Output {
-						better = r.TS.Before(prev.row.TS) || (r.TS.Equal(prev.row.TS) && abs < prev.path)
+						better = r.TS.After(prev.row.TS) || (r.TS.Equal(prev.row.TS) && (abs > prev.path || (abs == prev.path && no > prev.line)))
 					}
 					if better {
 						prev.row, prev.path, prev.line = r, abs, no

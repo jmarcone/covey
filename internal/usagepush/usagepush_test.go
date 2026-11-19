@@ -360,19 +360,26 @@ func TestReadCountsUnreadableLines(t *testing.T) {
 
 // Equal output: the earlier timestamp wins, so a file added later never moves
 // a row already sent.
-func TestDedupTieKeepsTheEarlierCopy(t *testing.T) {
+func TestDedupTieKeepsTheLaterCopy(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "a.jsonl"), callLine("m", "2026-11-18T10:00:01Z", ""))
 	writeFile(t, filepath.Join(dir, "b.jsonl"), callLine("m", "2026-11-18T10:00:02Z", ""))
 	rows, _, _ := Read([]string{dir}, "h", time.Time{})
-	if len(rows) != 1 || rows[0].TS.Second() != 1 {
+	if len(rows) != 1 || rows[0].TS.Second() != 2 {
 		t.Fatalf("%+v", rows)
 	}
-	// the same ts in two files: the smaller path
+	// the same ts in two files: the larger path
 	writeFile(t, filepath.Join(dir, "a.jsonl"), callLine("m", "2026-11-18T10:00:05Z", `,"cache_read_input_tokens":1`))
 	writeFile(t, filepath.Join(dir, "b.jsonl"), callLine("m", "2026-11-18T10:00:05Z", `,"cache_read_input_tokens":2`))
 	rows, _, _ = Read([]string{dir}, "h", time.Time{})
-	if len(rows) != 1 || rows[0].CacheRead != 1 {
+	if len(rows) != 1 || rows[0].CacheRead != 2 {
+		t.Fatalf("%+v", rows)
+	}
+	// streamed copies in one file with equal output: the later line (the script's choice)
+	writeFile(t, filepath.Join(dir, "b.jsonl"), callLine("m", "2026-11-18T10:00:05Z", `,"cache_read_input_tokens":2`),
+		callLine("m", "2026-11-18T10:00:07Z", `,"cache_read_input_tokens":3`))
+	rows, _, _ = Read([]string{dir}, "h", time.Time{})
+	if len(rows) != 1 || rows[0].TS.Second() != 7 || rows[0].CacheRead != 3 {
 		t.Fatalf("%+v", rows)
 	}
 	// more output still wins
