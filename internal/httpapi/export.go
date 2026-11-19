@@ -938,6 +938,10 @@ func (s *Server) handleImportAgent(w http.ResponseWriter, r *http.Request) {
 // carrying their old German names exactly, as the board found them then. One
 // column per key; a second one of the same key is an ordinary column.
 //
+// A keyed column keeps its key, but under a name that means another default
+// column ("Done" keyed open) it is created under its own old German name, as
+// UpdateStage refuses such a rename.
+//
 // A column whose name means a default column the board has keyed is not
 // created: it is a look-alike an agent made via set_stage ("Done" beside
 // "Erledigt"), as migration 0148 merged them, and since a bundle carries no
@@ -980,6 +984,17 @@ func planImportBoard(stages []bundleStage) ([]bundleStage, []string) {
 		name := st.Name
 		if k != "" && name == "" {
 			name = backlog.LegacyStageName(k)
+		}
+		// A keyed column keeps its key, but not a name that means another
+		// default column ("Done" keyed open): set_stage "Done" would land in
+		// it by its exact name, set_stage "done" in the done column, and the
+		// board would show two columns of one meaning. UpdateStage refuses
+		// that rename; here the column takes its old German name instead.
+		if k != "" {
+			if lk, ok := backlog.StageKeyFor(name); ok && lk != k {
+				warnings = append(warnings, "board column "+name+" means another default column than its key — created as "+backlog.LegacyStageName(k))
+				name = backlog.LegacyStageName(k)
+			}
 		}
 		if k == "" {
 			lk, ok := backlog.StageKeyFor(name)

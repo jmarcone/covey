@@ -757,6 +757,27 @@ func TestImportTakesExplicitKeysFirst(t *testing.T) {
 	}
 }
 
+// A keyed column keeps its key, but not under a name that means another
+// default column: "Done" keyed open would read as the done column, and
+// set_stage "Done" would land in it (exact name first) while set_stage "done"
+// lands in the real one. It is imported under its own old German name, as
+// UpdateStage refuses such a rename on the board, and named in a warning.
+func TestImportKeepsAKeyedColumnOffAnotherMeaning(t *testing.T) {
+	s := newStack(t)
+	board, warnings := importBoard(t, s, "fremder-name", []map[string]string{
+		{"name": "Done", "key": "open"},
+		{"name": "In Arbeit", "key": "in_progress"},
+		{"name": "Erledigt"},
+	})
+	want := []string{"Backlog:open", "In Arbeit:in_progress", "Erledigt:done"}
+	if got := boardOf(board); strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("imported board %v, want %v", got, want)
+	}
+	if !strings.Contains(warnings, "Done") {
+		t.Errorf("the renamed column must be named in a warning: %s", warnings)
+	}
+}
+
 // A bundle from before the key: its default columns are the ones with the old
 // German names. An agent-made look-alike ("Done") is merged as 0148 merges
 // it — there are no tasks in a bundle, so it is simply not created — and a
