@@ -77,9 +77,12 @@ func writeFile(t *testing.T, path string, lines ...string) {
 	}
 }
 
+// sess1 is a session folder's name: a uuid, as Claude Code names it.
+const sess1 = "11111111-2222-4333-8444-555555555555"
+
 func TestReadRules(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "sess1.jsonl"),
+	writeFile(t, filepath.Join(dir, sess1+".jsonl"),
 		// a user turn that merely mentions "usage" in its text: not a call
 		`{"type":"user","timestamp":"2026-11-18T10:00:00Z","message":{"content":"what is \"usage\"?"}}`,
 		// two streamed copies of one call: the larger output wins
@@ -93,9 +96,9 @@ func TestReadRules(t *testing.T) {
 		`{"type":"assistant","timestamp":"2026-11-18T10:07:00Z","message":{"id":"m4","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0}}}`,
 		`not json "usage"`,
 	)
-	writeFile(t, filepath.Join(dir, "sess1", "subagents", "agent-a.jsonl"),
+	writeFile(t, filepath.Join(dir, sess1, "subagents", "agent-a.jsonl"),
 		`{"type":"assistant","timestamp":"2026-11-18T10:01:00Z","message":{"id":"s1","model":"claude-haiku-5-5","usage":{"input_tokens":1,"output_tokens":1}}}`)
-	writeFile(t, filepath.Join(dir, "sess1", "subagents", "workflows", "wf_1", "agent-b.jsonl"),
+	writeFile(t, filepath.Join(dir, sess1, "subagents", "workflows", "wf_1", "agent-b.jsonl"),
 		`{"type":"assistant","timestamp":"2026-11-18T10:02:00Z","message":{"id":"w1","model":"claude-haiku-5-5","usage":{"input_tokens":1,"output_tokens":1}}}`)
 
 	rows, st, err := Read([]string{dir}, "box", time.Time{})
@@ -109,7 +112,7 @@ func TestReadRules(t *testing.T) {
 	if len(rows) != 5 || st.Copies != 1 || st.Synthetic != 1 {
 		t.Fatalf("rows %d, stats %+v", len(rows), st)
 	}
-	if m1 := by["m1"]; m1.Output != 9 || m1.CacheWrite1h != 40 || m1.CacheWrite5m != 0 || m1.Origin != OriginMain || m1.SessionID != "sess1" || m1.Host != "box" {
+	if m1 := by["m1"]; m1.Output != 9 || m1.CacheWrite1h != 40 || m1.CacheWrite5m != 0 || m1.Origin != OriginMain || m1.SessionID != sess1 || m1.Host != "box" {
 		t.Fatalf("m1 %+v", m1)
 	}
 	if m2 := by["m2"]; m2.CacheWrite5m != 70 || m2.CacheWrite1h != 0 {
@@ -118,7 +121,7 @@ func TestReadRules(t *testing.T) {
 	if m3 := by["m3"]; m3.CacheWrite5m != 50 || m3.CacheWrite1h != 20 {
 		t.Fatalf("m3 %+v", m3)
 	}
-	if by["s1"].Origin != OriginSubagent || by["w1"].Origin != OriginWorkflow || by["s1"].SessionID != "sess1" {
+	if by["s1"].Origin != OriginSubagent || by["w1"].Origin != OriginWorkflow || by["s1"].SessionID != sess1 || by["w1"].SessionID != sess1 {
 		t.Fatalf("origins %+v %+v", by["s1"], by["w1"])
 	}
 	// --since keeps calls at or after it
@@ -231,10 +234,11 @@ func TestReadPlacesFilesWhateverTheRoot(t *testing.T) {
 			`","model":"claude-opus-5-5","usage":{"input_tokens":1,"output_tokens":2}}}` + "\n"
 	}
 	files := map[string]string{
-		"-home-me-proj/s1.jsonl":                                  line("m-main"),
-		"-home-me-proj/s1/subagents/agent-a.jsonl":                line("m-sub"),
-		"-home-me-proj/s1/subagents/workflows/wf_1/agent-b.jsonl": line("m-wf"),
-		"-home-me-other/s2.jsonl":                                 line("m-other"),
+		"-home-me-proj/" + sess1 + ".jsonl":                                  line("m-main"),
+		"-home-me-proj/" + sess1 + "/subagents/agent-a.jsonl":                line("m-sub"),
+		"-home-me-proj/" + sess1 + "/subagents/workflows/wf_1/agent-b.jsonl": line("m-wf"),
+		"-home-me-other/s2.jsonl":                                            line("m-other"),
+		"-home-me-proj/notes/subagents/agent-c.jsonl":                        line("m-odd"),
 	}
 	for p, body := range files {
 		full := filepath.Join(root, filepath.FromSlash(p))
@@ -246,10 +250,13 @@ func TestReadPlacesFilesWhateverTheRoot(t *testing.T) {
 		}
 	}
 	want := map[string][2]string{
-		"m-main": {"s1", OriginMain}, "m-sub": {"s1", OriginSubagent},
-		"m-wf": {"s1", OriginWorkflow}, "m-other": {"s2", OriginMain},
+		"m-main": {sess1, OriginMain}, "m-sub": {sess1, OriginSubagent},
+		"m-wf": {sess1, OriginWorkflow}, "m-other": {"s2", OriginMain},
+		// a folder above subagents/ that is no session folder names no session
+		"m-odd": {UnknownSession, OriginSubagent},
 	}
-	for _, r := range []string{root, filepath.Join(root, "-home-me-proj"), filepath.Join(root, "-home-me-proj", "s1")} {
+	sessRoot := filepath.Join(root, "-home-me-proj", sess1)
+	for _, r := range []string{root, filepath.Join(root, "-home-me-proj"), sessRoot} {
 		rows, _, err := Read([]string{r}, "h", time.Time{})
 		if err != nil {
 			t.Fatal(err)
@@ -259,6 +266,9 @@ func TestReadPlacesFilesWhateverTheRoot(t *testing.T) {
 		}
 		for _, row := range rows {
 			w := want[row.MessageID]
+			if r == sessRoot && w[1] != OriginMain {
+				w[0] = UnknownSession // the root's own name is never a session
+			}
 			if row.SessionID != w[0] || row.Origin != w[1] {
 				t.Errorf("root %s, %s: session %q origin %q, want %q %q", r, row.MessageID, row.SessionID, row.Origin, w[0], w[1])
 			}
@@ -277,16 +287,16 @@ func callLine(id, ts, extra string) string {
 func TestPlaceUsesThePositionBelowTheRoot(t *testing.T) {
 	base := filepath.Join(t.TempDir(), "subagents", "workflows")
 	root := filepath.Join(base, "projects")
-	writeFile(t, filepath.Join(root, "-p", "s1.jsonl"), callLine("m-main", "2026-11-18T10:00:00Z", ""))
-	writeFile(t, filepath.Join(root, "-p", "s1", "subagents", "agent-a.jsonl"), callLine("m-sub", "2026-11-18T10:00:00Z", ""))
-	writeFile(t, filepath.Join(root, "-p", "s1", "subagents", "workflows", "wf", "agent-b.jsonl"), callLine("m-wf", "2026-11-18T10:00:00Z", ""))
+	writeFile(t, filepath.Join(root, "-p", sess1+".jsonl"), callLine("m-main", "2026-11-18T10:00:00Z", ""))
+	writeFile(t, filepath.Join(root, "-p", sess1, "subagents", "agent-a.jsonl"), callLine("m-sub", "2026-11-18T10:00:00Z", ""))
+	writeFile(t, filepath.Join(root, "-p", sess1, "subagents", "workflows", "wf", "agent-b.jsonl"), callLine("m-wf", "2026-11-18T10:00:00Z", ""))
 	// too deep to be either: a main session by the file name
-	writeFile(t, filepath.Join(root, "-p", "s1", "subagents", "x", "y", "agent-c.jsonl"), callLine("m-deep", "2026-11-18T10:00:00Z", ""))
+	writeFile(t, filepath.Join(root, "-p", sess1, "subagents", "x", "y", "agent-c.jsonl"), callLine("m-deep", "2026-11-18T10:00:00Z", ""))
 	rows, _, err := Read([]string{root}, "h", time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string][2]string{"m-main": {"s1", OriginMain}, "m-sub": {"s1", OriginSubagent}, "m-wf": {"s1", OriginWorkflow}, "m-deep": {"agent-c", OriginMain}}
+	want := map[string][2]string{"m-main": {sess1, OriginMain}, "m-sub": {sess1, OriginSubagent}, "m-wf": {sess1, OriginWorkflow}, "m-deep": {"agent-c", OriginMain}}
 	for _, r := range rows {
 		if w := want[r.MessageID]; r.SessionID != w[0] || r.Origin != w[1] {
 			t.Errorf("%s: %q %q, want %q %q", r.MessageID, r.SessionID, r.Origin, w[0], w[1])
@@ -295,10 +305,10 @@ func TestPlaceUsesThePositionBelowTheRoot(t *testing.T) {
 	if len(rows) != len(want) {
 		t.Fatalf("%d rows", len(rows))
 	}
-	// the session folder as root: the session is the folder's name
-	rows, _, _ = Read([]string{filepath.Join(root, "-p", "s1")}, "h", time.Time{})
+	// the session folder as root: its name is the root's, never a session
+	rows, _, _ = Read([]string{filepath.Join(root, "-p", sess1)}, "h", time.Time{})
 	for _, r := range rows {
-		if r.MessageID == "m-sub" && r.SessionID != "s1" {
+		if r.MessageID == "m-sub" && r.SessionID != UnknownSession {
 			t.Errorf("session folder as root: %+v", r)
 		}
 	}

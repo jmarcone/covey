@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"covey/internal/usagepush"
 )
 
 const (
@@ -15,7 +17,14 @@ const (
 	sessB = "7d1e0a3b-2222-4333-8444-a55556666777"
 )
 
-// projectsTree makes the ~/.claude/projects of a user "tester" on Windows
+// folder is the name Claude Code gives the project folder of
+// <home>/projects/<name>, for the store root = <home>/.claude/projects: the
+// home is known from the store's path.
+func folder(root, name string) string {
+	return usagepush.EncodePath(filepath.Dir(filepath.Dir(root))) + "-projects-" + name
+}
+
+// projectsTree makes the ~/.claude/projects of a user "tester"
 // with four project folders: a (a main session and its subagent), b (a call
 // and a line broken long ago), c (a transcript without any call) and d
 // (memory only, its transcripts cleaned up: no source).
@@ -34,17 +43,17 @@ func projectsTree(t *testing.T) string {
 		return `{"type":"assistant","timestamp":"2026-11-18T10:00:00Z","cwd":"C:\\Users\\tester\\projects\\a","message":{"id":"` + id +
 			`","model":"claude-opus-5-5","content":[{"type":"text","text":"see /home/tester/PRIVATETEXT"}],"usage":{"input_tokens":1,"output_tokens":2}}}`
 	}
-	a := filepath.Join(root, "C--Users-tester-projects-a")
+	a := filepath.Join(root, folder(root, "a"))
 	write(filepath.Join(a, sessA+".jsonl"), call("a1"))
 	write(filepath.Join(a, sessA, "subagents", "agent-x.jsonl"), call("a2"))
-	b := filepath.Join(root, "c--Users-tester-projects-b")
+	b := filepath.Join(root, folder(root, "b"))
 	write(filepath.Join(b, sessB+".jsonl"), call("b1"))
 	bad := filepath.Join(b, "broken.jsonl")
 	write(bad, `{"type":"assistant","message":{"usage":{"input_tok`, "{}")
 	old := time.Now().Add(-time.Hour)
 	os.Chtimes(bad, old, old)
-	write(filepath.Join(root, "C--Users-tester-projects-c", sessB+".jsonl"), `{"type":"user","message":{"content":"hi"}}`)
-	write(filepath.Join(root, "C--Users-tester-projects-d", "memory", "MEMORY.md"), "notes")
+	write(filepath.Join(root, folder(root, "c"), sessB+".jsonl"), `{"type":"user","message":{"content":"hi"}}`)
+	write(filepath.Join(root, folder(root, "d"), "memory", "MEMORY.md"), "notes")
 	return root
 }
 
@@ -54,7 +63,7 @@ func projectsTree(t *testing.T) string {
 // transcript is no source and sends nothing.
 func TestUsagePushPerProjectClaimsPerSource(t *testing.T) {
 	root := projectsTree(t)
-	label := "C--Users-tester-projects-a=covey operator"
+	label := folder(root, "a") + "=covey operator"
 	bodies, out, _, err := pushTo(t, root, "--source-per-project", "--label", label, "--host", "h1", "--complete", "--meter-secret", "claude_code_oauth_token")
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +143,7 @@ func TestUsagePushPerProjectDryRun(t *testing.T) {
 	root := projectsTree(t)
 	var out bytes.Buffer
 	err := runUsage([]string{"push", root, "--source-per-project", "--no-meter", "--complete", "--host", "h1", "--dry-run",
-		"--label", "C--Users-tester-projects-a=covey operator"}, &out, func(string) string { return "" })
+		"--label", folder(root, "a") + "=covey operator"}, &out, func(string) string { return "" })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +226,7 @@ func TestUsagePushPerProjectLinkedSessionWithholdsItsClaim(t *testing.T) {
 	root := projectsTree(t)
 	elsewhere := t.TempDir()
 	os.WriteFile(filepath.Join(elsewhere, "x.jsonl"), []byte("{}\n"), 0o644)
-	e := filepath.Join(root, "C--Users-tester-projects-e")
+	e := filepath.Join(root, folder(root, "e"))
 	os.MkdirAll(e, 0o755)
 	if err := os.Symlink(elsewhere, filepath.Join(e, sessA)); err != nil {
 		t.Skip("no symlinks:", err)
@@ -233,5 +242,23 @@ func TestUsagePushPerProjectLinkedSessionWithholdsItsClaim(t *testing.T) {
 		if b["source"] == "projects-e" {
 			t.Errorf("projects-e has nothing to send: %v", b)
 		}
+	}
+}
+
+// A dangling link where a session folder was makes the folder a source (it
+// is no empty folder), and withholds that source's claim.
+func TestUsagePushPerProjectDanglingLinkWithholdsItsClaim(t *testing.T) {
+	root := projectsTree(t)
+	f := filepath.Join(root, folder(root, "f"))
+	os.MkdirAll(f, 0o755)
+	if err := os.Symlink(filepath.Join(t.TempDir(), "gone"), filepath.Join(f, sessA)); err != nil {
+		t.Skip("no symlinks:", err)
+	}
+	bodies, out, _, err := pushTo(t, root, "--source-per-project", "--no-meter", "--host", "h1", "--complete")
+	if err != nil || len(bodies) != 3 {
+		t.Fatalf("%v, %d bodies\n%s", err, len(bodies), out)
+	}
+	if !strings.Contains(out, `no reported_through sent for "projects-f": 1 entries are neither a file nor a directory`) {
+		t.Errorf("output:\n%s", out)
 	}
 }

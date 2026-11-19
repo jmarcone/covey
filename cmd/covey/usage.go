@@ -250,7 +250,7 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 		for _, p := range s.st.Other {
 			fmt.Fprintf(usageStderr, "warning: %s is neither a regular file nor a directory; it is left out\n", p)
 		}
-		own := sourceProblems(s.st)
+		own := sourceProblems(s.st, *perProject)
 		for _, w := range own {
 			if *perProject {
 				fmt.Fprintf(info, "no reported_through sent for %q: %s\n", s.name, w)
@@ -401,9 +401,15 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 	return nil
 }
 
-// sourceProblems says why a read may lack calls of its source.
-func sourceProblems(st usagepush.Stats) []string {
+// sourceProblems says why a read may lack calls of its source. Per project,
+// an entry that is neither file nor directory (a dangling link where a
+// session folder was) withholds the claim too: the folder is a source only
+// because of it.
+func sourceProblems(st usagepush.Stats, perProject bool) []string {
 	var why []string
+	if perProject && len(st.Other) > 0 {
+		why = append(why, fmt.Sprintf("%d entries are neither a file nor a directory (a dangling link?)", len(st.Other)))
+	}
 	if len(st.Symlinks) > 0 {
 		why = append(why, fmt.Sprintf("%d symlinked directories were not followed", len(st.Symlinks)))
 	}

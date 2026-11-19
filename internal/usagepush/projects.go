@@ -57,73 +57,76 @@ var userHomeDir = os.UserHomeDir
 // or digit becomes "-", so the user name's own end cannot be read from a
 // folder name (jean.marc, jean-marc and "jean marc" are all jean-marc).
 var homeHeads = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)^[a-z]--users-`),                          // C:\Users\<name>
-	regexp.MustCompile(`^-home-`),                                     // /home/<name>
-	regexp.MustCompile(`^-Users-`),                                    // /Users/<name> (macOS)
-	regexp.MustCompile(`(?i)^--wsl(-localhost-|--)[a-z0-9-]*?-home-`), // \\wsl.localhost\<distro>\home\<name>
+	regexp.MustCompile(`(?i)^[a-z]--users-`), // C:\Users\<name>
+	regexp.MustCompile(`^-home-`),            // /home/<name>
+	regexp.MustCompile(`^-Users-`),           // /Users/<name> (macOS)
 }
+
+// wslHead is the start of a WSL directory opened from Windows,
+// \\wsl.localhost\<distro>\home\<name>: the folder is read as -home-<name>….
+var wslHead = regexp.MustCompile(`(?i)^--wsl(-localhost-|--)[a-z0-9-]*?-home-`)
 
 var rootHome = regexp.MustCompile(`^-root(-|$)`) // /root
 
 // Errors of HomeLabel.
 var (
 	ErrNoHome        = errors.New("no home directory recognised in the folder name")
-	ErrAmbiguousHome = errors.New("the user name in the folder name may be longer than it looks")
+	ErrAmbiguousHome = errors.New("the home directory in the folder name cannot be told for sure")
 )
 
 // HomeLabel is the label of the folder named folder: its name without the
-// encoded home directory, "~" for the home directory itself.
+// encoded home directory, "~" for the home directory itself. It fails closed:
+// a label is given only when the home is known for sure.
 //
-// homes are the --home-prefix values; given, only they are stripped. Else a
-// home in known (encoded, known for sure) is stripped; else the start of a
-// home is recognised (C--Users-, -home-, -Users-, -root, a WSL home seen from
-// Windows) and the user name after it taken from known when one fits, or as
-// one run of letters and digits. That run is refused (ErrAmbiguousHome) when
-// a known user name begins with it and goes on ("jean" of "jean-marc"): the
-// rest of the label could be the rest of the user name. ErrNoHome: the name
-// might hold a user name; the folder needs --home-prefix or --label.
-func HomeLabel(folder string, homes, known []string) (string, error) {
+// homes are the --home-prefix values; given, only they are stripped. Else
+// the folder must lie in exactly one of the candidate homes: known (the
+// homes known for sure) and others (the other users' homes listed beside
+// them). A folder that fits two (marco and marco-rossi) is ErrAmbiguousHome.
+// A WSL folder seen from Windows is read as its -home-… form. A folder in no
+// candidate home is labelled only when it is a bare home (C--Users-me is
+// "~") or below /root; any other text after a home's start could hold the
+// rest of a user name (ErrAmbiguousHome), and a folder without a home's
+// start might hold one (ErrNoHome). Both need --home-prefix or --label.
+func HomeLabel(folder string, homes, known, others []string) (string, error) {
 	if len(homes) > 0 {
 		if l, ok := stripHome(folder, homes); ok {
 			return l, nil
 		}
 		return "", ErrNoHome
 	}
-	if l, ok := stripHome(folder, known); ok {
-		return l, nil
+	f := folder
+	if m := wslHead.FindString(f); m != "" {
+		f = "-home-" + f[len(m):]
 	}
-	users := knownUsers(known)
-	for _, h := range homeHeads {
-		m := h.FindString(folder)
-		if m == "" {
+	var fits []string
+	for _, c := range append(append([]string{}, known...), others...) {
+		if !hasHomePrefix(f, c) {
 			continue
 		}
-		rest := folder[len(m):]
-		best := ""
-		for _, u := range users {
-			if len(u) > len(best) && hasHomePrefix(rest, u) {
-				best = u
-			}
+		dup := false
+		for _, x := range fits {
+			dup = dup || strings.EqualFold(x, c)
 		}
-		if best != "" {
-			return labelAfter(rest[len(best):]), nil
+		if !dup {
+			fits = append(fits, c)
 		}
-		name, after, _ := strings.Cut(rest, "-")
-		if name == "" {
-			return "", ErrNoHome
-		}
-		for _, u := range users {
-			if len(u) > len(name) && strings.EqualFold(u[:len(name)+1], name+"-") {
-				return "", ErrAmbiguousHome
-			}
-		}
-		if after == "" && !strings.HasSuffix(rest, "-") {
-			return "~", nil
-		}
-		return labelAfter("-" + after), nil
 	}
-	if m := rootHome.FindString(folder); m != "" {
-		return labelAfter(folder[len("-root"):]), nil
+	switch {
+	case len(fits) == 1:
+		return labelAfter(f[len(fits[0]):]), nil
+	case len(fits) > 1:
+		return "", ErrAmbiguousHome
+	}
+	if rootHome.MatchString(f) {
+		return labelAfter(f[len("-root"):]), nil
+	}
+	for _, h := range homeHeads {
+		if m := h.FindString(f); m != "" {
+			if rest := f[len(m):]; rest != "" && !strings.Contains(rest, "-") {
+				return "~", nil
+			}
+			return "", ErrAmbiguousHome
+		}
 	}
 	return "", ErrNoHome
 }
@@ -157,15 +160,48 @@ func labelAfter(rest string) string {
 	return rest
 }
 
-// knownUsers are the user names of the known homes, dashes included.
-func knownUsers(known []string) []string {
+// readDir is os.ReadDir, replaced in tests.
+var readDir = os.ReadDir
+
+var (
+	winHome = regexp.MustCompile(`(?i)^([a-z])--users-`)
+	mntHome = regexp.MustCompile(`^-mnt-([a-z])-Users-`)
+)
+
+// otherHomes lists the homes beside the known ones (the other entries of
+// C:\Users, /mnt/c/Users, /home, /Users), encoded, so that a folder of
+// another user whose name starts like a known one (marco-rossi beside marco)
+// is seen to fit two homes. A directory that cannot be listed adds none.
+func otherHomes(known []string) []string {
 	var out []string
-	for _, k := range known {
-		for _, h := range homeHeads {
-			if m := h.FindString(k); m != "" && len(k) > len(m) {
-				out = append(out, k[len(m):])
-				break
+	seen := map[string]bool{}
+	list := func(head string, dirs ...string) {
+		for _, d := range dirs {
+			if seen[d] {
+				continue
 			}
+			seen[d] = true
+			ents, err := readDir(d)
+			if err != nil {
+				continue
+			}
+			for _, e := range ents {
+				out = append(out, head+EncodePath(e.Name()))
+			}
+		}
+	}
+	for _, k := range known {
+		switch {
+		case winHome.MatchString(k):
+			d := winHome.FindStringSubmatch(k)[1]
+			list(strings.ToUpper(d)+"--Users-", strings.ToUpper(d)+`:\Users`, "/mnt/"+strings.ToLower(d)+"/Users")
+		case mntHome.MatchString(k):
+			d := mntHome.FindStringSubmatch(k)[1]
+			list("-mnt-"+d+"-Users-", "/mnt/"+d+"/Users")
+		case strings.HasPrefix(k, "-home-"):
+			list("-home-", "/home")
+		case strings.HasPrefix(k, "-Users-"):
+			list("-Users-", "/Users")
 		}
 	}
 	return out
@@ -255,7 +291,7 @@ func folderKey(f string) string {
 	return f
 }
 
-var uuidName = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+var uuidName = sessionName
 
 // encodedName: a directory name as Claude Code names a project folder.
 var encodedName = regexp.MustCompile(`^(-|[A-Za-z]--)`)
@@ -373,13 +409,14 @@ func Projects(roots []string, rules LabelRules) ([]Project, error) {
 	}
 
 	known := append(knownHomes(roots), rules.Known...)
+	others := otherHomes(known)
 	var out []Project
 	var unknown, ambiguous []string
 	bySource := map[string]string{}
 	for _, k := range keys {
 		label, ok := labels[k]
 		if !ok {
-			l, err := HomeLabel(k, rules.Homes, known)
+			l, err := HomeLabel(k, rules.Homes, known, others)
 			switch {
 			case errors.Is(err, ErrAmbiguousHome):
 				ambiguous = append(ambiguous, k)
@@ -407,7 +444,7 @@ func Projects(roots []string, rules LabelRules) ([]Project, error) {
 	}
 	var errs []string
 	if len(ambiguous) > 0 {
-		errs = append(errs, fmt.Sprintf("in these project folder names the user name may go on past where it seems to end, so their labels might hold part of it: %s", strings.Join(ambiguous, ", ")))
+		errs = append(errs, fmt.Sprintf("the home directory in these project folder names cannot be told for sure, so their labels might hold (part of) a user name: %s", strings.Join(ambiguous, ", ")))
 	}
 	if len(unknown) > 0 {
 		errs = append(errs, fmt.Sprintf("the home directory in these project folder names is not known, so their labels might hold a user name: %s", strings.Join(unknown, ", ")))

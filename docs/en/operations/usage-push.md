@@ -79,7 +79,9 @@ covey usage push ~/.claude/projects/<project> --source "operator: laptop" \
   unencrypted.
 - A directory may be one project (`~/.claude/projects/<project>`), all of
   `~/.claude/projects`, or one session's folder: the session and its origin
-  come from each file's own place, not from the directory named.
+  come from each file's own place, not from the directory named. A subagent
+  call whose folder above `subagents/` is no session folder below the
+  directory named (a uuid) gets the session `unknown`.
 - Several directories may be named at once. Main sessions, `subagents/` and
   `workflows/` transcripts are read; streamed copies of one call count once.
 
@@ -107,31 +109,33 @@ covey usage push ~/.claude/projects --source-per-project --complete --host home-
   The home directory's own folder is `~`.
 - **The home directory.** Because of that encoding a folder name does not
   say where a user name ends: `jean-marc`, `jean.marc` and `jean marc` are
-  all `jean-marc`. So the push first strips the homes it knows for sure: the
-  directory above the `.claude/projects` named (seen from WSL,
+  all `jean-marc`. So a label is derived only from a home known for sure:
+  the directory above the `.claude/projects` named (seen from WSL,
   `/mnt/c/Users/jean.marc` is also known as Windows writes it,
-  `C--Users-jean-marc`), and the home directory of the user running the
-  push. Only for folders outside those does it read the home from the name:
-  `<drive>--Users-<name>-`, `-home-<name>-`, `-Users-<name>-` (macOS),
-  `-root-`, and `--wsl-localhost-<distro>-home-<name>-` for a WSL directory
-  opened from Windows; the name is then a known user name when one fits,
-  else one run of letters and digits. If that run is only the start of a
-  known user name (`jean` of `jean-marc`), the push stops rather than send
-  the rest of the name as a label.
+  `C--Users-jean-marc`) and the home directory of the user running the
+  push; a WSL folder opened from Windows
+  (`--wsl-localhost-<distro>-home-<name>-…`) is read as its `-home-…` form.
+  A folder must lie in exactly one candidate home: the other users' homes
+  beside a known one (the other entries of `C:\Users`, `/home`) are
+  candidates too, so a folder of `marco-rossi` next to a known `marco`
+  fits two and is refused. Outside the known homes nothing is guessed: only
+  a bare home (`C--Users-me` is `~`) and folders below `/root` get a label;
+  any other folder stops the push and asks for `--home-prefix` or
+  `--label`.
 - `--home-prefix HOME` names the home directory instead, as a path
   (`C:\Users\jean.marc`, `/home/me`) or encoded (`C--Users-jean-marc`). It
   may be given several times; the longest that fits a folder wins, and only
-  the homes given are stripped. Give it when the transcripts are not in a
-  `.claude/projects` of their user (a copy, `CLAUDE_CONFIG_DIR`) and the user
-  name holds a character other than a letter or digit.
+  the homes given are stripped. Give it when the transcripts are not in the
+  `.claude/projects` of the user running the push (a copy,
+  `CLAUDE_CONFIG_DIR`, another user's store).
 - `--label FOLDER=LABEL` (several times) labels one folder, for example the
   covey operator's project `"covey operator"`. A `--label` for a folder that
   is not there is an error, so a typo does not send the derived label.
 - `--source PREFIX` is optional here: with it each source is
   `PREFIX: LABEL` (`home: covey operator`), without it the label alone.
 - **One stray folder stops every source.** A folder whose home is not
-  recognised (a project outside the home, `D:\work\x` is `D--work-x`) or is
-  ambiguous, a source over 64 characters, or two folders with one source
+  known for sure (a project outside the home, `D:\work\x` is `D--work-x`;
+  another user's store) or fits two homes, a source over 64 characters, or two folders with one source
   (two spellings that are not the same directory) stop the whole push: until
   that folder gets a `--label` (or the home a `--home-prefix`), nothing is
   sent and no source claims. The error lists every such folder. Run with
@@ -145,10 +149,13 @@ covey usage push ~/.claude/projects --source-per-project --complete --host home-
   session folders itself, and no project folders, is one project; a
   session's own folder is refused.
 - **Privacy:** only the label and the token counts leave the machine. No
-  path, no folder name, no user name, no content. Session id and origin are
-  read as above, from each file's place below its project folder; a
-  `subagents/` directly in a project folder, with no session folder above
-  it, gets the session `unknown`, never the folder's name.
+  path, no folder name, no user name, no content: a label is derived only
+  when the home in the folder name is known for sure, and otherwise the
+  push stops; a `--label` or `--home-prefix` you give is sent as you give
+  it. The session id is the session folder's uuid or the transcript's file
+  name; a call whose folder above `subagents/` is no session folder (a
+  `subagents/` directly in a project folder, or the named directory itself)
+  gets the session `unknown`, never a folder's name.
 - Each source is sent in its own requests with its own `reported_through`,
   under the same `--host` and `--meter-secret`. With `--complete` each source
   claims: it is one whole project folder, read whole, so it is complete by
@@ -184,13 +191,6 @@ covey usage push ~/.claude/projects --source-per-project --complete --host home-
   Remove the old source with `DELETE /api/v1/cost/external-usage?source=…`
   (its calls, meter link and claims); until then it also holds the meter
   split back, as "not reported", for up to seven days after its last push.
-
-## After an upgrade
-
-Since 748a2a19, on equal output the later streamed copy of a call is kept
-(as the measurement script does), where the earlier one was before. The
-first push after the upgrade therefore reports a number of calls as
-updated, once; later pushes report them unchanged.
 
 ## Every ten minutes
 

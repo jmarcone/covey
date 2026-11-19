@@ -132,9 +132,12 @@ var clock = time.Now
 // walkDir is filepath.WalkDir, replaced in tests.
 var walkDir = filepath.WalkDir
 
-// UnknownSession is the session of a subagent transcript that lies directly
-// in a project folder's subagents/, with no session folder above it.
+// UnknownSession is the session of a subagent transcript whose folder above
+// subagents/ is no session folder below the root (see place).
 const UnknownSession = "unknown"
+
+// sessionName is the name of a session folder: a uuid.
+var sessionName = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // ValidText says whether s is acceptable as the intake's text field: UTF-8, no
 // NUL, at most MaxText bytes.
@@ -266,7 +269,7 @@ func read(roots []string, host string, since time.Time, project bool) ([]Row, St
 			if err != nil {
 				return nil, st, err
 			}
-			session, origin := place(root, abs, project)
+			session, origin := place(root, abs)
 			st.Files++
 			err = readFile(f, func(l *line, no int) bool {
 				m := l.Message
@@ -375,10 +378,11 @@ func read(roots []string, host string, since time.Time, project bool) ([]Row, St
 // <session>/subagents/workflows/<wf>/<file> a workflow agent, and any other
 // file a main session named after the file. The root may be all projects, one
 // project, or one session's folder (then <session> is the root's own name).
-// Nothing above the root is looked at. With project set the root is a project
-// folder, whose name is never a session: a subagents/ directory right below
-// it gives the session UnknownSession.
-func place(root, abs string, project bool) (session, origin string) {
+// Nothing above the root is looked at. The session of a subagent or workflow
+// call is the folder above subagents/ only when that is a session folder
+// below the root (named by a uuid); otherwise, the root's own name included,
+// it is UnknownSession: a project folder's name holds its home directory.
+func place(root, abs string) (session, origin string) {
 	rel, err := filepath.Rel(root, abs)
 	if err == nil && rel == "." { // the root is the file itself
 		return strings.TrimSuffix(filepath.Base(abs), ".jsonl"), OriginMain
@@ -389,13 +393,10 @@ func place(root, abs string, project bool) (session, origin string) {
 	parts := strings.Split(filepath.ToSlash(rel), "/")
 	n := len(parts)
 	sessionAt := func(k int) string { // the directory just above parts[k]
-		if k > 0 {
+		if k > 0 && sessionName.MatchString(parts[k-1]) {
 			return parts[k-1]
 		}
-		if project {
-			return UnknownSession
-		}
-		return filepath.Base(root)
+		return UnknownSession
 	}
 	for k := 0; k < n-1; k++ {
 		if parts[k] != "subagents" {
