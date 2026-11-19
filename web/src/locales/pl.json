@@ -655,7 +655,8 @@
       "monthlyMeter": "Miesięczny limit użycia ({{window}}): {{from}} % → {{to}} % ({{pts}} punktów z {{n}} odczytów)",
       "monthlyResets": "reset {{date}}",
       "monthlyNoLimit": "nie wpisano limitu: jego ruch nie jest jeszcze pieniędzmi",
-      "monthlyMoney": "z licznika: {{amount}}"
+      "monthlyMoney": "z licznika: {{amount}}",
+      "noPlace": "Czekam na załadowanie środowiska tego poświadczenia: zapis będzie możliwy, gdy się załaduje."
     },
     "incl": {
       "split": "agenci covey {{covey}} · sesje spoza covey {{outside}}",
@@ -744,7 +745,8 @@
       "credentials": "Poświadczenia: {{list}}.",
       "byBill": "rachunek",
       "byCharges": "opłaty za użycie",
-      "hint": "Ceny tokenów dotyczą przedziałów, które pokrywają prawdziwe pieniądze: okna rachunku klucza API i przedziałów policzonych opłat za użycie (okresy brzegowe proporcjonalnie do czasu). Osobno od licznika subskrypcji i nigdy do niego nie dodawane."
+      "hint": "Ceny tokenów dotyczą przedziałów, które pokrywają prawdziwe pieniądze: okna rachunku klucza API i przedziałów policzonych opłat za użycie (okresy brzegowe proporcjonalnie do czasu). Osobno od licznika subskrypcji i nigdy do niego nie dodawane.",
+      "rates": "W USD tylko po kursach wpisanych przez osobę: {{rates}}."
     }
   },
   "lang": {

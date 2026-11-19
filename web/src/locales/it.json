@@ -655,7 +655,8 @@
       "monthlyMeter": "Limite d'uso mensile ({{window}}): {{from}} % → {{to}} % ({{pts}} punti da {{n}} letture)",
       "monthlyResets": "si azzera il {{date}}",
       "monthlyNoLimit": "nessun limite inserito: il suo movimento non è ancora denaro",
-      "monthlyMoney": "dal contatore: {{amount}}"
+      "monthlyMoney": "dal contatore: {{amount}}",
+      "noPlace": "In attesa che il runtime di questa credenziale venga caricato: si potrà salvare appena pronto."
     },
     "incl": {
       "split": "agenti covey {{covey}} · sessioni esterne {{outside}}",
@@ -744,7 +745,8 @@
       "credentials": "Credenziali: {{list}}.",
       "byBill": "fattura",
       "byCharges": "addebiti d'uso",
-      "hint": "I prezzi per token valgono sugli intervalli coperti dal denaro reale: la finestra di fatturazione di una chiave API e gli intervalli degli addebiti d'uso conteggiati (periodi di confine pro rata nel tempo). Separato dal contatore dell'abbonamento e mai sommato a esso."
+      "hint": "I prezzi per token valgono sugli intervalli coperti dal denaro reale: la finestra di fatturazione di una chiave API e gli intervalli degli addebiti d'uso conteggiati (periodi di confine pro rata nel tempo). Separato dal contatore dell'abbonamento e mai sommato a esso.",
+      "rates": "In USD solo ai cambi inseriti da una persona: {{rates}}."
     }
   },
   "lang": {

@@ -1698,8 +1698,13 @@ export function subscriptionDent(ext: ExternalUsage | null | undefined): Subscri
 // Its headline sets the lead figure (as reported by Claude Code: covey's
 // agents and the outside sessions linked to the credential) over the spans
 // that money covers against that money: in USD where all of it is, and then
-// one multiple; per currency otherwise, with no multiple and why. Apart from
-// the subscription headline, never added to a weekly meter's real cost.
+// one multiple; per currency otherwise, with no multiple and why. A charge in
+// another currency is in USD only at the rate a person entered with its date
+// (the server's counted_usd): that is intended, and the rate stands beside
+// the multiple; covey never converts at a rate of its own. Apart from the
+// subscription headline and never added to a weekly meter's real cost; a
+// credential the subscription headline covers (external.meter.credentials,
+// whose list and usage charges it already shows) is not in it at all.
 
 /** One credential whose money is per token. */
 export type PayPerTokenCredential = {
@@ -1735,6 +1740,10 @@ export type PayPerTokenHeadline = {
   why: "rate" | "list" | "money" | null;
   /** The currencies with no USD figure. */
   noRate: string[];
+  /** The rates the counted non-USD charges are in USD at: each one a person
+   *  entered with its date, never one covey looked up. Shown beside the
+   *  multiple. */
+  rates: { currency: string; rate: number; date: string }[];
 };
 
 /** Counted charges of several credentials, per currency: summed within a
@@ -1775,9 +1784,13 @@ export function payPerTokenHeadline(cells: CostCells | null | undefined, figures
   const realParts = sourceRealParts(ext);
   const from = windowStartOf(cells)?.getTime() ?? -Infinity, to = windowEnd.getTime();
   const creds: PayPerTokenCredential[] = [];
+  const rates = new Map<string, { currency: string; rate: number; date: string }>();
+  // The seats the subscription headline (headline()) shows, their list and
+  // their usage charges with them: never a second time here.
+  const covered = new Set((ext?.meter?.credentials ?? []).map((c) => credId(c.secret_key, c.secret_slot)));
   let pending = false;
   for (const f of figures) {
-    if (f.secretKey == null) continue;
+    if (f.secretKey == null || covered.has(f.id)) continue;
     const key = f.secretKey, slot = f.slot!;
     const linked = new Set((ext?.sources ?? []).filter((s) => listedSource(s, realParts)
       && s.meter_credential?.secret_key === key && s.meter_credential.secret_slot === slot).map((s) => s.source));
@@ -1797,6 +1810,11 @@ export function payPerTokenHeadline(cells: CostCells | null | undefined, figures
     const own = cells.cells.filter((c) => credId(c.secret_key, c.secret_slot) === f.id);
     creds.push({ id: f.id, name, money: "charges", coveyList: listOverSpans(own, spans, bucketMs, from, to, leadOf),
       outsideList: outside(spans), billed: null, currencies: u.currencies });
+    for (const c of u.charges) {
+      const cur = c.currency.toUpperCase();
+      if (isExportCharge(c) || !(c.counted_amount > 0) || cur === "USD" || c.fx_to_usd == null || !c.fx_date) continue;
+      rates.set(`${cur}/${c.fx_to_usd}/${c.fx_date}`, { currency: cur, rate: c.fx_to_usd, date: c.fx_date });
+    }
   }
   if (creds.length === 0) return null;
   const bills = creds.filter((c) => c.billed != null);
@@ -1810,5 +1828,6 @@ export function payPerTokenHeadline(cells: CostCells | null | undefined, figures
   return {
     credentials: creds, list, coveyList, outsideList, billed, billedPending: pending, charges, realUsd,
     multiple: why == null ? list / realUsd! : null, why, noRate,
+    rates: [...rates.values()].sort((a, b) => a.currency.localeCompare(b.currency) || a.date.localeCompare(b.date)),
   };
 }

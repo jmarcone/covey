@@ -655,7 +655,8 @@
       "monthlyMeter": "月度用量上限（{{window}}）: {{from}} % → {{to}} %（{{n}} 次读数，{{pts}} 点）",
       "monthlyResets": "{{date}} 重置",
       "monthlyNoLimit": "未录入上限: 其变动尚不构成金额",
-      "monthlyMoney": "来自计量: {{amount}}"
+      "monthlyMoney": "来自计量: {{amount}}",
+      "noPlace": "正在等待此凭据的运行时加载: 加载完成后即可保存。"
     },
     "incl": {
       "split": "covey 智能体 {{covey}} · covey 外会话 {{outside}}",
@@ -744,7 +745,8 @@
       "credentials": "凭据: {{list}}。",
       "byBill": "账单",
       "byCharges": "用量费用",
-      "hint": "token 价格按实际花费覆盖的时段计算: API 密钥的账单窗口，以及已计入的用量费用所覆盖的时段（边界时段按时间比例）。与订阅计量分开，从不相加。"
+      "hint": "token 价格按实际花费覆盖的时段计算: API 密钥的账单窗口，以及已计入的用量费用所覆盖的时段（边界时段按时间比例）。与订阅计量分开，从不相加。",
+      "rates": "仅按人工录入的汇率换算为美元: {{rates}}。"
     }
   },
   "lang": {

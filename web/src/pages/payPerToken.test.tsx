@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { BilledReport, CostCells, CredentialBasis, MeterCoverage, WindowCharge } from "../api";
+import type { BilledReport, CostCells, CredentialBasis, ExternalUsage, MeterCoverage, WindowCharge } from "../api";
 import i18n from "../i18n";
 import { mockFetch, renderWithProviders } from "../test/render";
 import {
@@ -200,6 +200,21 @@ describe("the pay-per-token headline (0152)", () => {
     expect(h.list).toBeCloseTo(55);
     expect(h.multiple).toBeCloseTo(1, 6);
     expect(h.why).toBeNull();
+    // Converted only at the rate a person entered, and named beside the multiple.
+    expect(h.rates).toEqual([{ currency: "EUR", rate: 1.1, date: "2026-11-17" }]);
+    const { container } = renderWithProviders(<PayPerTokenRow h={h} filtered={false} />);
+    expect(container.querySelector("[data-ppt-rates]")!.textContent)
+      .toBe("In USD only at the rates a person entered: at 1.1000 USD per EUR (2026-11-17).");
+  });
+
+  it("leaves out a usage seat the subscription headline already shows (external.meter)", () => {
+    const data = seat([meterCharge({ fx_to_usd: 1.1, fx_date: "2026-11-17", counted_usd: 55 })]);
+    data.external = {
+      sources: [], cells: [],
+      meter: { credentials: [{ secret_key: SEAT, secret_slot: 0, sources: [], step_count: 2, usage_steps: 2, split_steps: 0 }], steps: [] },
+    } as unknown as ExternalUsage;
+    const figures = credentialFigures({ cells: data, bucketMs: HOUR, windowEnd: END });
+    expect(payPerTokenHeadline(data, figures, HOUR, END)).toBeNull();
   });
 
   it("gives a usage seat whose EUR meter charge has no rate no multiple, and says why", () => {
@@ -234,8 +249,13 @@ describe("the forms (0152)", () => {
     const fetchSpy = vi.mocked(globalThis.fetch);
     const { container } = renderWithProviders(<CostBasisPanel f={figure([])} name="Seat" editable />);
     const root = within(container);
-    await userEvent.click(await root.findByRole("button", { name: "Set monthly usage limit" }));
+    await userEvent.click(await root.findByRole("button", { name: "Set monthly usage limit for Seat" }));
     const form = root.getByRole("form", { name: "Set monthly usage limit for Seat" });
+    // The history stands before Save; the hint describes the amount.
+    const history = await within(form).findByText("No usage limit entered.");
+    const save = within(form).getByRole("button", { name: "Save" });
+    expect(history.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(form).getByLabelText("Limit per month")).toHaveAccessibleDescription(/^The money limit the monthly meter/);
     await userEvent.type(within(form).getByLabelText("Limit per month"), "1000");
     await userEvent.click(within(form).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(fetchSpy.mock.calls.some((c) => (c[1]?.method ?? "").toUpperCase() === "PUT")).toBe(true));
@@ -252,5 +272,27 @@ describe("the forms (0152)", () => {
     const post = fetchSpy.mock.calls.find((c) => (c[1]?.method ?? "").toUpperCase() === "POST")!;
     expect(JSON.parse(String(post[1]!.body))).toMatchObject({ amount: 120, kind: "export" });
     void calls;
+  });
+
+  it("takes a reading with a fractional percent", async () => {
+    mockFetch({
+      "/runtime-instances": [{ id: "rt-1", engine: "claude", display_name: "Claude", model: "", bindings: [], can_carry_blocking: false,
+        creds: [{ ord: 2, kind: "subscription", secret_key: SEAT, secret_slot: 0, label: "" }] }],
+      "POST /cost/usage-readings": {},
+    });
+    const fetchSpy = vi.mocked(globalThis.fetch);
+    const { container } = renderWithProviders(<CostBasisPanel f={figure([])} name="Seat" editable />);
+    const root = within(container);
+    await userEvent.click(await root.findByRole("button", { name: "Enter a meter reading for Seat" }));
+    const form = root.getByRole("form", { name: "Enter a meter reading for Seat" });
+    const pct = within(form).getByLabelText("Used (%)");
+    expect(pct).toHaveAttribute("step", "any");
+    expect(pct).toHaveAccessibleDescription(/^A reading you read off the provider/);
+    await userEvent.type(pct, "83.4");
+    await userEvent.click(within(form).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(fetchSpy.mock.calls.some((c) => (c[1]?.method ?? "").toUpperCase() === "POST")).toBe(true));
+    const post = fetchSpy.mock.calls.find((c) => (c[1]?.method ?? "").toUpperCase() === "POST")!;
+    expect(String(post[0])).toBe("/api/v1/cost/usage-readings");
+    expect(JSON.parse(String(post[1]!.body))).toMatchObject({ runtime_id: "rt-1", ord: 2, window_kind: "overage", percent: 83.4 });
   });
 });

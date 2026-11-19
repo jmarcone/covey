@@ -655,7 +655,8 @@
       "monthlyMeter": "Maandelijkse gebruikslimiet ({{window}}): {{from}} % → {{to}} % ({{pts}} punten uit {{n}} standen)",
       "monthlyResets": "reset op {{date}}",
       "monthlyNoLimit": "geen limiet ingevoerd: de beweging is nog geen geld",
-      "monthlyMoney": "uit de teller: {{amount}}"
+      "monthlyMoney": "uit de teller: {{amount}}",
+      "noPlace": "Wachten tot de runtime van deze inloggegevens is geladen: opslaan kan zodra die er is."
     },
     "incl": {
       "split": "covey-agents {{covey}} · sessies buiten covey {{outside}}",
@@ -744,7 +745,8 @@
       "credentials": "Inloggegevens: {{list}}.",
       "byBill": "rekening",
       "byCharges": "gebruikskosten",
-      "hint": "De tokenprijzen gelden over de periodes die het echte geld dekt: het rekeningvenster van een API-sleutel en de periodes van de getelde gebruikskosten (grensperiodes naar rato van de tijd). Los van de abonnementsteller en er nooit bij opgeteld."
+      "hint": "De tokenprijzen gelden over de periodes die het echte geld dekt: het rekeningvenster van een API-sleutel en de periodes van de getelde gebruikskosten (grensperiodes naar rato van de tijd). Los van de abonnementsteller en er nooit bij opgeteld.",
+      "rates": "In USD alleen tegen de koersen die iemand heeft ingevoerd: {{rates}}."
     }
   },
   "lang": {

@@ -655,7 +655,8 @@
       "monthlyMeter": "Monatliches Nutzungslimit ({{window}}): {{from}} % → {{to}} % ({{pts}} Punkte aus {{n}} Ständen)",
       "monthlyResets": "setzt zurück am {{date}}",
       "monthlyNoLimit": "kein Limit eingetragen: seine Bewegung ist noch kein Geld",
-      "monthlyMoney": "aus dem Zähler: {{amount}}"
+      "monthlyMoney": "aus dem Zähler: {{amount}}",
+      "noPlace": "Warte darauf, dass die Laufzeit dieser Zugangsdaten geladen ist: Speichern geht, sobald sie da ist."
     },
     "incl": {
       "split": "covey-Agenten {{covey}} · Sitzungen außerhalb {{outside}}",
@@ -744,7 +745,8 @@
       "credentials": "Zugangsdaten: {{list}}.",
       "byBill": "Rechnung",
       "byCharges": "Nutzungsabrechnungen",
-      "hint": "Die Tokenpreise gelten über die Spannen, die das echte Geld abdeckt: das Rechnungsfenster eines API-Schlüssels und die Spannen der gezählten Nutzungsabrechnungen (Randperioden anteilig nach Zeit). Getrennt vom Abo-Zähler und nie zu ihm addiert."
+      "hint": "Die Tokenpreise gelten über die Spannen, die das echte Geld abdeckt: das Rechnungsfenster eines API-Schlüssels und die Spannen der gezählten Nutzungsabrechnungen (Randperioden anteilig nach Zeit). Getrennt vom Abo-Zähler und nie zu ihm addiert.",
+      "rates": "In USD nur zu den Kursen, die jemand eingetragen hat: {{rates}}."
     }
   },
   "lang": {

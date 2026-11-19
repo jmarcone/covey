@@ -412,9 +412,18 @@ export function CostBasisPanel({ f, name, editable }: { f: CredentialFigures; na
         <div className="flex flex-wrap gap-2">
           <button type="button" className="btn sm ghost" onClick={openBasis}>{t("costs.basis.setBasis")}</button>
           <button type="button" className="btn sm ghost" onClick={openCharge}>{t("costs.basis.addCharge")}</button>
-          <button type="button" className="btn sm ghost" onClick={openLimit}>{t("costs.basis.setLimit")}</button>
-          <button type="button" className="btn sm ghost" onClick={openReading}>{t("costs.basis.addReading")}</button>
+          <button type="button" className="btn sm ghost" aria-label={t("costs.basis.limitForm", { name })} onClick={openLimit}>
+            {t("costs.basis.setLimit")}
+          </button>
+          <button type="button" className="btn sm ghost" aria-label={t("costs.basis.readingForm", { name })} onClick={openReading}>
+            {t("costs.basis.addReading")}
+          </button>
         </div>
+      )}
+      {/* Until the credential's runtime and position are known there is
+          nowhere to save to: Save stays off, and says why. */}
+      {editable && form !== "none" && !base && (
+        <p className="muted text-xs mt-1 mb-0" role="status" data-no-place>{t("costs.basis.noPlace")}</p>
       )}
       {editable && form === "limit" && (
         <form className="mt-2" aria-label={t("costs.basis.limitForm", { name })} onSubmit={(e) => {
@@ -424,11 +433,20 @@ export function CostBasisPanel({ f, name, editable }: { f: CredentialFigures; na
           if (cur !== "USD" && rateNum != null) Object.assign(body, { fx_to_usd: rateNum, fx_date: rateDate });
           saveLimit.mutate(body);
         }}>
+          {/* The history first: what held before is what a new limit closes. */}
+          {limits.data && limits.data.length === 0 && <p className="muted text-xs mt-0 mb-1" data-limit-history>{t("costs.basis.limitHistoryEmpty")}</p>}
+          {limits.data && limits.data.length > 0 && (
+            <ul className="text-xs mt-0 mb-1" style={{ paddingLeft: 16 }} aria-label={t("costs.basis.limitHistory", { name })} data-limit-history>
+              {limits.data.map((l) => (
+                <li key={`${l.valid_from}/${l.window_kind}`} data-limit={l.valid_from}>{limitLine(t, l)}</li>
+              ))}
+            </ul>
+          )}
           <div className="flex flex-wrap items-end gap-3">
             <label className="text-xs" htmlFor={`${uid}-lamount`}>
               <span className="block mb-1">{t("costs.basis.limitAmount")}</span>
               <input id={`${uid}-lamount`} type="number" inputMode="decimal" min="0" step="0.01" required value={amount}
-                style={{ width: 110 }} onChange={(e) => setAmount(e.target.value)} />
+                aria-describedby={`${uid}-lhint`} style={{ width: 110 }} onChange={(e) => setAmount(e.target.value)} />
             </label>
             <label className="text-xs" htmlFor={`${uid}-lcur`}>
               <span className="block mb-1">{t("costs.basis.currency")}</span>
@@ -451,21 +469,13 @@ export function CostBasisPanel({ f, name, editable }: { f: CredentialFigures; na
               <input id={`${uid}-lfrom`} type="datetime-local" required value={limitFrom} onChange={(e) => setLimitFrom(e.target.value)} />
             </label>
             <div className="flex gap-2">
-              <button type="submit" className="btn sm primary" disabled={!limitValid || saveLimit.isPending}>
+              <button type="submit" className="btn sm primary" disabled={!base || !limitValid || saveLimit.isPending}>
                 {saveLimit.isPending ? t("costs.plan.saving") : t("costs.plan.save")}
               </button>
               <button type="button" className="btn sm ghost" disabled={saveLimit.isPending} onClick={() => setForm("none")}>{t("costs.plan.cancel")}</button>
             </div>
           </div>
-          <p className="muted text-xs mt-1 mb-0">{t("costs.basis.limitHint")}</p>
-          {limits.data && limits.data.length === 0 && <p className="muted text-xs mt-1 mb-0" data-limit-history>{t("costs.basis.limitHistoryEmpty")}</p>}
-          {limits.data && limits.data.length > 0 && (
-            <ul className="text-xs mt-1 mb-0" style={{ paddingLeft: 16 }} aria-label={t("costs.basis.limitHistory", { name })} data-limit-history>
-              {limits.data.map((l) => (
-                <li key={`${l.valid_from}/${l.window_kind}`} data-limit={l.valid_from}>{limitLine(t, l)}</li>
-              ))}
-            </ul>
-          )}
+          <p id={`${uid}-lhint`} className="muted text-xs mt-1 mb-0">{t("costs.basis.limitHint")}</p>
         </form>
       )}
       {editable && form === "reading" && (
@@ -483,8 +493,8 @@ export function CostBasisPanel({ f, name, editable }: { f: CredentialFigures; na
             </label>
             <label className="text-xs" htmlFor={`${uid}-rpct`}>
               <span className="block mb-1">{t("costs.basis.readingPercent")}</span>
-              <input id={`${uid}-rpct`} type="number" inputMode="decimal" min="0" max="1000" step="1" required value={percent}
-                style={{ width: 80 }} onChange={(e) => setPercent(e.target.value)} />
+              <input id={`${uid}-rpct`} type="number" inputMode="decimal" min="0" max="1000" step="any" required value={percent}
+                aria-describedby={`${uid}-rhint`} style={{ width: 80 }} onChange={(e) => setPercent(e.target.value)} />
             </label>
             <label className="text-xs" htmlFor={`${uid}-rreset`}>
               <span className="block mb-1">{t("costs.basis.readingResets")}</span>
@@ -495,13 +505,13 @@ export function CostBasisPanel({ f, name, editable }: { f: CredentialFigures; na
               <input id={`${uid}-rat`} type="datetime-local" value={readAt} onChange={(e) => setReadAt(e.target.value)} />
             </label>
             <div className="flex gap-2">
-              <button type="submit" className="btn sm primary" disabled={!readingValid || saveReading.isPending}>
+              <button type="submit" className="btn sm primary" disabled={!place || !readingValid || saveReading.isPending}>
                 {saveReading.isPending ? t("costs.plan.saving") : t("costs.plan.save")}
               </button>
               <button type="button" className="btn sm ghost" disabled={saveReading.isPending} onClick={() => setForm("none")}>{t("costs.plan.cancel")}</button>
             </div>
           </div>
-          <p className="muted text-xs mt-1 mb-0">{t("costs.basis.readingHint")}</p>
+          <p id={`${uid}-rhint`} className="muted text-xs mt-1 mb-0">{t("costs.basis.readingHint")}</p>
         </form>
       )}
       {editable && form === "basis" && (
@@ -522,7 +532,7 @@ export function CostBasisPanel({ f, name, editable }: { f: CredentialFigures; na
               <input id={`${uid}-bfrom`} type="datetime-local" required value={basisFrom} onChange={(e) => setBasisFrom(e.target.value)} />
             </label>
             <div className="flex gap-2">
-              <button type="submit" className="btn sm primary" disabled={!Number.isFinite(basisMs) || saveBasis.isPending}>
+              <button type="submit" className="btn sm primary" disabled={!base || !Number.isFinite(basisMs) || saveBasis.isPending}>
                 {saveBasis.isPending ? t("costs.plan.saving") : t("costs.plan.save")}
               </button>
               <button type="button" className="btn sm ghost" disabled={saveBasis.isPending} onClick={() => setForm("none")}>{t("costs.plan.cancel")}</button>
@@ -543,7 +553,8 @@ export function CostBasisPanel({ f, name, editable }: { f: CredentialFigures; na
           <div className="flex flex-wrap items-end gap-3">
             <label className="text-xs" htmlFor={`${uid}-kind`}>
               <span className="block mb-1">{t("costs.basis.chargeKind")}</span>
-              <select id={`${uid}-kind`} value={chargeKind} onChange={(e) => setChargeKind(e.target.value as UsageChargeKind)}>
+              <select id={`${uid}-kind`} value={chargeKind} aria-describedby={`${uid}-chint`}
+                onChange={(e) => setChargeKind(e.target.value as UsageChargeKind)}>
                 <option value="charge">{t("costs.basis.chargeKind_charge")}</option>
                 <option value="export">{t("costs.basis.chargeKind_export")}</option>
               </select>
@@ -551,7 +562,7 @@ export function CostBasisPanel({ f, name, editable }: { f: CredentialFigures; na
             <label className="text-xs" htmlFor={`${uid}-amount`}>
               <span className="block mb-1">{t("costs.basis.amount")}</span>
               <input id={`${uid}-amount`} type="number" inputMode="decimal" min="0" step="0.01" required value={amount}
-                style={{ width: 110 }} onChange={(e) => setAmount(e.target.value)} />
+                aria-describedby={`${uid}-chint`} style={{ width: 110 }} onChange={(e) => setAmount(e.target.value)} />
             </label>
             <label className="text-xs" htmlFor={`${uid}-cur`}>
               <span className="block mb-1">{t("costs.basis.currency")}</span>
@@ -582,13 +593,13 @@ export function CostBasisPanel({ f, name, editable }: { f: CredentialFigures; na
               <input id={`${uid}-note`} type="text" value={note} maxLength={2000} onChange={(e) => setNote(e.target.value)} />
             </label>
             <div className="flex gap-2">
-              <button type="submit" className="btn sm primary" disabled={!chargeValid || saveCharge.isPending}>
+              <button type="submit" className="btn sm primary" disabled={!base || !chargeValid || saveCharge.isPending}>
                 {saveCharge.isPending ? t("costs.plan.saving") : t("costs.plan.save")}
               </button>
               <button type="button" className="btn sm ghost" disabled={saveCharge.isPending} onClick={() => setForm("none")}>{t("costs.plan.cancel")}</button>
             </div>
           </div>
-          <p className="muted text-xs mt-1 mb-0">{t(chargeKind === "export" ? "costs.basis.exportHint" : "costs.basis.chargeHint")}</p>
+          <p id={`${uid}-chint`} className="muted text-xs mt-1 mb-0">{t(chargeKind === "export" ? "costs.basis.exportHint" : "costs.basis.chargeHint")}</p>
         </form>
       )}
       {error && <p className="text-xs mt-1 mb-0" role="alert" style={{ color: "var(--text-danger)" }}>{error}</p>}

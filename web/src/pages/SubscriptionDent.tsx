@@ -345,6 +345,12 @@ export function PayPerTokenRow({ h, filtered }: { h: PayPerTokenHeadline; filter
       <p className="text-sm mb-1" style={{ fontWeight: 600 }} data-ppt-sentence>
         {h.multiple != null ? t("costs.ppt.sentence", { ...args, x: `≈ ${fmtNumber(h.multiple, 2)}×` }) : t("costs.ppt.sentenceNoMultiple", args)}
       </p>
+      {/* A non-USD charge is in USD only at the rate a person entered: named beside the multiple. */}
+      {h.multiple != null && h.rates.length > 0 && (
+        <p className="muted text-xs mb-1" data-ppt-rates>
+          {t("costs.ppt.rates", { rates: h.rates.map((r) => t("costs.basis.storedRate", { rate: fmtNumber(r.rate, 4), currency: r.currency, date: r.date })).join("; ") })}
+        </p>
+      )}
       {h.why && (
         <p className="muted text-xs mb-1" data-ppt-no-multiple={h.why}>
           {h.why === "rate" ? t("costs.ppt.noMultipleRate", { currencies: h.noRate.join(", ") })

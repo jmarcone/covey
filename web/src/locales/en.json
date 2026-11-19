@@ -655,7 +655,8 @@
       "monthlyMeter": "Monthly usage limit ({{window}}): {{from}} % → {{to}} % ({{pts}} points from {{n}} readings)",
       "monthlyResets": "resets {{date}}",
       "monthlyNoLimit": "no limit entered: its movement is no money yet",
-      "monthlyMoney": "from the meter: {{amount}}"
+      "monthlyMoney": "from the meter: {{amount}}",
+      "noPlace": "Waiting for this credential's runtime to load: saving is possible once it has."
     },
     "incl": {
       "split": "covey agents {{covey}} · outside sessions {{outside}}",
@@ -744,7 +745,8 @@
       "credentials": "Credentials: {{list}}.",
       "byBill": "bill",
       "byCharges": "usage charges",
-      "hint": "The token prices are over the spans the real money covers: an API key's bill window, and the spans the counted usage charges cover (boundary periods pro rata by time). This is apart from the subscription meter and never added to it."
+      "hint": "The token prices are over the spans the real money covers: an API key's bill window, and the spans the counted usage charges cover (boundary periods pro rata by time). This is apart from the subscription meter and never added to it.",
+      "rates": "In USD only at the rates a person entered: {{rates}}."
     }
   },
   "lang": {
