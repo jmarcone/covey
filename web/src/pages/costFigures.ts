@@ -3,13 +3,16 @@ import type {
   BookingBasis,
   CellAgent,
   CostCell,
+  CostBasisKind,
   CostCells,
+  CredentialBasis,
   CredentialPlan,
   ExternalMeterTotal,
   ExternalUsage,
   MeterCoverage,
   MeterStep,
   UsageReading,
+  WindowCharge,
 } from "../api";
 import type { Source } from "./costSources";
 
@@ -396,6 +399,66 @@ export function billedPerPeriod(report: BilledReport | null | undefined, key: st
   return out;
 }
 
+// --- The basis: seat, usage, or both (0151) --------------------------------------
+
+/** The basis of a credential valid at t; null where none was set (the
+ *  behaviour from before 0151: a seat by its plan, an API key by its bill). */
+export function basisAt(bases: readonly CredentialBasis[] | null | undefined, key: string, slot: number, t: Date): CostBasisKind | null {
+  const ms = t.getTime();
+  for (const b of bases ?? []) {
+    if (b.secret_key !== key || b.secret_slot !== slot) continue;
+    if (ms < Date.parse(b.valid_from)) continue;
+    if (b.valid_to && ms >= Date.parse(b.valid_to)) continue;
+    return b.basis;
+  }
+  return null;
+}
+
+/** The counted usage charges of one currency, in that currency. usd: their
+ *  dollar figure, only when every one of them has one (in USD, or a rate with
+ *  its date); never a conversion of the page's own. */
+export type UsageCurrency = { currency: string; counted: number; usd: number | null; charges: number };
+
+export type UsageFigure = {
+  /** The basis at the window's end; null: none set. */
+  basis: CostBasisKind | null;
+  /** More than one basis held within the window. */
+  changed: boolean;
+  /** The charges that reach into the window, as the server cut them. */
+  charges: WindowCharge[];
+  /** What the charges count, per currency, never added across currencies. */
+  currencies: UsageCurrency[];
+  /** The counted total in USD: only when every currency has a dollar figure. */
+  usd: number | null;
+  /** Charges in the window that count nowhere: no usage basis at their time. */
+  uncounted: WindowCharge[];
+};
+
+/** A credential's basis and usage charges over the window; null when it has
+ *  neither, and then nothing on the page changes. */
+export function usageFigure(cells: Pick<CostCells, "cost_bases" | "usage_charges">, key: string, slot: number, windowEnd: Date): UsageFigure | null {
+  const bases = (cells.cost_bases ?? []).filter((b) => b.secret_key === key && b.secret_slot === slot);
+  const charges = (cells.usage_charges ?? []).filter((c) => c.secret_key === key && c.secret_slot === slot);
+  if (bases.length === 0 && charges.length === 0) return null;
+  const basis = basisAt(bases, key, slot, windowEnd) ?? bases.at(-1)?.basis ?? null;
+  const by = new Map<string, UsageCurrency>();
+  for (const c of charges) {
+    if (!(c.counted_amount > 0)) continue;
+    const cur = c.currency.toUpperCase();
+    const u = by.get(cur) ?? { currency: cur, counted: 0, usd: 0, charges: 0 };
+    u.counted += c.counted_amount;
+    u.usd = u.usd == null || c.counted_usd == null ? null : u.usd + c.counted_usd;
+    u.charges += 1;
+    by.set(cur, u);
+  }
+  const currencies = [...by.values()].sort((a, b) => a.currency.localeCompare(b.currency));
+  const usd = currencies.every((c) => c.usd != null) ? currencies.reduce((a, c) => a + c.usd!, 0) : null;
+  return {
+    basis, changed: bases.length > 1, charges, currencies, usd,
+    uncounted: charges.filter((c) => c.window_amount > 0 && !(c.counted_amount > 0)),
+  };
+}
+
 // --- Per credential --------------------------------------------------------------
 
 export type AgentFigure = {
@@ -420,6 +483,13 @@ export type AgentFigure = {
    *  agent ran only in steps that were not split. */
   realWhy: "unsplit" | null;
 };
+
+/** Why a credential billed by usage has no multiple: "rate" (a counted
+ *  charge has no dollar figure: no rate with its date), "noCharge" (nothing
+ *  counted in the window), "basisChanged" (the basis changed within the
+ *  window: the list covers spans the charges do not), "seatAndUsage" (the
+ *  seat's meter and the charges cover different spans). */
+export type NoUsageMultiple = "rate" | "noCharge" | "basisChanged" | "seatAndUsage";
 
 export type CredentialFigures = {
   id: string;
@@ -447,7 +517,15 @@ export type CredentialFigures = {
   /** Why there is no multiple: "agents" (filtered or per agent), "movement" (< 3 points), "meter" (no reading),
    *  "unpriced" (points without a plan price), "outside" (sessions outside covey report on this meter: the
    *  headline's multiples split it, covey's list over the whole movement would not). */
-  noMultiple: "agents" | "movement" | "meter" | "unpriced" | "outside" | null;
+  noMultiple: "agents" | "movement" | "meter" | "unpriced" | "outside" | NoUsageMultiple | null;
+  /** How the credential's real money is formed (0151): null where none was
+   *  set — a seat by its plan, an API key by its bill, as before. */
+  basis: CostBasisKind | null;
+  /** Its basis history and usage charges over the window; null with neither. */
+  usage: UsageFigure | null;
+  /** On the usage basis: covey's recomputed list $ per counted usage $ over
+   *  the window. Only with a dollar figure for every counted charge. */
+  usageMultiple: number | null;
   /** The meter's real cost split between covey and the sessions outside it
    *  (#120), per chunk of readings by the chunk's list-price share; null
    *  until a source names a meter, and for a seat with no split step. */
@@ -504,6 +582,8 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
   for (const m of meter) touch(m.secret_key, m.secret_slot, m.credential_kind);
   for (const p of input.billed?.points ?? []) if (p.secret_key != null) touch(p.secret_key, p.secret_slot, "api_key");
   for (const b of input.billed?.window?.totals ?? []) if (b.has_billed) touch(b.secret_key, b.secret_slot, "api_key");
+  // A credential charged by hand is money even where covey ran nothing on it.
+  for (const c of data.usage_charges ?? []) touch(c.secret_key, c.secret_slot);
 
   const out: CredentialFigures[] = [];
   for (const [id, a] of by) {
@@ -555,7 +635,30 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
       if (mult && outsideUnreported) mult = { kind: "floor", low: mult.low };
     }
 
-    const billed = a.key != null && kind === "api_key" ? billedFigure(input.billed, a.key, a.slot!, windowEnd) : null;
+    // The basis (0151). Without one, nothing above changes.
+    const usage = a.key == null ? null : usageFigure(data, a.key, a.slot!, windowEnd);
+    const basis = usage?.basis ?? null;
+    let usageMultiple: number | null = null;
+    if (usage && basis === "usage") {
+      // The usage charges are the money: the meter's points are not (the
+      // server prices none of them while this basis holds).
+      real = null;
+      mult = null;
+      if (sel.size > 0 || input.layout === "agents") noMultiple = "agents";
+      else if (kind === "api_key") noMultiple = null;
+      else if (usage.changed) noMultiple = "basisChanged";
+      else if (usage.currencies.length === 0) noMultiple = "noCharge";
+      else if (usage.usd == null) noMultiple = "rate";
+      else if (usage.usd > 0 && recomputed > 0) { usageMultiple = recomputed / usage.usd; noMultiple = null; }
+      else noMultiple = "noCharge";
+    } else if (usage && basis === "seat_and_usage" && kind !== "api_key" && noMultiple !== "agents") {
+      // The meter's multiple would leave the usage charges out; the charges
+      // cover their own spans, not the meter's.
+      mult = null;
+      noMultiple = "seatAndUsage";
+    }
+
+    const billed =a.key != null && kind === "api_key" ? billedFigure(input.billed, a.key, a.slot!, windowEnd) : null;
 
     const agents: AgentFigure[] = [...per.entries()].map(([aid, p]): AgentFigure => {
       const share = all > 0 ? p.recomputed / all : null;
@@ -587,6 +690,7 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
       reported, recomputed,
       check: reported > 0 ? ((recomputed - reported) / reported) * 100 : null,
       bookedWithoutLine, meter: cov, real, aligned, multiple: mult, noMultiple, split, outsideUnreported, billed, bookingCheck, agents,
+      basis, usage, usageMultiple,
     });
   }
   out.sort((x, y) => (x.id === "" ? 1 : 0) - (y.id === "" ? 1 : 0) || y.recomputed - x.recomputed);
@@ -664,8 +768,9 @@ export function isSeat(f: Pick<CredentialFigures, "kind" | "meter">): boolean {
  *  meter or a bill to read. */
 export function perCredentialTotals(figures: readonly CredentialFigures[]): { real: SourceTotal | null; billed: SourceTotal | null } {
   // The credentials whose tile offers a real cost: a credential of another
-  // kind has none, so it is not one of the credentials the figure is "of".
-  const subs = figures.filter((f) => f.secretKey != null && isSeat(f));
+  // kind has none, so it is not one of the credentials the figure is "of";
+  // nor does a seat billed by usage (0151): its money is not its meter.
+  const subs = figures.filter((f) => f.secretKey != null && isSeat(f) && f.basis !== "usage");
   const meters = subs.filter((f) => f.real != null);
   let real: SourceTotal | null = null;
   if (meters.length > 0) {
