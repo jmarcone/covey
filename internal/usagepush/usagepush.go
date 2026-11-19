@@ -30,6 +30,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -117,6 +118,14 @@ const UnknownModel = "unknown"
 // taken for a line still being written, not for damage.
 const MidWriteWindow = 30 * time.Minute
 
+// WatermarkMargin is left between the run's time and the claim, for replies
+// still being written and for clock skew. A broken last line is also only
+// excused when none of its timestamps is older than this.
+const WatermarkMargin = 15 * time.Minute
+
+// tsInText finds the timestamps in a line too broken to decode.
+var tsInText = regexp.MustCompile(`"timestamp"\s*:\s*"([^"]+)"`)
+
 // clock is time.Now, replaced in tests.
 var clock = time.Now
 
@@ -142,11 +151,21 @@ type Stats struct {
 	// Symlinks lists symlinked directories below a root. They are not
 	// followed, so calls below them are not read.
 	Symlinks []string
+	// Unread lists *.jsonl entries that are not regular files (and no
+	// symlink to one): they cannot be read. Other, non-regular entries that
+	// are no directory are in Other. Both are only warned about, but Unread
+	// also sends no claim.
+	Unread, Other []string
+	// SuspectAt lists file:line of the first Suspect lines.
+	SuspectAt []string
 	// Invalid counts calls held back because a count or a text field is
 	// outside the intake's bounds; InvalidWhy names the first few.
 	Invalid    int
-	InvalidWhy []string
+	InvalidWhy []string // "file:line: message id: why", the first few
 }
+
+// MaxListed is how many locations a Stats keeps for the user to fix.
+const MaxListed = 20
 
 // rowProblem says why the intake would refuse r, or "".
 func rowProblem(r Row) string {
@@ -195,6 +214,7 @@ func Read(roots []string, host string, since time.Time) ([]Row, Stats, error) {
 	type kept struct {
 		row  Row
 		path string
+		line int
 	}
 	seen := map[string]*kept{}
 	for _, root := range roots {
@@ -211,15 +231,7 @@ func Read(roots []string, host string, since time.Time) ([]Row, Stats, error) {
 			if err != nil {
 				return err
 			}
-			if d.Type()&fs.ModeSymlink != 0 {
-				if fi, err := os.Stat(p); err == nil && fi.IsDir() {
-					st.Symlinks = append(st.Symlinks, p)
-					return nil
-				}
-			}
-			if !d.IsDir() && strings.HasSuffix(d.Name(), ".jsonl") {
-				files = append(files, p)
-			}
+			visit(p, d, &st, &files)
 			return nil
 		})
 		if err != nil {
@@ -236,7 +248,7 @@ func Read(roots []string, host string, since time.Time) ([]Row, Stats, error) {
 			}
 			session, origin := place(root, abs)
 			st.Files++
-			err = readFile(f, func(l *line) bool {
+			err = readFile(f, func(l *line, no int) bool {
 				m := l.Message
 				st.Lines++
 				if m.ID == "" {
@@ -281,16 +293,19 @@ func Read(roots []string, host string, since time.Time) ([]Row, Stats, error) {
 						better = r.TS.Before(prev.row.TS) || (r.TS.Equal(prev.row.TS) && abs < prev.path)
 					}
 					if better {
-						prev.row, prev.path = r, abs
+						prev.row, prev.path, prev.line = r, abs, no
 					}
 					return true
 				}
-				seen[m.ID] = &kept{row: r, path: abs}
+				seen[m.ID] = &kept{row: r, path: abs, line: no}
 				return true
-			}, func(tolerated bool) {
+			}, func(no int, tolerated bool) {
 				st.Skipped++
 				if !tolerated {
 					st.Suspect++
+					if len(st.SuspectAt) < MaxListed {
+						st.SuspectAt = append(st.SuspectAt, fmt.Sprintf("%s:%d", abs, no))
+					}
 				}
 			})
 			if err != nil {
@@ -306,8 +321,8 @@ func Read(roots []string, host string, since time.Time) ([]Row, Stats, error) {
 		}
 		if why := rowProblem(k.row); why != "" {
 			st.Invalid++
-			if len(st.InvalidWhy) < 5 {
-				st.InvalidWhy = append(st.InvalidWhy, fmt.Sprintf("%s: %s", k.row.MessageID, why))
+			if len(st.InvalidWhy) < MaxListed {
+				st.InvalidWhy = append(st.InvalidWhy, fmt.Sprintf("%s:%d: %s: %s", k.path, k.line, k.row.MessageID, why))
 			}
 			continue
 		}
@@ -323,6 +338,8 @@ func Read(roots []string, host string, since time.Time) ([]Row, Stats, error) {
 		return rows[i].MessageID < rows[j].MessageID
 	})
 	sort.Strings(st.Symlinks)
+	sort.Strings(st.Unread)
+	sort.Strings(st.Other)
 	return rows, st, nil
 }
 
@@ -334,6 +351,9 @@ func Read(roots []string, host string, since time.Time) ([]Row, Stats, error) {
 // Nothing above the root is looked at.
 func place(root, abs string) (session, origin string) {
 	rel, err := filepath.Rel(root, abs)
+	if err == nil && rel == "." { // the root is the file itself
+		return strings.TrimSuffix(filepath.Base(abs), ".jsonl"), OriginMain
+	}
 	if err != nil {
 		rel = filepath.Base(abs)
 	}
@@ -359,11 +379,40 @@ func place(root, abs string) (session, origin string) {
 	return strings.TrimSuffix(parts[n-1], ".jsonl"), OriginMain
 }
 
+// visit sorts one walked entry: a *.jsonl file is collected; a symlink or
+// junction (Windows reports a reparse point as ModeIrregular) to a directory
+// is not descended by WalkDir and is listed; any other non-regular entry that
+// is no directory is listed too.
+func visit(p string, d fs.DirEntry, st *Stats, files *[]string) {
+	if d.IsDir() {
+		return
+	}
+	jsonl := strings.HasSuffix(d.Name(), ".jsonl")
+	if d.Type().IsRegular() {
+		if jsonl {
+			*files = append(*files, p)
+		}
+		return
+	}
+	fi, err := os.Stat(p) // follows a symlink
+	switch {
+	case err == nil && fi.IsDir():
+		st.Symlinks = append(st.Symlinks, p)
+	case err == nil && fi.Mode().IsRegular() && jsonl:
+		*files = append(*files, p)
+	case err == nil && fi.Mode().IsRegular():
+	case jsonl:
+		st.Unread = append(st.Unread, p)
+	default:
+		st.Other = append(st.Other, p)
+	}
+}
+
 // readFile calls each for every assistant line with a usage; each says false
 // when the line gave no call. skip is called for every line with a "usage"
 // that gave none (tolerated: only the last line of a file touched within
 // MidWriteWindow, probably still being written).
-func readFile(path string, each func(*line) bool, skip func(tolerated bool)) error {
+func readFile(path string, each func(l *line, lineNo int) bool, skip func(lineNo int, tolerated bool)) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -376,14 +425,18 @@ func readFile(path string, each func(*line) bool, skip func(tolerated bool)) err
 	recent := clock().Sub(fi.ModTime()) < MidWriteWindow
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 1<<20), 64<<20)
-	pending := false // an unreadable line, so far the last one
+	// An unreadable line, so far the last one; stale when its text holds a
+	// timestamp older than the margin (a crash-glued line: the broken record
+	// then the next one appended).
+	pending, pendingStale, pendingNo, no := false, false, 0, 0
 	for sc.Scan() {
+		no++
 		b := sc.Bytes()
 		if len(bytes.TrimSpace(b)) == 0 {
 			continue
 		}
 		if pending {
-			skip(false)
+			skip(pendingNo, false)
 			pending = false
 		}
 		// Cheap filter before decoding, as the script does: most lines are
@@ -393,21 +446,26 @@ func readFile(path string, each func(*line) bool, skip func(tolerated bool)) err
 		}
 		var l line
 		if json.Unmarshal(b, &l) != nil {
-			pending = true
+			pending, pendingNo, pendingStale = true, no, false
+			for _, m := range tsInText.FindAllSubmatch(b, -1) {
+				if t, ok := parseTS(string(m[1])); ok && clock().Sub(t) > WatermarkMargin {
+					pendingStale = true
+				}
+			}
 			continue
 		}
 		if l.Type != "assistant" || l.Message == nil || l.Message.Usage == nil {
 			continue
 		}
-		if !each(&l) {
-			skip(false)
+		if !each(&l, no) {
+			skip(no, false)
 		}
 	}
 	if err := sc.Err(); err != nil {
 		return err
 	}
 	if pending {
-		skip(recent)
+		skip(pendingNo, recent && !pendingStale)
 	}
 	return nil
 }

@@ -38,10 +38,6 @@ import (
 // usageStderr gets the warnings; a variable so tests can read it.
 var usageStderr io.Writer = os.Stderr
 
-// watermarkMargin is left between the run's time and the claim, for replies
-// still being written and for clock skew.
-const watermarkMargin = 15 * time.Minute
-
 func runUsage(args []string, stdout io.Writer, getenv func(string) string) error {
 	if len(args) == 0 || args[0] != "push" {
 		return errors.New("usage: covey usage push DIR... --source LABEL [--url URL] [--host NAME] [--meter-secret KEY[:SLOT]] [--since RFC3339] [--complete] [--key-file PATH] [--dry-run] [--json]")
@@ -50,7 +46,7 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 	fs.SetOutput(io.Discard)
 	source := fs.String("source", "", "label for these sessions, e.g. \"operator: home\" (1-64 characters)")
 	url := fs.String("url", "", "covey install, e.g. http://localhost:8494 (default $COVEY_URL)")
-	host := fs.String("host", "", "host name stored on every row (default: this machine's)")
+	host := fs.String("host", "", "host name stored on every row and claimed in reported_through (default: this machine's; WSL2 reports the Windows name, so give each transcript store its own, e.g. home-win and home-wsl)")
 	meter := fs.String("meter-secret", "", "subscription credential sharing the meter, KEY or KEY:SLOT")
 	since := fs.String("since", "", "only calls at or after this time (RFC 3339); no reported_through is sent")
 	complete := fs.Bool("complete", false, "the directories hold every Claude Code transcript of this host for this source; only then is reported_through sent")
@@ -131,6 +127,13 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 		fmt.Fprintf(usageStderr, "warning: %s is a symlinked directory; it is not followed, so calls below it are not read\n", p)
 	}
 
+	for _, p := range st.Unread {
+		fmt.Fprintf(usageStderr, "warning: %s is not a regular file and cannot be read\n", p)
+	}
+	for _, p := range st.Other {
+		fmt.Fprintf(usageStderr, "warning: %s is neither a regular file nor a directory; it is left out\n", p)
+	}
+
 	// The watermark claims that every call of this host up to its time is in
 	// the push. It is sent only when nothing can be missing.
 	var why []string
@@ -143,6 +146,9 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 	if len(st.Symlinks) > 0 {
 		why = append(why, fmt.Sprintf("%d symlinked directories were not followed", len(st.Symlinks)))
 	}
+	if len(st.Unread) > 0 {
+		why = append(why, fmt.Sprintf("%d transcript files could not be read", len(st.Unread)))
+	}
 	if st.Suspect > 0 {
 		why = append(why, fmt.Sprintf("%d lines with a usage could not be read (not just a last line still being written)", st.Suspect))
 	}
@@ -151,14 +157,21 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 	}
 	var through map[string]time.Time
 	if len(why) == 0 {
-		through = map[string]time.Time{h: time.Now().UTC().Add(-watermarkMargin).Truncate(time.Second)}
+		through = map[string]time.Time{h: time.Now().UTC().Add(-usagepush.WatermarkMargin).Truncate(time.Second)}
 	}
 	for _, w := range why {
 		fmt.Fprintf(stdout, "no reported_through sent: %s\n", w)
 	}
-	for _, w := range st.InvalidWhy {
-		fmt.Fprintf(stdout, "held back: %s\n", w)
+	listed := func(label string, items []string, total int) {
+		for _, it := range items {
+			fmt.Fprintf(stdout, "%s: %s\n", label, it)
+		}
+		if total > len(items) {
+			fmt.Fprintf(stdout, "%s: and %d more\n", label, total-len(items))
+		}
 	}
+	listed("unreadable line", st.SuspectAt, st.Suspect)
+	listed("held back", st.InvalidWhy, st.Invalid)
 	// The intake refuses a ts later than now + 5 min. Calls stamped ahead of
 	// this clock wait for a later run rather than fail the whole batch.
 	held := 0

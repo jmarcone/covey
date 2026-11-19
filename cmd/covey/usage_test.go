@@ -187,3 +187,26 @@ func TestWarnPlainHTTP(t *testing.T) {
 		}
 	}
 }
+
+// What the user needs to fix a withheld claim: file:line, never the content,
+// twenty at most.
+func TestUsagePushListsTheLinesThatBlockTheClaim(t *testing.T) {
+	dir := transcriptDir(t)
+	bad := filepath.Join(dir, "bad.jsonl")
+	var lines []string
+	for i := 0; i < 25; i++ {
+		lines = append(lines, `{"type":"assistant","message":{"usage":{"SECRETTEXT`)
+	}
+	lines = append(lines, "{}")
+	if err := os.WriteFile(bad, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bodies, out, _, err := pushTo(t, dir, "--source", "x", "--host", "h1", "--complete")
+	if err != nil || len(bodies) != 1 || bodies[0]["reported_through"] != nil {
+		t.Fatalf("%v %v", err, bodies)
+	}
+	if !strings.Contains(out, "bad.jsonl:1\n") || !strings.Contains(out, "bad.jsonl:20\n") || strings.Contains(out, "bad.jsonl:21\n") ||
+		!strings.Contains(out, "and 5 more") || strings.Contains(out, "SECRETTEXT") {
+		t.Errorf("output:\n%s", out)
+	}
+}

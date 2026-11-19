@@ -29,10 +29,21 @@ covey usage push ~/.claude/projects/<projekt> --source "operator: laptop" \
 - `--since 2026-11-18T00:00:00Z` sendet nur Aufrufe ab diesem Zeitpunkt. Weil
   ältere Aufrufe fehlen, sendet ein Push mit `--since` kein `reported_through`
   (siehe unten) und sagt das.
+- `--host NAME` ist der Rechner, unter dem die Aufrufe und die Behauptung
+  abgelegt werden. Standard ist der Name der Maschine, und WSL2 meldet den
+  Windows-Namen; ein Push aus WSL und einer aus Windows würden also als ein
+  Rechner behaupten, obwohl sie verschiedene Transkript-Ablagen lesen. Für
+  **jede Transkript-Ablage ein eigenes `--host`** verwenden: `home-win` und
+  `home-wsl`, ein anderer OS-Benutzer oder ein mit `CLAUDE_CONFIG_DIR`
+  gesetztes Verzeichnis.
 - `--complete` besagt, dass die genannten Verzeichnisse **alle**
   Claude-Code-Transkripte dieses Rechners für diese Quelle enthalten (in der
   Regel das ganze `~/.claude/projects`). Nur dann sendet der Push
-  `reported_through`.
+  `reported_through`. Es versichert auch, dass kein Transkript dieser Ablage
+  aufgeräumt wurde, bevor es gepusht war: Claude Code löscht alte Transkripte
+  nach `cleanupPeriodDays` (Standard 30), und ein ungepusht gelöschter Aufruf
+  fehlt der Behauptung. Den ersten Push mit `--complete` zügig machen und ihn
+  dann regelmäßig laufen lassen.
 - `--dry-run` zeigt, was gesendet würde (Aufrufe und Tokens je Herkunft und
   Modell), und sendet nichts. Dafür braucht es weder URL noch Schlüssel.
 - `--key-file PFAD` liest den Schlüssel aus einer Datei statt aus
@@ -50,9 +61,11 @@ covey usage push ~/.claude/projects/<projekt> --source "operator: laptop" \
   (Zeitpunkt des Laufs minus fünfzehn Minuten) deshalb nur mit `--complete`
   und nie, wenn Aufrufe fehlen könnten: mit `--since`, mit einem
   Verzeichnis-Symlink unterhalb eines genannten Verzeichnisses (Symlinks werden
-  nicht verfolgt; jeder wird auf stderr gemeldet), mit einer Zeile, die nicht
+  nicht verfolgt, ebenso wenig Junctions unter Windows; jeder wird auf stderr gemeldet), mit einer Zeile, die nicht
   gelesen werden konnte (siehe unten), oder mit zurückgehaltenen Aufrufen.
-  Der Push sagt jedes Mal, warum er keine Behauptung gesendet hat. Ohne
+  Der Push sagt jedes Mal, warum er keine Behauptung gesendet hat, und nennt
+  Datei und Zeile jeder unlesbaren Zeile und jedes zurückgehaltenen Aufrufs
+  (höchstens zwanzig, nie deren Inhalt). Ohne
   `--complete` sendet er nur die Aufrufe und sagt, dass die Aufteilung des
   Zählers auf einen Push mit `--complete` wartet. Auch ein Lauf ohne neue
   Aufrufe sendet die Behauptung, also den Push auch auf ruhigen Rechnern
@@ -60,7 +73,9 @@ covey usage push ~/.claude/projects/<projekt> --source "operator: laptop" \
 - Eine Zeile mit „usage“, die sich nicht lesen lässt (kaputtes JSON, keine
   Nachrichten-ID, kein Zeitstempel), zählt als übersprungen, und die Zahl wird
   ausgegeben. Nur die letzte Zeile einer Datei, die in den letzten 30 Minuten
-  geändert wurde, gilt als noch in Arbeit; jede andere übersprungene Zeile
+  geändert wurde, gilt als noch in Arbeit, und nur wenn ihr Text keinen Zeitstempel enthält, der
+  älter als fünfzehn Minuten ist (eine durch einen Absturz abgeschnittene Zeile,
+  an die der nächste Eintrag angehängt wurde, hat einen); jede andere übersprungene Zeile
   verhindert die Behauptung. Aufrufe mit einer Zahl über einer Milliarde oder
   unter null oder mit einem Text über 256 Bytes lehnt covey ab; der Push hält
   sie zurück und listet sie auf. Ein leeres Modell wird als `unknown`

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -427,5 +428,61 @@ func TestReadHoldsBackCallsOutsideTheIntakeBounds(t *testing.T) {
 	rows, st, _ := Read([]string{dir}, "h", time.Time{})
 	if len(rows) != 2 || st.Invalid != 3 || len(st.InvalidWhy) != 3 {
 		t.Fatalf("rows %d, %+v", len(rows), st)
+	}
+}
+
+type fakeEntry struct {
+	name string
+	mode fs.FileMode
+}
+
+func (f fakeEntry) Name() string               { return f.name }
+func (f fakeEntry) IsDir() bool                { return f.mode.IsDir() }
+func (f fakeEntry) Type() fs.FileMode          { return f.mode.Type() }
+func (f fakeEntry) Info() (fs.FileInfo, error) { return nil, os.ErrNotExist }
+
+// On Windows a junction is ModeIrregular, not ModeSymlink: it is a directory
+// that WalkDir does not enter, and it must be listed all the same.
+func TestVisitListsJunctionsAndOtherEntries(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "real", "s.jsonl"), callLine("m", "2026-11-18T10:00:00Z", ""))
+	var st Stats
+	var files []string
+	visit(filepath.Join(dir, "real"), fakeEntry{"real", fs.ModeIrregular}, &st, &files)
+	visit(filepath.Join(dir, "sock"), fakeEntry{"sock", fs.ModeSocket}, &st, &files)
+	visit(filepath.Join(dir, "x.jsonl"), fakeEntry{"x.jsonl", fs.ModeIrregular}, &st, &files)
+	visit(filepath.Join(dir, "real", "s.jsonl"), fakeEntry{"s.jsonl", 0}, &st, &files)
+	if len(st.Symlinks) != 1 || len(st.Other) != 1 || len(st.Unread) != 1 || len(files) != 1 {
+		t.Fatalf("%+v %v", st, files)
+	}
+}
+
+// A line cut off by a crash and followed by the next record holds an old
+// timestamp: it is damage even in a file written a minute ago.
+func TestReadCrashGluedLastLineIsSuspect(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC()
+	recent := now.Add(-time.Minute).Format(time.RFC3339)
+	f := filepath.Join(dir, "s.jsonl")
+	writeFile(t, f, callLine("m1", recent, ""),
+		`{"type":"assistant","timestamp":"`+now.Add(-3*time.Hour).Format(time.RFC3339)+`","message":{"usage":{"input_tok`+callLine("m2", recent, ""))
+	_, st, err := Read([]string{dir}, "h", time.Time{})
+	if err != nil || st.Suspect != 1 || len(st.SuspectAt) != 1 || st.SuspectAt[0] != f+":2" {
+		t.Fatalf("%+v %v", st, err)
+	}
+	// a broken last line with only recent timestamps is still being written
+	writeFile(t, f, callLine("m1", recent, ""), `{"type":"assistant","timestamp":"`+recent+`","message":{"usage":{"input_tok`)
+	_, st, _ = Read([]string{dir}, "h", time.Time{})
+	if st.Skipped != 1 || st.Suspect != 0 {
+		t.Fatalf("%+v", st)
+	}
+}
+
+func TestReadSingleFileRoot(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "sess9.jsonl")
+	writeFile(t, f, callLine("m", "2026-11-18T10:00:00Z", ""))
+	rows, _, err := Read([]string{f}, "h", time.Time{})
+	if err != nil || len(rows) != 1 || rows[0].SessionID != "sess9" || rows[0].Origin != OriginMain {
+		t.Fatalf("%+v %v", rows, err)
 	}
 }

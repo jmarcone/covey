@@ -28,9 +28,19 @@ covey usage push ~/.claude/projects/<project> --source "operator: laptop" \
 - `--since 2026-11-18T00:00:00Z` sends only calls from then on. Because older
   calls are left out, a `--since` push sends no `reported_through` (see below)
   and says so.
+- `--host NAME` is the host the calls and the claim are filed under. It
+  defaults to the machine's name, and WSL2 reports the Windows name, so a push
+  from WSL and one from Windows would claim as one host although they read
+  different transcript stores. Use **one distinct `--host` per transcript
+  store**: `home-win` and `home-wsl`, another OS user, or a directory set with
+  `CLAUDE_CONFIG_DIR`.
 - `--complete` says that the directories named hold **every** Claude Code
   transcript of this host for this source (normally the whole
   `~/.claude/projects`). Only then does the push send `reported_through`.
+  It also asserts that no transcript of that store was cleaned up before it
+  was pushed: Claude Code deletes old transcripts after `cleanupPeriodDays`
+  (default 30), and a call deleted unpushed is lost to the claim. Do the first
+  `--complete` push promptly, then keep it scheduled.
 - `--dry-run` prints what would be sent (calls and tokens per origin and per
   model) and sends nothing. It needs neither URL nor key.
 - `--key-file PATH` reads the key from a file instead of `COVEY_API_KEY`. The
@@ -46,15 +56,19 @@ covey usage push ~/.claude/projects/<project> --source "operator: laptop" \
   The push therefore sends it (the time of the run, less fifteen minutes)
   only with `--complete`, and never when calls may be missing: with
   `--since`, with a symlinked directory below a named one (they are not
-  followed; each is warned about on stderr), with a line that could not be
+  followed, and neither are junctions on Windows; each is warned about on
+  stderr), with a line that could not be
   read (see below), or with calls held back. Each time the push says why no
-  claim was sent. Without `--complete` it sends the calls only and says that
+  claim was sent, and lists the file and line of every unreadable line and
+  held-back call (twenty at most; never their contents). Without `--complete` it sends the calls only and says that
   the meter split waits until a `--complete` push. A run with no new calls
   still sends the claim, so schedule the push even on quiet machines.
 - A line with a usage that cannot be read (broken JSON, no message id, no
   timestamp) is counted as skipped, and the count is printed. Only the last
   line of a file changed in the last 30 minutes is taken for a reply still
-  being written; any other skipped line sends no claim. Calls with a count
+  being written, and only if its text holds no timestamp older than fifteen
+  minutes (a line cut off by a crash and followed by the next record has
+  one); any other skipped line sends no claim. Calls with a count
   above one billion or below zero, or with a text over 256 bytes, are
   refused by covey; the push holds them back and lists them. An empty model
   is sent as `unknown`.
