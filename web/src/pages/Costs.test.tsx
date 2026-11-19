@@ -377,7 +377,7 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     expect(card.textContent).toContain("16,00 $");
     expect(card.textContent).not.toMatch(/999/);
     expect(card.textContent).toMatch(/9 % \(17\.11\., 18:00 UTC\) → 13 % \(17\.11\., 20:00 UTC\): 4 Punkte/);
-    expect(card.closest(".card")!.querySelector("svg")).toBeNull();
+    expect(card.closest(".card")!.querySelector("svg:not([data-swatch])")).toBeNull();
   });
 
   // Review C9: under an agent filter the per-model and meter cards vanished,

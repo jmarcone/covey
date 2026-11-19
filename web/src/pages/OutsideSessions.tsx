@@ -1,13 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import type { CostCells } from "../api";
 import { fmtCount, fmtNumber, fmtUSD, fmtUSDAxis } from "../format";
-import { BarChart, Chip, SOURCE_COLOR, Swatch, type Bar } from "./StackedCostChart";
+import { BarChart, Chip, SOURCE_COLOR, Swatch, inclLine, outsideMoney, type Bar } from "./StackedCostChart";
 import {
   UNSPLIT_REASONS,
   agentsPerPeriod,
-  outsideDefaultOn,
   outsidePerPeriod,
   outsideTotals,
   type OutsideTotals,
@@ -17,9 +16,9 @@ import {
 
 /* The Claude Code sessions outside covey on the overview (#120, part C): a
  * consumer next to the agents, never a fifth money source and never folded
- * into the agents' figures unannounced. On by default in the org-wide view,
- * off once the page is narrowed to agents; either way the user can switch
- * it. Shown apart, it is its own chart; combined, one bar carries both and
+ * into the agents' figures unannounced. On by default, under an agent filter
+ * too, as everywhere on the page (#120 review, L2): narrowed, it is "selected
+ * agents … plus outside sessions". The user can switch it. Shown apart, it is its own chart; combined, one bar carries both and
  * the total says it includes the outside sessions — the agents' own tiles
  * above stay theirs alone. The detailed view (OutsideCosts) splits it per
  * model, origin and token type. */
@@ -118,11 +117,8 @@ export function OutsideOverview({ data, selected, days, bucket, fmtPeriod }: {
 }) {
   const { t } = useTranslation();
   const filtered = selected.size > 0;
-  // null: the default for the view; a click is the user's choice until the
-  // view changes between org-wide and narrowed.
-  const [choice, setChoice] = useState<boolean | null>(null);
-  useEffect(() => setChoice(null), [filtered]);
-  const on = choice ?? outsideDefaultOn(filtered);
+  // On by default, narrowed to agents or not: one rule for the whole page.
+  const [on, setOn] = useState(true);
   const [mode, setMode] = useState<"apart" | "combined">("apart");
   const [asTable, setAsTable] = useState(false);
 
@@ -149,11 +145,9 @@ export function OutsideOverview({ data, selected, days, bucket, fmtPeriod }: {
       ...(o == null ? [] : [{ key: "outside", label: seriesLabel, color: OUTSIDE_COLOR, value: o }]),
     ] }];
   });
-  // Narrowed to agents, the agents' part is the selected agents', and says so.
-  const sel = filtered ? "Selected" : "";
-  const combinedSub = totals.list != null
-    ? t(`costs.outside.combinedSub${sel}`, { outside: fmtUSD(totals.list), agents: fmtUSD(agentsList) })
-    : t(`costs.outside.${totals.calls === 0 ? "combinedSubNoCalls" : "combinedSubNoPrice"}${sel}`, { agents: fmtUSD(agentsList) });
+  // Its two parts, named as on the rest of the page: narrowed to agents,
+  // "selected agents $X · plus outside sessions $Y" (L2).
+  const combinedSub = inclLine(t, filtered, fmtUSD(agentsList), outsideMoney(t, totals, "list"));
   const detail = `/costs/outside?days=${days}&bucket=${bucket}`;
 
   return (
@@ -166,7 +160,7 @@ export function OutsideOverview({ data, selected, days, bucket, fmtPeriod }: {
       </div>
       <p className="muted text-xs mb-3" style={{ maxWidth: 760 }}>{t("costs.outside.hint")}</p>
       <div className="flex flex-wrap items-center gap-2 mb-3">
-        <Chip on={on} color={OUTSIDE_COLOR} onClick={() => setChoice(!on)}>{t("costs.outside.show")}</Chip>
+        <Chip on={on} color={OUTSIDE_COLOR} onClick={() => setOn(!on)}>{t("costs.outside.show")}</Chip>
         {on && <>
           <span className="muted text-xs" style={{ marginLeft: 8 }}>{t("costs.outside.mode")}</span>
           <Chip on={!combined} onClick={() => setMode("apart")}>{t("costs.outside.modeApart")}</Chip>
@@ -175,7 +169,7 @@ export function OutsideOverview({ data, selected, days, bucket, fmtPeriod }: {
           <Chip on={asTable} onClick={() => setAsTable((v) => !v)}>{t("costs.fig.showAsTable")}</Chip>
         </>}
       </div>
-      {!on && <p className="muted text-xs mb-0" data-outside-off>{filtered ? t("costs.outside.offFiltered") : t("costs.outside.off")}</p>}
+      {!on && <p className="muted text-xs mb-0" data-outside-off>{t("costs.outside.off")}</p>}
       {on && <>
         <div className="flex flex-wrap gap-3 mb-3">
           <FigureTile test="outside" label={t("costs.outside.tile")} color={OUTSIDE_COLOR}

@@ -28,6 +28,7 @@ import {
   rangeOptions,
   splitBy,
   listedSource,
+  sourceRealParts,
   hostsBehind,
   type SplitRow,
 } from "./outsideFigures";
@@ -182,7 +183,9 @@ export default function OutsideCosts() {
   // tile names the other sources on the same seats.
   // Only sources with calls in the range are named (a project folder with
   // no usage sends claim-only requests: 0 calls).
-  const listed = useMemo(() => new Set((data?.sources ?? []).filter(listedSource).map((s) => s.source)), [data]);
+  // A source with calls only before the range is listed for its real part (#120 review).
+  const real = useMemo(() => sourceRealParts(data), [data]);
+  const listed = useMemo(() => new Set((data?.sources ?? []).filter((s) => listedSource(s, real)).map((s) => s.source)), [data, real]);
   const otherSources = source == null ? [] : [...new Set(seats.flatMap((c) => c.sources))].filter((s) => s !== source && listed.has(s)).sort();
   const seatSteps = (c: { secret_key: string; secret_slot: number }) =>
     unsplitOf(data?.meter.steps ?? [], new Set([`${c.secret_key}#${c.secret_slot}`]));
@@ -206,7 +209,7 @@ export default function OutsideCosts() {
       <div className="flex flex-wrap items-center gap-2 mb-4" role="group" aria-label={t("costs.outside.source")}>
         <span className="muted text-xs" style={{ width: 84 }}>{t("costs.outside.source")}</span>
         <Chip on={source == null} onClick={() => set({ source: null })}>{t("costs.outside.sourceAll")}</Chip>
-        {(data?.sources ?? []).filter((s) => listedSource(s) || s.source === source).map((s) => (
+        {(data?.sources ?? []).filter((s) => listedSource(s, real) || s.source === source).map((s) => (
           <Chip key={s.source} on={source === s.source} onClick={() => set({ source: s.source })}>
             {s.source} <span style={{ opacity: 0.7 }}>{s.list_usd != null ? fmtUSD(s.list_usd) : "–"}</span>
           </Chip>

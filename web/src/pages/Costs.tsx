@@ -10,7 +10,8 @@ import { credentialFigures, headline, subscriptionDent } from "./costFigures";
 import { SubscriptionDentRow } from "./SubscriptionDent";
 import { canSetPlan } from "./PlanPrice";
 import { OutsideOverview } from "./OutsideSessions";
-import { COVEY_ONLY_PARAM, COVEY_ONLY_VALUE, RANGES, bucketOptions, listedSources, outsideKpis, rangeOptions } from "./outsideFigures";
+import { COVEY_ONLY_PARAM, COVEY_ONLY_VALUE, RANGES, beforeRange, bucketOptions, listedSources, outsideKpis, rangeOptions, sourceRealParts,
+  sourcesByMeter, type OutsideKpis } from "./outsideFigures";
 import {
   AgentFilter,
   BUCKET_MS,
@@ -23,6 +24,7 @@ import {
   TYPE_COLOR,
   cellTotals,
   inclLine,
+  inclLineMeter,
   outsideMoney,
   useBilled,
   useCostCells,
@@ -39,6 +41,9 @@ import {
 // booking-check says when it differs in kind.
 
 type Metric = "cost" | "tokens";
+
+/** An outside part with no source in it. */
+const NO_KPIS: OutsideKpis = { sources: [], calls: 0, list: null, reported: null, reportedCalls: 0, tokens: {}, unpricedTokens: 0 };
 
 // --- KPI tiles ---------------------------------------------------------------
 
@@ -311,6 +316,15 @@ export default function Costs({ me }: { me?: Principal }) {
   const ext = cells.data?.external;
   const sourcesListed = useMemo(() => listedSources(ext), [ext]);
   const outside = useMemo(() => (coveyOnly ? null : outsideKpis(ext)), [ext, coveyOnly]);
+  // The outside part split by where it counts (M6): on a subscription meter,
+  // or billed per use — the headline counts only the first.
+  const byMeter = useMemo(() => {
+    if (!outside) return null;
+    const { meter, perUse } = sourcesByMeter(ext);
+    if (perUse.size === 0) return null;
+    return { meter: outsideKpis(ext, meter) ?? NO_KPIS, perUse: outsideKpis(ext, perUse) ?? NO_KPIS };
+  }, [ext, outside]);
+  const realParts = useMemo(() => sourceRealParts(ext), [ext]);
   const included = outside != null ? ext! : null;
   const filtered = selected.size > 0;
   const coveyTok = totals.tokens;
@@ -326,8 +340,10 @@ export default function Costs({ me }: { me?: Principal }) {
   // is a miss that pays extra to be a hit next time, not a hit.
   const cached = tok.cache_read ?? 0;
   const output = tok.output ?? 0;
-  const parts = (covey: string, out: string) => (outside ? inclLine(t, filtered, covey, out) : undefined);
-  const tokParts = (f: (x: Record<string, number>) => number) => parts(fmtCount(f(coveyTok)), fmtCount(f(outside?.tokens ?? {})));
+  const parts = (covey: string, of: (o: OutsideKpis) => string) => (!outside ? undefined
+    : byMeter ? inclLineMeter(t, filtered, covey, of(byMeter.meter), of(byMeter.perUse))
+    : inclLine(t, filtered, covey, of(outside)));
+  const tokParts = (f: (x: Record<string, number>) => number) => parts(fmtCount(f(coveyTok)), (o) => fmtCount(f(o.tokens)));
 
   const agentList = cells.data?.agents ?? [];
   const scopeName =
@@ -371,14 +387,17 @@ export default function Costs({ me }: { me?: Principal }) {
 
       {/* The headline: what the subscription really paid, and for whom. */}
       {dent && <SubscriptionDentRow d={dent} filtered={selected.size > 0} h={head}
-        sourceParts={(cells.data?.external?.meter.source_parts ?? []).filter((p) => listedSources(cells.data?.external).some((s) => s.source === p.source))} />}
+        sourceParts={(cells.data?.external?.meter.source_parts ?? []).flatMap((p) => {
+          const s = sourcesListed.find((x) => x.source === p.source);
+          return s ? [{ ...p, before: beforeRange(s, realParts) }] : [];
+        })} />}
 
       {/* KPIs: over every credential, dollars and tokens of the same lines. */}
       <div className="flex flex-wrap gap-3 mb-4">
         <Kpi label={t("costs.fig.reported")} value={fmtUSD(totals.reported + (outside?.reported ?? 0))} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.reported}
-          parts={outside ? parts(fmtUSD(totals.reported), outsideMoney(t, outside, "reported")) : undefined} />
+          parts={parts(fmtUSD(totals.reported), (o) => outsideMoney(t, o, "reported"))} />
         <Kpi label={t("costs.fig.recomputed")} value={fmtUSD(totals.recomputed + (outside?.list ?? 0))} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.recomputed}
-          parts={outside ? parts(fmtUSD(totals.recomputed), outsideMoney(t, outside, "list")) : undefined} />
+          parts={parts(fmtUSD(totals.recomputed), (o) => outsideMoney(t, o, "list"))} />
         <Kpi
           label={t("costs.inputTokens")}
           value={fmtCount(input)}

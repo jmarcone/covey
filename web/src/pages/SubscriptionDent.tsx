@@ -3,7 +3,7 @@ import type { TFunction } from "i18next";
 import { fmtNumber, fmtUSD } from "../format";
 import { SPLIT_COLOR, SPLIT_HATCH } from "./costSources";
 import type { DentPart, FloorMultiple, Headline, SubscriptionDent } from "./costFigures";
-import { OrgWide, Swatch } from "./StackedCostChart";
+import { OrgWide, Swatch, outsideMoney } from "./StackedCostChart";
 
 /* The headline of the Costs page once Claude Code sessions outside covey
  * report on a subscription meter (#120): the whole dent in the meters over
@@ -70,7 +70,11 @@ function Part({ label, value, sub, color, dashed, hatch, test }: {
  *  the estimate and its floor. */
 function HeadlineSentence({ h }: { h: Headline }) {
   const { t } = useTranslation();
-  const parts = { list: fmtUSD(h.list), covey: fmtUSD(h.coveyList), outside: fmtUSD(h.outsideList) };
+  // The outside part: its figure, or "no list price" with the tokens that
+  // have none — never $0 where there is no figure (M3).
+  const outside = outsideMoney(t, { calls: h.outsideCalls, list: h.outsideList, reported: h.outsideReported,
+    reportedCalls: h.outsideReportedCalls, unpricedTokens: h.outsideUnpricedTokens }, "list");
+  const parts = { list: fmtUSD(h.list), covey: fmtUSD(h.coveyList), outside };
   const sentence = h.real == null ? t("costs.dent.head.noReal", parts)
     : h.multiple == null ? t("costs.dent.head.sentenceNoMultiple", { ...parts, real: fmtUSD(h.real) })
     : t(h.points != null ? "costs.dent.head.sentence" : "costs.dent.head.sentenceNoPoints", {
@@ -84,14 +88,22 @@ function HeadlineSentence({ h }: { h: Headline }) {
       <p className="text-sm mb-1" style={{ fontWeight: 600 }} data-head-sentence>{sentence}</p>
       {h.floor != null && (
         <p className="text-sm mb-1" data-head-floor>
-          {t("costs.dent.head.floor", { floor: times(h.floor), metered: fmtUSD(h.metered), high: fmtUSD(h.real! + h.slack) })}
+          {t("costs.dent.head.floor", { floor: times(h.floor), metered: fmtUSD(h.floorList), high: fmtUSD(h.real! + h.slack) })}
         </p>
       )}
       {h.why === "movement" && <p className="muted text-xs mb-1" data-head-no-multiple>{t("costs.dent.head.noMultipleMovement", { pts: pts(h.points ?? 0) })}</p>}
       {h.why === "unpriced" && h.real != null && <p className="muted text-xs mb-1" data-head-no-multiple>{t("costs.dent.head.noMultipleUnpriced", { n: pts(h.unpricedPoints) })}</p>}
-      {h.unmetered >= 0.005 && (
+      {/* list = metered + unmetered + unpriced: the multiple divides only the first (M2). */}
+      {(h.unmetered >= 0.005 || h.unpriced >= 0.005) && (
         <p className="muted text-xs mb-1" data-head-unmetered>
-          {t("costs.dent.head.unmetered", { list: fmtUSD(h.list), unmetered: fmtUSD(h.unmetered), metered: fmtUSD(h.metered) })}
+          {t(h.unpriced >= 0.005 ? "costs.dent.head.unmeteredUnpriced" : "costs.dent.head.unmetered",
+            { list: fmtUSD(h.list), unmetered: fmtUSD(h.unmetered), metered: fmtUSD(h.metered), unpriced: fmtUSD(h.unpriced) })}
+        </p>
+      )}
+      {/* Per-use sessions are on no meter: in the tiles, not in this sum (M6). */}
+      {h.perUse && h.perUse.calls > 0 && (
+        <p className="muted text-xs mb-1" data-head-per-use>
+          {t("costs.dent.head.perUse", { list: outsideMoney(t, h.perUse, "list") })}
         </p>
       )}
       <p className="muted text-xs mb-1" data-head-reported>
@@ -102,7 +114,8 @@ function HeadlineSentence({ h }: { h: Headline }) {
         <ul className="muted text-xs mb-1" aria-label={t("costs.dent.head.sourcesTitle")} data-head-sources style={{ paddingLeft: 16 }}>
           {h.sources.map((s) => (
             <li key={s.source} data-head-source={s.source}>
-              {t("costs.dent.head.source", { source: s.source, list: s.list != null ? fmtUSD(s.list) : t("costs.incl.noList") })}
+              {t("costs.dent.head.source", { source: s.source,
+                list: s.before ? t("costs.incl.beforeRange") : s.list != null ? fmtUSD(s.list) : t("costs.incl.noList") })}
             </li>
           ))}
         </ul>
@@ -115,8 +128,8 @@ export function SubscriptionDentRow({ d, filtered, h = null, sourceParts = [] }:
   d: SubscriptionDent; filtered: boolean;
   /** The headline: all the work at token prices against the one real cost. */
   h?: Headline | null;
-  /** The outside part per source (the server's source_parts), for the estimate below. */
-  sourceParts?: { source: string; list_usd: number; real_usd: number }[];
+  /** The outside part per source (the server's source_parts), for the estimate below; before: its calls lie before the range. */
+  sourceParts?: { source: string; list_usd: number; real_usd: number; before?: boolean }[];
 }) {
   const { t } = useTranslation();
   // Points are one unit only at one point price: then each part's points
@@ -258,6 +271,7 @@ export function SubscriptionDentRow({ d, filtered, h = null, sourceParts = [] }:
           {sourceParts.filter((p) => p.list_usd > 0 || p.real_usd > 0).map((p) => (
             <li key={p.source} data-dent-source-part={p.source}>
               {t("costs.dent.head.sourceReal", { source: p.source, usd: fmtUSD(p.real_usd), list: fmtUSD(p.list_usd) })}
+              {p.before && <> · {t("costs.incl.beforeRange")}</>}
             </li>
           ))}
         </ul>

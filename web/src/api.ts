@@ -816,6 +816,8 @@ export type BookingBasis = {
 };
 
 export type CostCells = {
+  /** The window's start: every line and source total is from it on; a meter step's span (from, at] may begin before it. */
+  since?: string;
   periods: string[];
   agents: CellAgent[];
   types: string[];
@@ -987,6 +989,9 @@ export type ExternalMeterSums = {
   unmetered_covey_list_usd?: number;
   /** The outside part per source; a seat lists every source linked to it. */
   source_parts?: ExternalMeterSourcePart[];
+  /** The metered list (covey and outside) without the in-range parts of lines that began before since and without the
+   *  first step's span before since: the numerator of the "at least" multiple. Absent from older servers. */
+  floor_list_usd?: number;
 };
 
 /** One agent's part of covey's share of a seat (the split steps only, by its share of each chunk's covey list). */

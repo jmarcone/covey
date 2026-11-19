@@ -487,12 +487,16 @@ func TestExternalUsageByModelLeavesTheAgentsFiguresAlone(t *testing.T) {
 		out := map[string]string{}
 		for _, p := range paths {
 			body := rawGet(t, admin, p)
-			if !withExternal && strings.HasPrefix(p, "/api/v1/cost/cells") {
+			if strings.HasPrefix(p, "/api/v1/cost/cells") {
 				var m map[string]json.RawMessage
 				if err := json.Unmarshal(body, &m); err != nil {
 					t.Fatal(err)
 				}
-				delete(m, "external")
+				// since is now − days, a new instant on every call.
+				delete(m, "since")
+				if !withExternal {
+					delete(m, "external")
+				}
 				body, _ = json.Marshal(m)
 			}
 			out[p] = string(body)

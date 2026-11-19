@@ -27,17 +27,22 @@ import {
 } from "./costFigures";
 import { PlanPrice } from "./PlanPrice";
 import {
+  OTHER_SOURCES,
+  beforeRange,
   listedSources,
   outsideKpis,
+  outsideKpisBySource,
   seatSources,
-  sourceHatch,
+  sourceStyles,
   hostsBehind,
+  sourceRealParts,
   sourceRealPerPeriod,
   sourcesPerPeriod,
   sourcesWithoutSeat,
   type HostBehind,
   type OutsideKpis,
   type SourcePeriod,
+  type SourceStyles,
 } from "./outsideFigures";
 
 /* The cost explorer. The credential is the first level: what money means
@@ -127,8 +132,8 @@ export function agentColor(agents: readonly { id: string }[], id: string) {
   return AGENT_COLORS[(i < 0 ? 0 : i) % AGENT_COLORS.length];
 }
 
-export function Chip({ on, color, hatched, hatch, children, onClick, onDoubleClick, locked, title, disabled, describedBy }: {
-  on: boolean; color?: string; hatched?: boolean; hatch?: number; children: React.ReactNode; onClick: () => void; onDoubleClick?: () => void;
+export function Chip({ on, color, hatched, hatch, ink, children, onClick, onDoubleClick, locked, title, disabled, describedBy }: {
+  on: boolean; color?: string; hatched?: boolean; hatch?: number; ink?: string; children: React.ReactNode; onClick: () => void; onDoubleClick?: () => void;
   /** The id of visible text that says why the chip is disabled. */
   describedBy?: string;
   /** The last chip that is on: it stays, and says so instead of ignoring the click. */
@@ -155,32 +160,65 @@ export function Chip({ on, color, hatched, hatch, children, onClick, onDoubleCli
         cursor: disabled ? "not-allowed" : locked ? "default" : "pointer", lineHeight: 1.2, opacity: disabled ? 0.45 : 1,
       }}
     >
-      {color && <Swatch color={color} hatched={hatched} hatch={hatch} dim={!on} />}
+      {color && <Swatch color={color} hatched={hatched} hatch={hatch} ink={ink} dim={!on} />}
       {children}
     </button>
   );
 }
 
-/** The hatch angles: 0 is a hatched bar's own (the real cost); 1 and up the
- *  outside sessions' sources, one each (outsideFigures.sourceHatch). */
-export const HATCH_ANGLES = [45, 135, 90, 0, 22, 158, 45];
+/** The hatches: 0 is a hatched bar's own (the real cost, 45°); 1–3 at 135°,
+ *  90° and 0° (the outside part, and with 0 the sources' four angles,
+ *  outsideFigures.SOURCE_HATCHES); 4 the cross-hatch (the unattributed
+ *  part); 5 dots ("other sources"). */
+export const HATCH_ANGLES = [45, 135, 90, 0, 45, 45];
 /** The cross-hatch: the unattributed part's (SPLIT_HATCH). */
-export const CROSS_HATCH = 6;
+export const CROSS_HATCH = 4;
+/** Dots: the sources folded into "other sources" (outsideFigures.OTHER_SOURCES_HATCH). */
+export const DOT_HATCH = 5;
 
-export function Swatch({ color, hatched, dim, dashed, hatch }: {
-  color: string; hatched?: boolean; dim?: boolean; dashed?: string;
-  /** A hatch of its own (an outside source's): hatched at HATCH_ANGLES[hatch]. */
-  hatch?: number;
-}) {
-  const striped = (hatched || hatch != null) && !dashed;
+/** A pattern's identity: its hatch, the colour of its tint and outline, and
+ *  the ink of its stripes (the segment's colour where none). */
+export const patternKey = (color: string, hatch: number, ink?: string) => `${hatch}|${color}|${ink ?? ""}`;
+
+/** The one <pattern> of a hatch, drawn alike in a bar and in its swatch (a
+ *  legend, a chip, a table row, the tooltip), so the two can never drift
+ *  apart: a CSS gradient's angle runs perpendicular to an SVG rotate of the
+ *  same number (#120 review, H1). */
+export function HatchPattern({ id, color, hatch, ink }: { id: string; color: string; hatch: number; ink?: string }) {
+  const stroke = ink ?? color;
   return (
-    <span aria-hidden data-hatch={hatch} style={{
-      width: 10, height: 10, borderRadius: 2, display: "inline-block", flexShrink: 0, opacity: dim ? 0.4 : 1,
-      background: !striped ? color : hatch === CROSS_HATCH
-        ? `repeating-linear-gradient(45deg, ${color} 0 1.5px, transparent 1.5px 4px), repeating-linear-gradient(135deg, ${color} 0 1.5px, transparent 1.5px 4px)`
-        : `repeating-linear-gradient(${HATCH_ANGLES[hatch ?? 0] ?? 45}deg, ${color} 0 2px, transparent 2px 4px)`,
-      border: dashed ? `1px dashed ${dashed}` : striped ? `1px solid ${color}` : undefined,
-    }} />
+    <pattern id={id} data-hatch-pattern={hatch} data-pattern-key={patternKey(color, hatch, ink)} patternUnits="userSpaceOnUse"
+      width={5} height={5} patternTransform={`rotate(${HATCH_ANGLES[hatch] ?? 45})`}>
+      <rect width={5} height={5} fill={color} opacity={0.3} />
+      {hatch === DOT_HATCH
+        ? <circle cx={2.5} cy={2.5} r={1.3} fill={stroke} />
+        : <line x1={0} y1={0} x2={0} y2={5} stroke={stroke} strokeWidth={hatch === CROSS_HATCH ? 2 : 3} />}
+      {hatch === CROSS_HATCH && <line x1={0} y1={0} x2={5} y2={0} stroke={stroke} strokeWidth={2} />}
+    </pattern>
+  );
+}
+
+/** A tiny SVG in a series' colour and, hatched, in the very pattern of its
+ *  bar (HatchPattern). */
+export function Swatch({ color, hatched, dim, dashed, hatch, ink }: {
+  color: string; hatched?: boolean; dim?: boolean; dashed?: string;
+  /** A hatch of its own (an outside source's): HatchPattern's. */
+  hatch?: number;
+  /** The ink of the stripes (an outside source's). */
+  ink?: string;
+}) {
+  const pid = `sw${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
+  const striped = (hatched || hatch != null) && !dashed;
+  const h = hatch ?? 0;
+  return (
+    <svg aria-hidden data-swatch data-hatch={hatch} data-pattern-key={striped ? patternKey(color, h, ink) : undefined}
+      width={10} height={10} viewBox="0 0 10 10"
+      style={{ display: "inline-block", flexShrink: 0, opacity: dim ? 0.4 : 1, overflow: "visible" }}>
+      {striped && <defs><HatchPattern id={pid} color={color} hatch={h} ink={ink} /></defs>}
+      <rect x={0.5} y={0.5} width={9} height={9} rx={1.5}
+        fill={striped ? `url(#${pid})` : color}
+        stroke={dashed ?? (striped ? color : "none")} strokeDasharray={dashed ? "2 2" : undefined} />
+    </svg>
   );
 }
 
@@ -361,17 +399,20 @@ export function AgentFilter({ agents, selected, onChange }: {
   );
 }
 
-function Tile({ label, value, sub, span, note, color, hatched, parts }: {
+function Tile({ label, value, sub, span, note, color, hatched, parts, orgWide }: {
   label: string; value: string; sub?: string; span?: string; note?: string; color?: string; hatched?: boolean;
   /** With the outside sessions included: the figure's two parts, named. */
   parts?: string;
+  /** The figure does not follow the agent filter, and says so. */
+  orgWide?: boolean;
 }) {
   return (
     <div role="group" aria-label={label} data-tile
       style={{ padding: "10px 14px", borderRadius: 8, border: "1px solid var(--border)", minWidth: 170, flex: "1 1 170px" }}>
-      <div className="muted text-xs" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <div className="muted text-xs" style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
         {color && <Swatch color={color} hatched={hatched} />}
         {label}
+        {orgWide && <OrgWide />}
       </div>
       <div style={{ fontSize: 20, fontWeight: 600, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>{value}</div>
       {parts && <div className="muted text-xs" data-parts style={{ marginTop: 2 }}>{parts}</div>}
@@ -401,6 +442,8 @@ export type Seg = {
   key: string; label: string; color: string; value: number; dashed?: string;
   /** Hatched at its own angle (an outside source's series), whatever the bar. */
   hatch?: number;
+  /** The ink of its stripes (an outside source's): HatchPattern's. */
+  ink?: string;
   /** A column of its own in the table, under this header (an outside source's series). */
   column?: string;
   /** What the table says where the segment has no figure (e.g. "no list price"), never $0. */
@@ -539,12 +582,16 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
   // A hatched bar is hatched in each segment's own colour: the real cost
   // split between covey and the sessions outside it is one bar of three.
   // Each outside source's series is hatched at an angle of its own.
-  const hk = (c: string, v: number) => `${v}|${c}`;
-  const hatches = [...new Set(groups.flatMap((g) => g.flatMap((b) => [
-    ...(b.hatched ? [hk(b.color, 0), ...b.segs.filter((x) => !x.dashed && x.hatch == null).map((x) => hk(x.color, 0))] : []),
-    ...b.segs.filter((x) => !x.dashed && x.hatch != null).map((x) => hk(x.color, x.hatch!)),
-  ])))];
-  const hatchId = (c: string, v = 0) => `${uid}-h${hatches.indexOf(hk(c, v))}`;
+  // One pattern per hatch, colour and ink (HatchPattern, as the swatches draw it).
+  const patterns = new Map<string, { color: string; hatch: number; ink?: string }>();
+  const addPattern = (color: string, hatch: number, ink?: string) => patterns.set(patternKey(color, hatch, ink), { color, hatch, ink });
+  for (const g of groups) for (const b of g) for (const x of b.segs) {
+    if (x.dashed) continue;
+    if (x.hatch != null) addPattern(x.color, x.hatch, x.ink);
+    else if (b.hatched) addPattern(x.color, 0);
+  }
+  const hatches = [...patterns.keys()];
+  const hatchId = (c: string, v = 0, ink?: string) => `${uid}-h${hatches.indexOf(patternKey(c, v, ink))}`;
   const summary = (i: number) => (groups[i] ?? []).filter((b) => sum(b.segs) > 0).map((b) => `${b.label} ${fmtValue(sum(b.segs))}`).join(", ");
   const close = () => { setPinned(null); setHover(null); };
 
@@ -556,15 +603,8 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
         <desc id={`${uid}-desc`} data-desc>{desc}</desc>
         <defs>
           {hatches.map((h, i) => {
-            const v = Number(h.slice(0, h.indexOf("|"))), c = h.slice(h.indexOf("|") + 1);
-            return (
-              <pattern key={h} id={`${uid}-h${i}`} data-hatch-pattern={v} patternUnits="userSpaceOnUse" width={5} height={5}
-                patternTransform={`rotate(${HATCH_ANGLES[v] ?? 45})`}>
-                <rect width={5} height={5} fill={c} opacity={0.3} />
-                <line x1={0} y1={0} x2={0} y2={5} stroke={c} strokeWidth={v === CROSS_HATCH ? 2 : 3} />
-                {v === CROSS_HATCH && <line x1={0} y1={0} x2={5} y2={0} stroke={c} strokeWidth={2} />}
-              </pattern>
-            );
+            const p = patterns.get(h)!;
+            return <HatchPattern key={h} id={`${uid}-h${i}`} color={p.color} hatch={p.hatch} ink={p.ink} />;
           })}
         </defs>
         {ax.ticks.map((v, i) => (
@@ -611,7 +651,7 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
                       }
                       const hv = g.hatch ?? (b.hatched ? 0 : null);
                       return <rect key={g.key} x={bx} y={top} width={barW} height={h} rx={1.5} data-seg={g.key}
-                        fill={hv != null ? `url(#${hatchId(g.color, hv)})` : g.color} stroke={hv != null ? g.color : undefined} />;
+                        fill={hv != null ? `url(#${hatchId(g.color, hv, g.hatch != null ? g.ink : undefined)})` : g.color} stroke={hv != null ? g.color : undefined} />;
                     })}
                     {(isOpen || b.valueLabel) && total > 0 && (
                       // A halo in the page's colour keeps the value legible where it spills over the bar next to it.
@@ -653,7 +693,7 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
               {b.tag && <div className="muted" data-tag-detail style={{ paddingLeft: 16 }}>{b.tag}{b.tagDetail ? ` · ${b.tagDetail}` : ""}</div>}
               {b.segs.filter((x) => x.value > 0).length > 1 && b.segs.filter((x) => x.value > 0).map((x) => (
                 <div key={x.key} className="muted" style={{ display: "flex", justifyContent: "space-between", gap: 12, paddingLeft: 16 }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Swatch color={x.color} hatched={b.hatched} dashed={x.dashed} hatch={x.hatch} /> {x.label}</span>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Swatch color={x.color} hatched={b.hatched} dashed={x.dashed} hatch={x.hatch} ink={x.ink} /> {x.label}</span>
                   <span>{fmtValue(x.value)}</span>
                 </div>
               ))}
@@ -680,13 +720,48 @@ export type OutsideOnChart = {
   ext: ExternalUsage;
   per: Map<string, Map<number, SourcePeriod>>;
   on: ReadonlySet<string>;
+  /** Each source's pattern and series, once per answer. */
+  styles: SourceStyles;
+  /** Each listed source's figures, once per answer. */
+  kpis: Map<string, OutsideKpis>;
+  /** Each source's real part of the meters. */
+  real: ReadonlyMap<string, number>;
 };
+
+/** The outside sessions on the chart, computed once per answer (#120 review, L4). */
+export function outsideOnChart(ext: ExternalUsage, off: ReadonlySet<string>): OutsideOnChart {
+  return {
+    ext, per: sourcesPerPeriod(ext), on: new Set(listedSources(ext).map((x) => x.source).filter((n) => !off.has(n))),
+    styles: sourceStyles(ext), kpis: outsideKpisBySource(ext), real: sourceRealParts(ext),
+  };
+}
 
 /** "covey agents $X · outside sessions $Y", or with an agent filter
  *  "selected agents $X · plus outside sessions $Y": every figure that
- *  includes the outside sessions names its two parts. */
-export function inclLine(t: TFunction, filtered: boolean, covey: string, outside: string): string {
-  return t(filtered ? "costs.incl.splitSelected" : "costs.incl.split", { covey, outside });
+ *  includes the outside sessions names its two parts. `range` labels them
+ *  as the range's, where a figure within the meter's readings stands
+ *  beside them (#120 review, L5). */
+export function inclLine(t: TFunction, filtered: boolean, covey: string, outside: string, range = false): string {
+  return t(range ? (filtered ? "costs.incl.splitRangeSelected" : "costs.incl.splitRange")
+    : filtered ? "costs.incl.splitSelected" : "costs.incl.split", { covey, outside });
+}
+
+/** The same with the outside part split by where it counts (#120 review,
+ *  M6): "covey agents $X · outside sessions on the meter $Y1 · per use $Y2". */
+export function inclLineMeter(t: TFunction, filtered: boolean, covey: string, meter: string, perUse: string): string {
+  return t(filtered ? "costs.incl.splitMeterSelected" : "costs.incl.splitMeter", { covey, meter, perUse });
+}
+
+/** A sum of parts some of which have no figure: the sum, marked (#120 review, L1). */
+export function withUnpriced(t: TFunction, usd: number, unpriced: boolean): string {
+  return unpriced ? t("costs.incl.withUnpriced", { usd: fmtUSD(usd) }) : fmtUSD(usd);
+}
+
+/** An outside part has no complete figure of this kind: some of its calls
+ *  carry none (no reported cost, or no list price). */
+export function partUnpriced(o: Pick<OutsideKpis, "calls" | "list" | "reported" | "reportedCalls" | "unpricedTokens">, kind: "reported" | "list"): boolean {
+  if (o.calls === 0) return false;
+  return kind === "reported" ? o.reported == null || o.reportedCalls < o.calls : o.list == null || o.unpricedTokens > 0;
 }
 
 /** The outside sessions' money in a line: their figure, or why there is
@@ -700,8 +775,15 @@ export function outsideMoney(t: TFunction, o: Pick<OutsideKpis, "calls" | "list"
       ? t("costs.incl.reportedOf", { usd: fmtUSD(o.reported), n: fmtNumber(o.reportedCalls, 0), m: fmtNumber(o.calls, 0) })
       : fmtUSD(o.reported);
   }
-  if (o.list == null) return t("costs.incl.noList");
+  if (o.list == null) return o.unpricedTokens > 0 ? t("costs.incl.noListTokens", { n: fmtCount(o.unpricedTokens) }) : t("costs.incl.noList");
   return o.unpricedTokens > 0 ? t("costs.incl.listUnpriced", { usd: fmtUSD(o.list), n: fmtCount(o.unpricedTokens) }) : fmtUSD(o.list);
+}
+
+/** An outside list within the meter's readings: its figure, or "no list
+ *  price" where none of the seat's outside calls had one — never $0 (#120
+ *  review, M3). */
+export function withinMoney(t: TFunction, usd: number, o: { priced: boolean; calls: number; unpricedTokens: number }): string {
+  return outsideMoney(t, { calls: o.calls, list: o.priced ? usd : null, reported: null, reportedCalls: 0, unpricedTokens: o.unpricedTokens }, "list");
 }
 
 /** "not reported yet by: laptop (operator: home) through …; desktop never". */
@@ -711,27 +793,55 @@ export function hostsBehindText(t: TFunction, hs: readonly HostBehind[]): string
     : t("costs.split.hostNever", { host: h.host, source: h.source })).join("; ") });
 }
 
-/** One source's figures over the range, from the server's source totals. */
-function sourceKpis(s: ExternalSource, ext: ExternalUsage): OutsideKpis {
-  return outsideKpis(ext, new Set([s.source])) ?? { sources: [s.source], calls: s.calls, list: s.list_usd, reported: s.reported_usd,
+/** One source's figures over the range, from the figures computed once per answer. */
+function sourceKpis(s: ExternalSource, o: OutsideOnChart): OutsideKpis {
+  return o.kpis.get(s.source) ?? { sources: [s.source], calls: s.calls, list: s.list_usd, reported: s.reported_usd,
     reportedCalls: 0, tokens: {}, unpricedTokens: s.unpriced_tokens };
+}
+
+/** The segments of some sources' values, one per series: a source of its
+ *  own, or "other sources" for the folded ones (summed, their names in the
+ *  tooltip), each in its source's pattern (#120 review, M5). value: null
+ *  where the source has no figure in it. */
+export function sourceSeriesSegs(t: TFunction, styles: SourceStyles, color: string,
+  values: readonly { source: string; value: number | null; calls?: number }[],
+  col: { keyPrefix: string; column?: (name: string) => string; none?: string }): Seg[] {
+  const by = new Map<string, { names: string[]; value: number; none: boolean }>();
+  for (const v of values) {
+    const k = styles.series(v.source);
+    const e = by.get(k) ?? { names: [], value: 0, none: false };
+    e.names.push(v.source);
+    e.value += v.value ?? 0;
+    if (v.value == null && (v.calls ?? 0) > 0) e.none = true;
+    by.set(k, e);
+  }
+  return [...by.entries()].map(([k, e]): Seg => {
+    const other = k === OTHER_SOURCES;
+    const st = styles.style(other ? OTHER_SOURCES : k);
+    const name = other ? t("costs.incl.otherSources", { n: e.names.length }) : k;
+    return {
+      key: `${col.keyPrefix}${other ? "other" : k}`,
+      label: other ? t("costs.incl.otherSeg", { n: e.names.length, sources: e.names.join(", ") }) : t("costs.incl.seg", { source: k }),
+      color, hatch: st.hatch, ink: st.ink, value: e.value,
+      column: col.column?.(name),
+      none: e.none && e.value === 0 ? col.none : undefined,
+    };
+  });
 }
 
 /** The bars' segments of the given sources in one period: their reported
  *  cost or their list price, hatched per source, each with a column of its
  *  own in the table and "no list price" (never $0) where it has none. */
 function outsideSegs(t: TFunction, o: OutsideOnChart, sources: readonly ExternalSource[], at: number, kind: "reported" | "list"): Seg[] {
-  return sources.map((s) => {
-    const e = o.per.get(s.source)?.get(at);
-    const v = kind === "reported" ? e?.reported : e?.list;
-    return {
-      key: `out:${s.source}`, label: t("costs.incl.seg", { source: s.source }),
-      color: kind === "reported" ? SOURCE_COLOR.reported : SOURCE_COLOR.recomputed,
-      hatch: sourceHatch(o.ext, s.source), value: v ?? 0,
-      column: t(kind === "reported" ? "costs.incl.colReported" : "costs.incl.colList", { source: s.source }),
-      none: e && e.calls > 0 && v == null ? t(kind === "reported" ? "costs.incl.noReported" : "costs.incl.noList") : undefined,
-    };
-  });
+  return sourceSeriesSegs(t, o.styles, kind === "reported" ? SOURCE_COLOR.reported : SOURCE_COLOR.recomputed,
+    sources.map((s) => {
+      const e = o.per.get(s.source)?.get(at);
+      return { source: s.source, value: (kind === "reported" ? e?.reported : e?.list) ?? null, calls: e?.calls ?? 0 };
+    }), {
+      keyPrefix: "out:",
+      column: (name) => t(kind === "reported" ? "costs.incl.colReported" : "costs.incl.colList", { source: name }),
+      none: t(kind === "reported" ? "costs.incl.noReported" : "costs.incl.noList"),
+    });
 }
 
 /** "$200/mo plan" — the plan as the server stores it. */
@@ -753,15 +863,22 @@ function realSpan(t: TFunction, f: CredentialFigures, key = "costs.fig.realSince
 }
 
 /** The tiles of one credential. */
-function CredentialTiles({ f, filtered, out }: { f: CredentialFigures; filtered: boolean; out: OutsideKpis | null }) {
+function CredentialTiles({ f, filtered, narrowed, out }: {
+  f: CredentialFigures; filtered: boolean; out: OutsideKpis | null;
+  /** The page is narrowed to agents: an org-wide figure says so. */
+  narrowed: boolean;
+}) {
   const { t } = useTranslation();
-  // With the outside sessions on this seat included, each figure names its parts.
+  // With the outside sessions on this seat included, each figure names its
+  // parts — the range's, where the multiple of everything on the meter
+  // stands beside them with the parts within the meter's readings (L5).
+  const range = f.everything != null;
   const tiles: React.ReactNode[] = [
     <Tile key="rep" label={t("costs.fig.reported")} value={fmtUSD(f.reported + (out?.reported ?? 0))} sub={t("costs.fig.reportedSub")} color={SOURCE_COLOR.reported}
-      parts={out ? inclLine(t, filtered, fmtUSD(f.reported), outsideMoney(t, out, "reported")) : undefined} />,
+      parts={out ? inclLine(t, filtered, fmtUSD(f.reported), outsideMoney(t, out, "reported"), range) : undefined} />,
     <Tile key="rec" label={t("costs.fig.recomputed")} value={fmtUSD(f.recomputed + (out?.list ?? 0))}
       sub={f.check != null ? t("costs.fig.priceTableCheck", { pct: pct(f.check) }) : undefined} color={SOURCE_COLOR.recomputed}
-      parts={out ? inclLine(t, filtered, fmtUSD(f.recomputed), outsideMoney(t, out, "list")) : undefined} />,
+      parts={out ? inclLine(t, filtered, fmtUSD(f.recomputed), outsideMoney(t, out, "list"), range) : undefined} />,
   ];
   if (isSeat(f)) {
     const r = f.real;
@@ -781,7 +898,8 @@ function CredentialTiles({ f, filtered, out }: { f: CredentialFigures; filtered:
       // this much (the meter may carry outside use nothing reports).
       const known = f.agents.filter((x) => x.realShare != null);
       const share = known.reduce((a, x) => a + x.realShare!, 0);
-      const value = known.length === 0 ? "–" : `${f.outsideUnreported ? "≤" : "≈"} ${fmtUSD(share)}`;
+      // A part is an estimate (≈); only a multiple is a bound (≥) (L3).
+      const value = known.length === 0 ? "–" : `≈ ${fmtUSD(share)}`;
       const sub = known.length === 0 ? t("costs.split.agentsUnsplit")
         : f.split ? t("costs.split.shareOfCoveySub", { usd: fmtUSD(f.split.covey_real_usd), whole: fmtUSD(r.value) })
         : t("costs.fig.shareOfRealSub", { usd: fmtUSD(r.value) });
@@ -802,10 +920,11 @@ function CredentialTiles({ f, filtered, out }: { f: CredentialFigures; filtered:
       // the unattributed movement, a lower bound (#120).
       const e = f.everything;
       if (e.multiple && e.estimate != null) {
-        tiles.push(<Tile key="mult" label={t("costs.incl.everything")} value={`≈ ${times(e.estimate)}`}
+        tiles.push(<Tile key="mult" label={t("costs.incl.everything")} value={`≈ ${times(e.estimate)}`} orgWide={narrowed}
           parts={t("costs.incl.everythingFloor", { floor: times(e.multiple.low) })}
           sub={t("costs.incl.everythingSub", { list: fmtUSD(e.coveyList + e.outsideList), covey: fmtUSD(e.coveyList),
-            outside: fmtUSD(e.outsideList), real: fmtUSD(e.real) })}
+            outside: withinMoney(t, e.outsideList, { priced: e.outsidePriced, calls: e.outsideCalls, unpricedTokens: e.outsideUnpricedTokens }),
+            real: fmtUSD(e.real) })}
           span={span} note={t("costs.incl.everythingNote", { slack: fmtUSD(e.slack) })} />);
       }
     } else if (f.multiple?.kind === "estimate") {
@@ -964,10 +1083,11 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
     const sp = splitPer?.[i];
     if (!sp) return [{ key: "real", label: t("costs.fig.realEstimate"), color: SOURCE_COLOR.real, value: realPer[i] }];
     const bySource = realBySource?.get(Date.parse(periods[i]));
+    // Per source in its own pattern; a source the page does not list, or one
+    // folded away, in "other sources" — never another source's (M4, M5).
     const outsideParts: Seg[] = bySource && bySource.size > 0
-      ? [...bySource.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([name, v]) => ({
-        key: `outside:${name}`, label: t("costs.incl.seg", { source: name }), color: SPLIT_COLOR.outside,
-        hatch: sourceHatch(outside!.ext, name), value: v }))
+      ? sourceSeriesSegs(t, outside!.styles, SPLIT_COLOR.outside,
+        [...bySource.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([source, value]) => ({ source, value })), { keyPrefix: "outside:" })
       : [{ key: "outside", label: t("costs.split.outside"), color: SPLIT_COLOR.outside, hatch: SPLIT_HATCH.outside, value: sp.outside }];
     return [
       { key: "covey", label: t("costs.split.covey"), color: SPLIT_COLOR.covey, value: sp.covey },
@@ -1107,7 +1227,7 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
         <span className="muted text-xs">{kind}{plan && !subscription ? ` · ${plan}` : ""}</span>
       </div>
       {subscription && <PlanPrice f={f} name={name} readings={readings} editable={canSetPlan} />}
-      <CredentialTiles f={f} filtered={filtered || layout === "agents"} out={mineKpis} />
+      <CredentialTiles f={f} filtered={filtered || layout === "agents"} narrowed={filtered} out={mineKpis} />
       <NoMultiple f={f} />
       {f.everything && (f.everything.unmeteredCovey ?? 0) + f.everything.unmeteredOutside >= 0.005 && (
         <p className="muted text-xs mb-2 mt-0" data-unmetered-note>{t("costs.incl.unmetered", {
@@ -1145,7 +1265,7 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
           {perSource.map((r, i) => (
             <div key={`out:${r.s.source}`} data-outside-row={r.s.source}>
               <div className="text-xs" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <Swatch color={SOURCE_COLOR.recomputed} hatch={sourceHatch(outside!.ext, r.s.source)} /> <b>{r.s.source}</b>
+                <Swatch color={SOURCE_COLOR.recomputed} {...outside!.styles.style(r.s.source)} /> <b>{r.s.source}</b>
                 <OutsideMark />
               </div>
               <BarChart title={`${t("costs.chartCost")} · ${name} · ${t("costs.incl.seg", { source: r.s.source })}`} periods={periods} groups={r.groups}
@@ -1191,7 +1311,8 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
       {filtered && (subscription || f.kind === "api_key") && <p className="muted text-xs mt-1 mb-0">{t("costs.fig.filteredRealNote")}</p>}
 
       {(f.agents.length > 0 || mine.length > 0) && <AgentTable f={f} agents={agents} subscription={subscription}
-        outside={outside ? mine.map((s) => ({ s, k: sourceKpis(s, outside.ext), hatch: sourceHatch(outside.ext, s.source) })) : []} filtered={filtered} />}
+        outside={outside ? mine.map((s) => ({ s, k: sourceKpis(s, outside), style: outside.styles.style(s.source), before: beforeRange(s, outside.real) })) : []}
+        filtered={filtered} />}
     </section>
   );
 }
@@ -1210,7 +1331,7 @@ export function OutsideMark() {
 function AgentTable({ f, agents, subscription, outside, filtered }: {
   f: CredentialFigures; agents: CellAgent[]; subscription: boolean;
   /** The outside sources on this seat, included: a row each and a total with them. */
-  outside: { s: ExternalSource; k: OutsideKpis; hatch: number }[];
+  outside: { s: ExternalSource; k: OutsideKpis; style: { hatch: number; ink?: string }; before: boolean }[];
   filtered: boolean;
 }) {
   const { t } = useTranslation();
@@ -1221,7 +1342,10 @@ function AgentTable({ f, agents, subscription, outside, filtered }: {
   const shareOf = (a: { share: number | null; recomputed: number }) => (whole != null ? (whole > 0 ? a.recomputed / whole : null) : a.share);
   const parts = new Map((f.split?.source_parts ?? []).map((p) => [p.source, p.real_usd]));
   const agentsReal = f.agents.filter((a) => a.realShare != null).reduce((a, x) => a + x.realShare!, 0);
-  const upTo = f.agents.some((a) => a.realBound === "upTo");
+  // The totals follow the chips: only the sources with a row (L1).
+  const outReal = outside.reduce((a, o) => a + (parts.get(o.s.source) ?? 0), 0);
+  const repUnpriced = outside.some((o) => partUnpriced(o.k, "reported"));
+  const listUnpriced = outside.some((o) => partUnpriced(o.k, "list"));
   const th: React.CSSProperties = { padding: "4px 8px 6px 0", fontWeight: 500, whiteSpace: "nowrap", textAlign: "right" };
   const td: React.CSSProperties = { padding: "3px 8px 3px 0", textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" };
   return (
@@ -1255,19 +1379,20 @@ function AgentTable({ f, agents, subscription, outside, filtered }: {
               <td style={td}>{a.gapPct != null ? pct(a.gapPct) : "–"}</td>
               <td style={td}>{shareOf(a) != null ? `${fmtNumber(shareOf(a)! * 100, 1)} %` : "–"}</td>
               {subscription && <td style={td} title={a.realWhy === "unsplit" ? t("costs.split.agentUnsplit") : undefined} data-real-share>
-                {a.realShare != null ? `${a.realBound === "upTo" ? "≤" : "≈"} ${fmtUSD(a.realShare)}` : "–"}
+                {a.realShare != null ? `≈ ${fmtUSD(a.realShare)}` : "–"}
               </td>}
             </tr>
           ))}
-          {outside.map(({ s, k, hatch }) => {
+          {outside.map(({ s, k, style, before }) => {
             const real = parts.get(s.source);
             return (
               <tr key={`out:${s.source}`} data-outside-row={s.source} style={{ borderTop: "1px solid var(--border)" }}>
                 <th scope="row" style={{ ...td, textAlign: "left", fontWeight: 400 }}>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                    <Swatch color={SOURCE_COLOR.recomputed} hatch={hatch} /> {s.source}
+                    <Swatch color={SOURCE_COLOR.recomputed} hatch={style.hatch} ink={style.ink} /> {s.source}
                   </span>
                   <OutsideMark />
+                  {before && <span className="muted" data-before-range style={{ display: "block", fontSize: 11 }}>{t("costs.incl.beforeRange")}</span>}
                 </th>
                 <td style={td}>{outsideMoney(t, k, "reported")}</td>
                 <td style={td}>{outsideMoney(t, k, "list")}</td>
@@ -1282,13 +1407,13 @@ function AgentTable({ f, agents, subscription, outside, filtered }: {
           {outside.length > 0 && (
             <tr data-incl-total style={{ borderTop: "1px solid var(--border-strong)", fontWeight: 600 }}>
               <th scope="row" style={{ ...td, textAlign: "left" }}>{t(filtered ? "costs.incl.totalSelected" : "costs.incl.total")}</th>
-              <td style={td}>{fmtUSD(f.reported + outside.reduce((a, o) => a + (o.k.reported ?? 0), 0))}</td>
-              <td style={td}>{fmtUSD(f.recomputed + outList)}</td>
+              <td style={td} data-incl-reported>{withUnpriced(t, f.reported + outside.reduce((a, o) => a + (o.k.reported ?? 0), 0), repUnpriced)}</td>
+              <td style={td} data-incl-list>{withUnpriced(t, f.recomputed + outList, listUnpriced)}</td>
               <td style={td}>–</td>
               <td style={td}>{whole != null && whole > 0 ? `${fmtNumber(((f.recomputed + outList) / whole) * 100, 1)} %` : "–"}</td>
               {subscription && <td style={td} data-incl-real>
                 {f.real?.priced && (f.split || f.agents.some((a) => a.realShare != null))
-                  ? `${upTo ? "≤" : "≈"} ${fmtUSD(agentsReal + (f.split ? [...parts.values()].reduce((a, v) => a + v, 0) : 0))}` : "–"}
+                  ? `≈ ${fmtUSD(agentsReal + (f.split ? outReal : 0))}` : "–"}
               </td>}
             </tr>
           )}
@@ -1299,7 +1424,11 @@ function AgentTable({ f, agents, subscription, outside, filtered }: {
 }
 
 /** The colour code of the page, explained once. */
-function ColourKey({ split, sources = [] }: { split: boolean; sources?: { name: string; hatch: number }[] }) {
+function ColourKey({ split, sources = [], other = [] }: {
+  split: boolean; sources?: { name: string; hatch: number; ink?: string }[];
+  /** The folded sources, drawn as one "other sources" series (M5). */
+  other?: string[];
+}) {
   const { t } = useTranslation();
   const items: [Source, string, boolean?][] = [
     ["reported", t("costs.fig.keyReported")],
@@ -1321,9 +1450,16 @@ function ColourKey({ split, sources = [] }: { split: boolean; sources?: { name: 
       {/* Each outside source: its own hatch, in the reported and the recomputed colour. */}
       {sources.map((x) => (
         <span key={x.name} style={{ display: "inline-flex", alignItems: "center", gap: 4 }} data-outside-key={x.name}>
-          <Swatch color={SOURCE_COLOR.reported} hatch={x.hatch} /><Swatch color={SOURCE_COLOR.recomputed} hatch={x.hatch} /> {t("costs.incl.key", { source: x.name })}
+          <Swatch color={SOURCE_COLOR.reported} hatch={x.hatch} ink={x.ink} /><Swatch color={SOURCE_COLOR.recomputed} hatch={x.hatch} ink={x.ink} />
+          {" "}{t("costs.incl.key", { source: x.name })}
         </span>
       ))}
+      {other.length > 0 && (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }} data-outside-key={OTHER_SOURCES}>
+          <Swatch color={SOURCE_COLOR.reported} hatch={DOT_HATCH} /><Swatch color={SOURCE_COLOR.recomputed} hatch={DOT_HATCH} />
+          {" "}{t("costs.incl.otherKey", { n: other.length, sources: other.join(", ") })}
+        </span>
+      )}
     </div>
   );
 }
@@ -1351,9 +1487,7 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
   // on by default; a chip switches one off.
   const [offSources, setOffSources] = useState<Set<string>>(new Set());
   const listed = useMemo(() => listedSources(outside), [outside]);
-  const onChart = useMemo<OutsideOnChart | null>(() => (outside ? {
-    ext: outside, per: sourcesPerPeriod(outside), on: new Set(listed.map((x) => x.source).filter((n) => !offSources.has(n))),
-  } : null), [outside, listed, offSources]);
+  const onChart = useMemo<OutsideOnChart | null>(() => (outside ? outsideOnChart(outside, offSources) : null), [outside, offSources]);
   const toggleSource = (n: string) => setOffSources((v) => { const x = new Set(v); if (x.has(n)) x.delete(n); else x.add(n); return x; });
   // Sources whose seat has no block here (billed per use, or a seat with
   // neither lines nor readings in the range): a block of their own.
@@ -1375,7 +1509,9 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
   return (
     <div>
       <ColourKey split={figures.some((f) => f.split != null)}
-        sources={onChart ? listed.filter((x) => onChart.on.has(x.source)).map((x) => ({ name: x.source, hatch: sourceHatch(outside, x.source) })) : []} />
+        sources={onChart ? listed.filter((x) => onChart.on.has(x.source) && onChart.styles.series(x.source) !== OTHER_SOURCES)
+          .map((x) => ({ name: x.source, ...onChart.styles.style(x.source) })) : []}
+        other={onChart ? onChart.styles.folded.filter((n) => onChart.on.has(n)) : []} />
       <Row label={t("costs.filter.source")}>
         {SOURCES.map((s) => (
           <Chip key={s} on={shown[s]} color={SOURCE_COLOR[s]} hatched={s === "real"} onClick={() => toggleSrc(s)}
@@ -1389,9 +1525,10 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
       {onChart && listed.length > 0 && (
         <Row label={t("costs.incl.chips")}>
           {listed.map((x) => (
-            <Chip key={x.source} on={onChart.on.has(x.source)} color={SOURCE_COLOR.recomputed} hatch={sourceHatch(outside, x.source)}
+            <Chip key={x.source} on={onChart.on.has(x.source)} color={SOURCE_COLOR.recomputed} {...onChart.styles.style(x.source)}
               onClick={() => toggleSource(x.source)}>
-              {x.source} <span style={{ opacity: 0.7 }}>{x.list_usd != null ? fmtUSD(x.list_usd) : t("costs.incl.noList")}</span>
+              {x.source} <span style={{ opacity: 0.7 }}>{beforeRange(x, onChart.real) ? t("costs.incl.beforeRange")
+                : x.list_usd != null ? fmtUSD(x.list_usd) : t("costs.incl.noList")}</span>
             </Chip>
           ))}
         </Row>
@@ -1468,7 +1605,7 @@ function OutsideBlock({ o, sources, src, fmtPeriod, asTable, filtered }: {
     if (src.recomputed) bars.push({ key: "recomputed", label: t("costs.fig.recomputed"), color: SOURCE_COLOR.recomputed, segs: outsideSegs(t, o, sources, at, "list") });
     return bars;
   });
-  const ks = sources.map((x) => ({ x, k: sourceKpis(x, o.ext) }));
+  const ks = sources.map((x) => ({ x, k: sourceKpis(x, o) }));
   const td: React.CSSProperties = { padding: "3px 8px 3px 0", textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" };
   return (
     <section className="mb-5" aria-label={title} data-outside-block>
@@ -1495,7 +1632,7 @@ function OutsideBlock({ o, sources, src, fmtPeriod, asTable, filtered }: {
               <tr key={x.source} data-outside-row={x.source} style={{ borderTop: "1px solid var(--border)" }}>
                 <th scope="row" style={{ ...td, textAlign: "left", fontWeight: 400 }}>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                    <Swatch color={SOURCE_COLOR.recomputed} hatch={sourceHatch(o.ext, x.source)} /> {x.source}
+                    <Swatch color={SOURCE_COLOR.recomputed} {...o.styles.style(x.source)} /> {x.source}
                   </span>
                   <OutsideMark />
                 </th>
@@ -1505,8 +1642,10 @@ function OutsideBlock({ o, sources, src, fmtPeriod, asTable, filtered }: {
             ))}
             <tr data-incl-total style={{ borderTop: "1px solid var(--border-strong)", fontWeight: 600 }}>
               <th scope="row" style={{ ...td, textAlign: "left" }}>{t(filtered ? "costs.incl.totalOutsideSelected" : "costs.incl.totalOutside")}</th>
-              <td style={td}>{ks.some((e) => e.k.reported != null) ? fmtUSD(ks.reduce((a, e) => a + (e.k.reported ?? 0), 0)) : t("costs.incl.noReported")}</td>
-              <td style={td}>{ks.some((e) => e.k.list != null) ? fmtUSD(ks.reduce((a, e) => a + (e.k.list ?? 0), 0)) : t("costs.incl.noList")}</td>
+              <td style={td}>{ks.some((e) => e.k.reported != null)
+                ? withUnpriced(t, ks.reduce((a, e) => a + (e.k.reported ?? 0), 0), ks.some((e) => partUnpriced(e.k, "reported"))) : t("costs.incl.noReported")}</td>
+              <td style={td}>{ks.some((e) => e.k.list != null)
+                ? withUnpriced(t, ks.reduce((a, e) => a + (e.k.list ?? 0), 0), ks.some((e) => partUnpriced(e.k, "list"))) : t("costs.incl.noList")}</td>
             </tr>
           </tbody>
         </table>

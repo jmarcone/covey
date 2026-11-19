@@ -876,7 +876,9 @@ func TestExternalUsageLeavesTheAgentsFiguresAlone(t *testing.T) {
 				if _, ok := m["external"]; !ok {
 					t.Fatalf("%s has no external field", p)
 				}
+				// since is now − days, a new instant on every call.
 				delete(m, "external")
+				delete(m, "since")
 				body, _ = json.Marshal(m)
 			}
 			out[p] = string(body)

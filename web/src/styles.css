@@ -185,6 +185,14 @@ picture { display: contents; }
   /* Unattributed movement (F3b): neither covey's agents nor the reported
      sessions explain it, booked to nobody. */
   --cost-unattributed: light-dark(#b45309, #c2410c);
+  /* The inks of the outside sources' stripes (#120 review, M5): each source
+     changes angle and ink from its neighbour, over a tint of its bar's own
+     colour. Indigo, fuchsia and near-black / near-white, at least 3:1
+     against the card (light 7.9 / 6.3 / 17.7, dark 5.5 / 9.3 / 15.8) and
+     apart from each other by hue and lightness. */
+  --cost-source-1: light-dark(#4338ca, #818cf8);
+  --cost-source-2: light-dark(#a21caf, #f0abfc);
+  --cost-source-3: light-dark(#18181b, #fafafa);
   /* The outside sessions per origin (#120, their detailed view): indigo from
      dark to light, main session to workflows (each at least 3:1 against the
      card: light 11.4 / 6.3 / 3.3, dark 11.8 / 6.0 / 3.5); a grey where the

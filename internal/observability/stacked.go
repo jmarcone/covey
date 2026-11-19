@@ -84,6 +84,9 @@ type CostCell struct {
 
 // CostCells is the whole data set for the chart.
 type CostCells struct {
+	// Since is the window's start: every line and source total is from it
+	// on, while a meter step's span (from, at] may begin before it (#120).
+	Since   time.Time   `json:"since"`
 	Periods []time.Time `json:"periods"`
 	Agents  []CellAgent `json:"agents"`
 	Types   []string    `json:"types"`
@@ -158,7 +161,7 @@ type BookingBasis struct {
 // CostCellsFor builds the data set for the organisation since `since`.
 func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time) (CostCells, error) {
 	bucket = normalizeBucket(bucket)
-	out := CostCells{Periods: []time.Time{}, Agents: []CellAgent{}, Types: CostTypes, Cells: []CostCell{}, Bookings: []BookingBasis{}}
+	out := CostCells{Since: since.UTC(), Periods: []time.Time{}, Agents: []CellAgent{}, Types: CostTypes, Cells: []CostCell{}, Bookings: []BookingBasis{}}
 	type key struct {
 		p    time.Time
 		a    uuid.UUID

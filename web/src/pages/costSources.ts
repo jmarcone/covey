@@ -63,7 +63,7 @@ export const SOURCE_COLOR: Record<Source, string> = {
 /** The split parts' patterns (HATCH_ANGLES in StackedCostChart): covey's
  *  the real bar's own 45°, the outside sessions' 135°, the unattributed part
  *  cross-hatched; the unsplit part is plain with a dashed edge. */
-export const SPLIT_HATCH = { outside: 1, unattributed: 6 } as const;
+export const SPLIT_HATCH = { outside: 1, unattributed: 4 } as const;
 
 export const SPLIT_COLOR = {
   covey: "var(--cost-real)",

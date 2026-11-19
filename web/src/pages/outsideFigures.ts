@@ -249,10 +249,6 @@ export function agentsPerPeriod(data: CostCells | undefined, selected: Set<strin
   return out;
 }
 
-/** The series is on by default in the org-wide view, off once the page is
- *  narrowed to agents; the user's own choice wins in either. */
-export const outsideDefaultOn = (filtered: boolean) => !filtered;
-
 // --- Included on the Costs page, by default and always labelled ----------------
 //
 // The human's question (#120): if all the work on the subscription is
@@ -266,15 +262,94 @@ export const outsideDefaultOn = (filtered: boolean) => !filtered;
 // `external` field and the external-usage endpoint, and named wherever it
 // is added.
 
-/** A source the page lists: one with calls (or list price) in the range. The
- *  uploader pushes one source per project folder, and a folder with
- *  transcripts but no usage sends claim-only requests: a source of 0 calls
- *  is in the API, never in a sub-line, a series, a row or a source list. */
-export const listedSource = (s: Pick<ExternalSource, "calls" | "list_usd">) => s.calls > 0 || s.list_usd != null;
+/** Each source's real part of the meters (the server's source_parts over the
+ *  whole meter, else summed over the seats). */
+export function sourceRealParts(ext: Pick<ExternalUsage, "meter"> | null | undefined): Map<string, number> {
+  const out = new Map<string, number>();
+  const m = ext?.meter;
+  const parts = m?.source_parts ?? (m?.credentials ?? []).flatMap((c) => c.source_parts ?? []);
+  for (const p of parts) out.set(p.source, (out.get(p.source) ?? 0) + p.real_usd);
+  return out;
+}
+
+/** A source the page lists: one with calls (or list price) in the range, or
+ *  with a real part of the meter — its calls lie before the range, in a
+ *  reading's span that straddles its start, and its part must be shown
+ *  where the parts are added up (#120 review). The uploader pushes one
+ *  source per project folder, and a folder with transcripts but no usage
+ *  sends claim-only requests: a source of 0 calls and no part is in the API,
+ *  never in a sub-line, a series, a row or a source list. */
+export const listedSource = (s: Pick<ExternalSource, "source" | "calls" | "list_usd">, real?: ReadonlyMap<string, number>) =>
+  s.calls > 0 || s.list_usd != null || (real?.get(s.source) ?? 0) > 0;
+
+/** Listed only for its real part: its calls lie before the range. */
+export const beforeRange = (s: Pick<ExternalSource, "source" | "calls" | "list_usd">, real?: ReadonlyMap<string, number>) =>
+  s.calls === 0 && s.list_usd == null && (real?.get(s.source) ?? 0) > 0;
 
 /** The sources the page lists, by name. */
-export const listedSources = (ext: ExternalUsage | null | undefined): ExternalSource[] =>
-  (ext?.sources ?? []).filter(listedSource).sort((a, b) => a.source.localeCompare(b.source));
+export const listedSources = (ext: ExternalUsage | null | undefined): ExternalSource[] => {
+  const real = sourceRealParts(ext);
+  return (ext?.sources ?? []).filter((s) => listedSource(s, real)).sort((a, b) => a.source.localeCompare(b.source));
+};
+
+/** What changes when an outside call lands: the sources' calls, list price
+ *  and last call. A read that only depends on them is fetched again when
+ *  this changes, not on every poll (#120 review, L4). */
+export const externalStamp = (ext: ExternalUsage | null | undefined): string =>
+  (ext?.sources ?? []).map((s) => `${s.source}:${s.calls}:${s.list_usd ?? "-"}:${s.last_at ?? "-"}`).join("|");
+
+// --- One pattern per source -------------------------------------------------------
+
+/** The hatch indices (HATCH_ANGLES in StackedCostChart) the sources take:
+ *  135°, 90°, 0° and 45° — four angles that read apart. 22° and 158° did not
+ *  (#120 review, M5). */
+export const SOURCE_HATCHES = [1, 2, 3, 0] as const;
+/** The inks a source's stripes are drawn in (styles.css, each at least 3:1
+ *  against the card in both schemes): angle and ink change together from one
+ *  source to the next, twelve combinations before one repeats. */
+export const SOURCE_INKS = ["var(--cost-source-1)", "var(--cost-source-2)", "var(--cost-source-3)"] as const;
+/** The dotted pattern of "other sources" (HATCH_ANGLES' OTHER_HATCH). */
+export const OTHER_SOURCES_HATCH = 5;
+/** Sources drawn as series of their own; beyond it the rest share one,
+ *  "other sources", whose members the tooltip names. */
+export const SOURCE_SERIES_MAX = 8;
+/** The series key of the folded sources. */
+export const OTHER_SOURCES = "\u0000other";
+
+export type SourceStyle = { hatch: number; ink: string | undefined };
+const OTHER_STYLE: SourceStyle = { hatch: OTHER_SOURCES_HATCH, ink: undefined };
+
+/** Every listed source's pattern, computed once per answer: the dearest
+ *  SOURCE_SERIES_MAX (or, with more, one fewer) have one of their own, in
+ *  name order; the rest — and a source the page does not list — are drawn
+ *  as "other sources", never in another source's pattern. */
+export type SourceStyles = {
+  style: (source: string) => SourceStyle;
+  /** The series a source is drawn in: its name, or OTHER_SOURCES. */
+  series: (source: string) => string;
+  /** The folded sources, by name. */
+  folded: string[];
+};
+
+export function sourceStyles(ext: ExternalUsage | null | undefined): SourceStyles {
+  const listed = listedSources(ext);
+  const fold = listed.length > SOURCE_SERIES_MAX;
+  const keep = new Set((fold
+    ? [...listed].sort((a, b) => (b.list_usd ?? -1) - (a.list_usd ?? -1) || a.source.localeCompare(b.source)).slice(0, SOURCE_SERIES_MAX - 1)
+    : listed).map((s) => s.source));
+  const styles = new Map<string, SourceStyle>();
+  let i = 0;
+  for (const s of listed) {
+    if (!keep.has(s.source)) continue;
+    styles.set(s.source, { hatch: SOURCE_HATCHES[i % SOURCE_HATCHES.length], ink: SOURCE_INKS[i % SOURCE_INKS.length] });
+    i++;
+  }
+  return {
+    style: (source) => styles.get(source) ?? OTHER_STYLE,
+    series: (source) => (styles.has(source) ? source : OTHER_SOURCES),
+    folded: listed.filter((s) => !keep.has(s.source)).map((s) => s.source),
+  };
+}
 
 /** The URL parameter of the "covey only" choice: ?only=covey. */
 export const COVEY_ONLY_PARAM = "only";
@@ -314,6 +389,32 @@ export function outsideKpis(ext: ExternalUsage | null | undefined, only?: Readon
   return out;
 }
 
+/** Every listed source's figures, in one pass over the cells (computed once
+ *  per answer, not per row and render: #120 review, L4). */
+export function outsideKpisBySource(ext: ExternalUsage | null | undefined): Map<string, OutsideKpis> {
+  const out = new Map<string, OutsideKpis>();
+  if (!ext) return out;
+  for (const s of listedSources(ext)) {
+    out.set(s.source, { sources: [s.source], calls: s.calls, list: s.list_usd, reported: s.reported_usd, reportedCalls: 0, tokens: {},
+      unpricedTokens: s.unpriced_tokens });
+  }
+  for (const c of ext.cells) {
+    const k = out.get(c.source);
+    if (!k) continue;
+    k.reportedCalls += c.reported_calls;
+    for (const [t, v] of Object.entries(c.tokens ?? {})) k.tokens[t] = (k.tokens[t] ?? 0) + v;
+  }
+  return out;
+}
+
+/** The listed sources split by where they are counted (#120 review, M6):
+ *  on a subscription meter (a seat they name), or billed per use (none). */
+export function sourcesByMeter(ext: ExternalUsage | null | undefined): { meter: Set<string>; perUse: Set<string> } {
+  const meter = new Set<string>(), perUse = new Set<string>();
+  for (const s of listedSources(ext)) (s.meter_credential ? meter : perUse).add(s.source);
+  return { meter, perUse };
+}
+
 /** One source in one chart period: list price (null when none of its calls
  *  had one), reported cost (null when no call carried one), its calls, and
  *  the list price per cost type, as the agents' cells carry it. */
@@ -350,14 +451,6 @@ export function sourcesWithoutSeat(ext: ExternalUsage | null | undefined, seats:
   return listedSources(ext).filter((s) => !s.meter_credential || !seats.has(seatOf(s.meter_credential)));
 }
 
-/** A source's hatch on the page: one pattern per source, the same in every
- *  block, the legend and the tooltip; 1 and up (0 is a hatched bar's own). */
-export function sourceHatch(ext: ExternalUsage | null | undefined, source: string): number {
-  const names = listedSources(ext).map((s) => s.source);
-  const i = names.indexOf(source);
-  return 1 + ((i < 0 ? 0 : i) % 5);
-}
-
 /** The outside part of a seat's real cost per chart period, per source (the
  *  server's source_parts of each split step, placed at its reading). Empty
  *  while the server sends no parts. */
@@ -385,8 +478,9 @@ export function hostsBehind(ext: Pick<ExternalUsage, "sources" | "meter"> | null
   }
   if (at === -Infinity) return [];
   const out: HostBehind[] = [];
+  const real = sourceRealParts(ext);
   for (const s of ext!.sources) {
-    if (!listedSource(s) || s.meter_credential?.secret_key !== key || s.meter_credential.secret_slot !== slot) continue;
+    if (!listedSource(s, real) ||s.meter_credential?.secret_key !== key || s.meter_credential.secret_slot !== slot) continue;
     for (const h of s.hosts ?? []) {
       if (h.reported_through == null || Date.parse(h.reported_through) < at) out.push({ source: s.source, host: h.host, through: h.reported_through });
     }

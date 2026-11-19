@@ -7,8 +7,10 @@ import type { CostCells, ExternalMeterStep, ExternalMeterSums, ExternalMeterTota
 import i18n from "../i18n";
 import { fmtCount, fmtNumber, fmtUSD } from "../format";
 import { mockFetch, renderWithProviders } from "../test/render";
-import { credentialFigures, everythingOnMeter, headline } from "./costFigures";
+import { credentialFigures, everythingOnMeter, headline, inRange, meterSlack, seatLists } from "./costFigures";
 import { hostsBehind, listedSources, outsideKpis, outsideModelRows, sourceRealPerPeriod, sourcesWithoutSeat } from "./outsideFigures";
+import { OTHER_SOURCES, SOURCE_SERIES_MAX, externalStamp, outsideKpisBySource, sourceStyles } from "./outsideFigures";
+import { HATCH_ANGLES, sourceSeriesSegs } from "./StackedCostChart";
 import { RANGES, TEN_MIN_MAX_DAYS, bucketOptions } from "./outsideFigures";
 
 // #120, the human's must: if all the work on the subscription is counted —
@@ -157,13 +159,17 @@ describe("the sessions outside covey on the cost page, included by default (#120
     await waitFor(() => expect(kpiParts("Reported by Claude Code")).not.toBeNull());
     // covey reported 9, the outside sessions 2.5 + 1 (sylius reported none).
     expect(kpiValue("Reported by Claude Code")).toBe(fmtUSD(9 + 3.5));
-    expect(kpiParts("Reported by Claude Code")).toBe(`covey agents ${fmtUSD(9)} · outside sessions ${fmtUSD(3.5)} (14 of 19 calls reported a cost)`);
+    // Split by where they count (M6): on the meter (op, sylius) and per use (work).
+    expect(kpiParts("Reported by Claude Code")).toBe(
+      `covey agents ${fmtUSD(9)} · outside sessions on the meter ${fmtUSD(2.5)} (10 of 15 calls reported a cost) · per use ${fmtUSD(1)}`);
     expect(kpiValue("Recomputed from tokens")).toBe(fmtUSD(10 + 6.5));
-    expect(kpiParts("Recomputed from tokens")).toBe(`covey agents ${fmtUSD(10)} · outside sessions ${fmtUSD(6.5)} + ${fmtCount(1000)} tokens with no list price`);
+    expect(kpiParts("Recomputed from tokens")).toBe(
+      `covey agents ${fmtUSD(10)} · outside sessions on the meter ${fmtUSD(5)} + ${fmtCount(1000)} tokens with no list price · per use ${fmtUSD(1.5)}`);
     // Tokens: covey's 500 + 500 input, 10M cache read, 500k output; outside 4 × 1000 input, 300k cache read, 170k output.
     const coveyIn = 1000 + 10_000_000, outIn = 4000 + 300_000;
     expect(kpiValue(t("costs.inputTokens"))).toBe(fmtCount(coveyIn + outIn));
-    expect(kpiParts(t("costs.inputTokens"))).toBe(`covey agents ${fmtCount(coveyIn)} · outside sessions ${fmtCount(outIn)}`);
+    expect(kpiParts(t("costs.inputTokens"))).toBe(
+      `covey agents ${fmtCount(coveyIn)} · outside sessions on the meter ${fmtCount(outIn - 1000)} · per use ${fmtCount(1000)}`);
     expect(kpiValue(t("costs.outputTokens"))).toBe(fmtCount(500_000 + 170_000));
     expect(kpiValue(t("costs.totalTokens"))).toBe(fmtCount(coveyIn + outIn + 670_000));
     // The note names the sources with calls — never one of 0 calls.
@@ -199,7 +205,8 @@ describe("the sessions outside covey on the cost page, included by default (#120
     serve();
     fireEvent.click(await screen.findByRole("button", { name: /^Coordinator/ }));
     await waitFor(() => expect(kpiParts("Recomputed from tokens")).toMatch(/^selected agents/));
-    expect(kpiParts("Recomputed from tokens")).toBe(`selected agents ${fmtUSD(10)} · plus outside sessions ${fmtUSD(6.5)} + ${fmtCount(1000)} tokens with no list price`);
+    expect(kpiParts("Recomputed from tokens")).toBe(
+      `selected agents ${fmtUSD(10)} · plus outside sessions on the meter ${fmtUSD(5)} + ${fmtCount(1000)} tokens with no list price · per use ${fmtUSD(1.5)}`);
     expect(document.querySelector("[data-inclusion-note]")!.textContent).toMatch(/the outside sessions are not agents/);
   });
 
@@ -276,21 +283,29 @@ describe("the sessions outside covey on the cost page, included by default (#120
   });
 
   it("4: the seat's multiple is of everything on its meter, a lower bound, replacing “No multiple here”", async () => {
-    const e = everythingOnMeter(external(), SEAT, 0)!;
-    expect(e.coveyList).toBe(10);
-    expect(e.outsideList).toBe(5);
+    // Within the readings: the range's $10 and $5 less what came after the
+    // last reading ($0.25 and $0.50).
+    const e = everythingOnMeter(cells(), SEAT, 0)!;
+    expect(e.coveyList).toBe(9.75);
+    expect(e.outsideList).toBe(4.5);
     expect(e.real).toBeCloseTo(6 * PP, 12);
     expect(e.slack).toBeCloseTo(2 * PP, 12);
     expect(e.multiple!.kind).toBe("floor");
-    expect(e.multiple!.low).toBeCloseTo(15 / (8 * PP), 12);
-    expect(everythingOnMeter({ ...external(), meter: { ...external().meter, credentials: [{ ...seatTotal(), points: 2 }] } }, SEAT, 0)!.why).toBe("movement");
+    expect(e.multiple!.low).toBeCloseTo(14.25 / (8 * PP), 12);
+    const small = cells();
+    small.external = { ...external(), meter: { ...external().meter, credentials: [{ ...seatTotal(), points: 2 }] } };
+    expect(everythingOnMeter(small, SEAT, 0)!.why).toBe("movement");
     serve();
     const tile = await screen.findByRole("group", { name: "List $ per real $ — everything on this meter" });
     // ≈ list ÷ real, and at least list ÷ (real + 2 points).
-    expect(tile.textContent).toContain(`≈ ${times(15 / (6 * PP))}`);
-    expect(tile.textContent).toContain(`at least ${times(15 / (8 * PP))}`);
-    expect(tile.textContent).toContain(`list ${fmtUSD(15)} (covey agents ${fmtUSD(10)} · outside sessions ${fmtUSD(5)}) over the meter's real cost ≈ ${fmtUSD(6 * PP)}`);
+    expect(tile.textContent).toContain(`≈ ${times(14.25 / (6 * PP))}`);
+    expect(tile.textContent).toContain(`at least ${times(14.25 / (8 * PP))}`);
+    // Labelled apart from the tiles' pairs, which are the range's (L5).
+    expect(tile.textContent).toContain(`within the meter's readings: list ${fmtUSD(14.25)} (covey agents ${fmtUSD(9.75)} · outside sessions ` +
+      `${fmtUSD(4.5)} + ${fmtCount(1000)} tokens with no list price) over the meter's real cost ≈ ${fmtUSD(6 * PP)}`);
     expect(tile.textContent).toContain(`at least list ÷ (real + ${fmtUSD(2 * PP)})`);
+    const rec = screen.getAllByRole("group", { name: "Recomputed from tokens" }).find((g) => g.closest(`[data-credential="${SEAT}#0"]`))!;
+    expect(rec.querySelector("[data-parts]")!.textContent).toMatch(/^in the range: covey agents /);
     expect(document.body.textContent).not.toContain("No multiple here");
     // The split multiples stay in the headline.
     expect(document.querySelector("[data-dent-multiples]")).toBeTruthy();
@@ -326,7 +341,7 @@ describe("the sessions outside covey on the cost page, included by default (#120
     const [f] = credentialFigures({ cells: cells(), bucketMs: 3600_000, windowEnd: new Date("2026-11-17T21:00:00Z") });
     expect(f.everything).toBeNull();
     const [g] = credentialFigures({ cells: cells(), bucketMs: 3600_000, windowEnd: new Date("2026-11-17T21:00:00Z"), includeOutside: true });
-    expect(g.everything!.multiple!.low).toBeCloseTo(15 / (8 * PP), 12);
+    expect(g.everything!.multiple!.low).toBeCloseTo(14.25 / (8 * PP), 12);
   });
 });
 
@@ -344,14 +359,19 @@ describe("the headline: all the work at token prices against the one real cost (
     expect(h.coveyReported).toBe(9);
     expect(h.outsideReported).toBe(2.5);
     // The real cost: 6 points at the plan's price; the list within the
-    // readings ($15) over it, and at least over 8 points.
+    // readings ($15 less the $0.75 after the last reading) over it, and at
+    // least over 8 points.
     expect(h.real).toBeCloseTo(6 * PP, 12);
     expect(h.points).toBe(6);
-    expect(h.metered).toBe(15);
-    expect(h.multiple).toBeCloseTo(15 / (6 * PP), 12);
-    expect(h.floor).toBeCloseTo(15 / (8 * PP), 12);
+    expect(h.metered).toBe(14.25);
+    expect(h.multiple).toBeCloseTo(14.25 / (6 * PP), 12);
+    expect(h.floor).toBeCloseTo(14.25 / (8 * PP), 12);
     // After the last reading: covey's $0.25 and the outside sessions' $0.50.
     expect(h.unmetered).toBeCloseTo(0.75, 12);
+    expect(h.unpriced).toBe(0);
+    expect(h.list).toBeCloseTo(h.metered + h.unmetered + h.unpriced, 12);
+    // The per-use source is apart, named.
+    expect(h.perUse).toEqual({ list: 1.5, reported: 1, calls: 4, reportedCalls: 4, unpricedTokens: 0 });
     // Below 3 points, no multiple.
     const small = cells();
     small.external!.meter = { ...small.external!.meter, points: 2 };
@@ -364,15 +384,18 @@ describe("the headline: all the work at token prices against the one real cost (
     serve();
     const row = await screen.findByRole("region", { name: t("costs.dent.title") });
     expect(row.querySelector("[data-head-sentence]")!.textContent).toBe(
-      `All this work at token prices (recomputed from tokens): ${fmtUSD(15)} = covey's agents ${fmtUSD(10)} + sessions outside covey ${fmtUSD(5)}, ` +
+      `All this work on the subscription meters at token prices (recomputed from tokens): ${fmtUSD(15)} = covey's agents ${fmtUSD(10)} ` +
+      `+ sessions outside covey ${fmtUSD(5)} + ${fmtCount(1000)} tokens with no list price, ` +
       `against the real cost of the subscription for the same period: ${fmtUSD(6 * PP)} (${fmtNumber(6, 1)} points of the meter). ` +
-      `→ ${fmtUSD(15)} ÷ ${fmtUSD(6 * PP)} ≈ ${times(15 / (6 * PP))}.`);
+      `→ ${fmtUSD(14.25)} ÷ ${fmtUSD(6 * PP)} ≈ ${times(14.25 / (6 * PP))}.`);
     expect(row.querySelector("[data-head-floor]")!.textContent).toBe(
-      `At least ${times(15 / (8 * PP))}: the real cost is the meter's movement, known to ±2 points (whole percents and lag), ` +
-      `so ${fmtUSD(15)} ÷ ${fmtUSD(8 * PP)}. Use nobody reported only raises the multiple of the known work.`);
+      `At least ${times(14.25 / (8 * PP))}: the real cost is the meter's movement, known to ±2 points per seat and 2 more per weekly reset ` +
+      `(whole percents and lag), so ${fmtUSD(14.25)} ÷ ${fmtUSD(8 * PP)}. Use nobody reported only raises the multiple of the known work.`);
     expect(row.querySelector("[data-head-unmetered]")!.textContent).toBe(
-      `Of ${fmtUSD(15)}, ${fmtUSD(0.75)} has no meter reading yet (after the last reading): it counts in the work above, ` +
-      `and the multiple uses only the ${fmtUSD(15)} within the meter's readings.`);
+      `Of ${fmtUSD(15)}, ${fmtUSD(14.25)} lies within the meter's priced readings and is what the multiple divides; ` +
+      `${fmtUSD(0.75)} came after the last reading and has no real cost yet.`);
+    expect(row.querySelector("[data-head-per-use]")!.textContent).toBe(
+      `Not in this sum: sessions outside covey billed per use, on no subscription meter (${fmtUSD(1.5)}). The tiles below include them.`);
     expect(row.querySelector("[data-head-reported]")!.textContent).toBe(
       `As reported by Claude Code: ${fmtUSD(11.5)} = covey's agents ${fmtUSD(9)} + sessions outside covey ${fmtUSD(2.5)} (10 of 15 calls reported a cost). ` +
       "The primary figure is the one recomputed from tokens: the same calls priced with covey's list, for both alike.");
@@ -391,6 +414,211 @@ describe("the headline: all the work at token prices against the one real cost (
       `${SY}: real share ≈ ${fmtUSD(0.8 * PP)} (list price ${fmtUSD(2)} in the split readings)`]);
     // The headline's sentence is not inside the detail.
     expect(detail.querySelector("[data-head-sentence]")).toBeNull();
+  });
+});
+
+/** A seat's meter total with a different seat name and its own numbers. */
+const otherSeat = (key: string, over: Partial<ExternalMeterTotal> = {}): ExternalMeterTotal => ({
+  ...seatTotal(), ...zero, secret_key: key, secret_slot: 0, sources: [], source_parts: [], agents: [], hours_with_reading: 0,
+  points_per_list_usd: null, plan_rates: [], ...over,
+});
+
+describe("the #126 review of the cost page", () => {
+  beforeEach(async () => { await i18n.changeLanguage("en"); });
+
+  it("H1: a swatch draws the very pattern of its bar — same key, same angle, same marks", async () => {
+    const { container } = serve();
+    await waitFor(() => expect(container.querySelector(`[data-outside-key="${OP}"] svg[data-swatch]`)).toBeTruthy());
+    const block = container.querySelector(`[data-credential="${SEAT}#0"]`)!;
+    const bar = block.querySelector(`rect[data-seg="out:${OP}"]`)!;
+    const barPattern = document.getElementById(bar.getAttribute("fill")!.slice(5, -1))!;
+    // The legend's swatch of the same bar (the reported one, drawn first).
+    const sw = [...container.querySelectorAll(`[data-outside-key="${OP}"] svg[data-swatch]`)][0];
+    const swPattern = sw.querySelector("pattern")!;
+    expect(sw.getAttribute("data-pattern-key")).toBe(barPattern.getAttribute("data-pattern-key"));
+    expect(swPattern.getAttribute("data-pattern-key")).toBe(barPattern.getAttribute("data-pattern-key"));
+    expect(swPattern.getAttribute("patternTransform")).toBe(barPattern.getAttribute("patternTransform"));
+    expect(swPattern.innerHTML).toBe(barPattern.innerHTML);
+    // No CSS gradient anywhere: its angle runs perpendicular to the SVG's.
+    expect(container.innerHTML).not.toContain("repeating-linear-gradient");
+  });
+
+  it("M1: 2 points at its price for every seat with list or movement, 2 more per reset; the headline and the seat agree", () => {
+    const data = cells();
+    // A second seat with list price but no movement, priced by its plan.
+    const IDLE = "idle_oauth_token";
+    data.plans!.push({ ...data.plans![0], secret_key: IDLE });
+    data.cells.push({ period: H18, agent_id: "a1", secret_key: IDLE, secret_slot: 0, credential_kind: "subscription", reported_usd: 1,
+      measured: { output: 1 }, engine_usd: 1, tokens: { output: 1000 } });
+    data.external!.meter.credentials.push(otherSeat(IDLE, { unmetered_covey_list_usd: 1 }));
+    // A weekly reset on the first seat.
+    data.external!.meter.steps[1] = { ...data.external!.meter.steps[1], reset: true };
+    const h = headline(data)!;
+    expect(h.slack).toBeCloseTo(2 * PP * 2 + 2 * PP, 12);
+    const seat = everythingOnMeter(data, SEAT, 0)!;
+    expect(seat.slack).toBeCloseTo(4 * PP, 12);
+    // One helper: the headline's slack is the seats' sum.
+    expect(h.slack).toBeCloseTo(meterSlack(data.external!.meter.credentials, data.external!.meter.steps, () => PP,
+      (c) => c.secret_key === IDLE), 12);
+    // A seat with neither list nor movement adds nothing.
+    expect(meterSlack([otherSeat("none")], [], () => PP)).toBe(0);
+  });
+
+  it("M2: the list is metered + after the last reading + in unpriced readings, a reading straddling the range's start cut at it", () => {
+    const data = cells();
+    // The range begins half-way through the first reading's span (17:40 → 18:40),
+    // and that reading has no plan price: half its $7 lies in the range.
+    data.since = "2026-11-17T18:10:00Z";
+    data.external!.meter.steps[0] = { ...data.external!.meter.steps[0], real_usd: null, split: false, reason: "unpriced" };
+    expect(inRange(data.external!.meter.steps[0], Date.parse(data.since))).toBe(0.5);
+    const h = headline(data)!;
+    expect(h.unpriced).toBeCloseTo(3.5, 12);
+    expect(h.unmetered).toBeCloseTo(0.75, 12);
+    expect(h.metered).toBeCloseTo(15 - 0.75 - 3.5, 12);
+    expect(h.metered + h.unmetered + h.unpriced).toBeCloseTo(h.list, 12);
+    // Each seat's parts add up too.
+    const l = seatLists(data, data.external!.meter.credentials[0]);
+    expect(l.covey.metered + l.covey.unmetered + l.covey.unpriced).toBeCloseTo(l.covey.range, 12);
+    expect(l.outside.metered + l.outside.unmetered + l.outside.unpriced).toBeCloseTo(l.outside.range!, 12);
+  });
+
+  it("M1/M2: the floor takes the server's floor_list_usd where it sends one, the estimate keeps the metered list", () => {
+    const data = cells();
+    data.external!.meter = { ...data.external!.meter, floor_list_usd: 12 };
+    data.external!.meter.credentials[0] = { ...data.external!.meter.credentials[0], floor_list_usd: 11 };
+    const h = headline(data)!;
+    expect(h.floor).toBeCloseTo(12 / (8 * PP), 12);
+    expect(h.multiple).toBeCloseTo(14.25 / (6 * PP), 12);
+    const e = everythingOnMeter(data, SEAT, 0)!;
+    expect(e.multiple!.low).toBeCloseTo(11 / (8 * PP), 12);
+    expect(e.estimate).toBeCloseTo(14.25 / (6 * PP), 12);
+  });
+
+  it("M3: no $0 where the outside sessions on the meter have no list price — the headline, the tile and the meter card say so", async () => {
+    const ext = external();
+    for (const s of ext.sources) if (s.meter_credential) { s.list_usd = null; s.unpriced_tokens = 500; }
+    for (const st of ext.meter.steps) st.external_list_usd = 0;
+    const data = cells(ext);
+    const h = headline(data)!;
+    expect(h.outsideList).toBeNull();
+    serve(data);
+    const row = await screen.findByRole("region", { name: t("costs.dent.title") });
+    expect(row.querySelector("[data-head-sentence]")!.textContent).toContain(`sessions outside covey no list price (${fmtCount(1000)} tokens)`);
+    const tile = await screen.findByRole("group", { name: t("costs.incl.everything") });
+    expect(tile.textContent).toContain(`outside sessions no list price (${fmtCount(1000)} tokens)`);
+    const card = await waitFor(() => {
+      const c = document.querySelector(`[data-meter="${SEAT}#0"]`);
+      if (!c) throw new Error("no meter card yet");
+      return c;
+    });
+    expect(card.textContent).toContain(`${t("costs.incl.meterListOutside")}no list price (${fmtCount(1000)} tokens)`);
+    expect(card.textContent).not.toContain(`${t("costs.incl.meterListOutside")}${fmtUSD(0)}`);
+  });
+
+  it("M4: a source with calls only before the range but a real part is listed, noted, and has a pattern of its own", async () => {
+    const ext = external();
+    const EARLY = "projects-early";
+    ext.sources.push({ ...ext.sources[1], source: EARLY, calls: 0, list_usd: null, reported_usd: null, unpriced_tokens: 0, first_at: null, last_at: null });
+    ext.meter.source_parts = [...(ext.meter.source_parts ?? []), { source: EARLY, list_usd: 1, real_usd: 0.1 }];
+    ext.meter.credentials[0].source_parts!.push({ source: EARLY, list_usd: 1, real_usd: 0.1 });
+    ext.meter.steps[0].source_parts!.push({ source: EARLY, list_usd: 0, real_usd: 0.1 });
+    expect(listedSources(ext).map((s) => s.source)).toContain(EARLY);
+    const st = sourceStyles(ext);
+    const keys = listedSources(ext).map((s) => `${st.style(s.source).hatch}|${st.style(s.source).ink}`);
+    expect(new Set(keys).size).toBe(keys.length);
+    // A source the page does not list is never drawn as another source.
+    expect(st.series("nobody")).toBe(OTHER_SOURCES);
+    expect(keys).not.toContain(`${st.style("nobody").hatch}|${st.style("nobody").ink}`);
+    const h = headline(cells(ext))!;
+    expect(h.sources.find((s) => s.source === EARLY)!.before).toBe(true);
+    const { container } = serve(cells(ext));
+    const block = await waitFor(() => {
+      const b = container.querySelector<HTMLElement>(`[data-credential="${SEAT}#0"]`);
+      if (!b?.querySelector(`tr[data-outside-row="${EARLY}"]`)) throw new Error("no row yet");
+      return b;
+    });
+    const row = block.querySelector(`tr[data-outside-row="${EARLY}"]`)!;
+    expect(row.querySelector("[data-before-range]")!.textContent).toBe("calls before the range");
+    expect(row.textContent).toContain(`≈ ${fmtUSD(0.1)}`);
+    expect(document.querySelector(`[data-head-source="${EARLY}"]`)!.textContent).toBe(`${EARLY} (outside covey): calls before the range`);
+  });
+
+  it("M5: angle and ink change from one source to the next; beyond the limit the rest fold into “other sources”, named in the tooltip", () => {
+    const ext = external();
+    const names = Array.from({ length: SOURCE_SERIES_MAX + 3 }, (_, i) => `src-${String(i).padStart(2, "0")}`);
+    ext.sources = names.map((n, i) => ({ ...ext.sources[1], source: n, list_usd: 100 - i }));
+    const st = sourceStyles(ext);
+    expect(st.folded).toEqual(names.slice(SOURCE_SERIES_MAX - 1));
+    const own = names.slice(0, SOURCE_SERIES_MAX - 1).map((n) => st.style(n));
+    for (let i = 1; i < own.length; i++) {
+      expect(own[i].hatch).not.toBe(own[i - 1].hatch);
+      expect(own[i].ink).not.toBe(own[i - 1].ink);
+    }
+    expect(new Set(own.map((s) => `${s.hatch}|${s.ink}`)).size).toBe(own.length);
+    // Only distinguishable angles: 45°, 90°, 135° and 0°.
+    for (const s of own) expect([0, 45, 90, 135]).toContain(HATCH_ANGLES[s.hatch]);
+    for (const n of st.folded) expect(st.series(n)).toBe(OTHER_SOURCES);
+    const segs = sourceSeriesSegs(i18n.t, st, "c", names.map((n) => ({ source: n, value: 1 })), { keyPrefix: "out:" });
+    expect(segs).toHaveLength(SOURCE_SERIES_MAX);
+    const other = segs.find((s) => s.key === "out:other")!;
+    expect(other.value).toBe(4);
+    expect(other.label).toBe(`other sources outside covey (4): ${names.slice(SOURCE_SERIES_MAX - 1).join(", ")}`);
+  });
+
+  it("M6 and L1: the per-use source is apart from the meters; the agent table's totals follow the chips and mark what has no price", async () => {
+    const { container } = serve();
+    const block = await waitFor(() => {
+      const b = container.querySelector<HTMLElement>(`[data-credential="${SEAT}#0"]`);
+      if (!b?.querySelector("[data-incl-total]")) throw new Error("no total yet");
+      return b;
+    });
+    const total = () => block.querySelector("[data-incl-total]")!;
+    // sylius reported no cost and has tokens with no list price: both sums say so.
+    expect(total().querySelector("[data-incl-reported]")!.textContent).toBe(`${fmtUSD(11.5)} (with unpriced)`);
+    expect(total().querySelector("[data-incl-list]")!.textContent).toBe(`${fmtUSD(15)} (with unpriced)`);
+    expect(total().querySelector("[data-incl-real]")!.textContent).toBe(`≈ ${fmtUSD(6 * PP)}`);
+    // Switched off by its chip, sylius leaves the real total as well.
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${SY}`) }));
+    await waitFor(() => expect(total().querySelector("[data-incl-real]")!.textContent).toBe(`≈ ${fmtUSD(5.2 * PP)}`));
+    expect(total().querySelector("[data-incl-reported]")!.textContent).toBe(fmtUSD(11.5));
+    expect(total().querySelector("[data-incl-list]")!.textContent).toBe(fmtUSD(13));
+  });
+
+  it("L2: under an agent filter the overview stays on, labelled, and the multiple of everything stays, org-wide", async () => {
+    serve();
+    fireEvent.click(await screen.findByRole("button", { name: /^Coordinator/ }));
+    const tile = await screen.findByRole("group", { name: t("costs.incl.everything") });
+    expect(tile.querySelector("[data-org-wide]")).toBeTruthy();
+    expect(screen.getByRole("button", { name: t("costs.outside.show") }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: t("costs.outside.modeCombined") }));
+    const combined = screen.getByRole("group", { name: t("costs.outside.combinedTotal") });
+    expect(combined.textContent).toMatch(/selected agents .* · plus outside sessions /);
+  });
+
+  it("L3: a part is ≈, never ≤ — only a multiple is a bound", async () => {
+    // A seat sources name, with no split reading: covey's parts on it are estimates.
+    const ext = external();
+    ext.meter.steps = ext.meter.steps.map((s) => ({ ...s, split: false, reason: "not_reported", external_real_usd: null, covey_real_usd: null,
+      unsplit_real_usd: s.real_usd!, source_parts: undefined }));
+    ext.meter.credentials[0] = { ...ext.meter.credentials[0], split_steps: 0, unsplit_steps: 2, covey_real_usd: 0, external_real_usd: 0 };
+    const { container } = serve(cells(ext));
+    const block = await waitFor(() => {
+      const b = container.querySelector<HTMLElement>(`[data-credential="${SEAT}#0"]`);
+      if (!b?.querySelector("[data-real-share]")) throw new Error("no table yet");
+      return b;
+    });
+    expect(block.querySelector("table")!.textContent).not.toContain("≤");
+    expect(block.querySelector("[data-real-share]")!.textContent).toMatch(/^≈ /);
+  });
+
+  it("L4: the sources' figures once per answer, the same as one at a time; a stamp that changes only with a call", () => {
+    const ext = external();
+    const by = outsideKpisBySource(ext);
+    for (const s of listedSources(ext)) expect(by.get(s.source)).toEqual(outsideKpis(ext, new Set([s.source])));
+    const a = externalStamp(ext);
+    expect(externalStamp({ ...ext, meter: { ...ext.meter, real_usd: 99 } })).toBe(a);
+    ext.sources[1] = { ...ext.sources[1], calls: 11 };
+    expect(externalStamp(ext)).not.toBe(a);
   });
 });
 
@@ -493,7 +721,7 @@ describe("the outside review's minors (#120)", () => {
       return [m[1], m[2]];
     };
     for (const name of ["cost-outside", "cost-unattributed", "cost-unsplit", "cost-origin-main", "cost-origin-subagent",
-      "cost-origin-workflow", "cost-origin-unknown"]) {
+      "cost-origin-workflow", "cost-origin-unknown", "cost-source-1", "cost-source-2", "cost-source-3"]) {
       const [light, dark] = token(name);
       expect(ratio(light, "#ffffff"), `${name} light`).toBeGreaterThanOrEqual(3);
       expect(ratio(dark, "#1f1f22"), `${name} dark`).toBeGreaterThanOrEqual(3);

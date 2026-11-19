@@ -162,15 +162,19 @@ const outsideTile = () => screen.getByRole("group", { name: t("costs.outside.til
 describe("the operator sessions on the cost page (#120)", () => {
   beforeEach(() => { i18n.changeLanguage("en"); });
 
-  it("shows the series by default org-wide, hides it once an agent is filtered, and lets the user switch it on", async () => {
+  it("shows the series by default, under an agent filter too (one rule for the page), and lets the user switch it off and on", async () => {
     serveCosts();
     await screen.findByRole("group", { name: t("costs.outside.tile") });
     expect(seriesChip().getAttribute("aria-pressed")).toBe("true");
 
     fireEvent.click(screen.getAllByRole("button", { name: /Coordinator/ })[0]);
+    expect(seriesChip().getAttribute("aria-pressed")).toBe("true");
+    expect(outsideTile()).toBeTruthy();
+
+    fireEvent.click(seriesChip());
     expect(seriesChip().getAttribute("aria-pressed")).toBe("false");
     expect(screen.queryByRole("group", { name: t("costs.outside.tile") })).toBeNull();
-    expect(screen.getByText(t("costs.outside.offFiltered"))).toBeTruthy();
+    expect(screen.getByText(t("costs.outside.off"))).toBeTruthy();
 
     fireEvent.click(seriesChip());
     expect(seriesChip().getAttribute("aria-pressed")).toBe("true");
@@ -247,11 +251,11 @@ describe("the operator sessions on the cost page (#120)", () => {
     serveCosts();
     await screen.findByRole("group", { name: t("costs.outside.tile") });
     fireEvent.click(screen.getAllByRole("button", { name: /Coordinator/ })[0]);
-    fireEvent.click(seriesChip());
     fireEvent.click(screen.getByRole("button", { name: t("costs.outside.modeCombined") }));
     const combined = screen.getByRole("group", { name: t("costs.outside.combinedTotal") });
-    expect(within(combined).getByText(t("costs.outside.combinedSubSelected", { outside: fmtUSD(15.75), agents: fmtUSD(7) }))).toBeTruthy();
-    expect(combined.textContent).not.toContain(t("costs.outside.combinedSub", { outside: fmtUSD(15.75), agents: fmtUSD(7) }));
+    // The page's own words for a narrowed figure: "selected agents … plus outside sessions".
+    expect(combined.textContent).toContain(`selected agents ${fmtUSD(7)} · plus outside sessions ${fmtUSD(15.75)}`);
+    expect(combined.textContent).not.toContain(`covey agents ${fmtUSD(7)}`);
   });
 
   it("changes the total only when combined, says so, and leaves the agents' own figure alone", async () => {
@@ -266,7 +270,7 @@ describe("the operator sessions on the cost page (#120)", () => {
     fireEvent.click(screen.getByRole("button", { name: t("costs.outside.modeCombined") }));
     const combined = screen.getByRole("group", { name: t("costs.outside.combinedTotal") });
     expect(within(combined).getByText(fmtUSD(7 + 15.75))).toBeTruthy();
-    expect(within(combined).getByText(t("costs.outside.combinedSub", { outside: fmtUSD(15.75), agents: fmtUSD(7) }))).toBeTruthy();
+    expect(combined.textContent).toContain(`covey agents ${fmtUSD(7)} · outside sessions ${fmtUSD(15.75)}`);
     expect(agentsKpi()).toBe(before);
 
     fireEvent.click(screen.getByRole("button", { name: t("costs.outside.modeApart") }));
@@ -293,8 +297,8 @@ describe("the operator sessions on the cost page (#120)", () => {
 
     fireEvent.click(within(section).getByRole("button", { name: t("costs.outside.modeCombined") }));
     const combined = screen.getByRole("group", { name: t("costs.outside.combinedTotal") });
-    expect(within(combined).getByText(t("costs.outside.combinedSubNoPrice", { agents: fmtUSD(7) }))).toBeTruthy();
-    expect(combined.textContent).not.toContain(t("costs.outside.combinedSub", { outside: fmtUSD(0), agents: fmtUSD(7) }));
+    expect(combined.textContent).toContain(`covey agents ${fmtUSD(7)} · outside sessions no list price (`);
+    expect(combined.textContent).not.toContain(`outside sessions ${fmtUSD(0)}`);
     for (const r of within(within(section).getByRole("table")).getAllByRole("row").filter((r) => r.closest("tbody"))) {
       expect(r.textContent).toContain(t("costs.outside.chartNoPriceCombined"));
     }
