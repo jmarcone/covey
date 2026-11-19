@@ -92,6 +92,7 @@ function external({ unpriced = false } = {}): ExternalUsage {
       steps: [
         step("2026-11-17T18:30:00Z", "split", 6, { outside: 4.2 }),
         step("2026-11-17T19:30:00Z", "not_reported", 1.5),
+        step("2026-11-17T20:30:00Z", "unpriced", null),
         step("2026-11-17T18:40:00Z", "split", 5, { key: OTHER_SEAT }),
         step("2026-11-17T19:40:00Z", "moved_without_reported_call", 1.2, { key: OTHER_SEAT }),
       ],
@@ -177,6 +178,20 @@ describe("the operator sessions on the cost page (#120)", () => {
     expect(within(tile).getByText(line)).toBeTruthy();
     expect(tile.textContent).not.toContain(fmtUSD(1.2));
     expect(t("costs.outside.unsplit_not_reported", { ...counted(2), usd: fmtUSD(3) })).toContain("2 readings");
+    // The readings at no plan price are counted here too, as on the detail page.
+    expect(o.unpricedSteps).toBe(1);
+    expect(within(tile).getByText(t("costs.outside.unpricedReadings", counted(1)))).toBeTruthy();
+  });
+
+  it("says selected agents in combined mode once the page is narrowed to agents", async () => {
+    serveCosts();
+    await screen.findByRole("group", { name: t("costs.outside.tile") });
+    fireEvent.click(screen.getAllByRole("button", { name: /Coordinator/ })[0]);
+    fireEvent.click(seriesChip());
+    fireEvent.click(screen.getByRole("button", { name: t("costs.outside.modeCombined") }));
+    const combined = screen.getByRole("group", { name: t("costs.outside.combinedTotal") });
+    expect(within(combined).getByText(t("costs.outside.combinedSubSelected", { outside: fmtUSD(15.75), agents: fmtUSD(7) }))).toBeTruthy();
+    expect(combined.textContent).not.toContain(t("costs.outside.combinedSub", { outside: fmtUSD(15.75), agents: fmtUSD(7) }));
   });
 
   it("changes the total only when combined, says so, and leaves the agents' own figure alone", async () => {
@@ -301,13 +316,20 @@ const VIEW_CELLS = [
   mc(H19, null, "claude-sonnet-5-7", [10, 50, 2_000, 0, 0], false),
 ];
 
-function view(over: { steps?: ExternalMeterStep[]; cells?: ExternalModelCell[]; seatSources?: string[]; source?: string | null } = {}): ExternalModelUsage {
+function view(over: { steps?: ExternalMeterStep[]; cells?: ExternalModelCell[]; seatSources?: string[]; source?: string | null;
+  seatSums?: Partial<ExternalMeterSums>; extra?: { source: string; key: string } } = {}): ExternalModelUsage {
   const ext = external();
+  const sources = over.extra
+    ? [...ext.sources, { ...ext.sources[0], source: over.extra.source, meter_credential: { secret_key: over.extra.key, secret_slot: 0 } }]
+    : ext.sources;
   return {
-    bucket: "hour", since: "2026-11-17T00:00:00Z", source: over.source ?? null, sources: ext.sources,
+    bucket: "hour", since: "2026-11-17T00:00:00Z", source: over.source ?? null, sources,
     models: [{ model: "claude-opus-5-5", priced: true }, { model: "claude-sonnet-5-5", priced: true }, { model: "claude-sonnet-5-7", priced: false }],
     cells: over.cells ?? VIEW_CELLS,
-    meter: { ...sums(), steps: over.steps ?? [], hours: [], credentials: [seat(SEAT, over.seatSources ?? ["operator: home"])] },
+    meter: { ...sums(), steps: over.steps ?? [], hours: [], credentials: [
+      seat(SEAT, over.seatSources ?? ["operator: home"], over.seatSums),
+      ...(over.extra ? [seat(over.extra.key, [over.extra.source])] : []),
+    ] },
   };
 }
 
@@ -353,6 +375,35 @@ describe("the detailed view of the operator sessions", () => {
     const real = screen.getByRole("group", { name: t("costs.outside.meterShare") });
     expect(real.textContent).toContain(fmtUSD(4.2));
     expect(real.textContent).toContain(t("costs.outside.ofMeter", { pct: `${fmtNumber(70, 1)} %` }));
+    // The $ per type of a row with unpriced tokens cover its priced calls
+    // only: marked, with the footnote; a row priced whole is not marked.
+    expect(origins.querySelector("[data-total] [data-priced-only]")).not.toBeNull();
+    expect(models.querySelector("[data-row='claude-opus-5-5'] [data-priced-only]")).toBeNull();
+    expect(screen.getByText(t("costs.outside.typePricedOnly"))).toBeTruthy();
+  });
+
+  it("shows no real cost, not $0, for a seat whose readings all had no plan price", async () => {
+    const { container } = serveView(view({ steps: [step("2026-11-17T18:30:00Z", "unpriced", null)],
+      seatSums: { real_usd: 0, external_real_usd: 0, covey_real_usd: 0, share: null, step_count: 1, split_steps: 0, unpriced_steps: 1, unpriced_points: 2 } }));
+    await screen.findByRole("table", { name: t("costs.outside.byModel") });
+    const line = container.querySelector(`[data-seat='${SEAT}#0']`)!.textContent!;
+    expect(line).toContain(t("costs.outside.seatNoShare", { real: "–" }));
+    expect(line).not.toContain(fmtUSD(0));
+    expect(line).toContain(t("costs.outside.unpricedReadings", counted(1)));
+  });
+
+  it("says no reading for a source whose seat has none in a period, though another seat has one", async () => {
+    const lab = VIEW_CELLS.slice(2, 3).map((c) => ({ ...c, source: "operator: lab" }));
+    const { container } = serveView(view({ extra: { source: "operator: lab", key: OTHER_SEAT }, cells: [...VIEW_CELLS, ...lab],
+      steps: [step("2026-11-17T18:30:00Z", "split", 6, { outside: 4.2 }), step("2026-11-17T19:30:00Z", "split", 2, { outside: 1 })] }));
+    await screen.findByRole("table", { name: t("costs.outside.byModel") });
+    const row = container.querySelector<HTMLTableRowElement>(`[data-meter-period='${Date.parse(H19)}']`)!;
+    expect(row.getAttribute("data-meter-row")).toBe("split");
+    expect(row.textContent).toContain(t("costs.outside.noReading"));
+    expect(row.querySelectorAll("td")[1].textContent).toBe(fmtUSD(1));
+    // Where every working source's seat has a reading: no such note.
+    const h18 = container.querySelector<HTMLTableRowElement>(`[data-meter-period='${Date.parse(H18)}']`)!;
+    expect(h18.textContent).not.toContain(t("costs.outside.noReading"));
   });
 
   it("shows the calls that carried their own reported cost, with plurals", async () => {
@@ -442,6 +493,9 @@ describe("the detailed view of the operator sessions", () => {
     await screen.findByRole("table", { name: t("costs.outside.byModel") });
     fireEvent.click(screen.getByRole("button", { name: t("costs.fig.showAsTable") }));
     const chart = screen.getByRole("table", { name: t("costs.outside.chartTitle") });
+    // The notes column is headed as a note, not as the meter's.
+    expect(within(chart).getByRole("columnheader", { name: t("costs.outside.colNote") })).toBeTruthy();
+    expect(within(chart).queryByRole("columnheader", { name: t("costs.fig.meterCol") })).toBeNull();
     const rows = within(chart).getAllByRole("row").filter((r) => r.closest("tbody"));
     expect(rows.length).toBe(3);
     const last = rows[2];

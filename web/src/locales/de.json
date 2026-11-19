@@ -491,7 +491,12 @@
       "tileOtherSources": "vom ganzen Zähler: Er umfasst die anderen Quellen darauf ({{sources}}), nicht nur diese Quelle",
       "combinedSubNoPrice": "kein Listenpreis für die Operator-Sitzungen (keiner ihrer Aufrufe hatte einen); covey-Agenten: {{agents}}",
       "combinedSubNoCalls": "keine Aufrufe der Operator-Sitzungen im Zeitraum; covey-Agenten: {{agents}}",
-      "chartNoPriceCombined": "Operator-Sitzungen: kein Listenpreis"
+      "chartNoPriceCombined": "Operator-Sitzungen: kein Listenpreis",
+      "combinedSubSelected": "enthält {{outside}} der Operator-Sitzungen außerhalb von covey; ausgewählte Agenten: {{agents}}",
+      "combinedSubNoPriceSelected": "kein Listenpreis für die Operator-Sitzungen (keiner ihrer Aufrufe hatte einen); ausgewählte Agenten: {{agents}}",
+      "combinedSubNoCallsSelected": "keine Aufrufe der Operator-Sitzungen im Zeitraum; ausgewählte Agenten: {{agents}}",
+      "agentsPartSelected": "ausgewählte Agenten (Listenpreis)",
+      "typePricedOnly": "* Die Dollar je Token-Art gelten nur für die Aufrufe mit Preis; die Token-Zahlen darüber enthalten auch die Aufrufe ohne Listenpreis."
     }
   },
   "lang": {

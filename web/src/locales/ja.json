@@ -491,7 +491,12 @@
       "tileOtherSources": "メーター全体の値です：このソースだけでなく、同じメーターの他のソース（{{sources}}）を含みます",
       "combinedSubNoPrice": "オペレーターのセッションには定価なし（どの呼び出しにも定価がありません）。covey のエージェント：{{agents}}",
       "combinedSubNoCalls": "期間内にオペレーターのセッションの呼び出しなし。covey のエージェント：{{agents}}",
-      "chartNoPriceCombined": "オペレーターのセッション：定価なし"
+      "chartNoPriceCombined": "オペレーターのセッション：定価なし",
+      "combinedSubSelected": "covey の外のオペレーターのセッション {{outside}} を含む。選択したエージェント：{{agents}}",
+      "combinedSubNoPriceSelected": "オペレーターのセッションには定価なし（どの呼び出しにも定価がありません）。選択したエージェント：{{agents}}",
+      "combinedSubNoCallsSelected": "期間内にオペレーターのセッションの呼び出しなし。選択したエージェント：{{agents}}",
+      "agentsPartSelected": "選択したエージェント（定価）",
+      "typePricedOnly": "* トークン種別ごとのドルは価格のある呼び出しのみを対象とします。その上のトークン数には定価のない呼び出しも含まれます。"
     }
   },
   "lang": {

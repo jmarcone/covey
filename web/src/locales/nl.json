@@ -491,7 +491,12 @@
       "tileOtherSources": "van de hele meter: het omvat de andere bronnen erop ({{sources}}), niet alleen deze bron",
       "combinedSubNoPrice": "geen catalogusprijs voor de operatorsessies (geen van hun aanroepen had er een); agents van covey: {{agents}}",
       "combinedSubNoCalls": "geen aanroepen van de operatorsessies in de periode; agents van covey: {{agents}}",
-      "chartNoPriceCombined": "operatorsessies: geen catalogusprijs"
+      "chartNoPriceCombined": "operatorsessies: geen catalogusprijs",
+      "combinedSubSelected": "bevat {{outside}} van operatorsessies buiten covey; geselecteerde agents: {{agents}}",
+      "combinedSubNoPriceSelected": "geen catalogusprijs voor de operatorsessies (geen van hun aanroepen had er een); geselecteerde agents: {{agents}}",
+      "combinedSubNoCallsSelected": "geen aanroepen van de operatorsessies in de periode; geselecteerde agents: {{agents}}",
+      "agentsPartSelected": "geselecteerde agents (catalogusprijs)",
+      "typePricedOnly": "* De dollars per tokensoort dekken alleen de aanroepen met een prijs; de tokenaantallen erboven bevatten ook de aanroepen zonder catalogusprijs."
     }
   },
   "lang": {

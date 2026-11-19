@@ -128,6 +128,8 @@ export type OutsideTotals = {
   share: number | null;
   /** The readings of those seats not split, per reason: split to nobody. */
   unsplit: Unsplit;
+  /** The readings of those seats at no plan price: out of the real cost. */
+  unpricedSteps: number;
   /** Outside list price after the meter's last reading: no reading yet, no share. */
   unmeteredList: number;
 };
@@ -149,13 +151,15 @@ export function outsideTotals(ext: ExternalUsage | null | undefined): OutsideTot
   const real = creds.reduce((a, c) => a + c.external_real_usd, 0);
   const splitReal = creds.reduce((a, c) => a + c.external_real_usd + c.covey_real_usd, 0);
   const splitSteps = creds.reduce((a, c) => a + c.split_steps, 0);
+  const { unsplit, unpricedSteps } = unsplitOf(ext.meter.steps, seats);
   return {
     list, calls, reported, unpricedTokens,
     reportedCalls: ext.cells.reduce((a, c) => a + c.reported_calls, 0),
     linked: seats.size > 0,
     real,
     share: splitSteps > 0 && splitReal > 0 ? real / splitReal : null,
-    unsplit: unsplitOf(ext.meter.steps, seats).unsplit,
+    unsplit,
+    unpricedSteps,
     unmeteredList: creds.reduce((a, c) => a + c.unmetered_list_usd, 0),
   };
 }
@@ -262,8 +266,8 @@ export function perPeriodBy(cells: readonly ExternalModelCell[], keyOf: (c: Exte
  *  its priced steps (null: none had a plan price). outside and covey: the
  *  parts of its split steps, a figure only while splitSteps > 0. Then the
  *  steps not split, per reason, with their real cost; the steps at no plan
- *  price; the idle ones. noReading: the outside sessions worked in it but no
- *  reading was placed there. */
+ *  price; the idle ones. noReading: the outside sessions worked in it on a
+ *  seat that has no reading placed there (another seat's may be). */
 export type MeterPeriod = {
   period: number;
   real: number | null;
@@ -291,9 +295,15 @@ export function meterPerPeriod(ext: { meter: ExternalUsage["meter"]; sources: Ex
     }
     return e;
   };
+  // The periods each seat has a reading in: a source's work is placed on
+  // its own seat's readings, so another seat's reading in the same period
+  // does not stand in for it.
+  const read = new Set<string>();
   for (const s of ext.meter.steps) {
     if (!seats.has(seatOf(s))) continue;
-    const e = at(bucketStart(Date.parse(s.at), bucket));
+    const p = bucketStart(Date.parse(s.at), bucket);
+    read.add(`${seatOf(s)}@${p}`);
+    const e = at(p);
     if (s.real_usd != null) e.real = (e.real ?? 0) + s.real_usd;
     const k = stepKind(s);
     if (k === "split") {
@@ -313,9 +323,9 @@ export function meterPerPeriod(ext: { meter: ExternalUsage["meter"]; sources: Ex
     for (const c of cells) {
       if (c.calls === 0) continue;
       const linked = ext.sources.find((s) => s.source === c.source)?.meter_credential;
-      if (!linked) continue;
+      if (!linked || !seats.has(seatOf(linked))) continue;
       const p = bucketStart(Date.parse(c.period), bucket);
-      if (!by.has(p)) at(p).noReading = true;
+      if (!read.has(`${seatOf(linked)}@${p}`)) at(p).noReading = true;
     }
   }
   return [...by.values()].sort((a, b) => a.period - b.period);

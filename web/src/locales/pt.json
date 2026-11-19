@@ -491,7 +491,12 @@
       "tileOtherSources": "do contador inteiro: inclui as outras fontes nele ({{sources}}), não só esta fonte",
       "combinedSubNoPrice": "sem preço de tabela para as sessões do operador (nenhuma das suas chamadas o tinha); agentes do covey: {{agents}}",
       "combinedSubNoCalls": "sem chamadas das sessões do operador no período; agentes do covey: {{agents}}",
-      "chartNoPriceCombined": "sessões do operador: sem preço de tabela"
+      "chartNoPriceCombined": "sessões do operador: sem preço de tabela",
+      "combinedSubSelected": "inclui {{outside}} de sessões do operador fora do covey; agentes selecionados: {{agents}}",
+      "combinedSubNoPriceSelected": "sem preço de tabela para as sessões do operador (nenhuma das suas chamadas o tinha); agentes selecionados: {{agents}}",
+      "combinedSubNoCallsSelected": "sem chamadas das sessões do operador no período; agentes selecionados: {{agents}}",
+      "agentsPartSelected": "agentes selecionados (preço de tabela)",
+      "typePricedOnly": "* Os dólares por tipo de token abrangem só as chamadas com preço; as contagens de tokens acima incluem as chamadas sem preço de tabela."
     }
   },
   "lang": {

@@ -491,7 +491,12 @@
       "tileOtherSources": "dell'intero contatore: comprende le altre fonti su di esso ({{sources}}), non solo questa fonte",
       "combinedSubNoPrice": "nessun prezzo di listino per le sessioni dell'operatore (nessuna delle loro chiamate ne aveva uno); agenti di covey: {{agents}}",
       "combinedSubNoCalls": "nessuna chiamata delle sessioni dell'operatore nel periodo; agenti di covey: {{agents}}",
-      "chartNoPriceCombined": "sessioni dell'operatore: nessun prezzo di listino"
+      "chartNoPriceCombined": "sessioni dell'operatore: nessun prezzo di listino",
+      "combinedSubSelected": "include {{outside}} delle sessioni dell'operatore fuori da covey; agenti selezionati: {{agents}}",
+      "combinedSubNoPriceSelected": "nessun prezzo di listino per le sessioni dell'operatore (nessuna delle loro chiamate ne aveva uno); agenti selezionati: {{agents}}",
+      "combinedSubNoCallsSelected": "nessuna chiamata delle sessioni dell'operatore nel periodo; agenti selezionati: {{agents}}",
+      "agentsPartSelected": "agenti selezionati (prezzo di listino)",
+      "typePricedOnly": "* I dollari per tipo di token coprono solo le chiamate con prezzo; i conteggi di token sopra includono le chiamate senza prezzo di listino."
     }
   },
   "lang": {
