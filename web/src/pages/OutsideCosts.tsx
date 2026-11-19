@@ -6,11 +6,13 @@ import { api, type ExternalModelUsage } from "../api";
 import { exact, fmtBucket, fmtCount, fmtNumber, fmtUSD, fmtUSDAxis } from "../format";
 import { Seg } from "./Costs";
 import { BarChart, Chip, Swatch, type Bar } from "./StackedCostChart";
-import { FigureTile, OUTSIDE_COLOR, counted, listLine, listValue, unsplitLines } from "./OutsideSessions";
+import { FigureTile, OUTSIDE_COLOR, counted, listLine, listValue, noCallLines, unattributedLine, unsplitLines } from "./OutsideSessions";
 import {
   ORIGINS,
+  meterShare,
   unsplitOf,
   unsplitSteps,
+  unsplitUSD,
   RANGES,
   TEN_HOUR_MAX_DAYS,
   TEN_MIN_MAX_DAYS,
@@ -30,7 +32,9 @@ import {
  * in buckets down to 10 minutes, per model and per origin (main session,
  * subagents, workflows), tokens per type with their dollars, and their share
  * of the subscription meter. Every figure is the server's
- * (GET /cost/external-usage): F1/F2 per cell, F3 per meter reading. */
+ * (GET /cost/external-usage): F1/F2 per cell, F3 and F3b per meter reading —
+ * the outside sessions' and covey's parts at most what they show, the
+ * unattributed part (booked to nobody) at least. */
 
 const MODEL_COLORS = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => `var(--agent-${i})`);
 const ORIGIN_COLOR: Record<string, string> = {
@@ -162,8 +166,9 @@ export default function OutsideCosts() {
     const linked = data.sources.filter((s) => s.meter_credential && (source == null || s.source === source));
     return data.meter.credentials.filter((c) => linked.some((s) => s.meter_credential!.secret_key === c.secret_key && s.meter_credential!.secret_slot === c.secret_slot));
   }, [data, source]);
-  const real = seats.reduce((a, c) => a + c.external_real_usd, 0);
-  const splitReal = seats.reduce((a, c) => a + c.external_real_usd + c.covey_real_usd, 0);
+  // F3b: the outside part is at most what it shows, and its share is of the
+  // whole dent (unattributed and not split included), at most too.
+  const share = useMemo(() => meterShare(seats), [seats]);
   const meterRows = useMemo(() => (data ? meterPerPeriod(data, cells, bucket, source) : []), [data, cells, bucket, source]);
   const sourceRow = data?.sources.find((s) => s.source === source);
   // With one source chosen, the share is still the whole meter's (the steps
@@ -211,10 +216,12 @@ export default function OutsideCosts() {
               lines={[models.total.reportedCalls > 0 && t("costs.outside.reportedCalls", counted(models.total.reportedCalls))]} />
           )}
           <FigureTile test="real" label={t("costs.outside.meterShare")} color={OUTSIDE_COLOR} hatched
-            value={seats.length > 0 && splitReal > 0 ? `≈ ${fmtUSD(real)}` : "–"}
+            value={seats.length > 0 && share.share != null ? `≤ ${fmtUSD(share.real)}` : "–"}
             lines={[
               seats.length === 0 ? t(sourceRow && !sourceRow.meter_credential ? "costs.outside.noMeterSource" : "costs.outside.noMeterLinked")
-                : splitReal > 0 ? t("costs.outside.ofMeter", { pct: pct(real / splitReal) }) : t("costs.outside.noShare"),
+                : share.share != null ? t("costs.outside.ofMeter", { pct: pct(share.share), dent: fmtUSD(share.dent) }) : t("costs.outside.noShare"),
+              // Beside the share, what the unattributed part is (F3b).
+              seats.length > 0 && (share.share != null || share.unattributed > 0) && unattributedLine(t, share.unattributed),
               seats.length > 0 && otherSources.length > 0 && t("costs.outside.tileOtherSources", { sources: otherSources.join(", ") }),
             ]} />
           {models.total.unpricedTokens > 0 && (
@@ -264,20 +271,36 @@ export default function OutsideCosts() {
               <p key={`${c.secret_key}#${c.secret_slot}`} className="text-sm mb-1" data-seat={`${c.secret_key}#${c.secret_slot}`}>
                 <b>{c.secret_key} #{c.secret_slot}</b>{" · "}
                 {(() => {
-                  // Every reading at no plan price: no real cost, not $0.
-                  const realText = c.step_count - c.unpriced_steps === 0 ? "–" : fmtUSD(c.real_usd);
-                  return c.share != null
-                    ? t("costs.outside.seatLine", { real: realText, outside: fmtUSD(c.external_real_usd), pct: pct(c.share), covey: fmtUSD(c.covey_real_usd) })
-                    : t("costs.outside.seatNoShare", { real: realText });
+                  // Every reading at no plan price: no real cost, not $0. F3b:
+                  // the outside and covey parts at most, the unattributed part
+                  // at least; the share is of the seat's whole real cost.
+                  const priced = c.step_count - c.unpriced_steps > 0;
+                  const realText = priced ? fmtUSD(c.real_usd) : "–";
+                  const sh = meterShare([c]);
+                  const unattributed = fmtUSD(c.unattributed_real_usd ?? 0);
+                  return sh.share != null
+                    ? t("costs.outside.seatLine", { real: realText, outside: fmtUSD(c.external_real_usd), pct: pct(sh.share),
+                      covey: fmtUSD(c.covey_real_usd), unattributed })
+                    : (c.unattributed_real_usd ?? 0) > 0
+                      ? t("costs.outside.seatNoShareUnattributed", { real: realText, unattributed })
+                      : t("costs.outside.seatNoShare", { real: realText });
                 })()}
                 {(() => {
                   const s = seatSteps(c);
-                  return [...unsplitLines(t, s.unsplit),
+                  return [...noCallLines(t, s.unattributed.noCall), ...unsplitLines(t, s.unsplit),
                     ...(s.unpricedSteps > 0 ? [t("costs.outside.unpricedReadings", counted(s.unpricedSteps))] : [])]
                     .map((l, i) => <span key={i} data-seat-unsplit> · {l}</span>);
                 })()}
                 {c.unmetered_list_usd > 0 && <> · {t("costs.outside.unmetered", { usd: fmtUSD(c.unmetered_list_usd) })}</>}
                 <span className="muted"> · {t("costs.outside.seatSources", { sources: c.sources.join(", ") })}</span>
+                {/* The seat's rate (F3b's k): what the unattributed part is measured by. */}
+                {c.step_count > c.unpriced_steps && c.split_steps > 0 && (
+                  <span className="muted text-xs" style={{ display: "block" }} data-seat-rate>
+                    {c.points_per_list_usd != null && c.points_per_list_usd > 0
+                      ? t("costs.dent.rateSeat", { seat: `${c.secret_key} #${c.secret_slot}`, usd: fmtUSD(1 / c.points_per_list_usd) })
+                      : t("costs.dent.rateUnknownSeat", { seat: `${c.secret_key} #${c.secret_slot}` })}
+                  </span>
+                )}
               </p>
             ))}
             {source != null && <p className="muted text-xs mb-2">{t("costs.outside.sourceNote")}</p>}
@@ -290,6 +313,8 @@ export default function OutsideCosts() {
                     <th scope="col" style={{ padding: "2px 8px 4px 0", fontWeight: 500 }}>{t("costs.outside.colReal")}</th>
                     <th scope="col" style={{ padding: "2px 8px 4px 0", fontWeight: 500 }}>{t("costs.outside.colOutsideReal")}</th>
                     <th scope="col" style={{ padding: "2px 8px 4px 0", fontWeight: 500 }}>{t("costs.outside.colCoveyReal")}</th>
+                    <th scope="col" style={{ padding: "2px 8px 4px 0", fontWeight: 500 }}>{t("costs.dent.unattributed")}</th>
+                    <th scope="col" style={{ padding: "2px 8px 4px 0", fontWeight: 500 }}>{t("costs.dent.unsplit")}</th>
                     <th scope="col" style={{ padding: "2px 0 4px 0", fontWeight: 500, textAlign: "left" }}>{t("costs.outside.colNote")}</th>
                   </tr>
                 </thead>
@@ -298,27 +323,39 @@ export default function OutsideCosts() {
                     // The parts are a figure only where a step was split: a
                     // reading not split, idle or at no plan price has no
                     // figure for either part, never $0. Each reason says so.
+                    // F3b: outside and covey at most (≤), the unattributed
+                    // part at least (≈, booked to nobody) — a figure where a
+                    // step was split or moved with no call; not split ≈ where
+                    // a reading was not split. They add up to the real cost.
                     const unsplitN = unsplitSteps(r.unsplit);
-                    const cell = (v: number) => (r.splitSteps > 0 ? fmtUSD(v) : "–");
+                    const noCallN = r.unattributed.noCall.steps;
+                    const cell = (v: number) => (r.splitSteps > 0 ? `≤ ${fmtUSD(v)}` : "–");
+                    const unattributedCell = r.splitSteps + noCallN > 0 ? `≈ ${fmtUSD(r.unattributed.usd)}` : "–";
+                    const unsplitCell = unsplitN > 0 ? `≈ ${fmtUSD(unsplitUSD(r.unsplit))}` : "–";
                     // No reading on one seat while another seat has one in
                     // the period: both are said.
-                    const anyStep = r.splitSteps + unsplitN + r.unpricedSteps + r.idleSteps > 0;
+                    const anyStep = r.splitSteps + noCallN + unsplitN + r.unpricedSteps + r.idleSteps > 0;
                     const notes = [
                       ...(r.noReading ? [t("costs.outside.noReading")] : []),
+                      ...noCallLines(t, r.unattributed.noCall),
                       ...unsplitLines(t, r.unsplit),
                       ...(r.unpricedSteps > 0 ? [t("costs.outside.unpricedReadings", counted(r.unpricedSteps))] : []),
-                      ...(r.splitSteps === 0 && unsplitN === 0 && r.unpricedSteps === 0 && r.idleSteps > 0 ? [t("costs.outside.idleHere")] : []),
+                      ...(r.splitSteps + noCallN + unsplitN + r.unpricedSteps === 0 && r.idleSteps > 0 ? [t("costs.outside.idleHere")] : []),
                     ];
                     const note = notes.join(" · ");
                     const kind = !anyStep ? "no-reading"
-                      : r.splitSteps > 0 ? (unsplitN > 0 ? "partial" : "split")
-                      : unsplitN > 0 ? "unsplit" : r.unpricedSteps > 0 ? "unpriced" : "idle";
+                      : r.splitSteps > 0 ? (unsplitN + noCallN > 0 ? "partial" : "split")
+                      : unsplitN > 0 ? (noCallN > 0 ? "partial" : "unsplit")
+                      : noCallN > 0 ? "unattributed" : r.unpricedSteps > 0 ? "unpriced" : "idle";
+                    const td = { textAlign: "right", padding: "2px 8px 2px 0", whiteSpace: "nowrap" } as const;
                     return (
                       <tr key={r.period} style={{ borderTop: "1px solid var(--border)" }} data-meter-row={kind} data-meter-period={r.period}>
                         <th scope="row" style={{ textAlign: "left", padding: "2px 8px 2px 0", fontWeight: 400 }}>{fmtPeriod(new Date(r.period).toISOString())}</th>
-                        <td style={{ textAlign: "right", padding: "2px 8px 2px 0" }}>{r.real != null ? fmtUSD(r.real) : "–"}</td>
-                        <td style={{ textAlign: "right", padding: "2px 8px 2px 0" }}>{cell(r.outside)}</td>
-                        <td style={{ textAlign: "right", padding: "2px 8px 2px 0" }}>{cell(r.covey)}</td>
+                        <td style={td}>{r.real != null ? fmtUSD(r.real) : "–"}</td>
+                        <td style={td}>{cell(r.outside)}</td>
+                        <td style={td}>{cell(r.covey)}</td>
+                        <td style={td} data-unattributed>{unattributedCell}</td>
+                        <td style={td} data-unsplit>{unsplitCell}</td>
                         <td className="muted" style={{ padding: "2px 0" }}>{note}</td>
                       </tr>
                     );
