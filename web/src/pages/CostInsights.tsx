@@ -10,8 +10,8 @@ import { usageList } from "./CostBasis";
 import { Chip } from "./StackedCostChart";
 import { usableReadings, type CredentialFigures } from "./costFigures";
 import { OrgWide, OutsideMark, SOURCE_COLOR, Swatch, useUsageReadings } from "./StackedCostChart";
-import { externalStamp, listedSources, outsideModelRows, sourceStyles, type OutsideModelRow, type SourceStyles } from "./outsideFigures";
-import { withUnpriced, withinMoney } from "./StackedCostChart";
+import { externalStamp, kpiLead, listedSources, outsideModelRows, outsideSplit, seatSources, sourceStyles, type OutsideModelRow, type SourceStyles } from "./outsideFigures";
+import { withUnpriced, withinMoney, withinSplit } from "./StackedCostChart";
 
 /* Cost insights.
  *
@@ -324,7 +324,11 @@ function ModelTable({ rep, figures, agents, outside = null }: {
  *  none), the list price of the credential's lines over the same span, and
  *  the multiple. No chart: two independent scales stretched to the same
  *  height agreed by construction, not by the data. */
-function MeterFigures({ f, readings }: { f: CredentialFigures; readings: UsageReading[] }) {
+function MeterFigures({ f, readings, outside = null }: {
+  f: CredentialFigures; readings: UsageReading[];
+  /** The sessions outside covey, to say the seat's outside part as the covey operator and the other projects (#163). */
+  outside?: ExternalUsage | null;
+}) {
   const { t } = useTranslation();
   const m = f.meter!;
   const r = f.real;
@@ -390,6 +394,18 @@ function MeterFigures({ f, readings }: { f: CredentialFigures; readings: UsageRe
       <span className="text-sm" style={{ fontVariantNumeric: "tabular-nums" }}>{value}</span>
     </div>
   );
+  // The seat's outside part within the meter's readings, as the covey
+  // operator and the other projects (#163): shared by their lead price over
+  // the range where both have calls (withinSplit), else one row, all of it.
+  const seatNames = outside ? new Set(seatSources(outside, m.secret_key, m.secret_slot).map((s) => s.source)) : null;
+  const split = outside && seatNames ? outsideSplit(outside, seatNames) : null;
+  const within = e && split ? withinSplit(e.outsideList, split) : null;
+  const outsideRows = e && split && within ? (
+    [["operator", split.operator, within.operator], ["projects", split.projects, within.projects]] as const
+  ).flatMap(([key, k, usd]) => !k || k.calls === 0 ? [] : [
+    <Fragment key={key}>{row(t(key === "operator" ? "costs.incl.meterListOperator" : "costs.incl.meterListProjects"),
+      withinMoney(t, usd, { priced: e.outsidePriced, calls: k.calls, unpricedTokens: kpiLead(k).unpricedTokens, recomputed: kpiLead(k).recomputed }),
+      SOURCE_COLOR.recomputed)}</Fragment>]) : null;
   return (
     <div className="mb-4" data-meter={f.id}>
       <div className="text-xs" style={{ fontWeight: 600, marginBottom: 4 }}>{`${m.secret_key} #${m.secret_slot} · ${source}`}</div>
@@ -399,8 +415,7 @@ function MeterFigures({ f, readings }: { f: CredentialFigures; readings: UsageRe
       }))}
       {row(t("costs.fig.realEstimate"), real, SOURCE_COLOR.real, true)}
       {row(t("costs.insights.meterList"), f.aligned != null ? fmtUSD(f.aligned) : "–", SOURCE_COLOR.recomputed)}
-      {e && row(t("costs.incl.meterListOutside"), withinMoney(t, e.outsideList,
-        { priced: e.outsidePriced, calls: e.outsideCalls, unpricedTokens: e.outsideUnpricedTokens, recomputed: e.outsideRecomputed }), SOURCE_COLOR.recomputed)}
+      {e && outsideRows}
       {row(e ? t("costs.incl.everything") : t("costs.fig.multiple"), mult)}
       <p className="muted text-xs mt-1 mb-0">
         {five
@@ -464,7 +479,7 @@ export function CostInsights({ days, figures, agents = NO_AGENTS, outside = null
         <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.insights.meterTitle")}{filtered && <OrgWide />}</div>
         <p className="muted text-xs mb-3">{t("costs.insights.meterHint")}</p>
         {metered.length === 0 && <div className="muted text-sm">{t("costs.insights.noReadings")}</div>}
-        {metered.map((f) => <MeterFigures key={f.id} f={f} readings={rs} />)}
+        {metered.map((f) => <MeterFigures key={f.id} f={f} readings={rs} outside={outside} />)}
         <p className="muted text-xs mt-2 mb-0">{t("costs.fig.accountWideCaveat")}</p>
       </div>
     </div>

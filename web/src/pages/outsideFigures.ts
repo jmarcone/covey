@@ -461,6 +461,32 @@ export function outsideKpis(ext: ExternalUsage | null | undefined, only?: Readon
   return out;
 }
 
+/** The source the Claude Code session that drives covey from outside reports
+ *  as (#163). Every other outside source is another project on the same
+ *  machine and plan. */
+export const OPERATOR_SOURCE = "covey operator";
+
+/** The outside sessions in two parts (#163): the covey operator, and the
+ *  other projects, each with its sources' figures; projectList: every
+ *  project on its own, for a hover. A part is null where no source of it
+ *  is listed. Over every source, or the given ones. */
+export type OutsideSplit = {
+  operator: OutsideKpis | null;
+  projects: OutsideKpis | null;
+  projectList: { source: string; kpis: OutsideKpis }[];
+};
+
+export function outsideSplit(ext: ExternalUsage | null | undefined, only?: ReadonlySet<string>): OutsideSplit {
+  const names = listedSources(ext).map((s) => s.source).filter((n) => !only || only.has(n));
+  const projects = names.filter((n) => n !== OPERATOR_SOURCE);
+  const by = outsideKpisBySource(ext);
+  return {
+    operator: names.includes(OPERATOR_SOURCE) ? outsideKpis(ext, new Set([OPERATOR_SOURCE])) : null,
+    projects: projects.length > 0 ? outsideKpis(ext, new Set(projects)) : null,
+    projectList: projects.sort().flatMap((source) => { const kpis = by.get(source); return kpis ? [{ source, kpis }] : []; }),
+  };
+}
+
 /** Every listed source's figures, in one pass over the cells (computed once
  *  per answer, not per row and render: #120 review, L4). */
 export function outsideKpisBySource(ext: ExternalUsage | null | undefined): Map<string, OutsideKpis> {

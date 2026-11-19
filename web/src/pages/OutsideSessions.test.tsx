@@ -255,7 +255,7 @@ describe("the operator sessions on the cost page (#120)", () => {
     const combined = screen.getByRole("group", { name: t("costs.outside.combinedTotal") });
     // The page's own words for a narrowed figure: "selected agents … plus outside sessions".
     expect(combined.textContent).toContain(`selected agents ${fmtUSD(7)} · plus outside sessions ${fmtUSD(15.75)}`);
-    expect(combined.textContent).not.toContain(`covey agents ${fmtUSD(7)}`);
+    expect(combined.textContent).not.toContain(`covey agents (internal) ${fmtUSD(7)}`);
   });
 
   it("changes the total only when combined, says so, and leaves the agents' own figure alone", async () => {
@@ -271,7 +271,7 @@ describe("the operator sessions on the cost page (#120)", () => {
     fireEvent.click(screen.getByRole("button", { name: t("costs.outside.modeCombined") }));
     const combined = screen.getByRole("group", { name: t("costs.outside.combinedTotal") });
     expect(within(combined).getByText(fmtUSD(7 + 15.75))).toBeTruthy();
-    expect(combined.textContent).toContain(`covey agents ${fmtUSD(7)} · outside sessions ${fmtUSD(15.75)}`);
+    expect(combined.textContent).toContain(`covey agents (internal) ${fmtUSD(7)} · outside sessions ${fmtUSD(15.75)}`);
     expect(agentsKpi()).toBe(before);
 
     fireEvent.click(screen.getByRole("button", { name: t("costs.outside.modeApart") }));
@@ -298,7 +298,7 @@ describe("the operator sessions on the cost page (#120)", () => {
 
     fireEvent.click(within(section).getByRole("button", { name: t("costs.outside.modeCombined") }));
     const combined = screen.getByRole("group", { name: t("costs.outside.combinedTotal") });
-    expect(combined.textContent).toContain(`covey agents ${fmtUSD(7)} · outside sessions no list price (`);
+    expect(combined.textContent).toContain(`covey agents (internal) ${fmtUSD(7)} · outside sessions no list price (`);
     expect(combined.textContent).not.toContain(`outside sessions ${fmtUSD(0)}`);
     for (const r of within(within(section).getByRole("table")).getAllByRole("row").filter((r) => r.closest("tbody"))) {
       expect(r.textContent).toContain(t("costs.outside.chartNoPriceCombined"));

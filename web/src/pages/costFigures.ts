@@ -1402,7 +1402,7 @@ export type Headline = {
   /** The listed sources on these seats, with their lead price (list: null where none of its calls had a price;
    *  recomputed: calls priced at the list for want of a reported cost); before: listed only for a real part, its
    *  calls lie before the range. */
-  sources: { source: string; list: number | null; reported: number | null; calls: number; before: boolean; recomputed: number }[];
+  sources: { source: string; list: number | null; reported: number | null; calls: number; before: boolean; recomputed: number; unpricedTokens: number }[];
   /** The sessions outside covey billed per use (no meter): not in list; null without such a source. */
   perUse: OutsideKpis | null;
   metered: number;
@@ -1500,7 +1500,8 @@ export function headline(cells: CostCells | null | undefined): Headline | null {
     reported: coveyReported + (outsideReported ?? 0), coveyReported, outsideReported, outsideCalls, outsideReportedCalls,
     outsideUnpricedTokens: outsideLeadUnpricedTokens,
     sources: own.map((s) => ({ source: s.source, list: byLead.get(s.source)?.lead ?? null, reported: s.reported_usd, calls: s.calls,
-      before: beforeRange(s, realParts), recomputed: byLead.get(s.source)?.recomputed ?? 0 })),
+      before: beforeRange(s, realParts), recomputed: byLead.get(s.source)?.recomputed ?? 0,
+      unpricedTokens: byLead.get(s.source)?.unpricedTokens ?? 0 })),
     perUse, metered, unmetered: before + after, before, after, unpriced, real, points: m.point_rate_mixed ? null : m.points, slack,
     multiple: why == null ? metered / real! : null,
     floorList, floor: why == null ? floorList / (real! + slack) : null,

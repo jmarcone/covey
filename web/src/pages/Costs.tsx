@@ -11,7 +11,7 @@ import { SubscriptionDentRow } from "./SubscriptionDent";
 import { canSetPlan } from "./PlanPrice";
 import { OutsideOverview } from "./OutsideSessions";
 import { COVEY_ONLY_PARAM, COVEY_ONLY_VALUE, PRICES_PARAM, PRICES_RECOMPUTED, RANGES, beforeRange, bucketOptions, kpiLead, listedSources,
-  outsideKpis, rangeOptions, sourceRealParts, sourcesByMeter, type OutsideKpis } from "./outsideFigures";
+  outsideKpis, outsideSplit, rangeOptions, sourceRealParts, type OutsideKpis } from "./outsideFigures";
 import {
   AgentFilter,
   BUCKET_MS,
@@ -23,8 +23,9 @@ import {
   TokenExplorer,
   TYPE_COLOR,
   cellTotals,
-  inclLine,
-  inclLineMeter,
+  SplitParts,
+  leadLines,
+  splitLines,
   outsideMoney,
   priceTableLine,
   useBilled,
@@ -43,13 +44,10 @@ import {
 
 type Metric = "cost" | "tokens";
 
-/** An outside part with no source in it. */
-const NO_KPIS: OutsideKpis = { sources: [], calls: 0, list: null, reported: null, reportedCalls: 0, tokens: {}, unpricedTokens: 0,
-  lead: null, leadRecomputed: 0, leadUnpricedCalls: 0, leadUnpricedTokens: 0 };
 
 // --- KPI tiles ---------------------------------------------------------------
 
-function Kpi({ label, value, sub, color, parts, check }: { label: string; value: string; sub?: string; color?: string; parts?: string; check?: string }) {
+function Kpi({ label, value, sub, color, parts, check }: { label: string; value: string; sub?: string; color?: string; parts?: React.ReactNode; check?: string }) {
   return (
     <div className="card" data-kpi={label} style={{ flex: 1, minWidth: 150 }}>
       <div className="muted text-xs" style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -137,7 +135,7 @@ export function Seg<T extends string | number>({
  *  in every turn. Whoever misses that optimizes the output length and
  *  wonders why nothing happens. The tokens are the lines' own, over every
  *  model, so they are the calls the dollars above are made of. */
-function TokenMix({ tokens, split }: { tokens: Record<string, number>; split?: string }) {
+function TokenMix({ tokens, split }: { tokens: Record<string, number>; split?: React.ReactNode }) {
   const { t } = useTranslation();
   const parts = [
     { key: "cache_read", value: tokens.cache_read ?? 0 },
@@ -330,14 +328,8 @@ export default function Costs({ me }: { me?: Principal }) {
   const ext = cells.data?.external;
   const sourcesListed = useMemo(() => listedSources(ext), [ext]);
   const outside = useMemo(() => (coveyOnly ? null : outsideKpis(ext)), [ext, coveyOnly]);
-  // The outside part split by where it counts (M6): on a subscription meter,
-  // or billed per use — the headline counts only the first.
-  const byMeter = useMemo(() => {
-    if (!outside) return null;
-    const { meter, perUse } = sourcesByMeter(ext);
-    if (perUse.size === 0) return null;
-    return { meter: outsideKpis(ext, meter) ?? NO_KPIS, perUse: outsideKpis(ext, perUse) ?? NO_KPIS };
-  }, [ext, outside]);
+  // The outside part in two (#163): the covey operator and the other projects.
+  const split = useMemo(() => (coveyOnly ? null : outsideSplit(ext)), [ext, coveyOnly]);
   const realParts = useMemo(() => sourceRealParts(ext), [ext]);
   const included = outside != null ? ext! : null;
   const filtered = selected.size > 0;
@@ -354,9 +346,8 @@ export default function Costs({ me }: { me?: Principal }) {
   // is a miss that pays extra to be a hit next time, not a hit.
   const cached = tok.cache_read ?? 0;
   const output = tok.output ?? 0;
-  const parts = (covey: string, of: (o: OutsideKpis) => string) => (!outside ? undefined
-    : byMeter ? inclLineMeter(t, filtered, covey, of(byMeter.meter), of(byMeter.perUse))
-    : inclLine(t, filtered, covey, of(outside)));
+  const parts = (covey: string, money: (o: OutsideKpis) => string) => (!outside || !split ? undefined
+    : <SplitParts lines={splitLines(t, { filtered, covey, split, money })} />);
   const tokParts = (f: (x: Record<string, number>) => number) => parts(fmtCount(f(coveyTok)), (o) => fmtCount(f(o.tokens)));
   // The lead figure: covey's lines at Claude Code's figure, the outside
   // sessions at their lead price.
@@ -422,7 +413,7 @@ export default function Costs({ me }: { me?: Principal }) {
             parts={parts(fmtUSD(totals.recomputed), (o) => outsideMoney(t, o, "list"))} />
         </> : (
           <Kpi label={t("costs.lead.label")} value={fmtUSD(lead)} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.reported}
-            parts={parts(fmtUSD(totals.reported), (o) => outsideMoney(t, o, "lead"))}
+            parts={outside && split ? <SplitParts stacked lines={leadLines(t, filtered, fmtUSD(totals.reported), split)} /> : undefined}
             check={priceTableLine(t, lead, totals.recomputed + (outside?.list ?? 0))} />
         )}
         <Kpi

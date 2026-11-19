@@ -9,7 +9,7 @@ import { credentialFigures, headline, perCredentialTotals, seatLists, splitPerPe
 
 // #120, the headline: once Claude Code sessions outside covey report on a
 // subscription meter, the page shows the whole dent in the meters, split
-// between covey's agents and those sessions, with list $ per real $ for
+// between covey agents (internal) and those sessions, with list $ per real $ for
 // each and for both together. The server splits the meter per chunk of at
 // least 5 points of readings by the chunk's list-price shares (F3c); a
 // reading the outside sessions had not reported is split to nobody — never
@@ -362,7 +362,7 @@ describe("one rule for the headline, the chart and the agents", () => {
     expect(perCredentialTotals([before]).real!.recomputed).toBe(343);
   });
 
-  it("splits a seat no source names as the server does: covey's agents and the unattributed part, no outside part (#120 review)", () => {
+  it("splits a seat no source names as the server does: covey agents (internal) and the unattributed part, no outside part (#120 review)", () => {
     // No source names this seat, so the server returns its steps reported
     // with L_out = 0 (#126 fix 1): covey's after the chunk's unattributed
     // part — here 1 point of the 19:40 reading. The seat block uses that
@@ -437,7 +437,7 @@ describe("Costs — the headline", () => {
     // without the slack.
     expect(value("Real cost of the meters")).toBe(`≈ ${fmtUSD(d.real!)}`);
     expect(group("Real cost of the meters").textContent).toContain(`${fmtNumber(9, 1)} points`);
-    expect(value("covey's agents")).toBe(`≈ ${fmtUSD(d.covey.real)}`);
+    expect(value("covey agents (internal)")).toBe(`≈ ${fmtUSD(d.covey.real)}`);
     expect(value("Sessions outside covey")).toBe(`≈ ${fmtUSD(d.outside.real)}`);
     expect(row.textContent).not.toMatch(/≤/);
     expect(group("Sessions outside covey").textContent).toContain(`≈ ${fmtNumber(d.outside.points, 1)} points`);
@@ -447,14 +447,14 @@ describe("Costs — the headline", () => {
     // The sentence names the dent, then what the split readings paid (finding 11).
     expect(row.querySelector("[data-dent-sentence]")!.textContent).toBe(
       `Your subscription paid ≈ ${fmtUSD(d.real!)} real. Of it, the readings the outside sessions reported paid ≈ ${fmtUSD(d.together.real)} ` +
-      `for ${fmtUSD(758)} of list-price work: ${fmtUSD(303)} by covey's agents, ${fmtUSD(455)} by the sessions outside covey that drive them.`);
+      `for ${fmtUSD(758)} of list-price work: ${fmtUSD(303)} by covey agents (internal), ${fmtUSD(455)} by the sessions outside covey that drive them.`);
     // The multiples are lower bounds: the meter is shared with whatever does
     // not report, whose use would only raise them.
     const m = (x: typeof d.covey) => times(x.multiple!.low);
     expect(row.querySelector("[data-dent-multiples]")!.textContent).toBe(
-      `List price per real dollar, at least: ≥ ${m(d.covey)} for covey's agents, ≥ ${m(d.outside)} for the sessions outside covey ` +
+      `List price per real dollar, at least: ≥ ${m(d.covey)} for covey agents (internal), ≥ ${m(d.outside)} for the sessions outside covey ` +
       `and ≥ ${m(d.together)} for both together. Unattributed use beyond the estimate would only raise them.`);
-    expect(row.querySelector("[data-dent-unsplit]")!.textContent).toMatch(/not booked to covey's agents/);
+    expect(row.querySelector("[data-dent-unsplit]")!.textContent).toMatch(/not booked to covey agents \(internal\)/);
     // No movement beyond the rate here: the unattributed part is shown, at
     // $0.00, and no sentence names it.
     expect(value("Unattributed")).toBe(`≈ ${fmtUSD(0)}`);
@@ -471,17 +471,17 @@ describe("Costs — the headline", () => {
     // Beyond the rate a lower bound, the chunk with no call an estimate.
     expect(group("Unattributed").textContent).toContain(`50 % of the dent · ≈ ${fmtNumber(21, 0)} points · ` +
       `beyond the rate: at least ${fmtUSD(19 * PP)} · moved with no call (meter lag or another machine): ≈ ${fmtUSD(2 * PP)} · booked to nobody`);
-    expect(within(group("covey's agents")).getByText(/^≈ /).textContent).toBe(`≈ ${fmtUSD(d.covey.real)}`);
-    expect(group("covey's agents").textContent).toContain(`≥ ${times(d.covey.multiple!.low)}`);
+    expect(within(group("covey agents (internal)")).getByText(/^≈ /).textContent).toBe(`≈ ${fmtUSD(d.covey.real)}`);
+    expect(group("covey agents (internal)").textContent).toContain(`≥ ${times(d.covey.multiple!.low)}`);
     expect(row.querySelector("[data-dent-sentence]")!.textContent).toBe(
       `Your subscription paid ≈ ${fmtUSD(42 * PP)} real. Of it, ≈ ${fmtUSD(d.together.real)} went to ${fmtUSD(200)} of list-price work: ` +
-      `${fmtUSD(90)} by covey's agents, ${fmtUSD(110)} by the sessions outside covey that drive them.`);
+      `${fmtUSD(90)} by covey agents (internal), ${fmtUSD(110)} by the sessions outside covey that drive them.`);
     expect(row.querySelector("[data-dent-unattributed]")!.textContent).toBe(
-      `≈ ${fmtUSD(21 * PP)} of the meter's movement is not explained by covey's agents or the reported sessions — ` +
+      `≈ ${fmtUSD(21 * PP)} of the meter's movement is not explained by covey agents (internal) or the reported sessions — ` +
       "another machine on the same account, for example; it is booked to nobody.");
     expect(row.querySelector("[data-dent-rate]")!.textContent).toBe(
       `1 point ≈ ${fmtUSD(10)} of list price, the most list price per point seen since the start of the meter week the range begins in; assumes the meter charges in proportion to list price. ` +
-      "Movement beyond that rate counts as unattributed, and that part is a lower bound. The parts of covey's agents " +
+      "Movement beyond that rate counts as unattributed, and that part is a lower bound. The parts of covey agents (internal) " +
       "and the outside sessions are estimates and may still hold another machine's use.");
     expect(row.querySelector("[data-dent-incomplete]")).toBeNull();
     expect(row.querySelector("[data-dent-multiples]")!.textContent).toMatch(
@@ -492,10 +492,10 @@ describe("Costs — the headline", () => {
     fireEvent.focus(bar);
     const tip = await screen.findByRole("tooltip");
     expect(tip.textContent).toContain(`Unattributed${fmtUSD(38 / 3 * PP)}`);
-    expect(tip.textContent).toMatch(/covey's agents/);
+    expect(tip.textContent).toMatch(/covey agents \(internal\)/);
     expect(document.querySelector('[data-split-key="unattributed"]')!.textContent).toMatch(/Real cost unattributed/);
     expect(document.querySelector("[data-split-note]")!.textContent).toContain(
-      `≈ ${fmtUSD(21 * PP)} is unattributed: not explained by covey's agents or the reported sessions, booked to nobody.`);
+      `≈ ${fmtUSD(21 * PP)} is unattributed: not explained by covey agents (internal) or the reported sessions, booked to nobody.`);
   });
 
   it("says when there is no rate yet, and still books a chunk that moved with no call to nobody (F3c)", async () => {
@@ -633,7 +633,7 @@ describe("Costs — the headline", () => {
     expect(unsplit).not.toMatch(/had not reported/);
     expect(row.querySelector("[data-dent-unsplit]")).toBeNull();
     expect(row.querySelector("[data-dent-unsplit-unpriced]")!.textContent).toBe(
-      `≈ ${fmtUSD(3 * PP)} of the movement fell in readings whose outside calls all had no price (1): their share is unknown, so it is split to nobody, not booked to covey's agents.`);
+      `≈ ${fmtUSD(3 * PP)} of the movement fell in readings whose outside calls all had no price (1): their share is unknown, so it is split to nobody, not booked to covey agents (internal).`);
     expect(row.querySelector("[data-dent-unpriced-calls]")!.textContent).toMatch(new RegExp(`^${fmtNumber(1234, 0)} outside calls`));
     expect(fmtNumber(1234, 0)).not.toBe("1234");
     const note = document.querySelector("[data-split-note]")!.textContent;
@@ -684,12 +684,12 @@ describe("Costs — the headline", () => {
     const bar = document.querySelector(`[data-period="${H20}"]`)!;
     fireEvent.focus(bar);
     const tip = await screen.findByRole("tooltip");
-    expect(tip.textContent).not.toMatch(/covey's agents/);
+    expect(tip.textContent).not.toMatch(/covey agents \(internal\)/);
     fireEvent.blur(bar);
     const bar18 = document.querySelector(`[data-period="${H18}"]`)!;
     fireEvent.focus(bar18);
     const tip18 = await screen.findByRole("tooltip");
-    expect(tip18.textContent).toMatch(/covey's agents/);
+    expect(tip18.textContent).toMatch(/covey agents \(internal\)/);
     expect(tip18.textContent).toMatch(/Sessions outside covey/);
   });
 
@@ -701,7 +701,7 @@ describe("Costs — the headline", () => {
     serve(cells(ext));
     await screen.findByRole("region", { name: "The whole dent in the subscription" });
     expect(document.body.textContent).not.toMatch(/share this meter/);
-    // The real bar is split as the server split it: covey's agents and the
+    // The real bar is split as the server split it: covey agents (internal) and the
     // unattributed point, and the note says no outside source names the meter.
     expect(document.querySelector("[data-split-note]")!.textContent).toMatch(/^No outside source names this meter/);
     expect(document.querySelector("[data-outside-unreported]")!.textContent).toMatch(/^No outside source reports on this meter, but it may carry use outside covey/);
