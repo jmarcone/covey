@@ -257,7 +257,7 @@ describe("per credential", () => {
     expect(figs.map((f) => f.id)).toEqual([`${KEY}#1`, `${SEAT}#0`, ""]);
     const [key, seat, none] = figs;
     expect(seat.recomputed).toBe(45); // the booking without lines (7) is not measured
-    expect(seat.unattributed).toBe(7);
+    expect(seat.bookedWithoutLine).toBe(7);
     expect(seat.real?.points).toBe(4);
     expect(seat.multiple?.kind).toBe("estimate");
     expect(key.recomputed).toBe(100);

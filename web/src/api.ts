@@ -872,7 +872,7 @@ export type ExternalCell = {
   unpriced_calls: number;
 };
 
-/** One reading of a seat's meter, split over the span since the reading before it (F3). */
+/** One reading of a seat's meter over the span since the reading before it, split by its chunk's list-price share (F3c). */
 export type ExternalMeterStep = {
   at: string;
   from: string;
@@ -886,14 +886,16 @@ export type ExternalMeterStep = {
   covey_list_usd: number;
   /** Every active machine of the linked sources has reported through the reading. */
   reported: boolean;
-  /** Split: the two parts are set and, with unattributed_real_usd, add up to real_usd. Otherwise reason says why not. */
+  /** Split: the two parts are set (at the chunk's share, not the reading's) and, with unattributed_real_usd, add up to real_usd.
+   *  A split step may carry reason moved_without_reported_call. Otherwise reason says why not. */
   split: boolean;
   /** outside_unpriced: the outside calls of the span all had no price, so their share is unknown. idle: a reported reading that did not move, with no call on either side.
-   *  moved_without_reported_call: unattributed whole (F3b), not unsplit. */
+   *  moved_without_reported_call: the meter moved with no call in the span (mostly its lag after use): split with its chunk,
+   *  or unattributed whole in a chunk with no list at all. */
   reason?: "not_reported" | "moved_without_reported_call" | "outside_unpriced" | "unpriced" | "idle";
   external_real_usd: number | null;
   covey_real_usd: number | null;
-  /** The step's unattributed part (F3b, a lower bound): its run's share, or all of it when it moved with no call.
+  /** The step's unattributed part (F3c): its chunk's points beyond the rate, spread by points, or all of it in a chunk with no list.
    *  covey + outside + unattributed + unsplit = real_usd. */
   unattributed_real_usd: number;
   unattributed_points: number;
@@ -926,11 +928,18 @@ export type ExternalMeterSums = {
   real_usd: number;
   external_real_usd: number;
   covey_real_usd: number;
-  /** Movement neither covey nor the reported sources explain (F3b): booked to nobody, a lower bound. */
+  /** Movement neither covey nor the reported sources explain (F3c): booked to nobody. */
   unattributed_real_usd: number;
   unsplit_real_usd: number;
   unattributed_points: number;
   unattributed_steps: number;
+  /** The part of it in chunks with no list at all (moved with no call: lag, or another machine), an estimate;
+   *  the rest, beyond the rate, is a lower bound. */
+  unattributed_no_call_real_usd: number;
+  unattributed_no_call_points: number;
+  /** Chunks with list price whose use is not all in it (outside calls without a price, covey bookings without a line):
+   *  they set no rate and have no unattributed part. */
+  incomplete_chunks: number;
   /** external_real_usd over the split steps' real cost; null without one. */
   share: number | null;
   /** The list prices of the split steps, which the multiples divide. */
@@ -941,9 +950,9 @@ export type ExternalMeterSums = {
   split_points: number;
   split_external_points: number;
   split_covey_points: number;
-  /** Runs of split steps; each leaves ±1 point of the whole. */
+  /** Since F3c the chunks with list price; each leaves ±1 point of the whole. */
   split_runs: number;
-  /** The ranges the whole percents leave: the whole's, and each part's (½·TV of its share per run). */
+  /** The ranges the whole percents leave: the whole's, and each part's (½·TV of its share per chunk). */
   split_slack_points: number;
   split_slack_usd: number;
   split_external_slack_points: number;
@@ -969,7 +978,7 @@ export type ExternalMeterSums = {
   unmetered_list_usd: number;
 };
 
-/** One agent's part of covey's share of a seat (the split steps only). */
+/** One agent's part of covey's share of a seat (the split steps only, by its share of each chunk's covey list). */
 export type ExternalMeterAgent = {
   agent_id: string;
   split_list_usd: number;
@@ -984,8 +993,11 @@ export type ExternalMeterTotal = ExternalMeterSums & {
   /** The outside sources linked to this meter; none: every step is unsplit. */
   sources: string[];
   hours_with_reading: number;
-  /** k of F3b: the lowest points per list $ of a run of split steps of 5 points or more, at its upper end; null without one. */
+  /** k of F3c at the seat's latest plan price that has one: the lowest points per list $ of a chunk of 10 points or more
+   *  with every call priced, at its upper end; null without one. */
   points_per_list_usd: number | null;
+  /** k per plan price per point, in the order the prices first appear. */
+  plan_rates: { usd_per_point: number; points_per_list_usd: number | null }[];
   agents: ExternalMeterAgent[];
 };
 

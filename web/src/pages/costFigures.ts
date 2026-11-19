@@ -410,9 +410,9 @@ export type AgentFigure = {
    *  figure: the agent's part of covey's share of each split step — never
    *  the movement of a step they did not report. */
   realShare: number | null;
-  /** "upTo": realShare is a bound (≤): the meter may carry unreported use
-   *  outside covey, or (a split seat) covey's part is an upper bound since
-   *  the unattributed part is a lower one (F3b); "estimate" otherwise. */
+  /** "upTo": realShare is a bound (≤): the meter may carry use outside
+   *  covey that nothing reports; "estimate" (≈) otherwise — on a split seat
+   *  too, where covey's part is the server's per-chunk estimate (F3c). */
   realBound: "estimate" | "upTo";
   /** Why realShare is null although the seat is priced: "unsplit", the
    *  agent ran only in steps that were not split. */
@@ -431,8 +431,9 @@ export type CredentialFigures = {
   recomputed: number;
   /** Price-table check: (recomputed − reported) / reported, in %. */
   check: number | null;
-  /** Booked without any line: not in reported or recomputed. */
-  unattributed: number;
+  /** Booked without a line (the cells' "unattributed" cost type): not in
+   *  reported or recomputed. Not the meter's unattributed part (F3c). */
+  bookedWithoutLine: number;
   meter: MeterCoverage | null;
   real: RealFigure | null;
   /** Recomputed list $ of the credential's lines between the meter's baseline
@@ -446,8 +447,8 @@ export type CredentialFigures = {
    *  headline's multiples split it, covey's list over the whole movement would not). */
   noMultiple: "agents" | "movement" | "meter" | "unpriced" | "outside" | null;
   /** The meter's real cost split between covey and the sessions outside it
-   *  (#120), per reading by list-price share; null until a source names a
-   *  meter, and for a seat with no split step. */
+   *  (#120), per chunk of readings by the chunk's list-price share; null
+   *  until a source names a meter, and for a seat with no split step. */
   split: ExternalMeterTotal | null;
   /** Sources name a meter, but no source names this seat, or its machines
    *  have not reported through any of its readings: its meter may carry use
@@ -504,7 +505,7 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
 
   const out: CredentialFigures[] = [];
   for (const [id, a] of by) {
-    let reported = 0, recomputed = 0, unattributed = 0, all = 0;
+    let reported = 0, recomputed = 0, bookedWithoutLine = 0, all = 0;
     const per = new Map<string, { reported: number; recomputed: number }>();
     for (const c of a.cells) {
       const rec = recomputedOf(c);
@@ -512,7 +513,7 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
       if (!inScope(c.agent_id)) continue;
       reported += c.engine_usd ?? 0;
       recomputed += rec;
-      unattributed += c.measured.unattributed ?? 0;
+      bookedWithoutLine += c.measured.unattributed ?? 0;
       const p = per.get(c.agent_id) ?? { reported: 0, recomputed: 0 };
       p.reported += c.engine_usd ?? 0;
       p.recomputed += rec;
@@ -527,8 +528,8 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
     // A seat no source names has nobody to share it with: the server books
     // its movement to covey (L_out = 0), but the meter is account-wide and
     // may still carry use outside covey, so covey's figures stay bounds.
-    // A linked seat whose only movement is unattributed (readings that moved
-    // with no call, F3b) is split too: nobody's, never covey's.
+    // A linked seat whose only movement is unattributed (chunks that moved
+    // with no call, F3c) is split too: nobody's, never covey's.
     const split = seatSplit && seatSplit.sources.length > 0
       && (seatSplit.split_steps > 0 || (seatSplit.unattributed_steps ?? 0) > 0) ? seatSplit : null;
     const outsideUnreported = seatSplit != null && split == null;
@@ -573,7 +574,7 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
         gapPct: p.reported > 0 ? ((p.recomputed - p.reported) / p.reported) * 100 : null,
         share,
         realShare,
-        realBound: outsideUnreported || split ? "upTo" : "estimate",
+        realBound: outsideUnreported ? "upTo" : "estimate",
         realWhy,
       };
     }).sort((x, y) => y.recomputed - x.recomputed);
@@ -583,7 +584,7 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
       id, secretKey: a.key, slot: a.slot, kind, plan,
       reported, recomputed,
       check: reported > 0 ? ((recomputed - reported) / reported) * 100 : null,
-      unattributed, meter: cov, real, aligned, multiple: mult, noMultiple, split, outsideUnreported, billed, bookingCheck, agents,
+      bookedWithoutLine, meter: cov, real, aligned, multiple: mult, noMultiple, split, outsideUnreported, billed, bookingCheck, agents,
     });
   }
   out.sort((x, y) => (x.id === "" ? 1 : 0) - (y.id === "" ? 1 : 0) || y.recomputed - x.recomputed);
@@ -706,7 +707,7 @@ export function meterSplit(ext: ExternalUsage | null | undefined, key: string, s
 }
 
 /** One period of a seat's real cost, split: covey's agents, the outside
- *  sessions, the unattributed movement (F3b: neither explains it, booked to
+ *  sessions, the unattributed movement (F3c: neither explains it, booked to
  *  nobody), and the movement of readings that were not split — the outside
  *  sessions had not reported them, or (unpricedSteps of them) their outside
  *  calls all had no price. */
@@ -723,7 +724,7 @@ export function splitPerPeriod(ext: ExternalUsage | null | undefined, key: strin
     if (st.secret_key !== key || st.secret_slot !== slot || st.real_usd == null) continue;
     const k = bucketStart(Date.parse(st.at), bucket);
     const p = out.get(k) ?? { ...EMPTY_SPLIT_PERIOD };
-    // A split step's run part, or the whole of one that moved with no call.
+    // A split step's chunk part, or the whole of one in a chunk with no list.
     p.unattributed += st.unattributed_real_usd ?? 0;
     if (st.split) {
       p.covey += st.covey_real_usd ?? 0;
@@ -747,8 +748,8 @@ export type FloorMultiple = Extract<Multiple, { kind: "floor" }>;
 export type DentPart = { real: number; share: number | null; points: number; list: number; multiple: FloorMultiple | null };
 
 /** One seat in the dent. real is null when none of its movement has a plan
- *  price; split: it has a split step. pointsPerList: the seat's k (F3b),
- *  null when no run of split readings moved 5 points. */
+ *  price; split: it has a split step. pointsPerList: the seat's k (F3c),
+ *  null when no complete chunk of split readings moved 10 points. */
 export type DentSeat = {
   key: string; slot: number; sources: string[];
   real: number | null; points: number; covey: number; outside: number; unattributed: number; unsplit: number;
@@ -758,18 +759,18 @@ export type DentSeat = {
 };
 
 /** The whole dent in the subscription meters over the window, and its split
- *  (#120). The parts add up to `real`: covey's agents and the outside
- *  sessions over the readings the outside sessions reported, `unattributed`
- *  for the movement neither explains (F3b: each run's points beyond the
- *  lowest rate seen, k, and readings that moved with no call — booked to
- *  nobody), `unsplit` over the readings they did not report — never booked
- *  to covey whole. The unattributed part is a lower bound, so covey's and
- *  the outside sessions' parts are at most what they show, and the three
+ *  (#120, F3c: per chunk of at least 5 points of readings, by the chunk's
+ *  list-price shares). The parts add up to `real`: covey's agents and the
+ *  outside sessions over the readings the outside sessions reported
+ *  (estimates, ≈), `unattributed` for the movement neither explains (each
+ *  chunk's points beyond the rate k — a lower bound — and chunks that moved
+ *  with no call at all — an estimate; booked to nobody), `unsplit` over the
+ *  readings they did not report — never booked to covey whole. The three
  *  multiples (list price over real cost, from 3 points of attributed
- *  movement) lower bounds: list / (real + slack), the low end of the range
- *  the whole percents leave (the server's: ±½·TV of each part's share per
- *  run, at each seat's own point price). Points without a plan price are not
- *  in it, and counted. */
+ *  movement) are lower bounds: list / (real + slack), the low end of the
+ *  range the whole percents leave (the server's: ±½·TV of each part's share
+ *  per chunk, at each reading's own point price). Points without a plan
+ *  price are not in it, and counted. */
 export type SubscriptionDent = {
   /** null: no seat has a priced reading. */
   real: number | null;
@@ -782,12 +783,13 @@ export type SubscriptionDent = {
    *  because the outside calls of the span all had no price (never covey's);
    *  the rest the outside sessions had not reported. */
   unsplit: { real: number; share: number | null; steps: number; unpricedSteps: number; unpricedReal: number };
-  /** The movement neither covey's agents nor the reported sessions explain:
-   *  a lower bound, booked to nobody. */
-  unattributed: { real: number; share: number | null; points: number; steps: number };
-  /** Some priced seat has no rate (k): there only readings that moved with
-   *  no call are unattributed. */
-  rateUnknown: boolean;
+  /** The movement neither covey's agents nor the reported sessions explain,
+   *  booked to nobody: `beyond` the rate (a lower bound) and `noCall`, the
+   *  chunks that moved with no call at all (an estimate). */
+  unattributed: { real: number; share: number | null; points: number; steps: number; beyond: number; noCall: number };
+  /** Chunks whose use is not all in their list (outside calls without a
+   *  price, covey bookings without a line): no rate, no unattributed part. */
+  incompleteChunks: number;
   unpricedPoints: number;
   /** Outside calls with no price at all: left out of the split. */
   unpricedCalls: number;
@@ -831,8 +833,9 @@ export function subscriptionDent(ext: ExternalUsage | null | undefined): Subscri
     unsplit: { real: m.unsplit_real_usd, share: share(m.unsplit_real_usd), steps: m.unsplit_steps,
       unpricedSteps: m.outside_unpriced_steps, unpricedReal: m.outside_unpriced_real_usd },
     unattributed: { real: m.unattributed_real_usd ?? 0, share: share(m.unattributed_real_usd ?? 0),
-      points: m.unattributed_points ?? 0, steps: m.unattributed_steps ?? 0 },
-    rateUnknown: m.credentials.some((c) => pricedSeat(c) && c.split_steps > 0 && c.points_per_list_usd == null),
+      points: m.unattributed_points ?? 0, steps: m.unattributed_steps ?? 0,
+      beyond: (m.unattributed_real_usd ?? 0) - (m.unattributed_no_call_real_usd ?? 0), noCall: m.unattributed_no_call_real_usd ?? 0 },
+    incompleteChunks: m.incomplete_chunks ?? 0,
     unpricedPoints: m.unpriced_points,
     unpricedCalls: m.unpriced_calls,
     unmeteredList: m.unmetered_list_usd,

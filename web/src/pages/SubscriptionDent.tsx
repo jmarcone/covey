@@ -11,18 +11,20 @@ import { OrgWide, Swatch } from "./StackedCostChart";
  * outside sessions and both together.
  *
  * Every figure is the server's split (costFigures.subscriptionDent over
- * external.meter): per meter reading, over the span since the reading
- * before it, by list-price share. The meter is account-wide: a machine that
+ * external.meter): per chunk of at least 5 points of readings, by the
+ * chunk's list-price shares (F3c) — a single reading's whole percents say
+ * little about its own movement. The meter is account-wide: a machine that
  * does not report (another one on the same subscription) moves it too. Per
- * seat the server takes the lowest rate of points per list $ seen over a
- * run of split readings (k, F3b); movement beyond it, and readings that
- * moved with no call, are unattributed — booked to nobody, never to covey or
- * a source — and a lower bound, so the other parts are at most what they
- * show and the multiples at least. Movement in a reading the outside
- * sessions had not reported, or whose outside calls all had no price, is
- * split to nobody and stands as its own part. Points without a plan price
- * are not in the dent and are counted beside it. The dent ignores the agent
- * filter and says so. */
+ * plan price the server takes the lowest rate of points per list $ seen over
+ * a chunk of 10 points (k); movement beyond it is unattributed and a lower
+ * bound, and a chunk that moved with no call at all (the meter's lag, or
+ * another machine) is unattributed whole, an estimate — both booked to
+ * nobody, never to covey or a source. covey's and the outside sessions'
+ * parts are estimates (≈); the multiples are lower bounds. Movement in a
+ * reading the outside sessions had not reported, or whose outside calls all
+ * had no price, is split to nobody and stands as its own part. Points
+ * without a plan price are not in the dent and are counted beside it. The
+ * dent ignores the agent filter and says so. */
 
 const times = (v: number) => `${fmtNumber(v, 1)}×`;
 const pctOf = (v: number | null) => (v != null ? `${fmtNumber(v * 100, 0)} %` : "–");
@@ -56,6 +58,10 @@ export function SubscriptionDentRow({ d, filtered }: { d: SubscriptionDent; filt
     : t("costs.dent.partSub", { pct: pctOf(p.share), list: fmtUSD(p.list), x: atLeast(p.multiple) });
   const tg = d.together;
   const un = d.unattributed;
+  // The unattributed part's two halves: beyond the rate (at least), and the
+  // chunks that moved with no call (≈).
+  const unParts = [t("costs.dent.unattributedBeyond", { usd: fmtUSD(un.beyond) })];
+  if (un.noCall >= 0.005) unParts.push(t("costs.dent.unattributedNoCall", { usd: fmtUSD(un.noCall) }));
   const sources = d.sources.join(", ");
   const seat = (s: SubscriptionDent["seats"][number]) => `${s.key} #${s.slot}`;
   // The unsplit readings by why: the outside sessions had not reported them,
@@ -89,14 +95,14 @@ export function SubscriptionDentRow({ d, filtered }: { d: SubscriptionDent; filt
           <Part test="total" label={t("costs.dent.total")} value={`≈ ${fmtUSD(d.real)}`}
             sub={d.points != null ? t("costs.dent.totalSubPoints", { pts: pts(d.points), sources }) : t("costs.dent.totalSub", { sources })} />
         )}
-        {/* Upper bounds: the unattributed part is a lower one (F3b), and
-            anything beyond it would come out of these two. */}
-        <Part test="covey" label={t("costs.dent.covey")} value={`≤ ${fmtUSD(d.covey.real)}`} sub={part(d.covey)} color={SPLIT_COLOR.covey} />
-        <Part test="outside" label={t("costs.dent.outside")} value={`≤ ${fmtUSD(d.outside.real)}`} sub={part(d.outside)} color={SPLIT_COLOR.outside} />
+        {/* Estimates, per chunk (F3c): the bounds are on the multiples and
+            on the unattributed part beyond the rate. */}
+        <Part test="covey" label={t("costs.dent.covey")} value={`≈ ${fmtUSD(d.covey.real)}`} sub={part(d.covey)} color={SPLIT_COLOR.covey} />
+        <Part test="outside" label={t("costs.dent.outside")} value={`≈ ${fmtUSD(d.outside.real)}`} sub={part(d.outside)} color={SPLIT_COLOR.outside} />
         <Part test="unattributed" label={t("costs.dent.unattributed")} value={`≈ ${fmtUSD(un.real)}`}
           sub={d.points != null
-            ? t("costs.dent.unattributedSubPoints", { pct: pctOf(un.share), pts: pts(un.points) })
-            : t("costs.dent.unattributedSub", { pct: pctOf(un.share) })}
+            ? t("costs.dent.unattributedSubPoints", { pct: pctOf(un.share), pts: pts(un.points), parts: unParts.join(" · ") })
+            : t("costs.dent.unattributedSub", { pct: pctOf(un.share), parts: unParts.join(" · ") })}
           color={SPLIT_COLOR.unattributed} />
         {d.unsplit.steps > 0 && (
           <Part test="unsplit" label={t("costs.dent.unsplit")} value={`≈ ${fmtUSD(d.unsplit.real)}`}
@@ -146,6 +152,9 @@ export function SubscriptionDentRow({ d, filtered }: { d: SubscriptionDent; filt
         <p className="muted text-xs mb-1" data-dent-unsplit-unpriced>
           {t("costs.dent.unsplitUnpricedNote", { usd: fmtUSD(d.unsplit.unpricedReal), n: count(unpricedSteps) })}
         </p>
+      )}
+      {d.incompleteChunks > 0 && (
+        <p className="muted text-xs mb-1" data-dent-incomplete>{t("costs.dent.incompleteNote", { n: count(d.incompleteChunks) })}</p>
       )}
       {d.unpricedPoints > 0 && (
         <p className="muted text-xs mb-1" data-dent-unpriced>{t("costs.dent.unpricedPoints", { n: pts(d.unpricedPoints) })}</p>

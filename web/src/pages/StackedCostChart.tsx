@@ -632,12 +632,12 @@ function CredentialTiles({ f, filtered }: { f: CredentialFigures; filtered: bool
         sub={r.unpricedPoints > 0 ? t("costs.fig.noPlanPricePoints", { n: r.unpricedPoints, m: r.points }) : t("costs.fig.noPlan")}
         color={SOURCE_COLOR.real} hatched />);
     } else if (filtered && r) {
-      // With outside sessions on the meter, of covey's part only, which is
-      // an upper bound (F3b: the unattributed part is a lower one); without
-      // a split step, at most this much (the meter may carry outside use).
+      // With outside sessions on the meter, of covey's part only, the
+      // server's per-chunk estimate (F3c); without a split step, at most
+      // this much (the meter may carry outside use nothing reports).
       const known = f.agents.filter((x) => x.realShare != null);
       const share = known.reduce((a, x) => a + x.realShare!, 0);
-      const value = known.length === 0 ? "–" : `${f.outsideUnreported || f.split ? "≤" : "≈"} ${fmtUSD(share)}`;
+      const value = known.length === 0 ? "–" : `${f.outsideUnreported ? "≤" : "≈"} ${fmtUSD(share)}`;
       const sub = known.length === 0 ? t("costs.split.agentsUnsplit")
         : f.split ? t("costs.split.shareOfCoveySub", { usd: fmtUSD(f.split.covey_real_usd), whole: fmtUSD(r.value) })
         : t("costs.fig.shareOfRealSub", { usd: fmtUSD(r.value) });
@@ -790,7 +790,7 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
     return [
       { key: "covey", label: t("costs.split.covey"), color: SPLIT_COLOR.covey, value: sp.covey },
       { key: "outside", label: t("costs.split.outside"), color: SPLIT_COLOR.outside, value: sp.outside },
-      // Neither covey's agents nor the reported sessions explain it (F3b):
+      // Neither covey's agents nor the reported sessions explain it (F3c):
       // booked to nobody.
       { key: "unattributed", label: t("costs.split.unattributed"), color: SPLIT_COLOR.unattributed, value: sp.unattributed },
       { key: "unsplit", label: unsplitLabel(sp),
@@ -908,7 +908,7 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
           })}
         </p>
       )}
-      {f.unattributed > 0.0005 && <p className="muted text-xs mb-2 mt-0">{t("costs.fig.unattributed", { usd: fmtUSD(f.unattributed) })}</p>}
+      {f.bookedWithoutLine > 0.0005 && <p className="muted text-xs mb-2 mt-0">{t("costs.fig.bookedWithoutLine", { usd: fmtUSD(f.bookedWithoutLine) })}</p>}
 
       {periods.length === 0 ? (
         <div className="muted text-sm" style={{ padding: "20px 0", textAlign: "center" }}>{t("costs.empty")}</div>

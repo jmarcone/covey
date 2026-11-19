@@ -232,29 +232,34 @@ func acceptanceA(desktopW string) []shareStep {
 	return steps
 }
 
-// Acceptance test (A) of #126 finding 20, figures by cost-controller: each
-// step split over its own span, placed at its reading; the desktop's stale
-// watermark holds the last step unsplit; the parts' ranges are ½·TV of
-// their shares (19); the agents' real share is per step (22).
+// Acceptance test (A) of #126 finding 20, figures by cost-controller,
+// recomputed for F3c: the desktop's stale watermark holds the last step
+// unsplit and closes the chunk before it. Chunk 1 is the first step (10
+// points, closes at once): L = 50.10, k = (10 + 2) / 50.10 = 0.239521 points
+// per list $, U = 0. Chunk 2 is the second and third steps: 4 points over
+// L = 6 (Lo 4, Lc 2), U = 4 − 2 − 0.239521 × 6 = 0.562874 points ($2.251497,
+// spread 1 : 3), the other $13.748503 split by the chunk's share 2/3 —
+// not 1/2 and 3/4 per step. The parts' ranges are ½·TV of their share per
+// chunk (19); the agents' real share follows the chunk's L_cov (22).
 func TestSplitSeatAcceptanceA(t *testing.T) {
 	seat := meterSeat{"seat", 0}
 	tot, steps := splitSeat(seat, []string{"operator: home"}, acceptanceA("18:30"))
 	m := meterSums([]ExternalMeterTotal{tot}, steps)
 
 	want := []struct {
-		split           bool
-		reason          string
-		out, cov, unspl float64
+		split                   bool
+		reason                  string
+		out, cov, unattr, unspl float64
 	}{
-		{true, "", 39.920160, 0.079840, 0},
-		{true, "", 2, 2, 0},
-		{true, "", 9, 3, 0},
-		{false, SplitNotReported, 0, 0, 8},
+		{true, "", 39.920160, 0.079840, 0, 0},
+		{true, "", 2.291417, 1.145709, 0.562874, 0},
+		{true, "", 6.874251, 3.437126, 1.688623, 0},
+		{false, SplitNotReported, 0, 0, 0, 8},
 	}
 	for i, w := range want {
 		st := m.Steps[i]
-		if st.Split != w.split || st.Reason != w.reason || !near(st.UnsplitRealUSD, w.unspl) {
-			t.Errorf("step %d = %+v, want split %v (%q), unsplit %v", i, st, w.split, w.reason, w.unspl)
+		if st.Split != w.split || st.Reason != w.reason || !near(st.UnsplitRealUSD, w.unspl) || !near(st.UnattributedRealUSD, w.unattr) {
+			t.Errorf("step %d = %+v, want split %v (%q), unattributed %v, unsplit %v", i, st, w.split, w.reason, w.unattr, w.unspl)
 			continue
 		}
 		if w.split && (!nearP(st.ExternalRealUSD, w.out) || !nearP(st.CoveyRealUSD, w.cov)) {
@@ -264,39 +269,45 @@ func TestSplitSeatAcceptanceA(t *testing.T) {
 			t.Errorf("step %d is not split but has parts", i)
 		}
 	}
-	if !near(m.RealUSD, 64) || !near(m.ExternalRealUSD, 50.920160) || !near(m.CoveyRealUSD, 5.079840) ||
-		!near(m.UnsplitRealUSD, 8) || !nearP(m.Share, 0.909289) || m.SplitPoints != 14 || m.SplitRuns != 1 {
-		t.Errorf("dent %v, outside %v, covey %v, unsplit %v, share %v, split points %v, runs %d",
+	if !nearP(tot.PointsPerListUSD, 12/50.1) || !near(m.UnattributedRealUSD, 2.251497) {
+		t.Errorf("k %v, unattributed %v; want 0.239521, 2.251497", tot.PointsPerListUSD, m.UnattributedRealUSD)
+	}
+	if !near(m.RealUSD, 64) || !near(m.ExternalRealUSD, 49.085828) || !near(m.CoveyRealUSD, 4.662675) ||
+		!near(m.UnsplitRealUSD, 8) || !nearP(m.Share, 0.913250) || m.SplitPoints != 14 || m.SplitRuns != 2 {
+		t.Errorf("dent %v, outside %v, covey %v, unsplit %v, share %v, split points %v, chunks %d",
 			m.RealUSD, m.ExternalRealUSD, m.CoveyRealUSD, m.UnsplitRealUSD, *m.Share, m.SplitPoints, m.SplitRuns)
 	}
 	// The hours the steps are placed in.
-	hours := map[int][4]float64{16: {44, 41.920160, 2.079840, 0}, 18: {12, 9, 3, 0}, 19: {8, 0, 0, 8}}
+	hours := map[int][5]float64{16: {44, 42.211577, 1.225549, 0.562874, 0}, 18: {12, 6.874251, 3.437126, 1.688623, 0}, 19: {8, 0, 0, 0, 8}}
 	if len(m.Hours) != len(hours) {
 		t.Fatalf("hours = %+v", m.Hours)
 	}
 	for _, h := range m.Hours {
 		w := hours[h.Hour.Hour()]
-		if !nearP(h.RealUSD, w[0]) || !near(h.ExternalRealUSD, w[1]) || !near(h.CoveyRealUSD, w[2]) || !near(h.UnsplitRealUSD, w[3]) {
+		if !nearP(h.RealUSD, w[0]) || !near(h.ExternalRealUSD, w[1]) || !near(h.CoveyRealUSD, w[2]) ||
+			!near(h.UnattributedRealUSD, w[3]) || !near(h.UnsplitRealUSD, w[4]) {
 			t.Errorf("hour %v = %+v, want %v", h.Hour, h, w)
 		}
 	}
-	// The multiples: list ÷ real, with their ranges.
+	// The multiples: list ÷ real, and their floor list ÷ (real + slack).
 	split := m.ExternalRealUSD + m.CoveyRealUSD
 	list := m.SplitExternalListUSD + m.SplitCoveyListUSD
-	check := func(name string, l, r, slack, value, low, high float64) {
+	check := func(name string, l, r, slack, value, low float64) {
 		t.Helper()
-		if !near(l/r, value) || math.Abs(l/(r+slack)-low) > 5e-6 || math.Abs(l/(r-slack)-high) > 5e-6 {
-			t.Errorf("%s: %.5f (%.5f–%.5f), want %.5f (%.5f–%.5f)", name, l/r, l/(r+slack), l/(r-slack), value, low, high)
+		if !near(l/r, value) || math.Abs(l/(r+slack)-low) > 5e-6 {
+			t.Errorf("%s: %.5f (≥ %.5f), want %.5f (≥ %.5f)", name, l/r, l/(r+slack), value, low)
 		}
 	}
-	check("together", list, split, m.SplitSlackUSD, 1.001786, 0.93500, 1.07885)
-	check("outside", m.SplitExternalListUSD, m.ExternalRealUSD, m.SplitExternalSlackUSD, 1.060484, 0.96580, 1.17575)
-	check("covey", m.SplitCoveyListUSD, m.CoveyRealUSD, m.SplitCoveySlackUSD, 0.413399, 0.29662, 0.68185)
-	if !near(m.SplitExternalSlackUSD, 4.992016) || !near(m.SplitCoveySlackUSD, 2) || !near(m.SplitSlackUSD, 4) {
-		t.Errorf("slack outside %v covey %v whole %v, want 4.992016, 2, 4", m.SplitExternalSlackUSD, m.SplitCoveySlackUSD, m.SplitSlackUSD)
+	check("together", list, split, m.SplitSlackUSD, 1.04375, 0.90852)
+	check("outside", m.SplitExternalListUSD, m.ExternalRealUSD, m.SplitExternalSlackUSD, 1.100114, 0.96871)
+	check("covey", m.SplitCoveyListUSD, m.CoveyRealUSD, m.SplitCoveySlackUSD, 0.450385, 0.34977)
+	// Per chunk at $4 a point: chunk 1 4 × (1, 0.998004, 0.001996), chunk 2
+	// 4 × (1, 2/3, 1/3).
+	if !near(m.SplitExternalSlackUSD, 6.658683) || !near(m.SplitCoveySlackUSD, 1.341317) || !near(m.SplitSlackUSD, 8) {
+		t.Errorf("slack outside %v covey %v whole %v, want 6.658683, 1.341317, 8", m.SplitExternalSlackUSD, m.SplitCoveySlackUSD, m.SplitSlackUSD)
 	}
-	// The agents: a1 has the first step's covey part and $6 of list in the
-	// unsplit step; a2 the second and third steps' covey parts.
+	// The agents: a1 has chunk 1's covey part and $6 of list in the
+	// unsplit step; a2 chunk 2's.
 	agents := map[string]ExternalMeterAgent{}
 	for _, a := range m.Credentials[0].Agents {
 		agents[a.AgentID.String()[34:]] = a
@@ -304,8 +315,8 @@ func TestSplitSeatAcceptanceA(t *testing.T) {
 	if a := agents["a1"]; !near(a.RealUSD, 0.079840) || !near(a.SplitListUSD, 0.10) || !near(a.UnsplitListUSD, 6) {
 		t.Errorf("a1 = %+v, want real 0.079840, split list 0.10, unsplit list 6", a)
 	}
-	if a := agents["a2"]; !near(a.RealUSD, 5) || !near(a.SplitListUSD, 2) || a.UnsplitListUSD != 0 {
-		t.Errorf("a2 = %+v, want real 5, split list 2", a)
+	if a := agents["a2"]; !near(a.RealUSD, 4.582834) || !near(a.SplitListUSD, 2) || a.UnsplitListUSD != 0 {
+		t.Errorf("a2 = %+v, want real 4.582834, split list 2", a)
 	}
 	if !near(agents["a1"].RealUSD+agents["a2"].RealUSD, m.CoveyRealUSD) {
 		t.Error("the agents do not add up to covey's part")
@@ -328,25 +339,39 @@ func TestSplitSeatAcceptanceA(t *testing.T) {
 	}
 }
 
-// Acceptance test (B), finding 19 alone: a part's range is ½·TV of its
-// share, not its share of the whole's. One step all outside, one all covey,
-// two points each: each part ±1 point, the whole ±1 too.
+// Acceptance test (B), finding 19 alone, under F3c: a part's range is ½·TV
+// of its share over each chunk. One step all outside, one all covey, two
+// points each, are one chunk at share ½ (it closes at 5 points): each part
+// ±0.5 point, the whole ±1 (it was ±1 each with the per-step shares 1 and
+// 0). With five points each they are two chunks of shares 1 and 0: each
+// part ±1, the whole ±1 per chunk.
 func TestSplitSeatPartRanges(t *testing.T) {
-	steps := []shareStep{
-		{From: tm("10:00"), At: tm("11:00"), Points: 2, Rate: rate(1), LOut: 5, Reported: true},
-		{From: tm("11:00"), At: tm("12:00"), Points: 2, Rate: rate(1), LCov: 5, Reported: true},
-	}
-	tot, _ := splitSeat(meterSeat{"seat", 0}, nil, steps)
-	if tot.SplitExternalSlackPoints != 1 || tot.SplitCoveySlackPoints != 1 || tot.SplitSlackPoints != 1 || tot.SplitRuns != 1 {
-		t.Errorf("slack outside %v covey %v whole %v (runs %d), want 1, 1, 1 (1)",
-			tot.SplitExternalSlackPoints, tot.SplitCoveySlackPoints, tot.SplitSlackPoints, tot.SplitRuns)
+	for _, c := range []struct {
+		points                      float64
+		outside, covey, whole, runs float64
+	}{{2, 0.5, 0.5, 1, 1}, {5, 1, 1, 2, 2}} {
+		steps := []shareStep{
+			{From: tm("10:00"), At: tm("11:00"), Points: c.points, Rate: rate(1), LOut: 5, Reported: true},
+			{From: tm("11:00"), At: tm("12:00"), Points: c.points, Rate: rate(1), LCov: 5, Reported: true},
+		}
+		tot, _ := splitSeat(meterSeat{"seat", 0}, nil, steps)
+		if !near(tot.SplitExternalSlackPoints, c.outside) || !near(tot.SplitCoveySlackPoints, c.covey) ||
+			!near(tot.SplitSlackPoints, c.whole) || float64(tot.SplitRuns) != c.runs {
+			t.Errorf("%v points each: slack outside %v covey %v whole %v (chunks %d), want %v, %v, %v (%v)", c.points,
+				tot.SplitExternalSlackPoints, tot.SplitCoveySlackPoints, tot.SplitSlackPoints, tot.SplitRuns,
+				c.outside, c.covey, c.whole, c.runs)
+		}
 	}
 }
 
 // Acceptance test (C): the web fixture of #126 (HOURS in
 // SubscriptionDent.test.tsx) as steps: 4 points, L_out 300 / L_cov 151 (a1
-// 101, a2 50); 2 points, 155 / 152 (a2); 3 points not reported (a1 40). The
-// agents and the parts' slack by cost-controller's figures.
+// 101, a2 50); 2 points, 155 / 152 (a2); 3 points not reported (a1 40).
+// Under F3c the first two are one chunk: 6 points over L = 758 (Lo 455, Lc
+// 303), no rate (fewer than 10 points), so R = 6 × $0.461538 splits at
+// 455/758: outside 1.662269, covey 1.106962; a1 gets 101/303 of covey's,
+// a2 202/303. The parts' slack: one chunk at $0.461538 a point, times the
+// share.
 func TestSplitSeatWebFixture(t *testing.T) {
 	pp := 200.0 * 12 / 52 / 100
 	a1, a2 := uuid.New(), uuid.New()
@@ -362,33 +387,34 @@ func TestSplitSeatWebFixture(t *testing.T) {
 	for _, a := range tot.Agents {
 		got[a.AgentID] = a
 	}
-	if !near(got[a1].RealUSD, 0.413440) || !near(got[a2].RealUSD, 0.661702) || !near(got[a1].UnsplitListUSD, 40) {
-		t.Errorf("a1 %+v, a2 %+v; want 0.413440 (unsplit list 40) and 0.661702", got[a1], got[a2])
+	if !near(got[a1].RealUSD, 0.368987) || !near(got[a2].RealUSD, 0.737974) || !near(got[a1].UnsplitListUSD, 40) {
+		t.Errorf("a1 %+v, a2 %+v; want 0.368987 (unsplit list 40) and 0.737974", got[a1], got[a2])
 	}
-	if !near(tot.SplitExternalSlackUSD, 0.307010) || !near(tot.SplitCoveySlackUSD, 0.228514) {
-		t.Errorf("slack outside %v covey %v, want 0.307010 and 0.228514", tot.SplitExternalSlackUSD, tot.SplitCoveySlackUSD)
+	if !near(tot.SplitExternalSlackUSD, 0.277045) || !near(tot.SplitCoveySlackUSD, 0.184494) {
+		t.Errorf("slack outside %v covey %v, want 0.277045 and 0.184494", tot.SplitExternalSlackUSD, tot.SplitCoveySlackUSD)
 	}
-	if !near(tot.ExternalRealUSD, 1.694089) || !near(tot.CoveyRealUSD, 1.075142) || !near(tot.UnsplitRealUSD, 1.384615) {
+	if !near(tot.ExternalRealUSD, 1.662269) || !near(tot.CoveyRealUSD, 1.106962) || !near(tot.UnsplitRealUSD, 1.384615) {
 		t.Errorf("outside %v covey %v unsplit %v", tot.ExternalRealUSD, tot.CoveyRealUSD, tot.UnsplitRealUSD)
 	}
 }
 
 // Acceptance test (D), finding 21: a reported step with no list on either
-// side that moved the meter is nobody's, not covey's whole — since F3b it
-// is unattributed whole, no longer "not split". A reading that did not
-// move either is idle: no money, and the run goes on through it.
+// side that moved the meter is nobody's, not covey's whole. Alone (a chunk
+// with no list, F3c) it is unattributed whole, not "not split". A reading
+// that did not move either is idle: no money, and the chunk goes on
+// through it.
 func TestSplitSeatMovedWithoutACall(t *testing.T) {
 	tot, steps := splitSeat(meterSeat{"seat", 0}, []string{"src"}, []shareStep{
 		{From: tm("10:00"), At: tm("11:00"), Points: 1, Rate: rate(4), Reported: true},
 	})
 	if s := steps[0]; s.Split || s.Reason != SplitNoReportedCall || s.UnattributedRealUSD != 4 || s.UnattributedPoints != 1 ||
 		s.UnsplitRealUSD != 0 || tot.CoveyRealUSD != 0 || tot.UnsplitRealUSD != 0 || tot.UnsplitSteps != 0 ||
-		tot.UnattributedRealUSD != 4 || tot.UnattributedSteps != 1 {
+		tot.UnattributedRealUSD != 4 || tot.UnattributedSteps != 1 || tot.UnattributedNoCallRealUSD != 4 || tot.SplitRuns != 0 {
 		t.Errorf("step %+v, covey %v, unsplit %v (%d steps), unattributed %v (%d steps); want unattributed 4 in 1 (%s)",
 			s, tot.CoveyRealUSD, tot.UnsplitRealUSD, tot.UnsplitSteps, tot.UnattributedRealUSD, tot.UnattributedSteps, SplitNoReportedCall)
 	}
 
-	// Idle readings between two split ones: one run, the same range as
+	// Idle readings between two split ones: one chunk, the same range as
 	// without them.
 	run := func(idle bool) ExternalMeterTotal {
 		in := []shareStep{{From: tm("10:00"), At: tm("11:00"), Points: 2, Rate: rate(1), LOut: 1, LCov: 1, Reported: true}}
@@ -407,18 +433,17 @@ func TestSplitSeatMovedWithoutACall(t *testing.T) {
 	}
 }
 
-// unattributedFixture is F3b's case at $1 a point. Run A, the clean one: 5
-// and 4 points over $50 of list each (L_out 30, L_cov 20), 9 points over
-// $100. A reading the outside sessions had not reported (1 point) ends it.
-// Run B: 20 points over L_out 50 / L_cov 30, then 10 points over L_cov 20 —
-// 30 points over $100, three times run A's rate: another machine on the
-// account. Then 2 points with no call on either side. Agent x ran in A1 ($20)
-// and B1 ($30), agent y in A2 ($20), the unreported step ($5) and B2 ($20).
-func unattributedFixture() []shareStep {
+// chunkFixture is F3c's case at $1 a point. Chunk 1: 4 points over L_out 40
+// / L_cov 10 (agent x), then 6 points over 20 / 30 (agent y) — 10 points
+// over $100 (Lo 60, Lc 40), the clean chunk. A reading the outside sessions
+// had not reported (1 point, y $5) closes it. Chunk 2: 20 points over 50 /
+// 30 (x). Chunk 3: 10 points over L_cov 20 (y). Chunk 4: 2 points with no
+// call on either side, the last.
+func chunkFixture() []shareStep {
 	x, y := uuid.MustParse("00000000-0000-0000-0000-0000000000a1"), uuid.MustParse("00000000-0000-0000-0000-0000000000a2")
 	return []shareStep{
-		{From: tm("08:00"), At: tm("08:30"), Points: 5, Rate: rate(1), LOut: 30, LCov: 20, Agents: map[uuid.UUID]float64{x: 20}, Reported: true},
-		{From: tm("08:30"), At: tm("09:30"), Points: 4, Rate: rate(1), LOut: 30, LCov: 20, Agents: map[uuid.UUID]float64{y: 20}, Reported: true},
+		{From: tm("08:00"), At: tm("08:30"), Points: 4, Rate: rate(1), LOut: 40, LCov: 10, Agents: map[uuid.UUID]float64{x: 10}, Reported: true},
+		{From: tm("08:30"), At: tm("09:30"), Points: 6, Rate: rate(1), LOut: 20, LCov: 30, Agents: map[uuid.UUID]float64{y: 30}, Reported: true},
 		{From: tm("09:30"), At: tm("10:30"), Points: 1, Rate: rate(1), LCov: 5, Agents: map[uuid.UUID]float64{y: 5}},
 		{From: tm("10:30"), At: tm("11:30"), Points: 20, Rate: rate(1), LOut: 50, LCov: 30, Agents: map[uuid.UUID]float64{x: 30}, Reported: true},
 		{From: tm("11:30"), At: tm("12:30"), Points: 10, Rate: rate(1), LCov: 20, Agents: map[uuid.UUID]float64{y: 20}, Reported: true},
@@ -426,30 +451,35 @@ func unattributedFixture() []shareStep {
 	}
 }
 
-// F3b (#120): k = min over the runs of 5 points or more of (P_r + S_r) / L_r
-// = min(10/100, 31/100) = 0.1 point per list $, at least the clean run's
-// true 9/100. Run B's unattributed points U = 30 − 1 − 0.1 × 100 = 19, spread
-// by points (12⅔ and 6⅓); the rest by list share. Run A, k's own, keeps
-// U = 0. The step with no call is unattributed whole; the unreported one
-// stays not split. Every step: covey + outside + unattributed + unsplit = R.
+// F3c (#120): k = min over the complete chunks of 10 points or more of
+// (P_c + 2) / L_c = min(12/100, 22/80, 12/20) = 0.12 point per list $.
+// Chunk 1 (k's own) keeps U = 0 and splits at its share 0.6 — 2.4 / 1.6 and
+// 3.6 / 2.4, where the readings' own shares (0.8 and 0.4) would give 3.2 /
+// 0.8 and 2.4 / 3.6. Chunk 2: U = 20 − 2 − 0.12 × 80 = 8.4, the other 11.6
+// at 0.625. Chunk 3: U = 10 − 2 − 2.4 = 5.6, the other 4.4 covey's. Chunk 4
+// has no list: its 2 points are unattributed whole (no call). The
+// unreported reading stays not split. Every step: covey + outside +
+// unattributed + unsplit = R.
 func TestSplitSeatUnattributed(t *testing.T) {
 	for _, sources := range [][]string{{"operator: home"}, nil} {
 		// A seat no source names gets the same unattributed part: another
 		// machine moves its meter all the same.
-		tot, steps := splitSeat(meterSeat{"seat", 0}, sources, unattributedFixture())
-		if tot.PointsPerListUSD == nil || !near(*tot.PointsPerListUSD, 0.1) || *tot.PointsPerListUSD < 9.0/100 {
-			t.Fatalf("sources %v: k = %v, want 0.1 (≥ the clean run's true 0.09)", sources, tot.PointsPerListUSD)
+		tot, steps := splitSeat(meterSeat{"seat", 0}, sources, chunkFixture())
+		if !nearP(tot.PointsPerListUSD, 0.12) || len(tot.PlanRates) != 1 || !nearP(tot.PlanRates[0].PointsPerListUSD, 0.12) ||
+			tot.PlanRates[0].USDPerPoint != 1 {
+			t.Fatalf("sources %v: k = %v, plan rates %+v; want 0.12 at $1 a point", sources, tot.PointsPerListUSD, tot.PlanRates)
 		}
 		want := []struct {
 			reason                    string
+			split                     bool
 			out, cov, unattr, unsplit float64
 		}{
-			{"", 3, 2, 0, 0},
-			{"", 2.4, 1.6, 0, 0},
-			{SplitNotReported, 0, 0, 0, 1},
-			{"", 7.333333 * 0.625, 7.333333 * 0.375, 12.666667, 0},
-			{"", 0, 3.666667, 6.333333, 0},
-			{SplitNoReportedCall, 0, 0, 2, 0},
+			{"", true, 2.4, 1.6, 0, 0},
+			{"", true, 3.6, 2.4, 0, 0},
+			{SplitNotReported, false, 0, 0, 0, 1},
+			{"", true, 7.25, 4.35, 8.4, 0},
+			{"", true, 0, 4.4, 5.6, 0},
+			{SplitNoReportedCall, false, 0, 0, 2, 0},
 		}
 		for i, w := range want {
 			s := steps[i]
@@ -457,49 +487,59 @@ func TestSplitSeatUnattributed(t *testing.T) {
 			if s.ExternalRealUSD != nil {
 				out, cov = *s.ExternalRealUSD, *s.CoveyRealUSD
 			}
-			if s.Reason != w.reason || s.Split != (w.reason == "") || math.Abs(out-w.out) > 1e-5 || math.Abs(cov-w.cov) > 1e-5 ||
-				math.Abs(s.UnattributedRealUSD-w.unattr) > 1e-5 || !near(s.UnsplitRealUSD, w.unsplit) {
+			if s.Reason != w.reason || s.Split != w.split || !near(out, w.out) || !near(cov, w.cov) ||
+				!near(s.UnattributedRealUSD, w.unattr) || !near(s.UnsplitRealUSD, w.unsplit) {
 				t.Errorf("sources %v, step %d = %+v (out %v cov %v), want %+v", sources, i, s, out, cov, w)
 			}
 			if !near(out+cov+s.UnattributedRealUSD+s.UnsplitRealUSD, *s.RealUSD) || !near(s.UnattributedPoints, s.UnattributedRealUSD) {
 				t.Errorf("sources %v, step %d: the parts do not add up to R = %v", sources, i, *s.RealUSD)
 			}
 		}
-		if !near(tot.RealUSD, 42) || !near(tot.UnattributedRealUSD, 21) || !near(tot.UnattributedPoints, 21) ||
-			tot.UnattributedSteps != 3 || !near(tot.UnsplitRealUSD, 1) || tot.UnsplitSteps != 1 ||
-			!near(tot.CoveyRealUSD, 10.016667) || !near(tot.ExternalRealUSD, 9.983333) ||
+		if !near(tot.RealUSD, 43) || !near(tot.UnattributedRealUSD, 16) || !near(tot.UnattributedPoints, 16) ||
+			tot.UnattributedSteps != 3 || !near(tot.UnattributedNoCallRealUSD, 2) || !near(tot.UnattributedNoCallPoints, 2) ||
+			!near(tot.UnsplitRealUSD, 1) || tot.UnsplitSteps != 1 || !near(tot.CoveyRealUSD, 12.75) || !near(tot.ExternalRealUSD, 13.25) ||
 			!near(tot.CoveyRealUSD+tot.ExternalRealUSD+tot.UnattributedRealUSD+tot.UnsplitRealUSD, tot.RealUSD) {
-			t.Errorf("sources %v: real %v covey %v outside %v unattributed %v (%v points, %d steps) unsplit %v (%d)", sources,
+			t.Errorf("sources %v: real %v covey %v outside %v unattributed %v (%v points, %d steps, no call %v) unsplit %v (%d)", sources,
 				tot.RealUSD, tot.CoveyRealUSD, tot.ExternalRealUSD, tot.UnattributedRealUSD, tot.UnattributedPoints,
-				tot.UnattributedSteps, tot.UnsplitRealUSD, tot.UnsplitSteps)
+				tot.UnattributedSteps, tot.UnattributedNoCallRealUSD, tot.UnsplitRealUSD, tot.UnsplitSteps)
 		}
-		// The split points: all four steps' whole, and the attributed points
-		// by share; the lists stay the multiples' numerators.
-		if tot.SplitPoints != 39 || !near(tot.SplitExternalPoints, 9.983333) || !near(tot.SplitCoveyPoints, 39-19-9.983333) ||
-			tot.SplitExternalListUSD != 110 || tot.SplitCoveyListUSD != 90 || tot.SplitRuns != 2 {
-			t.Errorf("sources %v: split points %v (outside %v covey %v), lists %v / %v, runs %d", sources, tot.SplitPoints,
-				tot.SplitExternalPoints, tot.SplitCoveyPoints, tot.SplitExternalListUSD, tot.SplitCoveyListUSD, tot.SplitRuns)
+		// The split points: the four split steps' whole, the attributed points
+		// by their chunk's share; the lists stay the multiples' numerators;
+		// SplitRuns counts the three chunks with list.
+		if tot.SplitPoints != 40 || !near(tot.SplitExternalPoints, 13.25) || !near(tot.SplitCoveyPoints, 12.75) ||
+			tot.SplitExternalListUSD != 110 || tot.SplitCoveyListUSD != 90 || tot.SplitRuns != 3 || tot.SplitSteps != 4 {
+			t.Errorf("sources %v: split points %v (outside %v covey %v), lists %v / %v, chunks %d, split steps %d", sources, tot.SplitPoints,
+				tot.SplitExternalPoints, tot.SplitCoveyPoints, tot.SplitExternalListUSD, tot.SplitCoveyListUSD, tot.SplitRuns, tot.SplitSteps)
 		}
-		// The agents follow covey's new part: x 2 + 2.75, y 1.6 + 3⅔; y's
-		// $5 in the unreported step is unsplit list.
+		// The ranges, one term per chunk at $1 a point: whole 3, outside
+		// 0.6 + 0.625 + 0, covey 0.4 + 0.375 + 1.
+		if !near(tot.SplitSlackPoints, 3) || !near(tot.SplitExternalSlackPoints, 1.225) || !near(tot.SplitCoveySlackPoints, 1.775) ||
+			!near(tot.SplitSlackUSD, 3) || !near(tot.SplitExternalSlackUSD, 1.225) || !near(tot.SplitCoveySlackUSD, 1.775) {
+			t.Errorf("sources %v: slack %v / %v / %v points, %v / %v / %v $", sources, tot.SplitSlackPoints, tot.SplitExternalSlackPoints,
+				tot.SplitCoveySlackPoints, tot.SplitSlackUSD, tot.SplitExternalSlackUSD, tot.SplitCoveySlackUSD)
+		}
+		// The agents follow the chunks' L_cov: in chunk 1 x has 10/40 and y
+		// 30/40 of covey's $4 (per step it would be 2.4 and 1.6), then x
+		// chunk 2's 4.35 and y chunk 3's 4.4; y's $5 in the unreported step
+		// is unsplit list.
 		agents := map[string]ExternalMeterAgent{}
 		for _, a := range tot.Agents {
 			agents[a.AgentID.String()[34:]] = a
 		}
-		if x, y := agents["a1"], agents["a2"]; !near(x.RealUSD, 4.75) || !near(y.RealUSD, 5.266667) ||
-			!near(x.RealUSD+y.RealUSD, tot.CoveyRealUSD) || y.UnsplitListUSD != 5 {
-			t.Errorf("sources %v: agents x %+v y %+v, want real 4.75 and 5.266667", sources, x, y)
+		if x, y := agents["a1"], agents["a2"]; !near(x.RealUSD, 5.35) || !near(y.RealUSD, 7.4) ||
+			!near(x.RealUSD+y.RealUSD, tot.CoveyRealUSD) || y.UnsplitListUSD != 5 || x.SplitListUSD != 40 || y.SplitListUSD != 50 {
+			t.Errorf("sources %v: agents x %+v y %+v, want real 5.35 and 7.4", sources, x, y)
 		}
 		m := meterSums([]ExternalMeterTotal{tot}, steps)
-		if !near(m.UnattributedRealUSD, 21) || m.UnattributedSteps != 3 || !near(m.UnattributedPoints, 21) {
-			t.Errorf("sums: unattributed %v in %d steps", m.UnattributedRealUSD, m.UnattributedSteps)
+		if !near(m.UnattributedRealUSD, 16) || m.UnattributedSteps != 3 || !near(m.UnattributedPoints, 16) || !near(m.UnattributedNoCallRealUSD, 2) {
+			t.Errorf("sums: unattributed %v in %d steps (no call %v)", m.UnattributedRealUSD, m.UnattributedSteps, m.UnattributedNoCallRealUSD)
 		}
 		seen := false
 		for _, h := range m.Hours {
 			if h.Hour.Hour() == 11 {
 				seen = true
-				if !near(h.UnattributedRealUSD, 12.666667) || h.UnattributedSteps != 1 || h.SplitSteps != 1 {
-					t.Errorf("hour 11 = %+v, want 12.67 unattributed in its one split step", h)
+				if !near(h.UnattributedRealUSD, 8.4) || h.UnattributedSteps != 1 || h.SplitSteps != 1 {
+					t.Errorf("hour 11 = %+v, want 8.4 unattributed in its one split step", h)
 				}
 			}
 		}
@@ -509,38 +549,40 @@ func TestSplitSeatUnattributed(t *testing.T) {
 	}
 }
 
-// F3b beside finding 26: an idle reading inside run B (no plan, no movement,
-// no list) adds a range entry at its own price (0) with the share before
-// it, but no points and no list: k, U and the parts are as without it,
-// the points ranges too, and the run stays one run.
+// F3c beside finding 26: an idle reading inside chunk 1 (no plan, no
+// movement, no list) adds a range entry at its own price (0) with the
+// chunk's share, but no points and no list: k, U and the parts are as
+// without it, the points ranges too, and the chunk stays one chunk.
 func TestSplitSeatUnattributedIdleInARun(t *testing.T) {
-	plain := unattributedFixture()
-	idle := append(append(append([]shareStep{}, plain[:4]...),
-		shareStep{From: tm("11:30"), At: tm("11:45"), Reported: true}), plain[4:]...)
-	idle[5].From = tm("11:45")
+	plain := chunkFixture()
+	idle := append(append(append([]shareStep{}, plain[:1]...),
+		shareStep{From: tm("08:30"), At: tm("08:45"), Reported: true}), plain[1:]...)
+	idle[2].From = tm("08:45")
 	a, _ := splitSeat(meterSeat{"seat", 0}, []string{"src"}, plain)
 	b, steps := splitSeat(meterSeat{"seat", 0}, []string{"src"}, idle)
-	if steps[4].Reason != SplitIdle || steps[4].UnattributedRealUSD != 0 {
-		t.Fatalf("the idle step = %+v", steps[4])
+	if steps[1].Reason != SplitIdle || steps[1].UnattributedRealUSD != 0 || steps[1].Split {
+		t.Fatalf("the idle step = %+v", steps[1])
 	}
 	if b.PointsPerListUSD == nil || !near(*b.PointsPerListUSD, *a.PointsPerListUSD) || !near(b.UnattributedRealUSD, a.UnattributedRealUSD) ||
 		!near(b.CoveyRealUSD, a.CoveyRealUSD) || !near(b.ExternalRealUSD, a.ExternalRealUSD) || b.SplitRuns != a.SplitRuns ||
 		!near(b.SplitSlackPoints, a.SplitSlackPoints) || !near(b.SplitExternalSlackPoints, a.SplitExternalSlackPoints) {
-		t.Errorf("with the idle step: k %v unattributed %v covey %v outside %v runs %d slack %v / %v; without: k %v %v %v %v %d %v / %v",
+		t.Errorf("with the idle step: k %v unattributed %v covey %v outside %v chunks %d slack %v / %v; without: k %v %v %v %v %d %v / %v",
 			b.PointsPerListUSD, b.UnattributedRealUSD, b.CoveyRealUSD, b.ExternalRealUSD, b.SplitRuns, b.SplitSlackPoints,
 			b.SplitExternalSlackPoints, *a.PointsPerListUSD, a.UnattributedRealUSD, a.CoveyRealUSD, a.ExternalRealUSD, a.SplitRuns,
 			a.SplitSlackPoints, a.SplitExternalSlackPoints)
 	}
-	// Its $ coefficient is 0 inside run B ($1 a point around it): the whole's
-	// $ range for that run grows from ½(1 + 0 + 1) to ½(1 + 1 + 1 + 1).
+	// Its $ coefficient is 0 inside chunk 1 ($1 a point around it): the
+	// whole's $ range for that chunk grows from ½(1 + 0 + 1) to
+	// ½(1 + 1 + 1 + 1).
 	if !near(b.SplitSlackUSD, a.SplitSlackUSD+1) {
 		t.Errorf("$ slack %v, want %v + 1", b.SplitSlackUSD, a.SplitSlackUSD)
 	}
 }
 
-// Without a run of 5 points k is unknown (nil): only a step that moved with
-// no call is unattributed, and every split step is split by list share
-// alone, as F3 had it.
+// Without a chunk of 10 points k is unknown (nil): nothing with list is
+// unattributed. The step that moved with no call is folded into its chunk
+// (3 + 1 + 3 points over L = 3, Lo 1: share 1/3) and split with it; the
+// last chunk (4 points over 9 / 1) splits at 0.9.
 func TestSplitSeatUnattributedWithoutARate(t *testing.T) {
 	tot, steps := splitSeat(meterSeat{"seat", 0}, []string{"src"}, []shareStep{
 		{From: tm("10:00"), At: tm("11:00"), Points: 3, Rate: rate(1), LOut: 1, LCov: 1, Reported: true},
@@ -548,13 +590,159 @@ func TestSplitSeatUnattributedWithoutARate(t *testing.T) {
 		{From: tm("12:00"), At: tm("13:00"), Points: 3, Rate: rate(1), Reported: true},
 		{From: tm("13:00"), At: tm("14:00"), Points: 4, Rate: rate(1), LOut: 9, LCov: 1, Reported: true},
 	})
-	if tot.PointsPerListUSD != nil {
-		t.Errorf("k = %v, want nil: the runs move 4 points each", *tot.PointsPerListUSD)
+	if tot.PointsPerListUSD != nil || len(tot.PlanRates) != 1 || tot.PlanRates[0].PointsPerListUSD != nil {
+		t.Errorf("k = %v, plan rates %+v; want nil: the chunks move 7 and 4 points", tot.PointsPerListUSD, tot.PlanRates)
 	}
-	if !near(tot.UnattributedRealUSD, 3) || tot.UnattributedSteps != 1 || steps[2].Reason != SplitNoReportedCall ||
-		!nearP(steps[0].ExternalRealUSD, 1.5) || !nearP(steps[3].ExternalRealUSD, 3.6) || !near(tot.CoveyRealUSD+tot.ExternalRealUSD, 8) {
-		t.Errorf("unattributed %v in %d steps, steps %+v; want 3 in the step with no call, the rest by list share",
-			tot.UnattributedRealUSD, tot.UnattributedSteps, steps)
+	if tot.UnattributedRealUSD != 0 || tot.UnattributedSteps != 0 || steps[2].Reason != SplitNoReportedCall || !steps[2].Split ||
+		!nearP(steps[0].ExternalRealUSD, 1) || !nearP(steps[2].ExternalRealUSD, 1) || !nearP(steps[2].CoveyRealUSD, 2) ||
+		!nearP(steps[3].ExternalRealUSD, 3.6) || !near(tot.CoveyRealUSD+tot.ExternalRealUSD, 11) || tot.SplitRuns != 2 || tot.SplitSteps != 4 {
+		t.Errorf("unattributed %v in %d steps, chunks %d, steps %+v; want none, the no-call step split with its chunk",
+			tot.UnattributedRealUSD, tot.UnattributedSteps, tot.SplitRuns, steps)
+	}
+}
+
+// The truncation bias F3c removes: ten readings at $1 a point, covey's list
+// ($10 each) in the five that moved 0 points, the outside sessions' ($10
+// each) in the five that ticked +1. Split per reading, covey's part is 0
+// and the outside's all 5 points; per chunk (one of 5 points, L = 100 at
+// share ½) each part is 2.5, as the list says.
+func TestSplitSeatChunkShareNotReadingShare(t *testing.T) {
+	x := uuid.MustParse("00000000-0000-0000-0000-0000000000a1")
+	var in []shareStep
+	at := tm("10:00")
+	for i := 0; i < 10; i++ {
+		st := shareStep{From: at, At: at.Add(10 * time.Minute), Rate: rate(1), Reported: true}
+		if i%2 == 0 {
+			st.LCov, st.Agents = 10, map[uuid.UUID]float64{x: 10}
+		} else {
+			st.Points, st.LOut = 1, 10
+		}
+		in = append(in, st)
+		at = st.At
+	}
+	tot, steps := splitSeat(meterSeat{"seat", 0}, []string{"src"}, in)
+	if !near(tot.CoveyRealUSD, 2.5) || !near(tot.ExternalRealUSD, 2.5) || tot.SplitRuns != 1 || tot.SplitSteps != 10 ||
+		tot.UnattributedRealUSD != 0 || len(tot.Agents) != 1 || !near(tot.Agents[0].RealUSD, 2.5) {
+		t.Errorf("covey %v outside %v (chunks %d, split steps %d, unattributed %v, agents %+v); want 2.5 / 2.5 in one chunk",
+			tot.CoveyRealUSD, tot.ExternalRealUSD, tot.SplitRuns, tot.SplitSteps, tot.UnattributedRealUSD, tot.Agents)
+	}
+	// Each reading that ticked carries ½ point of covey's.
+	if !nearP(steps[1].CoveyRealUSD, 0.5) || !nearP(steps[1].ExternalRealUSD, 0.5) || !nearP(steps[0].CoveyRealUSD, 0) {
+		t.Errorf("steps %+v / %+v", steps[0], steps[1])
+	}
+}
+
+// Meter lag: a +1 reading with no call right after use is folded into the
+// chunk (2 + 2 + 1 points over L = 4 at share ½) and split with it, not
+// unattributed whole as F3b had it; it keeps its reason.
+func TestSplitSeatLagFoldedIntoChunk(t *testing.T) {
+	tot, steps := splitSeat(meterSeat{"seat", 0}, []string{"src"}, []shareStep{
+		{From: tm("10:00"), At: tm("10:10"), Points: 2, Rate: rate(1), LOut: 1, LCov: 1, Reported: true},
+		{From: tm("10:10"), At: tm("10:20"), Points: 2, Rate: rate(1), LOut: 1, LCov: 1, Reported: true},
+		{From: tm("10:20"), At: tm("10:30"), Points: 1, Rate: rate(1), Reported: true},
+	})
+	if s := steps[2]; !s.Split || s.Reason != SplitNoReportedCall || s.UnattributedRealUSD != 0 ||
+		!nearP(s.ExternalRealUSD, 0.5) || !nearP(s.CoveyRealUSD, 0.5) {
+		t.Errorf("the lagging reading = %+v, want split ½ / ½ (%s)", s, SplitNoReportedCall)
+	}
+	if tot.UnattributedRealUSD != 0 || tot.UnattributedSteps != 0 || tot.SplitSteps != 3 || tot.SplitPoints != 5 ||
+		!near(tot.CoveyRealUSD, 2.5) || !near(tot.ExternalRealUSD, 2.5) || tot.SplitRuns != 1 {
+		t.Errorf("unattributed %v (%d steps), split steps %d points %v, covey %v outside %v, chunks %d", tot.UnattributedRealUSD,
+			tot.UnattributedSteps, tot.SplitSteps, tot.SplitPoints, tot.CoveyRealUSD, tot.ExternalRealUSD, tot.SplitRuns)
+	}
+}
+
+// A reset closes the chunk, and the reset step's points and list stay out
+// of k: its span holds calls whose points went with the old week. At $1 a
+// point: chunk 1, 10 points over $100 (k 12/100); the reset step, 3 points
+// over $200, opens chunk 2, which closes with the next 10 points over $50
+// (k 12/50 without the reset step, 15/250 = 0.06 with it); chunk 3, 10
+// points over $50. k = 0.12, so chunk 3 has U = 10 − 2 − 6 = 2 (5 at 0.06).
+// The reset step still takes chunk 2's share.
+func TestSplitSeatResetOutOfRate(t *testing.T) {
+	tot, steps := splitSeat(meterSeat{"seat", 0}, []string{"src"}, []shareStep{
+		{From: tm("10:00"), At: tm("11:00"), Points: 10, Rate: rate(1), LOut: 50, LCov: 50, Reported: true},
+		{From: tm("11:00"), At: tm("12:00"), Points: 3, Rate: rate(1), LOut: 100, LCov: 100, Reset: true, Reported: true},
+		{From: tm("12:00"), At: tm("13:00"), Points: 10, Rate: rate(1), LOut: 25, LCov: 25, Reported: true},
+		{From: tm("13:00"), At: tm("14:00"), Points: 10, Rate: rate(1), LOut: 25, LCov: 25, Reported: true},
+	})
+	if !nearP(tot.PointsPerListUSD, 0.12) || !near(tot.UnattributedPoints, 2) || !near(steps[3].UnattributedPoints, 2) {
+		t.Errorf("k %v, unattributed %v points (chunk 3: %v); want 0.12 and 2", tot.PointsPerListUSD, tot.UnattributedPoints,
+			steps[3].UnattributedPoints)
+	}
+	if s := steps[1]; !s.Split || !nearP(s.ExternalRealUSD, 1.5) || tot.SplitRuns != 3 {
+		t.Errorf("the reset step = %+v (chunks %d), want split 1.5 / 1.5 in chunk 2", s, tot.SplitRuns)
+	}
+}
+
+// k per plan price: points are percent of the plan's weekly limit, so a
+// change of plan closes the chunk and each price has its own k. $1 a point:
+// 10 points over $100 (k 0.12), later 10 over $50 (U = 10 − 2 − 6 = 2, $2).
+// $2 a point: 10 over $200 (k 0.06), later 10 over $100 (U = 10 − 2 − 6 =
+// 2, $4). One k for the seat (0.06) would give the $1 chunk U = 5. Then 2
+// points at each price: two chunks, not one of 4 points.
+func TestSplitSeatRatePerPlan(t *testing.T) {
+	tot, _ := splitSeat(meterSeat{"seat", 0}, []string{"src"}, []shareStep{
+		{From: tm("10:00"), At: tm("11:00"), Points: 10, Rate: rate(1), LOut: 50, LCov: 50, Reported: true},
+		{From: tm("11:00"), At: tm("12:00"), Points: 10, Rate: rate(2), LOut: 100, LCov: 100, Reported: true},
+		{From: tm("12:00"), At: tm("13:00"), Points: 10, Rate: rate(1), LOut: 25, LCov: 25, Reported: true},
+		{From: tm("13:00"), At: tm("14:00"), Points: 10, Rate: rate(2), LOut: 50, LCov: 50, Reported: true},
+		{From: tm("14:00"), At: tm("15:00"), Points: 2, Rate: rate(1), LOut: 10, LCov: 10, Reported: true},
+		{From: tm("15:00"), At: tm("16:00"), Points: 2, Rate: rate(2), LOut: 10, LCov: 10, Reported: true},
+	})
+	if len(tot.PlanRates) != 2 || tot.PlanRates[0].USDPerPoint != 1 || !nearP(tot.PlanRates[0].PointsPerListUSD, 0.12) ||
+		tot.PlanRates[1].USDPerPoint != 2 || !nearP(tot.PlanRates[1].PointsPerListUSD, 0.06) || !nearP(tot.PointsPerListUSD, 0.06) {
+		t.Errorf("plan rates %+v, k %v; want $1: 0.12, $2: 0.06, the seat's (latest) 0.06", tot.PlanRates, tot.PointsPerListUSD)
+	}
+	if !near(tot.UnattributedPoints, 4) || !near(tot.UnattributedRealUSD, 6) || tot.SplitRuns != 6 {
+		t.Errorf("unattributed %v points $%v, chunks %d; want 4, 6, 6", tot.UnattributedPoints, tot.UnattributedRealUSD, tot.SplitRuns)
+	}
+}
+
+// A chunk whose use is not all in its list — outside calls without a price
+// beside priced ones, or a covey booking without a line — sets no rate and
+// has no unattributed part: that use would land in U. At $1 a point: 10
+// points over $100 (k 0.12); 10 points over $200 with a booking without a
+// line (it would set k 0.06); 20 points over $50 with unpriced outside calls
+// (U would be 20 − 2 − 6 = 12). Unreported readings between them close the
+// chunks. Nothing is unattributed, and the last chunk splits at ½.
+func TestSplitSeatIncompleteChunks(t *testing.T) {
+	tot, steps := splitSeat(meterSeat{"seat", 0}, []string{"src"}, []shareStep{
+		{From: tm("10:00"), At: tm("11:00"), Points: 10, Rate: rate(1), LOut: 50, LCov: 50, Reported: true},
+		{From: tm("11:00"), At: tm("12:00"), Points: 1, Rate: rate(1), LCov: 1},
+		{From: tm("12:00"), At: tm("13:00"), Points: 10, Rate: rate(1), LOut: 100, LCov: 100, UnlinedBookings: 1, Reported: true},
+		{From: tm("13:00"), At: tm("14:00"), Points: 1, Rate: rate(1), LCov: 1},
+		{From: tm("14:00"), At: tm("15:00"), Points: 20, Rate: rate(1), LOut: 25, LCov: 25, UnpricedCalls: 5, Reported: true},
+	})
+	if !nearP(tot.PointsPerListUSD, 0.12) || tot.UnattributedRealUSD != 0 || tot.IncompleteChunks != 2 {
+		t.Errorf("k %v, unattributed %v, incomplete chunks %d; want 0.12, 0, 2", tot.PointsPerListUSD, tot.UnattributedRealUSD,
+			tot.IncompleteChunks)
+	}
+	if !nearP(steps[4].ExternalRealUSD, 10) || !nearP(steps[4].CoveyRealUSD, 10) {
+		t.Errorf("the chunk with unpriced calls = %+v, want 10 / 10", steps[4])
+	}
+	m := meterSums([]ExternalMeterTotal{tot}, steps)
+	if m.IncompleteChunks != 2 {
+		t.Errorf("sums: %d incomplete chunks", m.IncompleteChunks)
+	}
+}
+
+// S_c = 2 (truncation and one point of lag), and k only from 10 points. At
+// $1 a point: 6 points over $100 sets no rate (it would set 7/100 at 5
+// points and S 1); an unreported reading closes it; 10 points over $50 set
+// k = 12/50 = 0.24 (11/50 with S 1); 10 points over $30 then have U = 10 −
+// 2 − 7.2 = 0.8 (1.8 with S 1).
+func TestSplitSeatRateSlack(t *testing.T) {
+	tot, steps := splitSeat(meterSeat{"seat", 0}, []string{"src"}, []shareStep{
+		{From: tm("10:00"), At: tm("11:00"), Points: 6, Rate: rate(1), LOut: 50, LCov: 50, Reported: true},
+		{From: tm("11:00"), At: tm("12:00"), Points: 1, Rate: rate(1), LCov: 1},
+		{From: tm("12:00"), At: tm("13:00"), Points: 10, Rate: rate(1), LOut: 25, LCov: 25, Reported: true},
+		{From: tm("13:00"), At: tm("14:00"), Points: 10, Rate: rate(1), LOut: 15, LCov: 15, Reported: true},
+	})
+	if !nearP(tot.PointsPerListUSD, 0.24) || !near(tot.UnattributedPoints, 0.8) || !near(steps[3].UnattributedPoints, 0.8) ||
+		steps[0].UnattributedPoints != 0 || steps[2].UnattributedPoints != 0 {
+		t.Errorf("k %v, unattributed %v points (steps %v, %v, %v); want 0.24 and 0.8 in the last", tot.PointsPerListUSD,
+			tot.UnattributedPoints, steps[0].UnattributedPoints, steps[2].UnattributedPoints, steps[3].UnattributedPoints)
 	}
 }
 
@@ -585,7 +773,7 @@ func TestSplitSeatIdleIsNoSplitStep(t *testing.T) {
 }
 
 // #126 finding 24: a reading without a plan has no price, so its $
-// coefficient in the run's range is 0, not the price of the reading before
+// coefficient in the chunk's range is 0, not the price of the reading before
 // it. 2 pts @ $4, 0 pts without a plan, 2 pts @ $4, each with L_out 1 and
 // L_cov 1: rates 4, 0, 4 → ½(4 + 4 + 4 + 4) = 8; the outside part's
 // coefficients 2, 0, 2 → ½(2 + 2 + 2 + 2) = 4.
@@ -606,15 +794,15 @@ func TestSplitSeatRangeWithoutAPlan(t *testing.T) {
 	}
 }
 
-// #126 finding 26: an idle reading inside a run is seen through at its own
+// #126 finding 26: an idle reading inside a chunk is seen through at its own
 // price, not its neighbours'. 2 pts @ $4 (L_out 3, L_cov 1), 0 pts without a
-// plan and no list, 2 pts @ $4 (L_out 1, L_cov 3): the idle step keeps the
-// share before it (0.75) at rate 0, so rates 4, 0, 4 → ½(4 + 4 + 4 + 4) = 8,
-// the outside part's 3, 0, 1 → ½(3 + 3 + 1 + 1) = 4, covey's 1, 0, 3 → 4;
-// the points ranges stay 1 and 0.75. With a plan of its own the idle step is
-// priced at it: rates 4, 6, 4 → ½(4 + 2 + 2 + 4) = 6, outside 3, 4.5, 1 →
-// ½(3 + 1.5 + 3.5 + 1) = 4.5, covey 1, 1.5, 3 → ½(1 + 0.5 + 1.5 + 3) = 3. At
-// the run's own price it changes nothing: 4, 3, 3, as if skipped.
+// plan and no list, 2 pts @ $4 (L_out 1, L_cov 3): one chunk (an idle step
+// does not close it, whatever its price) of share 4/8 = ½, so rates 4, 0, 4
+// → ½(4 + 4 + 4 + 4) = 8, each part ½ of it, 4; the points ranges 1 and ½.
+// With a plan of its own the idle step is priced at it: rates 4, 6, 4 →
+// ½(4 + 2 + 2 + 4) = 6, each part 3. At the chunk's own price it changes
+// nothing: 4, 2, 2, as if skipped. (Per reading's share, F3 and F3b, the
+// parts were 4 / 4, 4.5 / 3 and 3 / 3, the points 0.75.)
 func TestSplitSeatIdleInARunAtItsPrice(t *testing.T) {
 	for _, c := range []struct {
 		name                string
@@ -622,8 +810,8 @@ func TestSplitSeatIdleInARunAtItsPrice(t *testing.T) {
 		whole, outside, cov float64
 	}{
 		{"no plan", nil, 8, 4, 4},
-		{"a plan of its own", rate(6), 6, 4.5, 3},
-		{"the run's plan", rate(4), 4, 3, 3},
+		{"a plan of its own", rate(6), 6, 3, 3},
+		{"the chunk's plan", rate(4), 4, 2, 2},
 	} {
 		tot, steps := splitSeat(meterSeat{"seat", 0}, []string{"src"}, []shareStep{
 			{From: tm("10:00"), At: tm("11:00"), Points: 2, Rate: rate(4), LOut: 3, LCov: 1, Reported: true},
@@ -640,8 +828,8 @@ func TestSplitSeatIdleInARunAtItsPrice(t *testing.T) {
 			t.Errorf("%s: slack whole %v outside %v covey %v, want %v, %v, %v", c.name,
 				tot.SplitSlackUSD, tot.SplitExternalSlackUSD, tot.SplitCoveySlackUSD, c.whole, c.outside, c.cov)
 		}
-		if !near(tot.SplitSlackPoints, 1) || !near(tot.SplitExternalSlackPoints, 0.75) || !near(tot.SplitCoveySlackPoints, 0.75) {
-			t.Errorf("%s: slack points %v outside %v covey %v, want 1, 0.75, 0.75", c.name,
+		if !near(tot.SplitSlackPoints, 1) || !near(tot.SplitExternalSlackPoints, 0.5) || !near(tot.SplitCoveySlackPoints, 0.5) {
+			t.Errorf("%s: slack points %v outside %v covey %v, want 1, 0.5, 0.5", c.name,
 				tot.SplitSlackPoints, tot.SplitExternalSlackPoints, tot.SplitCoveySlackPoints)
 		}
 	}
@@ -768,8 +956,8 @@ func TestMeterSeats(t *testing.T) {
 }
 
 // A reading that did not move and has no list on either side is idle even
-// with outside calls of no price: nothing to split, and the run of split
-// steps goes on through it (one run, not two).
+// with outside calls of no price: nothing to split, and the chunk goes
+// on through it (one chunk, not two).
 func TestSplitSeatUnmovedUnpricedIsIdle(t *testing.T) {
 	tot, steps := splitSeat(meterSeat{"seat", 0}, []string{"src"}, []shareStep{
 		{From: tm("10:00"), At: tm("11:00"), Points: 2, Rate: rate(4), LOut: 1, LCov: 1, Reported: true},

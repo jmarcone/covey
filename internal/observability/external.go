@@ -49,24 +49,42 @@ import (
 //     L_cov comes from model_usage only: a booking of an older daemon that
 //     files no lines is not in it (the booking check flags such bookings),
 //     so a step with only such a run moved "without a reported call".
-//   - F3b, the unattributed share (#120): the meter is account-wide, and a
-//     machine that does not report (another one on the same subscription)
-//     moves it too. F3 alone books that movement to covey and the reporting
-//     sources. Per seat over the range, with the runs of consecutive split
-//     steps r (P_r their points, S_r = 1 their points slack, ½·TV of 1, and
-//     L_r = Σ (L_out + L_cov) of their steps):
-//     k = min over the runs with P_r ≥ 5 of (P_r + S_r) / L_r, points per
-//     list $; U_r = max(0, P_r − S_r − k·L_r) the run's unattributed points,
-//     spread over its steps by their points. A step's R splits into
-//     R_un = R · U_r / P_r, and the rest by list share as F3 says. A step
-//     that moved with no call on either side is unattributed whole. With no
-//     run of 5 points k is unknown and only that last rule applies.
+//   - F3c, the split per chunk and the unattributed share (#120). The meter
+//     is read in whole percents, only while covey runs, and lags use by
+//     minutes: most readings move 0 points while list price accrues, so a
+//     reading's own list share says little about its own movement. And the
+//     meter is account-wide: a machine that does not report (another one on
+//     the same subscription) moves it too. Per seat, the steps are walked in
+//     time order and gathered into chunks: a split, idle or
+//     moved_without_reported_call step joins the current chunk, which
+//     closes once its points P_c reach 5 (at that reading). A not_reported,
+//     outside_unpriced or unpriced step closes it before itself and stays
+//     out of every chunk, as do a reset and a change of plan price (the
+//     points are percent of the plan's weekly limit). The last chunk may
+//     hold fewer than 5 points. Per chunk c: P_c, L_c = Σ (L_out + L_cov),
+//     Lo_c and Lc_c, and S_c = 2 points of slack (the two ends' whole
+//     percents and one point of lag at the end, as meterQuery reads a drop
+//     of one point as a lagging reading). Per plan price:
+//     k = min over the chunks at that price with P_c ≥ 10, L_c > 0 and
+//     every call priced of (P_c + S_c) / L_c, points per list $ (a reset
+//     step's points and list are left out of it: its span holds calls
+//     whose points went with the old week); null without such a chunk.
+//     U_c = max(0, P_c − S_c − k·L_c) when k is known; U_c = P_c for a
+//     chunk with L_c = 0 (the meter moved and nobody reported a call);
+//     U_c = 0 without k and for a chunk with unpriced outside calls or a
+//     covey booking without a line (their use is missing from L_c, so it
+//     would land in U_c). Each step of a chunk: R_un = R · U_c / P_c, and
+//     the rest by the CHUNK's list share, R_out = (R − R_un) · Lo_c / L_c,
+//     R_cov the rest; covey's part goes to the agents by their share of
+//     Lc_c. So each chunk's parts are the chunk-level split, placed over
+//     its steps, and every step keeps covey + outside + unattributed +
+//     unsplit = R.
 //     Assuming the meter charges in proportion to list price at one true
-//     rate k*: P*_r ≥ k*·L_r and P_r + S_r ≥ P*_r for every run, so k ≥ k*
-//     and U_r ≤ the true unattributed points: U is a lower bound, the
-//     attributed parts (and the agents' shares) upper bounds, and the
-//     multiples lower bounds. Unattributed movement is booked to nobody,
-//     never to covey or a source.
+//     rate k* per plan: P*_c ≥ k*·L_c and P_c + S_c ≥ P*_c for every chunk,
+//     so k ≥ k* and U_c ≤ the true unattributed points: the unattributed
+//     part beyond the rate is a lower bound, and the multiples lower
+//     bounds. Unattributed movement is booked to nobody, never to covey or
+//     a source.
 
 // Limits of one upload.
 const (
@@ -566,8 +584,10 @@ const (
 	// no active machine.
 	SplitNotReported = "not_reported"
 	// SplitNoReportedCall: the meter moved, but neither covey nor a linked
-	// source has a call in the step's span. Its movement is unattributed
-	// whole (F3b): neither unsplit nor anybody's.
+	// source has a call in the step's span — mostly the meter's lag after
+	// use. It joins its chunk (F3c) and is split by the chunk's share like
+	// the chunk's other steps (Split is true, the reason stays); in a chunk
+	// with no list at all it is unattributed whole.
 	SplitNoReportedCall = "moved_without_reported_call"
 	// SplitOutsideUnpriced: the linked sources have calls in the step's span,
 	// but none of them has a price (no list price, no reported_usd), so L_out
@@ -577,7 +597,7 @@ const (
 	SplitUnpriced = "unpriced"
 	// SplitIdle: a reported reading that did not move, with no priced call
 	// on either side: nothing to split. It is neither a split nor an unsplit
-	// step, and the run of split steps goes on through it at the run's
+	// step; it joins its chunk (F3c), whose ranges see it at the chunk's
 	// share and its own price; without a plan its $ coefficient is 0.
 	SplitIdle = "idle"
 )
@@ -599,8 +619,8 @@ type ExternalMeter struct {
 type ExternalMeterSums struct {
 	// RealUSD: Σ R over the priced steps — the dent. ExternalRealUSD /
 	// CoveyRealUSD: Σ R_out / Σ R_cov over the split steps;
-	// UnattributedRealUSD: Σ R_un (F3b), the split steps' unattributed part
-	// and the steps that moved with no call whole; UnsplitRealUSD: Σ R over
+	// UnattributedRealUSD: Σ R_un (F3c), the chunks' points beyond the rate
+	// and the chunks with no list at all whole; UnsplitRealUSD: Σ R over
 	// the priced steps that were not split and are not unattributed whole.
 	// The four add up to RealUSD.
 	RealUSD             float64 `json:"real_usd"`
@@ -609,9 +629,21 @@ type ExternalMeterSums struct {
 	UnattributedRealUSD float64 `json:"unattributed_real_usd"`
 	UnsplitRealUSD      float64 `json:"unsplit_real_usd"`
 	// UnattributedPoints: the points of UnattributedRealUSD;
-	// UnattributedSteps: the steps with some (a lower bound, F3b).
+	// UnattributedSteps: the steps with some.
 	UnattributedPoints float64 `json:"unattributed_points"`
 	UnattributedSteps  int     `json:"unattributed_steps"`
+	// UnattributedNoCallRealUSD / UnattributedNoCallPoints: the part of the
+	// unattributed movement that is a chunk with no list at all (the meter
+	// moved and nobody reported a call: lag or another machine), an
+	// estimate; the rest, beyond the rate k, is a lower bound.
+	UnattributedNoCallRealUSD float64 `json:"unattributed_no_call_real_usd"`
+	UnattributedNoCallPoints  float64 `json:"unattributed_no_call_points"`
+	// IncompleteChunks: chunks with list price whose use is not all in it —
+	// outside calls without a price, or covey bookings without a line. They
+	// set no rate and have no unattributed part, so their parts may hold
+	// use of another machine, and the use of those calls is shared at the
+	// priced calls' shares.
+	IncompleteChunks int `json:"incomplete_chunks"`
 	// Share: ExternalRealUSD over the split steps' real cost; nil without
 	// one.
 	Share *float64 `json:"share"`
@@ -621,25 +653,28 @@ type ExternalMeterSums struct {
 	SplitCoveyListUSD    float64 `json:"split_covey_list_usd"`
 	// Points: the priced movement, the dent in points. SplitPoints: the
 	// split steps' part of it, SplitExternalPoints / SplitCoveyPoints the
-	// share-weighted parts of their attributed points (Σ s_i·(points_i −
-	// u_i) and Σ (1 − s_i)·(points_i − u_i), u_i the step's unattributed
-	// points).
+	// share-weighted parts of their attributed points (Σ s_c·(points_i −
+	// u_i) and Σ (1 − s_c)·(points_i − u_i), s_c the step's chunk's share,
+	// u_i the step's unattributed points).
 	// Points of seats on different plans are not one unit: a sum over seats
 	// is a figure only while PointRateMixed is false.
 	Points              float64 `json:"points"`
 	SplitPoints         float64 `json:"split_points"`
 	SplitExternalPoints float64 `json:"split_external_points"`
 	SplitCoveyPoints    float64 `json:"split_covey_points"`
-	// SplitRuns: the runs of split steps (a run ends at an unsplit step or a
-	// reset). The meter shows whole percents, so each run's movement is
-	// known to ±1 point: SplitSlackPoints / SplitSlackUSD, the whole's range.
-	// A part's range is ±½·TV of its share over each run, TV = s_1 +
-	// Σ|s_{k+1} − s_k| + s_n (s_out for the outside sessions, 1 − s_out for
-	// covey): Split{External,Covey}Slack{Points,USD}. The dollars weigh each
-	// reading at its own plan's price per point. With an unattributed part
-	// a part's true coefficient is a_r·s_k (a_r ≤ 1 the run's attributed
-	// fraction): its TV is at most the one given, so the ranges stay wide
-	// enough.
+	// SplitRuns: since F3c the number of chunks with list price (the field
+	// keeps its name). The meter shows whole percents, so each chunk's
+	// movement is known to ±1 point from its two end readings:
+	// SplitSlackPoints / SplitSlackUSD, the attributed whole's range. A
+	// part's range is ±½·TV over each chunk's steps of its coefficient,
+	// TV = f_1 + Σ|f_{k+1} − f_k| + f_n with f_k = s_c·rate_k (s_c the
+	// chunk's outside share Lo_c / L_c, 1 − s_c for covey, 1 for the whole;
+	// rate_k each reading's own plan price per point, 0 without a plan):
+	// Split{External,Covey}Slack{Points,USD}. Within a chunk s_c and the
+	// attributed fraction a_c = 1 − U_c / P_c are one number each, so a
+	// part's true coefficient a_c·s_c·rate_k has a TV at most the one given.
+	// Across chunks a_c changes, and a sum over contiguous chunks would not
+	// bound it: each chunk is its own term, so the ranges stay wide enough.
 	SplitRuns                int     `json:"split_runs"`
 	SplitSlackPoints         float64 `json:"split_slack_points"`
 	SplitSlackUSD            float64 `json:"split_slack_usd"`
@@ -656,7 +691,9 @@ type ExternalMeterSums struct {
 	// UnsplitSteps counting the priced ones that moved. An idle step
 	// (SplitIdle) is in neither: a seat whose only reported steps are idle
 	// has no split. A step that moved with no call (SplitNoReportedCall) is
-	// in neither either: it is unattributed whole (UnattributedSteps).
+	// a split step when its chunk has list price (it takes the chunk's
+	// share) and in neither when not (unattributed whole,
+	// UnattributedSteps).
 	StepCount    int `json:"step_count"`
 	SplitSteps   int `json:"split_steps"`
 	UnsplitSteps int `json:"unsplit_steps"`
@@ -699,10 +736,13 @@ type ExternalMeterStep struct {
 	// that could report on it: its steps are reported, with L_out = 0.
 	Reported bool `json:"reported"`
 	// Split: R_out and R_cov are set and, with UnattributedRealUSD (its
-	// run's part, F3b), add up to R. Otherwise Reason says why not: a step
-	// that moved with no call (SplitNoReportedCall) has R unattributed
-	// whole, any other priced step R unsplit. covey + outside +
-	// unattributed + unsplit = R in every step.
+	// chunk's part, F3c), add up to R; they follow the chunk's list share,
+	// not the step's. A split step may still carry Reason
+	// SplitNoReportedCall (it moved with no call and took its chunk's
+	// share). Otherwise Reason says why not: a step that moved with no call
+	// in a chunk with no list has R unattributed whole, any other priced
+	// step R unsplit. covey + outside + unattributed + unsplit = R in every
+	// step.
 	Split               bool     `json:"split"`
 	Reason              string   `json:"reason,omitempty"`
 	ExternalRealUSD     *float64 `json:"external_real_usd"`
@@ -748,22 +788,33 @@ type ExternalMeterTotal struct {
 	Sources []string `json:"sources"`
 	// HoursWithReading: the UTC hours a step is placed in.
 	HoursWithReading int `json:"hours_with_reading"`
-	// PointsPerListUSD: k of F3b, the lowest rate (points per list $) of a
-	// run of split steps that moved 5 points or more, at the run's upper
-	// end; nil without such a run, when only the steps that moved with no
-	// call are unattributed.
-	PointsPerListUSD *float64 `json:"points_per_list_usd"`
+	// PointsPerListUSD: k of F3c at the seat's latest plan price that has
+	// one: the lowest rate (points per list $) of a chunk with every call
+	// priced that moved 10 points or more, at the chunk's upper end; nil
+	// without such a chunk, when only chunks with no list are
+	// unattributed. PlanRates: k per plan price, in the order the prices
+	// first appear (points are percent of one plan's limit, so each plan
+	// has its own).
+	PointsPerListUSD *float64                `json:"points_per_list_usd"`
+	PlanRates        []ExternalMeterPlanRate `json:"plan_rates"`
 	ExternalMeterSums
 	// Agents: covey's real share per agent (finding 22 on #126).
 	Agents []ExternalMeterAgent `json:"agents"`
 }
 
+// ExternalMeterPlanRate is k (F3c) at one plan price per point of a seat;
+// PointsPerListUSD nil when no chunk at that price could set it.
+type ExternalMeterPlanRate struct {
+	USDPerPoint      float64  `json:"usd_per_point"`
+	PointsPerListUSD *float64 `json:"points_per_list_usd"`
+}
+
 // ExternalMeterAgent is one agent's part of covey's share of a seat:
-// RealUSD = Σ over the split steps with L_cov > 0 of R_cov · L_a / L_cov
-// (R_cov after the step's unattributed part, F3b), so the agents add up to
-// the seat's CoveyRealUSD. SplitListUSD: the agent's
-// list over the split steps; UnsplitListUSD: over the steps that were not
-// split, which give it no real share.
+// RealUSD = Σ over the chunks with Lc_c > 0 of R_cov,c · L_a,c / Lc_c
+// (R_cov,c after the chunk's unattributed part, F3c; L_a,c the agent's list
+// in the chunk), so the agents add up to the seat's CoveyRealUSD.
+// SplitListUSD: the agent's list over the split steps; UnsplitListUSD: over
+// the steps that were not split, which give it no real share.
 type ExternalMeterAgent struct {
 	AgentID        uuid.UUID `json:"agent_id"`
 	SplitListUSD   float64   `json:"split_list_usd"`
@@ -1087,7 +1138,11 @@ type shareStep struct {
 	// Agents: each agent's part of LCov.
 	Agents                        map[uuid.UUID]float64
 	UnpricedCalls, UnpricedTokens int64
-	Reported                      bool
+	// UnlinedBookings: covey bookings on the seat in the span that no line
+	// was linked to (an older daemon, a run cut off): use that moved the
+	// meter but is not in LCov.
+	UnlinedBookings int64
+	Reported        bool
 }
 
 // seatSteps builds a seat's steps from its meter's readings in the window
@@ -1246,6 +1301,32 @@ func (s *Store) stepLists(ctx context.Context, orgID uuid.UUID, seat meterSeat, 
 		}
 		st.Agents[agent] += usd
 	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	// Bookings on the seat no line was linked to (as the cost cells'
+	// measured "unattributed" type reads them): their use is not in L_cov,
+	// so the step's chunk sets no rate and has no unattributed part (F3c).
+	rows, err = s.pool.Query(ctx, `SELECT s.i, count(*)
+		FROM unnest($2::timestamptz[], $3::timestamptz[]) WITH ORDINALITY AS s(f, t, i)
+		JOIN cost_entries ce ON ce.secret_key = $4 AND ce.secret_slot = $5
+			AND ce.created_at > s.f AND ce.created_at <= s.t AND ce.usd > 0.0005
+		JOIN agents a ON a.id = ce.agent_id AND a.org_id = $1
+		WHERE NOT EXISTS (SELECT 1 FROM model_usage m WHERE m.cost_entry_id = ce.id)
+		GROUP BY 1`, orgID, from, to, seat.key, seat.slot)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var i, n int64
+		if err := rows.Scan(&i, &n); err != nil {
+			return err
+		}
+		steps[i-1].UnlinedBookings += n
+	}
 	return rows.Err()
 }
 
@@ -1389,40 +1470,22 @@ func (s *Store) hostMarks(ctx context.Context, orgID uuid.UUID, sources []string
 	}, nil
 }
 
-// splitRun is one run of split steps of a seat, for the ranges: per step
-// with lists, its outside share and its price per point.
-type splitRun struct{ share, rate []float64 }
-
-// tv is ½·TV of f over the run: ½(f_1 + Σ|f_{k+1} − f_k| + f_n), the bound
-// of the error the readings' whole percents leave in a part whose
-// coefficient at step k is f_k (#126 finding 19).
-func (r splitRun) tv(f func(k int) float64) float64 {
-	n := len(r.share)
-	if n == 0 {
-		return 0
-	}
-	sum := math.Abs(f(0)) + math.Abs(f(n-1))
-	for k := 0; k+1 < n; k++ {
-		sum += math.Abs(f(k+1) - f(k))
-	}
-	return sum / 2
-}
-
 // stepReason is why a step is not split: "" for a split step, SplitIdle for
-// one with nothing to split, else the reason it is unsplit (or, for
-// SplitNoReportedCall, unattributed whole).
+// one with nothing to split, SplitNoReportedCall for one that moved with no
+// call (split by its chunk's share all the same when the chunk has list
+// price, F3c), else the reason it is unsplit.
 //
 // A step that moved at no plan price is out of the dent whole (unpriced). A
 // priced step is split when it was reported and L_out + L_cov > 0. A
-// reported step with no list on either side that moved the meter is not
-// split: neither covey nor a linked source made that movement, so it is
-// unattributed whole (F3b). A reported step whose outside calls all lack a
-// price (L_out = 0 with unpriced calls) is not split either
-// (outside_unpriced): the outside share is unknown, and booking R to covey
-// would bill it the outside sessions' work. Outside calls some of which are
-// priced stay split on the priced ones, the rest counted as unpriced. One
-// that did not move either (R = 0, both lists 0, no priced outside call: an
-// idle reading) has nothing to split and is no split step (SplitIdle, #126
+// reported step with no list on either side that moved the meter moved
+// "without a reported call": mostly the meter's lag after use, so it joins
+// its chunk. A reported step whose outside calls all lack a price (L_out = 0
+// with unpriced calls) is not split (outside_unpriced): the outside share
+// is unknown, and booking R to covey would bill it the outside sessions'
+// work. Outside calls some of which are priced stay split on the priced
+// ones, the rest counted as unpriced (and the chunk is incomplete). One that
+// did not move either (R = 0, both lists 0, no priced outside call: an idle
+// reading) has nothing to split and is no split step (SplitIdle, #126
 // finding 25), even with outside calls of no price.
 func stepReason(in shareStep) string {
 	lists := in.LOut + in.LCov
@@ -1432,8 +1495,8 @@ func stepReason(in shareStep) string {
 	case !in.Reported:
 		return SplitNotReported
 	// A step that did not move and has no list is idle even with outside
-	// calls of no price: there is nothing to split, and it must not end the
-	// run.
+	// calls of no price: there is nothing to split, and it must not close
+	// the chunk.
 	case in.LOut == 0 && in.UnpricedCalls > 0 && (in.Points != 0 || lists > 0):
 		return SplitOutsideUnpriced
 	case lists == 0 && in.Points != 0:
@@ -1444,88 +1507,191 @@ func stepReason(in shareStep) string {
 	return ""
 }
 
-// unattributedMinPoints: a run of split steps sets the rate k of F3b only
-// from this much movement on; below it the run's whole-percent slack (one
-// point) is too large a part of it.
-const unattributedMinPoints = 5
+const (
+	// chunkMinPoints: a chunk closes at the reading its points reach this
+	// (F3c): enough movement that the whole percents at its two ends are a
+	// small part of it.
+	chunkMinPoints = 5
+	// rateMinPoints: a chunk sets the rate k only from this much movement
+	// on (its points without a reset step's): below it the slack S_c is too
+	// large a part of it.
+	rateMinPoints = 10
+	// chunkSlackPoints is S_c: one point for the whole percents at the
+	// chunk's two ends and one of lag at its end (a reading may trail the
+	// use before it by a point, as meterQuery reads a drop of one).
+	chunkSlackPoints = 2.0
+)
 
-// rateRun is one run of split steps for F3b: its points, its list (Σ L_out
-// + L_cov) and the fraction of its points that is unattributed.
-type rateRun struct {
-	points, list float64
-	frac         float64
+// meterChunk is one chunk of a seat's steps (F3c).
+type meterChunk struct {
+	// steps: the indexes of its steps, in order.
+	steps []int
+	// points: P_c; lOut, lCov: Lo_c and Lc_c; agents: each agent's part
+	// of Lc_c.
+	points, lOut, lCov float64
+	agents             map[uuid.UUID]float64
+	// kPoints, kList: its points and list without a reset step's, for k.
+	kPoints, kList float64
+	// rate: the plan price per point of its steps that moved or have list
+	// (one per chunk: a change of price closes it); nil when none has one.
+	rate *float64
+	// incomplete: a step of it had outside calls without a price or covey
+	// bookings without a line: use that is not in its list.
+	incomplete bool
+	// unattributed: U_c; frac: U_c / P_c, the fraction of each step's
+	// movement that is unattributed (1 for a chunk with no list).
+	unattributed, frac float64
 }
 
-// runSlackPoints is S_r, a run's points slack: ½·TV of 1 over the run, one
-// point (the meter shows whole percents at both ends of the run).
-const runSlackPoints = 1.0
+func (c *meterChunk) list() float64 { return c.lOut + c.lCov }
 
-// seatRuns groups the split steps into runs as the ranges do: an idle step
-// neither starts nor ends a run, any other step that is not split ends it,
-// and a reset starts a new one. runOf[i] is step i's run, −1 when it is not
-// split.
-func seatRuns(steps []shareStep, reasons []string) ([]int, []rateRun) {
-	runOf := make([]int, len(steps))
-	var runs []rateRun
+// share is the chunk's outside share Lo_c / L_c; 0 without list.
+func (c *meterChunk) share() float64 {
+	if l := c.list(); l > 0 {
+		return c.lOut / l
+	}
+	return 0
+}
+
+// seatChunks walks a seat's steps in time order into chunks (F3c): a split,
+// idle or moved_without_reported_call step joins the current chunk, opening
+// one when none is open, and the chunk closes at the reading its points
+// reach chunkMinPoints. A not_reported, outside_unpriced or unpriced step
+// closes it before itself and stays in none; a reset closes it before
+// itself, and so does a step that moved or has list at another plan price
+// than the chunk's (an idle step, with neither, rides along at its own
+// price). chunkOf[i] is step i's chunk, −1 for none.
+func seatChunks(steps []shareStep, reasons []string) ([]int, []meterChunk) {
+	chunkOf := make([]int, len(steps))
+	var chunks []meterChunk
 	cur := -1
 	for i, in := range steps {
-		runOf[i] = -1
+		chunkOf[i] = -1
 		if in.Reset {
 			cur = -1
 		}
 		switch reasons[i] {
-		case "":
-			if cur < 0 {
-				runs = append(runs, rateRun{})
-				cur = len(runs) - 1
-			}
-			runOf[i] = cur
-			runs[cur].points += in.Points
-			runs[cur].list += in.LOut + in.LCov
-		case SplitIdle:
+		case "", SplitIdle, SplitNoReportedCall:
 		default:
+			cur = -1
+			continue
+		}
+		counts := reasons[i] != SplitIdle
+		if cur >= 0 && counts && in.Rate != nil {
+			if r := chunks[cur].rate; r != nil && *r != *in.Rate {
+				cur = -1
+			}
+		}
+		if cur < 0 {
+			chunks = append(chunks, meterChunk{})
+			cur = len(chunks) - 1
+		}
+		c := &chunks[cur]
+		chunkOf[i] = cur
+		c.steps = append(c.steps, i)
+		c.points += in.Points
+		c.lOut += in.LOut
+		c.lCov += in.LCov
+		if !in.Reset {
+			c.kPoints += in.Points
+			c.kList += in.LOut + in.LCov
+		}
+		if counts && in.Rate != nil && c.rate == nil {
+			c.rate = in.Rate
+		}
+		if in.UnpricedCalls > 0 || in.UnlinedBookings > 0 {
+			c.incomplete = true
+		}
+		for id, l := range in.Agents {
+			if c.agents == nil {
+				c.agents = map[uuid.UUID]float64{}
+			}
+			c.agents[id] += l
+		}
+		if c.points >= chunkMinPoints {
 			cur = -1
 		}
 	}
-	return runOf, runs
+	return chunkOf, chunks
 }
 
-// unattributedRuns is F3b over a seat's runs: k = min over the runs with
-// P_r ≥ 5 of (P_r + S_r) / L_r (nil without one), then each run's
-// unattributed fraction U_r / P_r with U_r = max(0, P_r − S_r − k·L_r).
-func unattributedRuns(runs []rateRun) *float64 {
-	var k *float64
-	for _, r := range runs {
-		if r.points < unattributedMinPoints || r.list <= 0 {
+// chunkRates is F3c's k per plan price and each chunk's U_c: k = min over
+// the complete chunks at that price with kPoints ≥ rateMinPoints and
+// kList > 0 of (kPoints + S_c) / kList; U_c = max(0, P_c − S_c − k·L_c), P_c
+// whole for a chunk with no list, 0 without k and for an incomplete chunk.
+// It returns the prices in the order they first appear, with k (nil when
+// none).
+func chunkRates(chunks []meterChunk) []ExternalMeterPlanRate {
+	var rates []ExternalMeterPlanRate
+	at := map[float64]int{}
+	for _, c := range chunks {
+		if c.rate == nil {
 			continue
 		}
-		if v := (r.points + runSlackPoints) / r.list; k == nil || v < *k {
-			k = &v
+		i, ok := at[*c.rate]
+		if !ok {
+			i = len(rates)
+			at[*c.rate] = i
+			rates = append(rates, ExternalMeterPlanRate{USDPerPoint: *c.rate})
+		}
+		if c.incomplete || c.kPoints < rateMinPoints || c.kList <= 0 {
+			continue
+		}
+		if v := (c.kPoints + chunkSlackPoints) / c.kList; rates[i].PointsPerListUSD == nil || v < *rates[i].PointsPerListUSD {
+			rates[i].PointsPerListUSD = &v
 		}
 	}
-	if k == nil {
-		return nil
-	}
-	for i := range runs {
-		r := &runs[i]
-		if u := r.points - runSlackPoints - *k*r.list; u > 0 && r.points > 0 {
-			r.frac = u / r.points
+	for i := range chunks {
+		c := &chunks[i]
+		switch {
+		case c.list() <= 0:
+			// The meter moved and nobody reported a call in the whole chunk.
+			c.unattributed, c.frac = c.points, 1
+		case c.incomplete || c.rate == nil:
+		default:
+			k := rates[at[*c.rate]].PointsPerListUSD
+			if k == nil {
+				continue
+			}
+			if u := c.points - chunkSlackPoints - *k*c.list(); u > 0 && c.points > 0 {
+				c.unattributed, c.frac = u, u/c.points
+			}
 		}
 	}
-	return k
+	return rates
 }
 
-// splitSeat is F3 and F3b for one seat over its steps, in order: each step
-// split or not, with the seat's sums, its runs' ranges and its agents.
-// Every step keeps covey + outside + unattributed + unsplit = R. An idle
-// step neither starts nor ends a run; inside a run the ranges see through
-// it at its own price with the share before it (the plan's rate, 0 without
-// a plan: #126 finding 26), and it adds no points and no list to the run's
-// P_r and L_r. Any other step that is not split ends the run, and a reset
-// starts a new one.
+// rateTV is ½·TV of the steps' plan prices over a chunk, ½(r_1 +
+// Σ|r_{k+1} − r_k| + r_n), each step at its own price and 0 without a plan
+// (#126 findings 24 and 26): the $ range of a part whose share is 1 over
+// the chunk (#126 finding 19). A part's is its share times this.
+func rateTV(steps []shareStep, idx []int) float64 {
+	r := func(k int) float64 {
+		if p := steps[idx[k]].Rate; p != nil {
+			return *p
+		}
+		return 0
+	}
+	n := len(idx)
+	if n == 0 {
+		return 0
+	}
+	sum := r(0) + r(n-1)
+	for k := 0; k+1 < n; k++ {
+		sum += math.Abs(r(k+1) - r(k))
+	}
+	return sum / 2
+}
+
+// splitSeat is F3 and F3c for one seat over its steps, in order: each step
+// split by its chunk or not, with the seat's sums, its chunks' ranges and
+// its agents. Every step keeps covey + outside + unattributed + unsplit = R,
+// and each chunk's parts are the chunk-level split: covey_c = (P_c − U_c) ·
+// rate · Lc_c / L_c, the outside sessions' likewise, placed over its steps
+// by their movement.
 func splitSeat(seat meterSeat, sources []string, steps []shareStep) (ExternalMeterTotal, []ExternalMeterStep) {
 	tot := ExternalMeterTotal{SecretKey: seat.key, SecretSlot: seat.slot, Sources: append([]string{}, sources...),
-		Agents: []ExternalMeterAgent{}}
+		Agents: []ExternalMeterAgent{}, PlanRates: []ExternalMeterPlanRate{}}
 	out := make([]ExternalMeterStep, 0, len(steps))
 	agents := map[uuid.UUID]*ExternalMeterAgent{}
 	agent := func(id uuid.UUID) *ExternalMeterAgent {
@@ -1540,26 +1706,22 @@ func splitSeat(seat meterSeat, sources []string, steps []shareStep) (ExternalMet
 	for i, in := range steps {
 		reasons[i] = stepReason(in)
 	}
-	runOf, runs := seatRuns(steps, reasons)
-	tot.PointsPerListUSD = unattributedRuns(runs)
+	chunkOf, chunks := seatChunks(steps, reasons)
+	tot.PlanRates = append(tot.PlanRates, chunkRates(chunks)...)
+	// The seat's k: the one of the latest chunk whose plan price has one.
+	for i := len(chunks) - 1; i >= 0 && tot.PointsPerListUSD == nil; i-- {
+		if r := chunks[i].rate; r != nil {
+			for _, pr := range tot.PlanRates {
+				if pr.USDPerPoint == *r && pr.PointsPerListUSD != nil {
+					v := *pr.PointsPerListUSD
+					tot.PointsPerListUSD = &v
+				}
+			}
+		}
+	}
 
 	hours := map[time.Time]bool{}
 	rates := map[float64]bool{}
-	var run splitRun
-	endRun := func() {
-		if len(run.share) == 0 {
-			return
-		}
-		tot.SplitRuns++
-		one := func(int) float64 { return 1 }
-		tot.SplitSlackPoints += run.tv(one)
-		tot.SplitSlackUSD += run.tv(func(k int) float64 { return run.rate[k] })
-		tot.SplitExternalSlackPoints += run.tv(func(k int) float64 { return run.share[k] })
-		tot.SplitExternalSlackUSD += run.tv(func(k int) float64 { return run.share[k] * run.rate[k] })
-		tot.SplitCoveySlackPoints += run.tv(func(k int) float64 { return 1 - run.share[k] })
-		tot.SplitCoveySlackUSD += run.tv(func(k int) float64 { return (1 - run.share[k]) * run.rate[k] })
-		run = splitRun{}
-	}
 	for i, in := range steps {
 		st := ExternalMeterStep{At: in.At, From: in.From, SecretKey: seat.key, SecretSlot: seat.slot,
 			Points: in.Points, Reset: in.Reset, ExternalListUSD: in.LOut, CoveyListUSD: in.LCov, Reported: in.Reported}
@@ -1567,9 +1729,6 @@ func splitSeat(seat meterSeat, sources []string, steps []shareStep) (ExternalMet
 		hours[in.At.Truncate(time.Hour)] = true
 		tot.UnpricedCalls += in.UnpricedCalls
 		tot.UnpricedTokens += in.UnpricedTokens
-		if in.Reset {
-			endRun()
-		}
 		unsplitList := func() {
 			for id, l := range in.Agents {
 				agent(id).UnsplitListUSD += l
@@ -1580,7 +1739,6 @@ func splitSeat(seat meterSeat, sources []string, steps []shareStep) (ExternalMet
 			tot.UnpricedSteps++
 			tot.UnpricedPoints += in.Points
 			unsplitList()
-			endRun()
 			out = append(out, st)
 			continue
 		}
@@ -1595,15 +1753,12 @@ func splitSeat(seat meterSeat, sources []string, steps []shareStep) (ExternalMet
 		st.RealUSD = &r
 		tot.RealUSD += r
 		tot.Points += in.Points
-		lists := in.LOut + in.LCov
-		switch st.Reason {
-		case SplitNoReportedCall:
-			// The meter moved and nobody reported a call: unattributed whole,
-			// never covey's, never "not split" (F3b). No covey line, so no
-			// agent has a list here.
-			st.UnattributedRealUSD, st.UnattributedPoints = r, in.Points
-			endRun()
-		case SplitNotReported, SplitOutsideUnpriced:
+		var c *meterChunk
+		if chunkOf[i] >= 0 {
+			c = &chunks[chunkOf[i]]
+		}
+		switch {
+		case st.Reason == SplitNotReported || st.Reason == SplitOutsideUnpriced || c == nil:
 			st.UnsplitRealUSD = r
 			tot.UnsplitRealUSD += r
 			if in.Points != 0 {
@@ -1616,30 +1771,24 @@ func splitSeat(seat meterSeat, sources []string, steps []shareStep) (ExternalMet
 				}
 			}
 			unsplitList()
-			endRun()
-		case SplitIdle:
-			// Inside a run its sub-point movement still counts, at its own
-			// price (#126 finding 26): the share before it, so the points
-			// ranges stay, and the plan's rate or 0 without one, so the $
-			// ranges do not take the neighbours' price for it. At the run's
-			// own price it changes no range; before a run it adds nothing.
-			// It has no points and no list, so it adds nothing to the run's
-			// P_r or L_r (F3b) either, and S_r stays one point.
-			if len(run.share) > 0 {
-				rate := 0.0
-				if in.Rate != nil {
-					rate = *in.Rate
-				}
-				run.share = append(run.share, run.share[len(run.share)-1])
-				run.rate = append(run.rate, rate)
-			}
+		case c.list() <= 0:
+			// A chunk with no list at all: the meter moved and nobody
+			// reported a call (lag, or another machine). Unattributed whole,
+			// never covey's, never "not split". No covey line, so no agent
+			// has a list here; an idle step of it has R = 0.
+			st.UnattributedRealUSD, st.UnattributedPoints = r, in.Points
+			tot.UnattributedNoCallRealUSD += r
+			tot.UnattributedNoCallPoints += in.Points
+		case st.Reason == SplitIdle:
+			// Nothing to split (R = 0); the chunk's ranges see it at its own
+			// price (#126 finding 26).
 		default:
-			// The run's unattributed part first, spread by points (F3b);
-			// the rest by list share (F3).
-			frac := runs[runOf[i]].frac
-			st.UnattributedRealUSD, st.UnattributedPoints = r*frac, in.Points*frac
+			// The chunk's unattributed part first, spread by points; the
+			// rest by the chunk's list share (F3c), a step that moved with
+			// no call alike.
+			st.UnattributedRealUSD, st.UnattributedPoints = r*c.frac, in.Points*c.frac
 			attributed, attrPoints := r-st.UnattributedRealUSD, in.Points-st.UnattributedPoints
-			share := in.LOut / lists
+			share := c.share()
 			rOut := attributed * share
 			rCov := attributed - rOut
 			st.Split, st.ExternalRealUSD, st.CoveyRealUSD = true, &rOut, &rCov
@@ -1652,21 +1801,15 @@ func splitSeat(seat meterSeat, sources []string, steps []shareStep) (ExternalMet
 			tot.SplitExternalPoints += attrPoints * share
 			tot.SplitCoveyPoints += attrPoints * (1 - share)
 			for id, l := range in.Agents {
-				a := agent(id)
-				a.SplitListUSD += l
-				if in.LCov > 0 {
-					a.RealUSD += rCov * l / in.LCov
+				agent(id).SplitListUSD += l
+			}
+			// covey's part goes to the agents by their share of the chunk's
+			// L_cov, not the step's.
+			if c.lCov > 0 {
+				for id, l := range c.agents {
+					agent(id).RealUSD += rCov * l / c.lCov
 				}
 			}
-			// The price of a reading that did not move is the plan's all the
-			// same; without a plan it has none, so its $ coefficient is 0
-			// (#126 finding 24), not the price of an earlier reading.
-			rate := 0.0
-			if in.Rate != nil {
-				rate = *in.Rate
-			}
-			run.share = append(run.share, share)
-			run.rate = append(run.rate, rate)
 		}
 		tot.UnattributedRealUSD += st.UnattributedRealUSD
 		tot.UnattributedPoints += st.UnattributedPoints
@@ -1675,7 +1818,23 @@ func splitSeat(seat meterSeat, sources []string, steps []shareStep) (ExternalMet
 		}
 		out = append(out, st)
 	}
-	endRun()
+	// The ranges, one term per chunk with list price (see SplitRuns).
+	for _, c := range chunks {
+		if c.incomplete && c.list() > 0 {
+			tot.IncompleteChunks++
+		}
+		if c.list() <= 0 {
+			continue
+		}
+		tot.SplitRuns++
+		s, tv := c.share(), rateTV(steps, c.steps)
+		tot.SplitSlackPoints++
+		tot.SplitSlackUSD += tv
+		tot.SplitExternalSlackPoints += s
+		tot.SplitExternalSlackUSD += s * tv
+		tot.SplitCoveySlackPoints += 1 - s
+		tot.SplitCoveySlackUSD += (1 - s) * tv
+	}
 	tot.PointRateMixed = len(rates) > 1
 	tot.HoursWithReading = len(hours)
 	if split := tot.ExternalRealUSD + tot.CoveyRealUSD; split > 0 {
@@ -1711,6 +1870,9 @@ func meterSums(totals []ExternalMeterTotal, steps []ExternalMeterStep) ExternalM
 		a.UnattributedRealUSD += b.UnattributedRealUSD
 		a.UnattributedPoints += b.UnattributedPoints
 		a.UnattributedSteps += b.UnattributedSteps
+		a.UnattributedNoCallRealUSD += b.UnattributedNoCallRealUSD
+		a.UnattributedNoCallPoints += b.UnattributedNoCallPoints
+		a.IncompleteChunks += b.IncompleteChunks
 		a.SplitExternalListUSD += b.SplitExternalListUSD
 		a.SplitCoveyListUSD += b.SplitCoveyListUSD
 		a.Points += b.Points

@@ -356,11 +356,13 @@ func TestExternalUsageTableHoldsOnlyTheListedColumns(t *testing.T) {
 }
 
 // Criterion 6, F3 against the database: two hours of meter readings on a
-// subscription seat, covey's lines and outside calls on it. The meter's real
-// cost is split by list-price share per UTC hour; an hour without outside
-// calls gives them 0; an hour without a reading has no figure; and the two
-// shares add up to the meter's cost. The split is per hour whatever the
-// chart's bucket.
+// subscription seat, covey's lines and outside calls on it. Since F3c the
+// meter's real cost is split per chunk of readings by the chunk's list-price
+// share: the two readings (+2 points over L_out 3 / L_cov 1, +1 over 0 / 2)
+// are one chunk of 3 points over 3 / 3, so each takes the share ½ — the
+// reading with no outside call too; an hour without a reading has no
+// figure; and the two shares add up to the meter's cost. The split is the
+// same whatever the chart's bucket.
 func TestExternalUsageMeterShare(t *testing.T) {
 	s := newStack(t)
 	ctx := context.Background()
@@ -426,12 +428,12 @@ func TestExternalUsageMeterShare(t *testing.T) {
 		}
 		s1, s2, s3 := m.Steps[0], m.Steps[1], m.Steps[2]
 		if !s1.At.Equal(h1.Add(40*time.Minute)) || !s1.From.Equal(h1.Add(-30*time.Hour)) || !s1.Split ||
-			!near(s1.RealUSD, r1) || !near(s1.ExternalRealUSD, r1*3/4) || !near(s1.CoveyRealUSD, r1/4) ||
+			!near(s1.RealUSD, r1) || !near(s1.ExternalRealUSD, r1/2) || !near(s1.CoveyRealUSD, r1/2) ||
 			!nearV(s1.ExternalListUSD, 3) || !nearV(s1.CoveyListUSD, 1) {
-			t.Errorf("%s: step 1 = %+v, want R %v split 3:1 over (baseline, h1:40]", bucket, s1, r1)
+			t.Errorf("%s: step 1 = %+v, want R %v split 1:1 (its chunk's share) over (baseline, h1:40]", bucket, s1, r1)
 		}
-		if !s2.Split || !near(s2.ExternalRealUSD, 0) || !near(s2.CoveyRealUSD, r2) {
-			t.Errorf("%s: step 2 = %+v, want R_out 0 and R_cov %v", bucket, s2, r2)
+		if !s2.Split || !near(s2.ExternalRealUSD, r2/2) || !near(s2.CoveyRealUSD, r2/2) {
+			t.Errorf("%s: step 2 = %+v, want R_out and R_cov %v each", bucket, s2, r2/2)
 		}
 		// h4:40 lies after the laptop's watermark: not reported, not split,
 		// though its span holds h3's call.
@@ -442,8 +444,8 @@ func TestExternalUsageMeterShare(t *testing.T) {
 		if len(m.Hours) != 3 || !m.Hours[0].Hour.Equal(h1) || !m.Hours[2].Hour.Equal(h4) {
 			t.Errorf("%s: hours = %+v, want h1, h2, h4", bucket, m.Hours)
 		}
-		if !nearV(m.RealUSD, r1+r2+perPoint) || !nearV(m.ExternalRealUSD, r1*3/4) || !nearV(m.CoveyRealUSD, r1/4+r2) ||
-			!nearV(m.UnsplitRealUSD, perPoint) || !near(m.Share, r1*3/4/(r1+r2)) || m.UnmeteredListUSD != 0 {
+		if !nearV(m.RealUSD, r1+r2+perPoint) || !nearV(m.ExternalRealUSD, (r1+r2)/2) || !nearV(m.CoveyRealUSD, (r1+r2)/2) ||
+			!nearV(m.UnsplitRealUSD, perPoint) || !near(m.Share, 0.5) || m.UnmeteredListUSD != 0 {
 			t.Errorf("%s: totals real %v outside %v covey %v unsplit %v share %v unmetered %v", bucket,
 				m.RealUSD, m.ExternalRealUSD, m.CoveyRealUSD, m.UnsplitRealUSD, m.Share, m.UnmeteredListUSD)
 		}
@@ -466,8 +468,9 @@ func TestExternalUsageMeterShare(t *testing.T) {
 	}
 
 	// The watermark is clamped to the push and never moves back. An empty
-	// push through now reports the last step: its $5 of outside calls take
-	// all of R, there being no covey line in its span.
+	// push through now reports the last step: it joins the chunk (4 points
+	// over L_out 8 / L_cov 3), and takes its share 8/11, though its own span
+	// has no covey line.
 	now := time.Now().UTC()
 	push := func(at time.Time) []any {
 		t.Helper()
@@ -486,8 +489,9 @@ func TestExternalUsageMeterShare(t *testing.T) {
 		t.Errorf("an older watermark moved it back: %v, want %v", h["reported_through"], stored)
 	}
 	m := cellsExternal(t, admin, "days=2&bucket=hour").Meter
-	if s3 := m.Steps[2]; !s3.Split || !near(s3.ExternalRealUSD, perPoint) || !near(s3.CoveyRealUSD, 0) || m.UnsplitRealUSD != 0 {
-		t.Errorf("after the push: step 3 = %+v, unsplit %v; want R_out %v", s3, m.UnsplitRealUSD, perPoint)
+	if s3 := m.Steps[2]; !s3.Split || !near(s3.ExternalRealUSD, perPoint*8/11) || !near(s3.CoveyRealUSD, perPoint*3/11) ||
+		m.UnsplitRealUSD != 0 || m.SplitRuns != 1 {
+		t.Errorf("after the push: step 3 = %+v, unsplit %v, chunks %d; want R_out %v", s3, m.UnsplitRealUSD, m.SplitRuns, perPoint*8/11)
 	}
 	src := cellsExternal(t, admin, "days=2&bucket=hour").Sources
 	if len(src) != 2 || len(src[0].Hosts) != 1 || src[0].Hosts[0].ReportedThrough == nil {
@@ -678,18 +682,25 @@ func TestExternalUsageMeterShareSeatWithoutSource(t *testing.T) {
 	}
 }
 
-// F3b end to end (#120): another machine on the account that does not
-// report. One seat at $200 a month; each split reading has $1 of covey's
-// Opus output and $2 of the home source's, list $3:
+// F3c end to end (#120): the split per chunk of readings and the
+// unattributed share. One seat at $200 a month (pp a point); each reading
+// with calls has $1 of covey's Opus output and $2 of the home source's,
+// list $3:
 //
-//   - h1:40, +6 points: the clean run, k = (6 + 1) / 3 points per list $.
-//   - h2:40, +1 point, no call on either side: unattributed whole; it ends
-//     the run.
-//   - h3:40, +12 points over the same $3: U = 12 − 1 − 7/3 × 3 = 4 points
-//     unattributed, the other 8 split 2:1.
+//   - h1:40, +10 points: chunk 1, the clean one, k = (10 + 2) / 3 = 4
+//     points per list $; U = 0, split 1:2.
+//   - h2:40, +1 point, no call on either side (the meter's lag): it opens
+//     chunk 2 and is split with it, not unattributed whole.
+//   - h3:40, +15 points over $3: chunk 2 closes at 16 points, U = 16 − 2 −
+//     4 × 3 = 2 points, spread 1 : 15 over h2 and h3; the other 14 split
+//     1:2.
+//   - h4:40, +1 point with no call, then h5:40, +20 points over $3 and a
+//     covey booking no line was linked to: chunk 3 is incomplete, so it has
+//     no unattributed part (it would have 21 − 2 − 12 = 7 points) and sets
+//     no rate.
 //
-// So of 19 points, 5 are unattributed (booked to nobody), covey 14/3, the
-// outside sessions 28/3.
+// So of 47 points, 2 are unattributed (booked to nobody), covey 15, the
+// outside sessions 30.
 func TestExternalUsageUnattributedShare(t *testing.T) {
 	s := newStack(t)
 	ctx := context.Background()
@@ -700,8 +711,8 @@ func TestExternalUsageUnattributedShare(t *testing.T) {
 		t.Fatal(err)
 	}
 	ord := s.seat(t, rt.ID, daemon.CredSubscription, "claude_code_oauth_token", "sitz", "A")
-	h1 := time.Now().UTC().Truncate(time.Hour).Add(-5 * time.Hour)
-	h2, h3 := h1.Add(time.Hour), h1.Add(2*time.Hour)
+	h1 := time.Now().UTC().Truncate(time.Hour).Add(-7 * time.Hour)
+	h2, h3, h4, h5 := h1.Add(time.Hour), h1.Add(2*time.Hour), h1.Add(3*time.Hour), h1.Add(4*time.Hour)
 	admin.expect(http.MethodPut, fmt.Sprintf("/api/v1/runtime-instances/%s/credentials/%d/plan", rt.ID, ord),
 		map[string]any{"plan_name": "Max", "amount": 200, "currency": "USD", "period": "month", "tax_basis": "net",
 			"valid_from": h1.Add(-48 * time.Hour)}, http.StatusOK)
@@ -710,62 +721,73 @@ func TestExternalUsageUnattributedShare(t *testing.T) {
 	for _, r := range []struct {
 		at  time.Time
 		pct float64
-	}{{h1.Add(-30 * time.Hour), 10}, {h1.Add(40 * time.Minute), 16}, {h2.Add(40 * time.Minute), 17},
-		{h3.Add(40 * time.Minute), 29}} {
+	}{{h1.Add(-30 * time.Hour), 10}, {h1.Add(40 * time.Minute), 20}, {h2.Add(40 * time.Minute), 21},
+		{h3.Add(40 * time.Minute), 36}, {h4.Add(40 * time.Minute), 37}, {h5.Add(40 * time.Minute), 57}} {
 		if err := s.obs.AddUsageReading(ctx, s.orgID, observability.MeterReading{Credential: cred,
 			Supported: true, WindowPercent: -1, WeekPercent: r.pct, FetchedAt: r.at}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	f := billingFixture{s: s, ctx: ctx, agent: agent.ID, org: s.orgID}
-	f.line(t, cred, h1.Add(10*time.Minute), 50_000)
-	f.line(t, cred, h3.Add(10*time.Minute), 50_000)
+	for _, h := range []time.Time{h1, h3, h5} {
+		f.line(t, cred, h.Add(10*time.Minute), 50_000)
+	}
+	// A booking on the seat no line was linked to (an older daemon).
+	f.exec(t, `INSERT INTO cost_entries (agent_id, model, usd, output_tokens, created_at, secret_key, secret_slot)
+		VALUES ($1, 'claude-opus-5-5', 0.5, 1000, $2, 'claude_code_oauth_token', 0)`, agent.ID, h5.Add(20*time.Minute))
 	out := func(id string, at time.Time) map[string]any {
 		r := extRow(id, at, "claude-opus-5-5", 100_000)
 		r["input"], r["cache_read"], r["cache_write_1h"] = 0, 0, 0
 		return r
 	}
-	up := extUpload("operator: home", out("a", h1.Add(5*time.Minute)), out("b", h3.Add(5*time.Minute)))
+	up := extUpload("operator: home", out("a", h1.Add(5*time.Minute)), out("b", h3.Add(5*time.Minute)), out("c", h5.Add(5*time.Minute)))
 	up["meter_credential"] = map[string]any{"secret_key": "claude_code_oauth_token", "secret_slot": 0}
-	up["reported_through"] = map[string]any{"laptop": h3.Add(50 * time.Minute)}
+	up["reported_through"] = map[string]any{"laptop": h5.Add(50 * time.Minute)}
 	admin.expect(http.MethodPost, externalPath, up, http.StatusOK)
 
 	nearV := func(v, want float64) bool { return math.Abs(v-want) < 1e-9 }
 	m := cellsExternal(t, admin, "days=2&bucket=hour").Meter
-	if len(m.Steps) != 3 || len(m.Credentials) != 1 {
-		t.Fatalf("steps %+v, credentials %+v; want three steps on one seat", m.Steps, m.Credentials)
+	if len(m.Steps) != 5 || len(m.Credentials) != 1 {
+		t.Fatalf("steps %+v, credentials %+v; want five steps on one seat", m.Steps, m.Credentials)
 	}
 	c := m.Credentials[0]
-	if c.PointsPerListUSD == nil || !nearV(*c.PointsPerListUSD, 7.0/3) {
-		t.Errorf("k = %v, want 7/3 points per list $", c.PointsPerListUSD)
+	if c.PointsPerListUSD == nil || !nearV(*c.PointsPerListUSD, 4) || len(c.PlanRates) != 1 || !nearV(c.PlanRates[0].USDPerPoint, pp) {
+		t.Errorf("k = %v, plan rates %+v; want 4 points per list $ at one plan price", c.PointsPerListUSD, c.PlanRates)
 	}
-	s1, s2, s3 := m.Steps[0], m.Steps[1], m.Steps[2]
-	if !s1.Split || s1.UnattributedRealUSD != 0 || !nearV(*s1.CoveyRealUSD, 2*pp) || !nearV(*s1.ExternalRealUSD, 4*pp) {
-		t.Errorf("h1:40 = %+v, want 6 points split 1:2, none unattributed", s1)
+	st := m.Steps
+	if !st[0].Split || st[0].UnattributedRealUSD != 0 || !nearV(*st[0].CoveyRealUSD, 10*pp/3) || !nearV(*st[0].ExternalRealUSD, 20*pp/3) {
+		t.Errorf("h1:40 = %+v, want 10 points split 1:2, none unattributed", st[0])
 	}
-	if s2.Split || s2.Reason != observability.SplitNoReportedCall || !nearV(s2.UnattributedRealUSD, pp) || s2.UnsplitRealUSD != 0 {
-		t.Errorf("h2:40 = %+v, want its point unattributed whole", s2)
+	if !st[1].Split || st[1].Reason != observability.SplitNoReportedCall || !nearV(st[1].UnattributedRealUSD, pp/8) ||
+		!nearV(*st[1].CoveyRealUSD, 7*pp/24) || st[1].UnsplitRealUSD != 0 {
+		t.Errorf("h2:40 = %+v, want its point split with chunk 2 (⅛ unattributed)", st[1])
 	}
-	if !s3.Split || !nearV(s3.UnattributedRealUSD, 4*pp) || !nearV(s3.UnattributedPoints, 4) ||
-		!nearV(*s3.CoveyRealUSD, 8*pp/3) || !nearV(*s3.ExternalRealUSD, 16*pp/3) {
-		t.Errorf("h3:40 = %+v, want 4 points unattributed and 8 split 1:2", s3)
+	if !st[2].Split || !nearV(st[2].UnattributedRealUSD, 15*pp/8) || !nearV(st[2].UnattributedPoints, 15.0/8) ||
+		!nearV(*st[2].CoveyRealUSD, 35*pp/8) || !nearV(*st[2].ExternalRealUSD, 35*pp/4) {
+		t.Errorf("h3:40 = %+v, want 15/8 points unattributed and the rest split 1:2", st[2])
 	}
-	if !nearV(m.RealUSD, 19*pp) || !nearV(m.UnattributedRealUSD, 5*pp) || !nearV(m.UnattributedPoints, 5) ||
-		m.UnattributedSteps != 2 || !nearV(m.CoveyRealUSD, 14*pp/3) || !nearV(m.ExternalRealUSD, 28*pp/3) ||
-		m.UnsplitRealUSD != 0 || m.UnsplitSteps != 0 {
-		t.Errorf("headline: real %v unattributed %v (%v points, %d steps) covey %v outside %v unsplit %v (%d)",
-			m.RealUSD, m.UnattributedRealUSD, m.UnattributedPoints, m.UnattributedSteps, m.CoveyRealUSD,
-			m.ExternalRealUSD, m.UnsplitRealUSD, m.UnsplitSteps)
+	if !st[3].Split || !st[4].Split || st[3].UnattributedRealUSD != 0 || st[4].UnattributedRealUSD != 0 ||
+		!nearV(*st[4].CoveyRealUSD, 20*pp/3) || !nearV(*st[3].CoveyRealUSD, pp/3) {
+		t.Errorf("h4:40 = %+v, h5:40 = %+v; want chunk 3 split 1:2 with nothing unattributed", st[3], st[4])
+	}
+	if !nearV(m.RealUSD, 47*pp) || !nearV(m.UnattributedRealUSD, 2*pp) || !nearV(m.UnattributedPoints, 2) ||
+		m.UnattributedSteps != 2 || !nearV(m.CoveyRealUSD, 15*pp) || !nearV(m.ExternalRealUSD, 30*pp) ||
+		m.UnsplitRealUSD != 0 || m.UnsplitSteps != 0 || m.UnattributedNoCallRealUSD != 0 || m.IncompleteChunks != 1 ||
+		m.SplitRuns != 3 || m.SplitSteps != 5 {
+		t.Errorf("headline: real %v unattributed %v (%v points, %d steps, no call %v) covey %v outside %v unsplit %v (%d), "+
+			"incomplete %d, chunks %d, split steps %d", m.RealUSD, m.UnattributedRealUSD, m.UnattributedPoints, m.UnattributedSteps,
+			m.UnattributedNoCallRealUSD, m.CoveyRealUSD, m.ExternalRealUSD, m.UnsplitRealUSD, m.UnsplitSteps, m.IncompleteChunks,
+			m.SplitRuns, m.SplitSteps)
 	}
 	if a := c.Agents; len(a) != 1 || !nearV(a[0].RealUSD, m.CoveyRealUSD) {
-		t.Errorf("agents %+v, want the one agent with covey's 14/3 points", a)
+		t.Errorf("agents %+v, want the one agent with covey's 15 points", a)
 	}
 	hours := map[time.Time]observability.ExternalMeterHour{}
 	for _, h := range m.Hours {
 		hours[h.Hour] = h
 	}
-	if h := hours[h3]; !nearV(h.UnattributedRealUSD, 4*pp) || h.UnattributedSteps != 1 {
-		t.Errorf("hour h3 = %+v, want 4 points unattributed", h)
+	if h := hours[h3]; !nearV(h.UnattributedRealUSD, 15*pp/8) || h.UnattributedSteps != 1 {
+		t.Errorf("hour h3 = %+v, want 15/8 points unattributed", h)
 	}
 	// The wire names.
 	var raw struct {
@@ -778,13 +800,16 @@ func TestExternalUsageUnattributedShare(t *testing.T) {
 	}
 	creds, _ := raw.External.Meter["credentials"].([]any)
 	seat, _ := creds[0].(map[string]any)
-	for _, k := range []string{"unattributed_real_usd", "unattributed_points", "unattributed_steps"} {
+	for _, k := range []string{"unattributed_real_usd", "unattributed_points", "unattributed_steps", "unattributed_no_call_real_usd",
+		"unattributed_no_call_points", "incomplete_chunks"} {
 		if _, ok := raw.External.Meter[k]; !ok {
 			t.Errorf("meter has no %s", k)
 		}
 	}
-	if _, ok := seat["points_per_list_usd"]; !ok {
-		t.Errorf("the seat has no points_per_list_usd: %v", seat)
+	for _, k := range []string{"points_per_list_usd", "plan_rates"} {
+		if _, ok := seat[k]; !ok {
+			t.Errorf("the seat has no %s: %v", k, seat)
+		}
 	}
 }
 
@@ -1120,6 +1145,11 @@ func TestExternalUsageSplitsAReadingOverItsSpan(t *testing.T) {
 	}
 	if !h.Hour.Equal(base.Add(2*time.Hour)) || !near(h.ExternalRealUSD, r*lOut/(lOut+lCov)) || !near(h.CoveyListUSD, lCov) {
 		t.Errorf("hour = %+v, want the step's split at 2:00", h)
+	}
+	// The bare call's use is not in L_out: the step's chunk is incomplete
+	// (F3c), sets no rate and has no unattributed part.
+	if m.IncompleteChunks != 1 || m.UnattributedRealUSD != 0 {
+		t.Errorf("incomplete chunks %d, unattributed %v; want 1 and 0", m.IncompleteChunks, m.UnattributedRealUSD)
 	}
 	if m.UnpricedCalls != 1 || m.UnpricedTokens != 2060 || m.Credentials[0].UnpricedCalls != 1 {
 		t.Errorf("unpriced calls %d (%d tokens), seat %d; want the bare call, 2060 tokens", m.UnpricedCalls,
