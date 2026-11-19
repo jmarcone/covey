@@ -128,12 +128,18 @@ func (o *Orchestrator) SyncBillingOrg(ctx context.Context, orgID uuid.UUID, forc
 	}
 	daily := forceDaily || st.LastDailyAt == nil || now.Sub(*st.LastDailyAt) >= billingDailyEvery
 
+	// Both reads are stamped with the sync's one instant, not with the
+	// moment each was written. The daily re-read is written seconds after
+	// the hourly one; stamped with its own time it was the freshest width
+	// for every day of the hourly reach until the next hourly sync, and the
+	// hourly views fell back to one point per day (chosenRows takes the
+	// freshest width, the hours on a tie).
 	attempt := observability.BillingSyncAttempt{At: now, Status: "ok"}
 	refreshed, landed, err := o.syncBillingWindow(ctx, client, orgID, billing.Hour,
-		now.Add(-billingHourlyBack).Truncate(24*time.Hour), now)
+		now.Add(-billingHourlyBack).Truncate(24*time.Hour), now, now)
 	if err == nil && daily {
 		var dailyLanded bool
-		_, dailyLanded, err = o.syncBillingWindow(ctx, client, orgID, billing.Day, now.Add(-billingDailyBack), now)
+		_, dailyLanded, err = o.syncBillingWindow(ctx, client, orgID, billing.Day, now.Add(-billingDailyBack), now, now)
 		landed = landed || dailyLanded
 		attempt.Daily = err == nil
 	}
@@ -156,9 +162,10 @@ func (o *Orchestrator) SyncBillingOrg(ctx context.Context, orgID uuid.UUID, forc
 }
 
 // syncBillingWindow reads both endpoints over one window and replaces the
-// stored rows with them — only after both arrived complete.
+// stored rows with them — only after both arrived complete — stamped
+// fetchedAt, the sync's instant.
 func (o *Orchestrator) syncBillingWindow(ctx context.Context, c *billing.Client, orgID uuid.UUID, width string,
-	from, to time.Time) (*time.Time, bool, error) {
+	from, to, fetchedAt time.Time) (*time.Time, bool, error) {
 	cost, err := c.Cost(ctx, billing.Query{Start: from, End: to, Bucket: width, GroupBy: costGroups})
 	if err != nil {
 		return nil, false, err
@@ -167,7 +174,7 @@ func (o *Orchestrator) syncBillingWindow(ctx context.Context, c *billing.Client,
 	if err != nil {
 		return nil, false, err
 	}
-	if err := o.Obs.ReplaceBilled(ctx, orgID, width, &cost, &usage, time.Now()); err != nil {
+	if err := o.Obs.ReplaceBilled(ctx, orgID, width, &cost, &usage, fetchedAt); err != nil {
 		return nil, false, err
 	}
 	refreshed := cost.DataRefreshedAt

@@ -82,20 +82,26 @@ const billingKeysDays = 30
 
 // handleBilled: the bill per bucket (hour | 10hour | day | week), API key and model,
 // each point with the credential the key is mapped to (none: other use of
-// the account) — the chart's bars. And `window`: per mapped credential the
+// the account) — the chart's bars; at hour and 10hour `whole_days` beside
+// them, the days the bill is read for as a whole. And `window`: per mapped credential the
 // bill over whole billed buckets with the reported and recomputed figures of
 // the same window — the tiles, which must never set a bill over one span
-// against lines over another. ?days= and ?bucket= as on the other cost
-// endpoints.
+// against lines over another. Bars and tiles read the same rows whatever the
+// bucket; the bucket shapes the bars only (ask for bucket=hour whenever the
+// window is hourly, or a day's bar starts before it). ?days= and ?bucket= as
+// on the other cost endpoints.
 func (s *Server) handleBilled(w http.ResponseWriter, r *http.Request) {
 	p := principalFrom(r)
-	bucket, since := costWindow(r)
+	// One instant for since and the window's end: ?days=2 is a window of
+	// exactly two days, inside the hourly reach.
+	now := time.Now().UTC()
+	bucket, since := costWindowAt(r, now)
 	series, err := s.Obs.BilledSeries(r.Context(), p.OrgID, bucket, since)
 	if err != nil {
 		mapErr(w, err)
 		return
 	}
-	window, err := s.Obs.BilledWindowFor(r.Context(), p.OrgID, since, time.Now())
+	window, err := s.Obs.BilledWindowFor(r.Context(), p.OrgID, since, now)
 	if err != nil {
 		mapErr(w, err)
 		return
@@ -111,6 +117,11 @@ func (s *Server) handleBilled(w http.ResponseWriter, r *http.Request) {
 	}
 	if series.HourlyFrom != nil {
 		out["hourly_from"] = series.HourlyFrom
+	}
+	// At hour and 10hour, the days read whole: with points, the rows the
+	// window sums.
+	if len(series.WholeDays) > 0 {
+		out["whole_days"] = series.WholeDays
 	}
 	writeJSON(w, http.StatusOK, out)
 }

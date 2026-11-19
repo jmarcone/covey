@@ -11,6 +11,7 @@ export { SOURCE_COLOR };
 import {
   billedFetchBucket,
   billedPerPeriod,
+  billedWholeDays,
   credentialFigures,
   credId,
   isSeat,
@@ -1138,6 +1139,9 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
   // The bill inside the tile's window, in the chart's buckets.
   const bill = useMemo(() => (f.kind === "api_key" && f.secretKey != null
     ? billedPerPeriod(billed, f.secretKey, f.slot!, bucket) : new Map<number, number>()), [billed, f.kind, f.secretKey, f.slot, bucket]);
+  // The days of that window the bill is read for as a whole: no hour or
+  // 10-hour bar holds them, so the bars fall short of the tile by this much.
+  const billWhole = f.kind === "api_key" && f.secretKey != null ? billedWholeDays(billed, f.secretKey, f.slot!, bucket) : 0;
 
   // The periods: the cells', the meter's, the bill's — matched by instant.
   const periods = useMemo(() => {
@@ -1423,6 +1427,8 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
         {rate.mixed ? t("costs.fig.hourRealNoteMixed") : t("costs.fig.hourRealNote", { usd: fmtUSD(pointPrice ?? 0) })}
       </p>}
       {/* The comparison was asked for but is not drawn here: say why. An agent filter has its own note below. */}
+      {billWhole >= 0.005 && <p className="muted text-xs mt-1 mb-0" data-billed-whole-days>
+        {t("costs.fig.billedWholeDays", { usd: fmtUSD(billWhole) })}</p>}
       {billedShort && <p className="muted text-xs mt-1 mb-0" data-billed-hourly-from>
         {t("costs.fig.billedHourlyFrom", { at: fmtBucket(billed!.hourly_from!, "hour") })}</p>}
       {view === "vs" && layout === "combined" && !vs && !(filtered && (subscription || f.kind === "api_key")) && (

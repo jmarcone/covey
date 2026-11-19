@@ -298,7 +298,8 @@
       "shareOfRealSpan": "rzeczywisty udział dotyczy rzeczywistego kosztu od {{from}} (odczyt bazowy licznika) do {{to}}, nie tylko okresu",
       "vsNote": "× to cena cennikowa okresu ÷ jego rzeczywisty koszt. Licznik rusza się o pełne punkty, więc rzeczywisty koszt okresu ma dokładność ±1 punktu: okres dostaje × dopiero od 3 punktów ruchu, jak kafelek, a jego zakres jest w szczegółach okresu.",
       "billedBeforeHourly": "rachunek niepełny: przed wierszami godzinowymi",
-      "billedHourlyFrom": "Rachunek jest przechowywany godzinowo od {{at}}: wcześniejszych słupków brakuje lub są niepełne."
+      "billedHourlyFrom": "Rachunek jest przechowywany godzinowo od {{at}}: wcześniejszych słupków brakuje lub są niepełne.",
+      "billedWholeDays": "{{usd}} rachunku jest znane tylko za cały dzień UTC: żaden słupek godzinowy go nie zawiera."
     },
     "kpiAllCredentials": "wszystkie poświadczenia, z linii",
     "tok": {

@@ -298,7 +298,8 @@
       "shareOfRealSpan": "实际份额针对的是自 {{from}}（计量基准读数）至 {{to}} 的实际成本，而不仅是所选时段",
       "vsNote": "× 是某个时段的标价 ÷ 该时段的实际成本。计量按整数点移动，因此时段的实际成本有 ±1 点的误差：与卡片一样，时段至少移动 3 点才显示 ×，其范围见该时段的详情。",
       "billedBeforeHourly": "账单不完整：在按小时记录之前",
-      "billedHourlyFrom": "账单从 {{at}} 起按小时保存：此前的柱缺失或不完整。"
+      "billedHourlyFrom": "账单从 {{at}} 起按小时保存：此前的柱缺失或不完整。",
+      "billedWholeDays": "账单中有 {{usd}} 仅按整个 UTC 日已知：没有任何小时柱包含它。"
     },
     "kpiAllCredentials": "所有凭据，按各行汇总",
     "tok": {

@@ -298,7 +298,8 @@
       "shareOfRealSpan": "la quota reale si riferisce al costo reale dal {{from}} (lettura di base del contatore) al {{to}}, non al solo periodo",
       "vsNote": "× è il prezzo di listino di un periodo ÷ il suo costo reale. Il contatore avanza per punti interi, quindi il costo reale di un periodo è ±1 punto: un periodo mostra × solo da 3 punti di movimento, come la scheda, e il suo intervallo è nei dettagli del periodo.",
       "billedBeforeHourly": "fattura incompleta: prima delle righe orarie",
-      "billedHourlyFrom": "La fattura è conservata per ora da {{at}}: le barre precedenti mancano o sono incomplete."
+      "billedHourlyFrom": "La fattura è conservata per ora da {{at}}: le barre precedenti mancano o sono incomplete.",
+      "billedWholeDays": "{{usd}} della fattura sono noti solo per giorno UTC intero: nessuna barra oraria li contiene."
     },
     "kpiAllCredentials": "tutte le credenziali, dalle righe",
     "tok": {

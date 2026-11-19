@@ -298,7 +298,8 @@
       "shareOfRealSpan": "la parte real se refiere al coste real desde {{from}} (lectura base del medidor) hasta {{to}}, no solo al periodo",
       "vsNote": "× es el precio de lista de un periodo ÷ su coste real. El medidor se mueve en puntos enteros, así que el coste real de un periodo es ±1 punto: un periodo solo muestra × a partir de 3 puntos de movimiento, como la ficha, y su rango aparece en los detalles del periodo.",
       "billedBeforeHourly": "factura incompleta: antes de las filas por hora",
-      "billedHourlyFrom": "La factura se guarda por hora desde {{at}}: las barras anteriores faltan o están incompletas."
+      "billedHourlyFrom": "La factura se guarda por hora desde {{at}}: las barras anteriores faltan o están incompletas.",
+      "billedWholeDays": "{{usd}} de la factura se conocen solo por día UTC completo: ninguna barra horaria los contiene."
     },
     "kpiAllCredentials": "todas las credenciales, de las líneas",
     "tok": {

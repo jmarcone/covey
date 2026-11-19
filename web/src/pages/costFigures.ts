@@ -1,4 +1,5 @@
 import type {
+  BilledPoint,
   BilledReport,
   BookingBasis,
   CellAgent,
@@ -444,23 +445,49 @@ export function billedFetchBucket(days: number, bucket: string): "hour" | "day" 
   return bucket === "hour" || bucket === "10hour" || bucket === "10min" || days <= 2 ? "hour" : "day";
 }
 
+/** Chart buckets shorter than a UTC day: a day of the bill read whole
+ *  (whole_days) fits none of them. */
+function subDay(bucket: string): boolean {
+  return bucket === "hour" || bucket === "10hour" || bucket === "10min";
+}
+
+/** The points of one credential inside the window the billed tile covers. */
+function inWindow(report: BilledReport | null | undefined, points: readonly BilledPoint[] | null | undefined,
+  key: string, slot: number): BilledPoint[] {
+  const w = report?.window;
+  if (!w) return [];
+  const start = Date.parse(w.start), end = Date.parse(w.end);
+  return (points ?? []).filter((p) => {
+    if (p.secret_key !== key || p.secret_slot !== slot) return false;
+    const at = Date.parse(p.bucket);
+    return at >= start && at < end;
+  });
+}
+
 /** The bill of one credential per chart period (keyed by the period's start
  *  in ms): only the points inside the window the billed tile covers, summed
  *  into the chart's buckets — so the bars cover the same window and buckets
- *  as the rest of the chart, and their total is the tile's figure. */
+ *  as the rest of the chart. A day the server read whole (whole_days) goes
+ *  into a day, week or month bar; at hour, 10 h and 10 min it fits no bar
+ *  and is kept apart (billedWholeDays). Bars and that part together are the
+ *  tile's figure. */
 export function billedPerPeriod(report: BilledReport | null | undefined, key: string, slot: number, bucket: string): Map<number, number> {
   const out = new Map<number, number>();
-  const w = report?.window;
-  if (!w) return out;
-  const start = Date.parse(w.start), end = Date.parse(w.end);
-  for (const p of report?.points ?? []) {
-    if (p.secret_key !== key || p.secret_slot !== slot) continue;
-    const at = Date.parse(p.bucket);
-    if (at < start || at >= end) continue;
-    const k = bucketStart(at, bucket);
+  const points = [...inWindow(report, report?.points, key, slot),
+    ...(subDay(bucket) ? [] : inWindow(report, report?.whole_days, key, slot))];
+  for (const p of points) {
+    const k = bucketStart(Date.parse(p.bucket), bucket);
     out.set(k, (out.get(k) ?? 0) + (Number(p.billed_usd) || 0));
   }
   return out;
+}
+
+/** The part of one credential's tile that no bar of a chart finer than a
+ *  day holds: the days in the window the bill is read for as a whole. 0 at
+ *  a day bucket or coarser, where those days are in the bars. */
+export function billedWholeDays(report: BilledReport | null | undefined, key: string, slot: number, bucket: string): number {
+  if (!subDay(bucket)) return 0;
+  return inWindow(report, report?.whole_days, key, slot).reduce((a, p) => a + (Number(p.billed_usd) || 0), 0);
 }
 
 // --- The basis: seat, usage, or both (0151) --------------------------------------
