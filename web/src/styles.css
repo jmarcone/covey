@@ -181,6 +181,14 @@ picture { display: contents; }
   --cost-outside: light-dark(#1e1b4b, #6d28d9);
   --cost-unsplit: light-dark(#c3c8cd, #50565e);
   --cost-unsplit-edge: light-dark(#5b6168, #aab1b8);
+  /* Unattributed movement (F3b): neither covey's agents nor the reported
+     sessions explain it, booked to nobody. An amber, hatched as real cost
+     is, at least 3:1 against covey's green (light 3.17:1, dark 3.29:1). It
+     is about as light as the grey of the unsplit part and, in the dark
+     scheme, as the indigo: the grey is told apart by its plain fill and
+     dashed edge, the indigo by hue (amber against violet), and the chart's
+     tooltip names every part. */
+  --cost-unattributed: light-dark(#fcc419, #8a3c0c);
   /* Cost and token types: one blue family, light (cheap, plentiful) to dark
      (dear). Only for types — never for a source or an agent. */
   --cost-type-input: light-dark(#7d9fd0, #9dbbe8);

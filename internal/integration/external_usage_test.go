@@ -678,6 +678,116 @@ func TestExternalUsageMeterShareSeatWithoutSource(t *testing.T) {
 	}
 }
 
+// F3b end to end (#120): another machine on the account that does not
+// report. One seat at $200 a month; each split reading has $1 of covey's
+// Opus output and $2 of the home source's, list $3:
+//
+//   - h1:40, +6 points: the clean run, k = (6 + 1) / 3 points per list $.
+//   - h2:40, +1 point, no call on either side: unattributed whole; it ends
+//     the run.
+//   - h3:40, +12 points over the same $3: U = 12 − 1 − 7/3 × 3 = 4 points
+//     unattributed, the other 8 split 2:1.
+//
+// So of 19 points, 5 are unattributed (booked to nobody), covey 14/3, the
+// outside sessions 28/3.
+func TestExternalUsageUnattributedShare(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	admin := login(t, s, "admin@test.local", "admin-passwort")
+	agent := s.newSupportAgent("ohne-zuordnung")
+	rt, err := s.runtimes.Create(ctx, s.orgID, "claude-code", "Claude", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ord := s.seat(t, rt.ID, daemon.CredSubscription, "claude_code_oauth_token", "sitz", "A")
+	h1 := time.Now().UTC().Truncate(time.Hour).Add(-5 * time.Hour)
+	h2, h3 := h1.Add(time.Hour), h1.Add(2*time.Hour)
+	admin.expect(http.MethodPut, fmt.Sprintf("/api/v1/runtime-instances/%s/credentials/%d/plan", rt.ID, ord),
+		map[string]any{"plan_name": "Max", "amount": 200, "currency": "USD", "period": "month", "tax_basis": "net",
+			"valid_from": h1.Add(-48 * time.Hour)}, http.StatusOK)
+	pp := 200.0 * 12 / 52 / 100
+	cred := observability.CredentialRef{RuntimeID: rt.ID, Ord: ord, SecretKey: "claude_code_oauth_token", Kind: "subscription"}
+	for _, r := range []struct {
+		at  time.Time
+		pct float64
+	}{{h1.Add(-30 * time.Hour), 10}, {h1.Add(40 * time.Minute), 16}, {h2.Add(40 * time.Minute), 17},
+		{h3.Add(40 * time.Minute), 29}} {
+		if err := s.obs.AddUsageReading(ctx, s.orgID, observability.MeterReading{Credential: cred,
+			Supported: true, WindowPercent: -1, WeekPercent: r.pct, FetchedAt: r.at}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f := billingFixture{s: s, ctx: ctx, agent: agent.ID, org: s.orgID}
+	f.line(t, cred, h1.Add(10*time.Minute), 50_000)
+	f.line(t, cred, h3.Add(10*time.Minute), 50_000)
+	out := func(id string, at time.Time) map[string]any {
+		r := extRow(id, at, "claude-opus-5-5", 100_000)
+		r["input"], r["cache_read"], r["cache_write_1h"] = 0, 0, 0
+		return r
+	}
+	up := extUpload("operator: home", out("a", h1.Add(5*time.Minute)), out("b", h3.Add(5*time.Minute)))
+	up["meter_credential"] = map[string]any{"secret_key": "claude_code_oauth_token", "secret_slot": 0}
+	up["reported_through"] = map[string]any{"laptop": h3.Add(50 * time.Minute)}
+	admin.expect(http.MethodPost, externalPath, up, http.StatusOK)
+
+	nearV := func(v, want float64) bool { return math.Abs(v-want) < 1e-9 }
+	m := cellsExternal(t, admin, "days=2&bucket=hour").Meter
+	if len(m.Steps) != 3 || len(m.Credentials) != 1 {
+		t.Fatalf("steps %+v, credentials %+v; want three steps on one seat", m.Steps, m.Credentials)
+	}
+	c := m.Credentials[0]
+	if c.PointsPerListUSD == nil || !nearV(*c.PointsPerListUSD, 7.0/3) {
+		t.Errorf("k = %v, want 7/3 points per list $", c.PointsPerListUSD)
+	}
+	s1, s2, s3 := m.Steps[0], m.Steps[1], m.Steps[2]
+	if !s1.Split || s1.UnattributedRealUSD != 0 || !nearV(*s1.CoveyRealUSD, 2*pp) || !nearV(*s1.ExternalRealUSD, 4*pp) {
+		t.Errorf("h1:40 = %+v, want 6 points split 1:2, none unattributed", s1)
+	}
+	if s2.Split || s2.Reason != observability.SplitNoReportedCall || !nearV(s2.UnattributedRealUSD, pp) || s2.UnsplitRealUSD != 0 {
+		t.Errorf("h2:40 = %+v, want its point unattributed whole", s2)
+	}
+	if !s3.Split || !nearV(s3.UnattributedRealUSD, 4*pp) || !nearV(s3.UnattributedPoints, 4) ||
+		!nearV(*s3.CoveyRealUSD, 8*pp/3) || !nearV(*s3.ExternalRealUSD, 16*pp/3) {
+		t.Errorf("h3:40 = %+v, want 4 points unattributed and 8 split 1:2", s3)
+	}
+	if !nearV(m.RealUSD, 19*pp) || !nearV(m.UnattributedRealUSD, 5*pp) || !nearV(m.UnattributedPoints, 5) ||
+		m.UnattributedSteps != 2 || !nearV(m.CoveyRealUSD, 14*pp/3) || !nearV(m.ExternalRealUSD, 28*pp/3) ||
+		m.UnsplitRealUSD != 0 || m.UnsplitSteps != 0 {
+		t.Errorf("headline: real %v unattributed %v (%v points, %d steps) covey %v outside %v unsplit %v (%d)",
+			m.RealUSD, m.UnattributedRealUSD, m.UnattributedPoints, m.UnattributedSteps, m.CoveyRealUSD,
+			m.ExternalRealUSD, m.UnsplitRealUSD, m.UnsplitSteps)
+	}
+	if a := c.Agents; len(a) != 1 || !nearV(a[0].RealUSD, m.CoveyRealUSD) {
+		t.Errorf("agents %+v, want the one agent with covey's 14/3 points", a)
+	}
+	hours := map[time.Time]observability.ExternalMeterHour{}
+	for _, h := range m.Hours {
+		hours[h.Hour] = h
+	}
+	if h := hours[h3]; !nearV(h.UnattributedRealUSD, 4*pp) || h.UnattributedSteps != 1 {
+		t.Errorf("hour h3 = %+v, want 4 points unattributed", h)
+	}
+	// The wire names.
+	var raw struct {
+		External struct {
+			Meter map[string]any `json:"meter"`
+		} `json:"external"`
+	}
+	if err := json.Unmarshal(rawGet(t, admin, "/api/v1/cost/cells?days=2&bucket=hour"), &raw); err != nil {
+		t.Fatal(err)
+	}
+	creds, _ := raw.External.Meter["credentials"].([]any)
+	seat, _ := creds[0].(map[string]any)
+	for _, k := range []string{"unattributed_real_usd", "unattributed_points", "unattributed_steps"} {
+		if _, ok := raw.External.Meter[k]; !ok {
+			t.Errorf("meter has no %s", k)
+		}
+	}
+	if _, ok := seat["points_per_list_usd"]; !ok {
+		t.Errorf("the seat has no points_per_list_usd: %v", seat)
+	}
+}
+
 // Criterion 7, F4: the agents' figures in /cost/cells, /cost/models and
 // /cost/org are the same with and without outside rows — byte for byte; the
 // outside series is only the new `external` field. And nothing is written to

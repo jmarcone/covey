@@ -55,13 +55,15 @@ export const SOURCE_COLOR: Record<Source, string> = {
 };
 
 /** The parts of a meter's real cost once sessions outside covey report on it
- *  (#120): covey's agents, the outside sessions, and movement in a reading
- *  the outside sessions did not report, split to nobody — drawn plain with a
+ *  (#120): covey's agents, the outside sessions, the unattributed movement
+ *  neither explains (F3b, booked to nobody), and movement in a reading the
+ *  outside sessions did not report, split to nobody — drawn plain with a
  *  dashed edge (unsplitEdge) rather than hatched, so it tells from covey's
  *  part by its pattern too. */
 export const SPLIT_COLOR = {
   covey: "var(--cost-real)",
   outside: "var(--cost-outside)",
+  unattributed: "var(--cost-unattributed)",
   unsplit: "var(--cost-unsplit)",
   unsplitEdge: "var(--cost-unsplit-edge)",
 } as const;

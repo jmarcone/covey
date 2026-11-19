@@ -374,14 +374,18 @@ func TestSplitSeatWebFixture(t *testing.T) {
 }
 
 // Acceptance test (D), finding 21: a reported step with no list on either
-// side that moved the meter is nobody's, not covey's whole. A reading that
-// did not move either is idle: no money, and the run goes on through it.
+// side that moved the meter is nobody's, not covey's whole — since F3b it
+// is unattributed whole, no longer "not split". A reading that did not
+// move either is idle: no money, and the run goes on through it.
 func TestSplitSeatMovedWithoutACall(t *testing.T) {
 	tot, steps := splitSeat(meterSeat{"seat", 0}, []string{"src"}, []shareStep{
 		{From: tm("10:00"), At: tm("11:00"), Points: 1, Rate: rate(4), Reported: true},
 	})
-	if steps[0].Split || steps[0].Reason != SplitNoReportedCall || tot.CoveyRealUSD != 0 || tot.UnsplitRealUSD != 4 {
-		t.Errorf("step %+v, covey %v, unsplit %v; want unsplit 4 (%s)", steps[0], tot.CoveyRealUSD, tot.UnsplitRealUSD, SplitNoReportedCall)
+	if s := steps[0]; s.Split || s.Reason != SplitNoReportedCall || s.UnattributedRealUSD != 4 || s.UnattributedPoints != 1 ||
+		s.UnsplitRealUSD != 0 || tot.CoveyRealUSD != 0 || tot.UnsplitRealUSD != 0 || tot.UnsplitSteps != 0 ||
+		tot.UnattributedRealUSD != 4 || tot.UnattributedSteps != 1 {
+		t.Errorf("step %+v, covey %v, unsplit %v (%d steps), unattributed %v (%d steps); want unattributed 4 in 1 (%s)",
+			s, tot.CoveyRealUSD, tot.UnsplitRealUSD, tot.UnsplitSteps, tot.UnattributedRealUSD, tot.UnattributedSteps, SplitNoReportedCall)
 	}
 
 	// Idle readings between two split ones: one run, the same range as
@@ -400,6 +404,128 @@ func TestSplitSeatMovedWithoutACall(t *testing.T) {
 		with.UnsplitSteps != 0 {
 		t.Errorf("with an idle reading: %d runs, slack %v (%v without), %d split steps, %d unsplit", with.SplitRuns,
 			with.SplitExternalSlackPoints, without.SplitExternalSlackPoints, with.SplitSteps, with.UnsplitSteps)
+	}
+}
+
+// unattributedFixture is F3b's case at $1 a point. Run A, the clean one: 5
+// and 4 points over $50 of list each (L_out 30, L_cov 20), 9 points over
+// $100. A reading the outside sessions had not reported (1 point) ends it.
+// Run B: 20 points over L_out 50 / L_cov 30, then 10 points over L_cov 20 —
+// 30 points over $100, three times run A's rate: another machine on the
+// account. Then 2 points with no call on either side. Agent x ran in A1 ($20)
+// and B1 ($30), agent y in A2 ($20), the unreported step ($5) and B2 ($20).
+func unattributedFixture() []shareStep {
+	x, y := uuid.MustParse("00000000-0000-0000-0000-0000000000a1"), uuid.MustParse("00000000-0000-0000-0000-0000000000a2")
+	return []shareStep{
+		{From: tm("08:00"), At: tm("08:30"), Points: 5, Rate: rate(1), LOut: 30, LCov: 20, Agents: map[uuid.UUID]float64{x: 20}, Reported: true},
+		{From: tm("08:30"), At: tm("09:30"), Points: 4, Rate: rate(1), LOut: 30, LCov: 20, Agents: map[uuid.UUID]float64{y: 20}, Reported: true},
+		{From: tm("09:30"), At: tm("10:30"), Points: 1, Rate: rate(1), LCov: 5, Agents: map[uuid.UUID]float64{y: 5}},
+		{From: tm("10:30"), At: tm("11:30"), Points: 20, Rate: rate(1), LOut: 50, LCov: 30, Agents: map[uuid.UUID]float64{x: 30}, Reported: true},
+		{From: tm("11:30"), At: tm("12:30"), Points: 10, Rate: rate(1), LCov: 20, Agents: map[uuid.UUID]float64{y: 20}, Reported: true},
+		{From: tm("12:30"), At: tm("13:30"), Points: 2, Rate: rate(1), Reported: true},
+	}
+}
+
+// F3b (#120): k = min over the runs of 5 points or more of (P_r + S_r) / L_r
+// = min(10/100, 31/100) = 0.1 point per list $, at least the clean run's
+// true 9/100. Run B's unattributed points U = 30 − 1 − 0.1 × 100 = 19, spread
+// by points (12⅔ and 6⅓); the rest by list share. Run A, k's own, keeps
+// U = 0. The step with no call is unattributed whole; the unreported one
+// stays not split. Every step: covey + outside + unattributed + unsplit = R.
+func TestSplitSeatUnattributed(t *testing.T) {
+	for _, sources := range [][]string{{"operator: home"}, nil} {
+		// A seat no source names gets the same unattributed part: another
+		// machine moves its meter all the same.
+		tot, steps := splitSeat(meterSeat{"seat", 0}, sources, unattributedFixture())
+		if tot.PointsPerListUSD == nil || !near(*tot.PointsPerListUSD, 0.1) || *tot.PointsPerListUSD < 9.0/100 {
+			t.Fatalf("sources %v: k = %v, want 0.1 (≥ the clean run's true 0.09)", sources, tot.PointsPerListUSD)
+		}
+		want := []struct {
+			reason                    string
+			out, cov, unattr, unsplit float64
+		}{
+			{"", 3, 2, 0, 0},
+			{"", 2.4, 1.6, 0, 0},
+			{SplitNotReported, 0, 0, 0, 1},
+			{"", 7.333333 * 0.625, 7.333333 * 0.375, 12.666667, 0},
+			{"", 0, 3.666667, 6.333333, 0},
+			{SplitNoReportedCall, 0, 0, 2, 0},
+		}
+		for i, w := range want {
+			s := steps[i]
+			var out, cov float64
+			if s.ExternalRealUSD != nil {
+				out, cov = *s.ExternalRealUSD, *s.CoveyRealUSD
+			}
+			if s.Reason != w.reason || s.Split != (w.reason == "") || math.Abs(out-w.out) > 1e-5 || math.Abs(cov-w.cov) > 1e-5 ||
+				math.Abs(s.UnattributedRealUSD-w.unattr) > 1e-5 || !near(s.UnsplitRealUSD, w.unsplit) {
+				t.Errorf("sources %v, step %d = %+v (out %v cov %v), want %+v", sources, i, s, out, cov, w)
+			}
+			if !near(out+cov+s.UnattributedRealUSD+s.UnsplitRealUSD, *s.RealUSD) || !near(s.UnattributedPoints, s.UnattributedRealUSD) {
+				t.Errorf("sources %v, step %d: the parts do not add up to R = %v", sources, i, *s.RealUSD)
+			}
+		}
+		if !near(tot.RealUSD, 42) || !near(tot.UnattributedRealUSD, 21) || !near(tot.UnattributedPoints, 21) ||
+			tot.UnattributedSteps != 3 || !near(tot.UnsplitRealUSD, 1) || tot.UnsplitSteps != 1 ||
+			!near(tot.CoveyRealUSD, 10.016667) || !near(tot.ExternalRealUSD, 9.983333) ||
+			!near(tot.CoveyRealUSD+tot.ExternalRealUSD+tot.UnattributedRealUSD+tot.UnsplitRealUSD, tot.RealUSD) {
+			t.Errorf("sources %v: real %v covey %v outside %v unattributed %v (%v points, %d steps) unsplit %v (%d)", sources,
+				tot.RealUSD, tot.CoveyRealUSD, tot.ExternalRealUSD, tot.UnattributedRealUSD, tot.UnattributedPoints,
+				tot.UnattributedSteps, tot.UnsplitRealUSD, tot.UnsplitSteps)
+		}
+		// The split points: all four steps' whole, and the attributed points
+		// by share; the lists stay the multiples' numerators.
+		if tot.SplitPoints != 39 || !near(tot.SplitExternalPoints, 9.983333) || !near(tot.SplitCoveyPoints, 39-19-9.983333) ||
+			tot.SplitExternalListUSD != 110 || tot.SplitCoveyListUSD != 90 || tot.SplitRuns != 2 {
+			t.Errorf("sources %v: split points %v (outside %v covey %v), lists %v / %v, runs %d", sources, tot.SplitPoints,
+				tot.SplitExternalPoints, tot.SplitCoveyPoints, tot.SplitExternalListUSD, tot.SplitCoveyListUSD, tot.SplitRuns)
+		}
+		// The agents follow covey's new part: x 2 + 2.75, y 1.6 + 3⅔; y's
+		// $5 in the unreported step is unsplit list.
+		agents := map[string]ExternalMeterAgent{}
+		for _, a := range tot.Agents {
+			agents[a.AgentID.String()[34:]] = a
+		}
+		if x, y := agents["a1"], agents["a2"]; !near(x.RealUSD, 4.75) || !near(y.RealUSD, 5.266667) ||
+			!near(x.RealUSD+y.RealUSD, tot.CoveyRealUSD) || y.UnsplitListUSD != 5 {
+			t.Errorf("sources %v: agents x %+v y %+v, want real 4.75 and 5.266667", sources, x, y)
+		}
+		m := meterSums([]ExternalMeterTotal{tot}, steps)
+		if !near(m.UnattributedRealUSD, 21) || m.UnattributedSteps != 3 || !near(m.UnattributedPoints, 21) {
+			t.Errorf("sums: unattributed %v in %d steps", m.UnattributedRealUSD, m.UnattributedSteps)
+		}
+		seen := false
+		for _, h := range m.Hours {
+			if h.Hour.Hour() == 11 {
+				seen = true
+				if !near(h.UnattributedRealUSD, 12.666667) || h.UnattributedSteps != 1 || h.SplitSteps != 1 {
+					t.Errorf("hour 11 = %+v, want 12.67 unattributed in its one split step", h)
+				}
+			}
+		}
+		if !seen {
+			t.Errorf("no hour 11 in %+v", m.Hours)
+		}
+	}
+}
+
+// Without a run of 5 points k is unknown (nil): only a step that moved with
+// no call is unattributed, and every split step is split by list share
+// alone, as F3 had it.
+func TestSplitSeatUnattributedWithoutARate(t *testing.T) {
+	tot, steps := splitSeat(meterSeat{"seat", 0}, []string{"src"}, []shareStep{
+		{From: tm("10:00"), At: tm("11:00"), Points: 3, Rate: rate(1), LOut: 1, LCov: 1, Reported: true},
+		{From: tm("11:00"), At: tm("12:00"), Points: 1, Rate: rate(1), LCov: 1, Reported: true},
+		{From: tm("12:00"), At: tm("13:00"), Points: 3, Rate: rate(1), Reported: true},
+		{From: tm("13:00"), At: tm("14:00"), Points: 4, Rate: rate(1), LOut: 9, LCov: 1, Reported: true},
+	})
+	if tot.PointsPerListUSD != nil {
+		t.Errorf("k = %v, want nil: the runs move 4 points each", *tot.PointsPerListUSD)
+	}
+	if !near(tot.UnattributedRealUSD, 3) || tot.UnattributedSteps != 1 || steps[2].Reason != SplitNoReportedCall ||
+		!nearP(steps[0].ExternalRealUSD, 1.5) || !nearP(steps[3].ExternalRealUSD, 3.6) || !near(tot.CoveyRealUSD+tot.ExternalRealUSD, 8) {
+		t.Errorf("unattributed %v in %d steps, steps %+v; want 3 in the step with no call, the rest by list share",
+			tot.UnattributedRealUSD, tot.UnattributedSteps, steps)
 	}
 }
 

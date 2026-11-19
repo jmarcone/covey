@@ -22,22 +22,29 @@ const H18 = "2026-11-17T18:00:00Z", H19 = "2026-11-17T19:00:00Z", H20 = "2026-11
 const times = (v: number) => `${fmtNumber(v, 1)}×`;
 
 /** One reading step as the server returns it: split by list-price share
- *  when reported and some list is there, else unsplit — idle when reported
- *  with neither list nor movement. */
-function step(at: string, from: string, points: number, reported: boolean, outList: number, covList: number, key = SEAT): ExternalMeterStep {
+ *  when reported and some list is there (after `unattributed` of its points,
+ *  its run's part, F3b), else unsplit — idle when reported with neither list
+ *  nor movement, unattributed whole when reported with movement and no list. */
+function step(at: string, from: string, points: number, reported: boolean, outList: number, covList: number, key = SEAT,
+  unattributed = 0): ExternalMeterStep {
   const real = points * PP;
   const split = reported && outList + covList > 0;
-  const out = split ? real * outList / (outList + covList) : null;
+  const noCall = reported && !split && points > 0;
+  const un = noCall ? real : unattributed * PP;
+  const out = split ? (real - un) * outList / (outList + covList) : null;
   return {
     at, from, secret_key: key, secret_slot: 0, points, reset: false, real_usd: real,
     external_list_usd: outList, covey_list_usd: covList, reported, split,
-    reason: split ? undefined : reported && points === 0 && outList + covList === 0 ? "idle" : "not_reported",
-    external_real_usd: out, covey_real_usd: out == null ? null : real - out, unsplit_real_usd: split ? 0 : real,
+    reason: split ? undefined : noCall ? "moved_without_reported_call" : reported && points === 0 ? "idle" : "not_reported",
+    external_real_usd: out, covey_real_usd: out == null ? null : real - un - out,
+    unattributed_real_usd: un, unattributed_points: noCall ? points : unattributed,
+    unsplit_real_usd: split || noCall ? 0 : real,
   };
 }
 
 const zero: ExternalMeterSums = {
   real_usd: 0, external_real_usd: 0, covey_real_usd: 0, unsplit_real_usd: 0, share: null,
+  unattributed_real_usd: 0, unattributed_points: 0, unattributed_steps: 0,
   split_external_list_usd: 0, split_covey_list_usd: 0, points: 0, split_points: 0, split_external_points: 0,
   split_covey_points: 0, split_runs: 0, split_slack_points: 0, split_slack_usd: 0, split_external_slack_points: 0,
   split_external_slack_usd: 0, split_covey_slack_points: 0, split_covey_slack_usd: 0, point_rate: 0, point_rate_mixed: false,
@@ -62,14 +69,18 @@ function seat(steps: ExternalMeterStep[], extra: Partial<ExternalMeterTotal> = {
   return {
     ...zero,
     secret_key: steps[0]?.secret_key ?? SEAT, secret_slot: 0, meter_source: "usage_cmd", sources: ["operator: home"],
-    hours_with_reading: steps.length, agents: [],
+    hours_with_reading: steps.length, agents: [], points_per_list_usd: null,
     real_usd: sum((s) => s.real_usd ?? 0), external_real_usd: out, covey_real_usd: cov,
     unsplit_real_usd: sum((s) => s.unsplit_real_usd), share: out + cov > 0 ? out / (out + cov) : null,
+    unattributed_real_usd: sum((s) => s.unattributed_real_usd), unattributed_points: sum((s) => s.unattributed_points),
+    unattributed_steps: steps.filter((s) => s.unattributed_points > 0).length,
     split_external_list_usd: sum((s) => s.external_list_usd, split), split_covey_list_usd: sum((s) => s.covey_list_usd, split),
     points: sum((s) => s.points), split_points: sum((s) => s.points, split),
-    split_external_points: sum((s) => s.points * share(s), split), split_covey_points: sum((s) => s.points * (1 - share(s)), split),
+    split_external_points: sum((s) => (s.points - s.unattributed_points) * share(s), split),
+    split_covey_points: sum((s) => (s.points - s.unattributed_points) * (1 - share(s)), split),
     split_runs: 1, split_slack_points: 1, split_slack_usd: PP, point_rate: PP,
-    step_count: steps.length, split_steps: steps.filter(split).length, unsplit_steps: steps.filter((s) => !s.split && s.points > 0).length,
+    step_count: steps.length, split_steps: steps.filter(split).length,
+    unsplit_steps: steps.filter((s) => !s.split && s.points > 0 && s.reason !== "moved_without_reported_call").length,
     outside_unpriced_steps: steps.filter((s) => s.reason === "outside_unpriced" && s.points > 0).length,
     outside_unpriced_real_usd: sum((s) => s.unsplit_real_usd, (s) => s.reason === "outside_unpriced"),
     ...extra,
@@ -109,8 +120,29 @@ const AGENTS: ExternalMeterAgent[] = [
   { agent_id: "a2", split_list_usd: 202, real_usd: 0.661702, unsplit_list_usd: 0 },
   { agent_id: "a1", split_list_usd: 101, real_usd: 0.413440, unsplit_list_usd: 40 },
 ];
-const SEAT_A = () => seat(STEPS, { agents: AGENTS, split_external_slack_usd: 0.307010, split_covey_slack_usd: 0.228514 });
+// k as the server finds it: the one run (6 points over $758), at its upper
+// end, so its own unattributed part is 0.
+const SEAT_A = () => seat(STEPS, { agents: AGENTS, split_external_slack_usd: 0.307010, split_covey_slack_usd: 0.228514,
+  points_per_list_usd: 7 / 758 });
 const EXT = () => external([{ steps: STEPS, total: SEAT_A() }]);
+
+/** F3b's fixture (TestSplitSeatUnattributed in Go), placed in the three
+ *  hours: run A (5 and 4 points over $50 of list each, 30 / 20) is the
+ *  clean one, k = 10 / 100; a reading the outside sessions had not reported
+ *  (1 point) ends it; run B (20 points over 50 / 30, 10 over 0 / 20) moved
+ *  30 points over $100, U = 30 − 1 − 0.1 × 100 = 19 of them unattributed
+ *  (12⅔ and 6⅓); then 2 points with no call at all. */
+const U_STEPS = [
+  step("2026-11-17T18:20:00Z", "2026-11-17T18:00:00Z", 5, true, 30, 20),
+  step("2026-11-17T18:40:00Z", "2026-11-17T18:20:00Z", 4, true, 30, 20),
+  step("2026-11-17T19:10:00Z", "2026-11-17T18:40:00Z", 1, false, 0, 5),
+  step("2026-11-17T19:40:00Z", "2026-11-17T19:10:00Z", 20, true, 50, 30, SEAT, 38 / 3),
+  step("2026-11-17T20:20:00Z", "2026-11-17T19:40:00Z", 10, true, 0, 20, SEAT, 19 / 3),
+  step("2026-11-17T20:40:00Z", "2026-11-17T20:20:00Z", 2, true, 0, 0),
+];
+const U_SEAT = (extra: Partial<ExternalMeterTotal> = {}) => seat(U_STEPS, { points_per_list_usd: 0.1, split_runs: 2,
+  split_slack_points: 2, split_slack_usd: 2 * PP, split_external_slack_usd: PP, split_covey_slack_usd: PP, ...extra });
+const U_EXT = (extra: Partial<ExternalMeterTotal> = {}) => external([{ steps: U_STEPS, total: U_SEAT(extra) }]);
 
 /** The cost cells of one seat over three hours, with the meter's steps. */
 function cells(ext: ExternalUsage | undefined, points = [4, 2, 3]): CostCells {
@@ -170,18 +202,39 @@ describe("subscriptionDent", () => {
     expect(d.covey.points + d.outside.points).toBeCloseTo(6, 9);
   });
 
-  it("gives each part the range of its own share, as the server computes it, not a share of the whole's (finding 19)", () => {
+  it("gives each part a lower bound at the low end of its own range, as the server computes it (finding 19, F3b)", () => {
+    // The meter is shared with whatever does not report: each multiple is
+    // list / (real + slack), at least — never an estimate with an upper end.
     const d = subscriptionDent(EXT())!;
     const split = 6 * PP;
-    expect(d.together.multiple).toEqual({ kind: "estimate", value: 758 / split, low: 758 / (split + PP), high: 758 / (split - PP) });
-    const cv = d.covey.multiple!, out = d.outside.multiple!;
-    expect(cv.low).toBeCloseTo(303 / (d.covey.real + 0.228514), 9);
-    expect(cv.high).toBeCloseTo(303 / (d.covey.real - 0.228514), 9);
-    expect(out.low).toBeCloseTo(455 / (d.outside.real + 0.307010), 9);
-    // A part whose real cost could be 0 within the whole percents has no
-    // upper end: shown as "≥ low", never ∞.
-    const thin = subscriptionDent(external([{ steps: STEPS, total: SEAT_A() }].map((x) => ({ ...x, total: { ...x.total, split_covey_slack_usd: 2 } }))))!;
-    expect(thin.covey.multiple!.high).toBe(Infinity);
+    expect(d.together.multiple).toEqual({ kind: "floor", low: 758 / (split + PP) });
+    expect(d.covey.multiple!.kind).toBe("floor");
+    expect(d.covey.multiple!.low).toBeCloseTo(303 / (d.covey.real + 0.228514), 9);
+    expect(d.outside.multiple!.low).toBeCloseTo(455 / (d.outside.real + 0.307010), 9);
+  });
+
+  it("books the movement neither covey nor the reported sessions explain to nobody, and the parts add up (F3b)", () => {
+    const d = subscriptionDent(U_EXT())!;
+    expect(d.real).toBeCloseTo(42 * PP, 9);
+    expect(d.unattributed.real).toBeCloseTo(21 * PP, 9);
+    expect(d.unattributed.points).toBeCloseTo(21, 9);
+    expect(d.unattributed.steps).toBe(3);
+    expect(d.unattributed.share).toBeCloseTo(0.5, 9);
+    expect(d.unsplit.real).toBeCloseTo(PP, 9);
+    expect(d.unsplit.steps).toBe(1);
+    expect(d.covey.real).toBeCloseTo((2 + 1.6 + 2.75 + 11 / 3) * PP, 9);
+    expect(d.outside.real).toBeCloseTo((3 + 2.4 + 55 / 12) * PP, 9);
+    expect(d.covey.real + d.outside.real + d.unattributed.real + d.unsplit.real).toBeCloseTo(d.real!, 9);
+    // The points too: the attributed points of the split readings.
+    expect(d.covey.points + d.outside.points + 19).toBeCloseTo(39, 9);
+    expect(d.together.points).toBeCloseTo(20, 9);
+    // The multiples over the attributed real: lower bounds.
+    expect(d.together.multiple).toEqual({ kind: "floor", low: 200 / (d.covey.real + d.outside.real + 2 * PP) });
+    expect(d.covey.multiple!.low).toBeCloseTo(90 / (d.covey.real + PP), 9);
+    expect(d.seats[0].pointsPerList).toBe(0.1);
+    expect(d.seats[0].unattributed).toBeCloseTo(21 * PP, 9);
+    expect(d.rateUnknown).toBe(false);
+    expect(subscriptionDent(U_EXT({ points_per_list_usd: null }))!.rateUnknown).toBe(true);
   });
 
   it("gives no multiple below 3 points of split movement, nor without a split reading", () => {
@@ -214,7 +267,7 @@ describe("subscriptionDent", () => {
     expect(d.unsplit.unpricedReal).toBeCloseTo(5 * PP, 9);
     expect(d.covey.real).toBeCloseTo(1.075142, 6);
     const hourly = splitPerPeriod(external([{ steps, total: seat(steps) }]), SEAT, 0, "hour");
-    expect(hourly.get(Date.parse("2026-11-17T21:00:00Z"))).toEqual({ covey: 0, outside: 0, unsplit: 5 * PP, unsplitSteps: 1, unpricedSteps: 1 });
+    expect(hourly.get(Date.parse("2026-11-17T21:00:00Z"))).toEqual({ covey: 0, outside: 0, unattributed: 0, unsplit: 5 * PP, unsplitSteps: 1, unpricedSteps: 1 });
   });
 
   it("is absent until a source names a meter", () => {
@@ -229,7 +282,14 @@ describe("one rule for the headline, the chart and the agents", () => {
     const ext = EXT();
     const d = subscriptionDent(ext)!;
     const hourly = splitPerPeriod(ext, SEAT, 0, "hour");
-    expect(hourly.get(Date.parse(H20))).toEqual({ covey: 0, outside: 0, unsplit: 3 * PP, unsplitSteps: 1, unpricedSteps: 0 });
+    expect(hourly.get(Date.parse(H20))).toEqual({ covey: 0, outside: 0, unattributed: 0, unsplit: 3 * PP, unsplitSteps: 1, unpricedSteps: 0 });
+    // F3b: a run's unattributed part and a reading with no call land where
+    // their readings fall, apart from the unsplit one.
+    const u = splitPerPeriod(U_EXT(), SEAT, 0, "hour");
+    expect(u.get(Date.parse(H19))!.unattributed).toBeCloseTo(38 / 3 * PP, 9);
+    expect(u.get(Date.parse(H19))!.unsplit).toBeCloseTo(PP, 9);
+    expect(u.get(Date.parse(H20))!.unattributed).toBeCloseTo((19 / 3 + 2) * PP, 9);
+    expect(u.get(Date.parse(H20))!.unsplitSteps).toBe(0);
     // At 10 minutes the 18:40 reading's split lands at 18:40, not at 18:00.
     const tens = splitPerPeriod(ext, SEAT, 0, "10min");
     expect(tens.has(Date.parse("2026-11-17T18:00:00Z"))).toBe(false);
@@ -328,11 +388,59 @@ describe("Costs — the headline", () => {
     expect(row.querySelector("[data-dent-sentence]")!.textContent).toBe(
       `Your subscription paid ≈ ${fmtUSD(d.real!)} real. Of it, the readings the outside sessions reported paid ≈ ${fmtUSD(d.together.real)} ` +
       `for ${fmtUSD(758)} of list-price work: ${fmtUSD(303)} by covey's agents, ${fmtUSD(455)} by the sessions outside covey that drive them.`);
-    const m = (x: typeof d.covey) => (x.multiple?.kind === "estimate" ? times(x.multiple.value) : "");
+    // The multiples are lower bounds: the meter is shared with whatever does
+    // not report, whose use would only raise them.
+    const m = (x: typeof d.covey) => times(x.multiple!.low);
     expect(row.querySelector("[data-dent-multiples]")!.textContent).toBe(
-      `List price per real dollar: ≈ ${m(d.covey)} for covey's agents, ≈ ${m(d.outside)} for the sessions outside covey ` +
-      `and ≈ ${m(d.together)} for both together (range ${times(d.together.multiple!.low)} to ${times(d.together.multiple!.high)}).`);
+      `List price per real dollar, at least: ≥ ${m(d.covey)} for covey's agents, ≥ ${m(d.outside)} for the sessions outside covey ` +
+      `and ≥ ${m(d.together)} for both together. Unattributed use beyond the estimate would only raise them.`);
     expect(row.querySelector("[data-dent-unsplit]")!.textContent).toMatch(/not booked to covey's agents/);
+    // No movement beyond the rate here: the unattributed part is shown, at
+    // $0.00, and no sentence names it.
+    expect(value("Unattributed")).toBe(`≈ ${fmtUSD(0)}`);
+    expect(row.querySelector("[data-dent-unattributed]")).toBeNull();
+  });
+
+  it("names the unattributed part, the rate it rests on and the multiples as lower bounds (F3b)", async () => {
+    const data = cells(U_EXT(), [9, 21, 12]);
+    const d = subscriptionDent(data.external)!;
+    serve(data);
+    const row = await screen.findByRole("region", { name: "The whole dent in the subscription" });
+    const group = (name: string) => within(row).getByRole("group", { name });
+    expect(within(group("Unattributed")).getByText(/^≈ /).textContent).toBe(`≈ ${fmtUSD(21 * PP)}`);
+    expect(group("Unattributed").textContent).toContain(`50 % of the dent · ≈ ${fmtNumber(21, 0)} points · at least this much · booked to nobody`);
+    expect(within(group("covey's agents")).getByText(/^≈ /).textContent).toBe(`≈ ${fmtUSD(d.covey.real)}`);
+    expect(group("covey's agents").textContent).toContain(`≥ ${times(d.covey.multiple!.low)}`);
+    expect(row.querySelector("[data-dent-sentence]")!.textContent).toBe(
+      `Your subscription paid ≈ ${fmtUSD(42 * PP)} real. Of it, ≈ ${fmtUSD(d.together.real)} went to ${fmtUSD(200)} of list-price work: ` +
+      `${fmtUSD(90)} by covey's agents, ${fmtUSD(110)} by the sessions outside covey that drive them.`);
+    expect(row.querySelector("[data-dent-unattributed]")!.textContent).toBe(
+      `≈ ${fmtUSD(21 * PP)} of the meter's movement is not explained by covey's agents or the reported sessions — ` +
+      "another machine on the same account, for example; it is booked to nobody.");
+    expect(row.querySelector("[data-dent-rate]")!.textContent).toBe(
+      `1 point ≈ ${fmtUSD(10)} of list price, the lowest rate seen in the range; assumes the meter charges in proportion to list price. ` +
+      "Movement beyond that rate counts as unattributed, so the unattributed part is a lower bound, and the parts of covey's agents " +
+      "and the outside sessions are at most what they show.");
+    expect(row.querySelector("[data-dent-multiples]")!.textContent).toMatch(
+      /^List price per real dollar, at least: ≥ .* Unattributed use beyond the estimate would only raise them\.$/);
+    // The chart: the 19:00 real bar carries an unattributed segment beside
+    // covey's and the outside sessions' parts, and the key names it.
+    const bar = document.querySelector(`[data-period="${H19}"]`)!;
+    fireEvent.focus(bar);
+    const tip = await screen.findByRole("tooltip");
+    expect(tip.textContent).toMatch(new RegExp(`Unattributed${fmtUSD(38 / 3 * PP).replace(/[$.]/g, "\\$&")}`));
+    expect(tip.textContent).toMatch(/covey's agents/);
+    expect(document.querySelector('[data-split-key="unattributed"]')!.textContent).toMatch(/Real cost unattributed/);
+    expect(document.querySelector("[data-split-note]")!.textContent).toContain(
+      `≈ ${fmtUSD(21 * PP)} is unattributed: not explained by covey's agents or the reported sessions, booked to nobody.`);
+  });
+
+  it("says when there is no rate yet, and still books a reading that moved with no call to nobody (F3b)", async () => {
+    serve(cells(U_EXT({ points_per_list_usd: null }), [9, 21, 12]));
+    const row = await screen.findByRole("region", { name: "The whole dent in the subscription" });
+    expect(row.querySelector("[data-dent-rate]")!.textContent).toMatch(
+      /^No run of split readings moved the meter 5 points or more, so there is no rate yet to measure unattributed use by/);
+    expect(row.querySelector("[data-dent-rate]")!.textContent).not.toMatch(/lower bound/);
   });
 
   it("says how many points have no plan price, and shows such a seat as – (finding 23)", async () => {

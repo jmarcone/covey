@@ -886,12 +886,17 @@ export type ExternalMeterStep = {
   covey_list_usd: number;
   /** Every active machine of the linked sources has reported through the reading. */
   reported: boolean;
-  /** Split: the two parts are set and add up to real_usd. Otherwise reason says why not. */
+  /** Split: the two parts are set and, with unattributed_real_usd, add up to real_usd. Otherwise reason says why not. */
   split: boolean;
-  /** outside_unpriced: the outside calls of the span all had no price, so their share is unknown. idle: a reported reading that did not move, with no call on either side. */
+  /** outside_unpriced: the outside calls of the span all had no price, so their share is unknown. idle: a reported reading that did not move, with no call on either side.
+   *  moved_without_reported_call: unattributed whole (F3b), not unsplit. */
   reason?: "not_reported" | "moved_without_reported_call" | "outside_unpriced" | "unpriced" | "idle";
   external_real_usd: number | null;
   covey_real_usd: number | null;
+  /** The step's unattributed part (F3b, a lower bound): its run's share, or all of it when it moved with no call.
+   *  covey + outside + unattributed + unsplit = real_usd. */
+  unattributed_real_usd: number;
+  unattributed_points: number;
   unsplit_real_usd: number;
 };
 
@@ -906,19 +911,26 @@ export type ExternalMeterHour = {
   covey_list_usd: number;
   external_real_usd: number;
   covey_real_usd: number;
+  unattributed_real_usd: number;
+  unattributed_points: number;
   unsplit_real_usd: number;
   steps: number;
   split_steps: number;
+  unattributed_steps: number;
   unpriced_points: number;
 };
 
 /** The split's sums: per seat, and over every seat. */
 export type ExternalMeterSums = {
-  /** Σ real over the priced steps: the dent. The three parts below add up to it. */
+  /** Σ real over the priced steps: the dent. The four parts below add up to it. */
   real_usd: number;
   external_real_usd: number;
   covey_real_usd: number;
+  /** Movement neither covey nor the reported sources explain (F3b): booked to nobody, a lower bound. */
+  unattributed_real_usd: number;
   unsplit_real_usd: number;
+  unattributed_points: number;
+  unattributed_steps: number;
   /** external_real_usd over the split steps' real cost; null without one. */
   share: number | null;
   /** The list prices of the split steps, which the multiples divide. */
@@ -972,6 +984,8 @@ export type ExternalMeterTotal = ExternalMeterSums & {
   /** The outside sources linked to this meter; none: every step is unsplit. */
   sources: string[];
   hours_with_reading: number;
+  /** k of F3b: the lowest points per list $ of a run of split steps of 5 points or more, at its upper end; null without one. */
+  points_per_list_usd: number | null;
   agents: ExternalMeterAgent[];
 };
 
