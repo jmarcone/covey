@@ -129,6 +129,13 @@ var tsInText = regexp.MustCompile(`"timestamp"\s*:\s*"([^"]+)"`)
 // clock is time.Now, replaced in tests.
 var clock = time.Now
 
+// walkDir is filepath.WalkDir, replaced in tests.
+var walkDir = filepath.WalkDir
+
+// UnknownSession is the session of a subagent transcript that lies directly
+// in a project folder's subagents/, with no session folder above it.
+const UnknownSession = "unknown"
+
 // ValidText says whether s is acceptable as the intake's text field: UTF-8, no
 // NUL, at most MaxText bytes.
 func ValidText(s string) bool {
@@ -210,12 +217,15 @@ func parseTS(s string) (time.Time, bool) {
 // left out (zero since keeps everything). A root without any *.jsonl is an
 // error, even when another root has files.
 func Read(roots []string, host string, since time.Time) ([]Row, Stats, error) {
-	return read(roots, host, since, true)
+	return read(roots, host, since, false)
 }
 
-// read is Read; with needFiles false a root without any *.jsonl gives no rows
-// rather than an error (a project folder whose transcripts were cleaned up).
-func read(roots []string, host string, since time.Time, needFiles bool) ([]Row, Stats, error) {
+// read is Read; with project set it reads project folders for
+// --source-per-project: a root without any *.jsonl gives no rows rather than
+// an error, a directory or file that cannot be read is listed in Unread (it
+// withholds the claim of that source only) rather than failing the push, and
+// a session is never named after the root (see place).
+func read(roots []string, host string, since time.Time, project bool) ([]Row, Stats, error) {
 	var st Stats
 	type kept struct {
 		row  Row
@@ -233,8 +243,12 @@ func read(roots []string, host string, since time.Time, needFiles bool) ([]Row, 
 			root = a
 		}
 		var files []string
-		err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		err := walkDir(root, func(p string, d fs.DirEntry, err error) error {
 			if err != nil {
+				if project {
+					st.Unread = append(st.Unread, p)
+					return nil
+				}
 				return err
 			}
 			visit(p, d, &st, &files)
@@ -243,7 +257,7 @@ func read(roots []string, host string, since time.Time, needFiles bool) ([]Row, 
 		if err != nil {
 			return nil, st, fmt.Errorf("read %s: %w", root, err)
 		}
-		if len(files) == 0 && needFiles {
+		if len(files) == 0 && !project {
 			return nil, st, fmt.Errorf("no *.jsonl transcripts under %s", root)
 		}
 		sort.Strings(files)
@@ -252,7 +266,7 @@ func read(roots []string, host string, since time.Time, needFiles bool) ([]Row, 
 			if err != nil {
 				return nil, st, err
 			}
-			session, origin := place(root, abs)
+			session, origin := place(root, abs, project)
 			st.Files++
 			err = readFile(f, func(l *line, no int) bool {
 				m := l.Message
@@ -318,6 +332,10 @@ func read(roots []string, host string, since time.Time, needFiles bool) ([]Row, 
 				}
 			})
 			if err != nil {
+				if project {
+					st.Unread = append(st.Unread, abs)
+					continue
+				}
 				return nil, st, fmt.Errorf("read %s: %w", f, err)
 			}
 		}
@@ -357,8 +375,10 @@ func read(roots []string, host string, since time.Time, needFiles bool) ([]Row, 
 // <session>/subagents/workflows/<wf>/<file> a workflow agent, and any other
 // file a main session named after the file. The root may be all projects, one
 // project, or one session's folder (then <session> is the root's own name).
-// Nothing above the root is looked at.
-func place(root, abs string) (session, origin string) {
+// Nothing above the root is looked at. With project set the root is a project
+// folder, whose name is never a session: a subagents/ directory right below
+// it gives the session UnknownSession.
+func place(root, abs string, project bool) (session, origin string) {
 	rel, err := filepath.Rel(root, abs)
 	if err == nil && rel == "." { // the root is the file itself
 		return strings.TrimSuffix(filepath.Base(abs), ".jsonl"), OriginMain
@@ -371,6 +391,9 @@ func place(root, abs string) (session, origin string) {
 	sessionAt := func(k int) string { // the directory just above parts[k]
 		if k > 0 {
 			return parts[k-1]
+		}
+		if project {
+			return UnknownSession
 		}
 		return filepath.Base(root)
 	}

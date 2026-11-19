@@ -39,7 +39,9 @@ func TestUsagePushRefusesBadInput(t *testing.T) {
 		{"push", "dir", "--source", "x", "--home-prefix", "/home/u"}, // so does --home-prefix
 		{"push", "dir", "--source-per-project", "--label", "nolabel"},
 		{"push", "dir", "--source-per-project", "--label", "a=b", "--label", "a=c"},
-		{"push", "dir", "--source-per-project", "--source", strings.Repeat("x", 65)},
+		{"push", "dir", "--source-per-project", "--no-meter", "--source", strings.Repeat("x", 65)},
+		{"push", "dir", "--source", "x", "--no-meter"},                               // --no-meter needs --source-per-project
+		{"push", "dir", "--source-per-project", "--no-meter", "--meter-secret", "k"}, // one or the other
 	} {
 		if err := runUsage(args, &bytes.Buffer{}, env); err == nil {
 			t.Errorf("%v: accepted", args)

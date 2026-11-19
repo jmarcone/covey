@@ -95,62 +95,102 @@ covey usage push ~/.claude/projects --source-per-project --complete --host home-
   --label=-home-me-src-covey="covey operator" --meter-secret claude_code_oauth_token:0
 ```
 
+- **`--meter-secret` or `--no-meter` is required.** covey links a source to
+  its meter per source, from a push that names the meter. Every new project
+  is a new source, and one pushed without the link would stay unlinked: its
+  use would be booked to covey's agents. Give `--meter-secret` on every run,
+  or `--no-meter` for a per-use account.
 - The **label** is the folder's name without the home directory. Claude Code
   names the folder of `C:\Users\me\projects\shop` `C--Users-me-projects-shop`
   and that of `/home/me/shop` `-home-me-shop` (every character other than a
   letter or digit becomes `-`); their labels are `projects-shop` and `shop`.
-  The home directory's own folder is `~`. The home is read from each folder
-  name: `<drive>--Users-<name>-`, `-home-<name>-`, `-Users-<name>-` (macOS),
+  The home directory's own folder is `~`.
+- **The home directory.** Because of that encoding a folder name does not
+  say where a user name ends: `jean-marc`, `jean.marc` and `jean marc` are
+  all `jean-marc`. So the push first strips the homes it knows for sure: the
+  directory above the `.claude/projects` named (seen from WSL,
+  `/mnt/c/Users/jean.marc` is also known as Windows writes it,
+  `C--Users-jean-marc`), and the home directory of the user running the
+  push. Only for folders outside those does it read the home from the name:
+  `<drive>--Users-<name>-`, `-home-<name>-`, `-Users-<name>-` (macOS),
   `-root-`, and `--wsl-localhost-<distro>-home-<name>-` for a WSL directory
-  opened from Windows.
+  opened from Windows; the name is then a known user name when one fits,
+  else one run of letters and digits. If that run is only the start of a
+  known user name (`jean` of `jean-marc`), the push stops rather than send
+  the rest of the name as a label.
 - `--home-prefix HOME` names the home directory instead, as a path
   (`C:\Users\jean.marc`, `/home/me`) or encoded (`C--Users-jean-marc`). It
-  may be given several times; the longest that fits a folder wins, and the
-  derivation is then off. A user name with a character other than a letter
-  or digit needs it: `jean.marc` is encoded `jean-marc`, which the folder
-  name cannot tell from a user `jean` with a project `marc-…`.
-- A folder whose home is not recognised (a project outside the home,
-  `D:\work\x` is `D--work-x`) stops the push, which lists every such folder:
-  its name might hold a user name. Give `--home-prefix` or a `--label`.
+  may be given several times; the longest that fits a folder wins, and only
+  the homes given are stripped. Give it when the transcripts are not in a
+  `.claude/projects` of their user (a copy, `CLAUDE_CONFIG_DIR`) and the user
+  name holds a character other than a letter or digit.
 - `--label FOLDER=LABEL` (several times) labels one folder, for example the
   covey operator's project `"covey operator"`. A `--label` for a folder that
   is not there is an error, so a typo does not send the derived label.
 - `--source PREFIX` is optional here: with it each source is
-  `PREFIX: LABEL` (`home: covey operator`), without it the label alone. Each
-  source, prefix included, must be 1–64 characters of UTF-8 without NUL; a
-  longer one stops the push (give that folder a shorter `--label`). So do two
-  folders that would get the same source. The `C--…` and `c--…` folders of
-  one Windows directory (Claude Code writes the drive letter either way) are
-  one project.
+  `PREFIX: LABEL` (`home: covey operator`), without it the label alone.
+- **One stray folder stops every source.** A folder whose home is not
+  recognised (a project outside the home, `D:\work\x` is `D--work-x`) or is
+  ambiguous, a source over 64 characters, or two folders with one source
+  (two spellings that are not the same directory) stop the whole push: until
+  that folder gets a `--label` (or the home a `--home-prefix`), nothing is
+  sent and no source claims. The error lists every such folder. Run with
+  `--dry-run` after setting up a machine and after starting work in a new
+  directory outside the home. The `C--…` and `c--…` folders of one Windows
+  directory (Claude Code writes the drive letter either way) are one
+  project, not a collision.
+- A transcript or session folder lying at the top of `~/.claude/projects`,
+  beside the project folders, is refused with its name: move it into its
+  project folder or away. A named directory that holds transcripts or
+  session folders itself, and no project folders, is one project; a
+  session's own folder is refused.
 - **Privacy:** only the label and the token counts leave the machine. No
   path, no folder name, no user name, no content. Session id and origin are
-  read as above, from each file's place below its project folder.
+  read as above, from each file's place below its project folder; a
+  `subagents/` directly in a project folder, with no session folder above
+  it, gets the session `unknown`, never the folder's name.
 - Each source is sent in its own requests with its own `reported_through`,
   under the same `--host` and `--meter-secret`. With `--complete` each source
   claims: it is one whole project folder, read whole, so it is complete by
-  construction. A symlinked directory, an unreadable line or a held-back call
-  withholds only the claim of the folder it is in; `--since` and a missing
-  `--complete` withhold every claim. A folder with transcripts but no call
-  in them still sends its claim (a request without calls). Name the whole
-  `~/.claude/projects`, so that both spellings of a Windows folder are read.
-- A project folder without any `*.jsonl` file (only `memory/` is there) is
-  no source: it is skipped, needs no label, and nothing is sent for it.
+  construction. A symlinked directory, an unreadable line, a directory or
+  file that cannot be read, or a held-back call withholds only the claim of
+  the folder it is in; `--since` and a missing `--complete` withhold every
+  claim. A folder with transcripts but no call in them still sends its claim
+  (a request without calls). Name the whole `~/.claude/projects`, so that
+  both spellings of a Windows folder are read.
+- A project folder is skipped (no source, no label needed, nothing sent)
+  only when it could be read whole and holds no `*.jsonl` file and no link:
+  only `memory/` is there. A folder that cannot be read, or whose session
+  folder is a symlink or junction, stays a source with its claim withheld.
 - **Cleanup:** Claude Code deletes transcripts after `cleanupPeriodDays`
   (default 30). Once all of a project's transcripts are gone, its folder is
   skipped and its source stops claiming. covey counts the host of that
   source as active for up to seven days after its last push, so the meter
   readings of that window wait as "not reported" until the week has passed.
   Raising `cleanupPeriodDays` makes this rarer.
-- A call found in two project folders is sent once, with the folder holding
-  its better copy.
+- A call found in two project folders (a session resumed or forked into
+  another directory) is sent once: the copy with the most output, then the
+  earliest, then the folder whose name sorts first; the label plays no part,
+  so relabelling moves no call. When that folder's copy is cleaned up while
+  the other folder still holds one, the call is sent again under the other
+  source, and covey then counts it under both.
 - `--dry-run` adds one line per source: calls, tokens, and whether it would
   claim. With `--json` the sources are under `sources`, and the notes go to
   stderr so that stdout holds the JSON only.
-- A named directory that holds transcripts or session folders itself is one
-  project; a session's own folder is refused.
-- Choose per machine from its first push. covey keeps a source's calls, so a
-  machine that pushed under one `--source` and then switches would count its
-  calls twice in "outside covey".
+- **Switching, or changing a label.** covey keeps a source's calls. A
+  machine that pushed under one `--source` and switches to
+  `--source-per-project`, or a folder whose label changes, sends its calls
+  again under the new source, and they count twice in "outside covey".
+  Remove the old source with `DELETE /api/v1/cost/external-usage?source=…`
+  (its calls, meter link and claims); until then it also holds the meter
+  split back, as "not reported", for up to seven days after its last push.
+
+## After an upgrade
+
+Since 748a2a19, on equal output the later streamed copy of a call is kept
+(as the measurement script does), where the earlier one was before. The
+first push after the upgrade therefore reports a number of calls as
+updated, once; later pushes report them unchanged.
 
 ## Every ten minutes
 
@@ -161,13 +201,13 @@ elsewhere too, name those directories as well, or leave `--complete` out.
 cron:
 
 ```cron
-*/10 * * * * COVEY_URL=http://localhost:8494 covey usage push $HOME/.claude/projects --complete --source "operator: laptop" --key-file $HOME/.config/covey/usage.key >>$HOME/.cache/covey-usage.log 2>&1
+*/10 * * * * COVEY_URL=http://localhost:8494 covey usage push $HOME/.claude/projects --complete --source "operator: laptop" --meter-secret claude_code_oauth_token:0 --key-file $HOME/.config/covey/usage.key >>$HOME/.cache/covey-usage.log 2>&1
 ```
 
 With one source per project:
 
 ```cron
-*/10 * * * * COVEY_URL=http://localhost:8494 covey usage push $HOME/.claude/projects --source-per-project --complete --label=-home-me-src-covey="covey operator" --key-file $HOME/.config/covey/usage.key >>$HOME/.cache/covey-usage.log 2>&1
+*/10 * * * * COVEY_URL=http://localhost:8494 covey usage push $HOME/.claude/projects --source-per-project --complete --label=-home-me-src-covey="covey operator" --meter-secret claude_code_oauth_token:0 --key-file $HOME/.config/covey/usage.key >>$HOME/.cache/covey-usage.log 2>&1
 ```
 
 systemd (user units):
@@ -177,7 +217,7 @@ systemd (user units):
 [Service]
 Type=oneshot
 Environment=COVEY_URL=http://localhost:8494
-ExecStart=%h/bin/covey usage push %h/.claude/projects --complete --source "operator: laptop" --key-file %h/.config/covey/usage.key
+ExecStart=%h/bin/covey usage push %h/.claude/projects --complete --source "operator: laptop" --meter-secret claude_code_oauth_token:0 --key-file %h/.config/covey/usage.key
 
 # ~/.config/systemd/user/covey-usage.timer
 [Timer]

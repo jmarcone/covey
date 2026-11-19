@@ -32,7 +32,7 @@ func projectsTree(t *testing.T) string {
 	}
 	call := func(id string) string {
 		return `{"type":"assistant","timestamp":"2026-11-18T10:00:00Z","cwd":"C:\\Users\\tester\\projects\\a","message":{"id":"` + id +
-			`","model":"claude-opus-5-5","content":[{"type":"text","text":"see /home/tester/secret"}],"usage":{"input_tokens":1,"output_tokens":2}}}`
+			`","model":"claude-opus-5-5","content":[{"type":"text","text":"see /home/tester/PRIVATETEXT"}],"usage":{"input_tokens":1,"output_tokens":2}}}`
 	}
 	a := filepath.Join(root, "C--Users-tester-projects-a")
 	write(filepath.Join(a, sessA+".jsonl"), call("a1"))
@@ -99,7 +99,7 @@ func TestUsagePushPerProjectClaimsPerSource(t *testing.T) {
 
 	// without --complete, or with --since, no source claims
 	for _, extra := range [][]string{nil, {"--complete", "--since", "2026-11-01T00:00:00Z"}} {
-		bodies, _, _, err := pushTo(t, append([]string{root, "--source-per-project", "--source", "home", "--host", "h1"}, extra...)...)
+		bodies, _, _, err := pushTo(t, append([]string{root, "--source-per-project", "--no-meter", "--source", "home", "--host", "h1"}, extra...)...)
 		if err != nil || len(bodies) != 2 {
 			t.Fatalf("%v: %v, %d bodies", extra, err, len(bodies))
 		}
@@ -115,14 +115,14 @@ func TestUsagePushPerProjectClaimsPerSource(t *testing.T) {
 // path, the user name of the home directory or anything of the text.
 func TestUsagePushPerProjectSendsNoPath(t *testing.T) {
 	root := projectsTree(t)
-	bodies, _, _, err := pushTo(t, root, "--source-per-project", "--host", "h1", "--complete")
+	bodies, _, _, err := pushTo(t, root, "--source-per-project", "--meter-secret", "claude_code_oauth_token:0", "--host", "h1", "--complete")
 	if err != nil || len(bodies) != 3 {
 		t.Fatalf("%v, %d bodies", err, len(bodies))
 	}
 	for _, b := range bodies {
 		raw, _ := json.Marshal(b)
 		s := string(raw)
-		for _, bad := range []string{"/", `\`, "tester", "Users", "C--", "c--", ".claude", "secret", "MEMORY", "broken", "agent-x"} {
+		for _, bad := range []string{"/", `\`, "tester", "Users", "C--", "c--", ".claude", "PRIVATETEXT", "MEMORY", "broken", "agent-x"} {
 			if strings.Contains(s, bad) {
 				t.Errorf("a request carries %q: %s", bad, s)
 			}
@@ -133,7 +133,7 @@ func TestUsagePushPerProjectSendsNoPath(t *testing.T) {
 func TestUsagePushPerProjectDryRun(t *testing.T) {
 	root := projectsTree(t)
 	var out bytes.Buffer
-	err := runUsage([]string{"push", root, "--source-per-project", "--complete", "--host", "h1", "--dry-run",
+	err := runUsage([]string{"push", root, "--source-per-project", "--no-meter", "--complete", "--host", "h1", "--dry-run",
 		"--label", "C--Users-tester-projects-a=covey operator"}, &out, func(string) string { return "" })
 	if err != nil {
 		t.Fatal(err)
@@ -154,7 +154,7 @@ func TestUsagePushPerProjectDryRun(t *testing.T) {
 	}
 	// JSON: the same per source
 	out.Reset()
-	if err := runUsage([]string{"push", root, "--source-per-project", "--complete", "--host", "h1", "--dry-run", "--json"}, &out, func(string) string { return "" }); err != nil {
+	if err := runUsage([]string{"push", root, "--source-per-project", "--no-meter", "--complete", "--host", "h1", "--dry-run", "--json"}, &out, func(string) string { return "" }); err != nil {
 		t.Fatal(err)
 	}
 	var j struct {
@@ -173,15 +173,65 @@ func TestUsagePushPerProjectDryRun(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "D--work-z", sessA), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := runUsage([]string{"push", root, "--source-per-project", "--dry-run"}, &bytes.Buffer{}, func(string) string { return "" }); err != nil {
+	if err := runUsage([]string{"push", root, "--source-per-project", "--no-meter", "--dry-run"}, &bytes.Buffer{}, func(string) string { return "" }); err != nil {
 		t.Fatalf("empty folder: %v", err)
 	}
 	// with a transcript it is a source, and its unknown home is refused, not sent
 	if err := os.WriteFile(filepath.Join(root, "D--work-z", sessA+".jsonl"), []byte("{}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err = runUsage([]string{"push", root, "--source-per-project", "--dry-run"}, &bytes.Buffer{}, func(string) string { return "" })
+	err = runUsage([]string{"push", root, "--source-per-project", "--no-meter", "--dry-run"}, &bytes.Buffer{}, func(string) string { return "" })
 	if err == nil || !strings.Contains(err.Error(), "D--work-z") || !strings.Contains(err.Error(), "--home-prefix") {
 		t.Fatalf("%v", err)
+	}
+}
+
+// covey links a source to its meter per source: every project is a source,
+// and a new one pushed without the link would be booked to covey. So a
+// per-project push names the meter, or says there is none.
+func TestUsagePushPerProjectNeedsTheMeter(t *testing.T) {
+	root := projectsTree(t)
+	bodies, _, _, err := pushTo(t, root, "--source-per-project", "--host", "h1", "--complete")
+	if err == nil || len(bodies) != 0 || !strings.Contains(err.Error(), "--meter-secret") || !strings.Contains(err.Error(), "--no-meter") {
+		t.Fatalf("no meter: %v, %d requests", err, len(bodies))
+	}
+	bodies, _, _, err = pushTo(t, root, "--source-per-project", "--meter-secret", "claude_code_oauth_token:1", "--host", "h1", "--complete")
+	if err != nil || len(bodies) != 3 {
+		t.Fatalf("%v %d", err, len(bodies))
+	}
+	for _, b := range bodies {
+		m, _ := b["meter_credential"].(map[string]any)
+		if m["secret_key"] != "claude_code_oauth_token" || m["secret_slot"] != float64(1) {
+			t.Errorf("%s: meter %v", b["source"], b["meter_credential"])
+		}
+	}
+	bodies, _, _, err = pushTo(t, root, "--source-per-project", "--no-meter", "--host", "h1", "--complete")
+	if err != nil || len(bodies) != 3 || bodies[0]["meter_credential"] != nil {
+		t.Fatalf("--no-meter: %v %v", err, bodies)
+	}
+}
+
+// A project folder whose session folder is a link is still a source: its
+// claim is withheld, the others claim.
+func TestUsagePushPerProjectLinkedSessionWithholdsItsClaim(t *testing.T) {
+	root := projectsTree(t)
+	elsewhere := t.TempDir()
+	os.WriteFile(filepath.Join(elsewhere, "x.jsonl"), []byte("{}\n"), 0o644)
+	e := filepath.Join(root, "C--Users-tester-projects-e")
+	os.MkdirAll(e, 0o755)
+	if err := os.Symlink(elsewhere, filepath.Join(e, sessA)); err != nil {
+		t.Skip("no symlinks:", err)
+	}
+	bodies, out, errOut, err := pushTo(t, root, "--source-per-project", "--no-meter", "--host", "h1", "--complete")
+	if err != nil || len(bodies) != 3 {
+		t.Fatalf("%v, %d bodies\n%s", err, len(bodies), out)
+	}
+	if !strings.Contains(out, `no reported_through sent for "projects-e": 1 symlinked directories were not followed`) || !strings.Contains(errOut, "symlinked") {
+		t.Errorf("output:\n%s\n%s", out, errOut)
+	}
+	for _, b := range bodies {
+		if b["source"] == "projects-e" {
+			t.Errorf("projects-e has nothing to send: %v", b)
+		}
 	}
 }

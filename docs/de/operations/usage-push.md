@@ -105,54 +105,85 @@ covey usage push ~/.claude/projects --source-per-project --complete --host home-
   --label=-home-me-src-covey="covey operator" --meter-secret claude_code_oauth_token:0
 ```
 
+- **`--meter-secret` oder `--no-meter` ist Pflicht.** covey verknüpft eine
+  Quelle je Quelle mit ihrem Zähler, durch einen Push, der den Zähler nennt.
+  Jedes neue Projekt ist eine neue Quelle, und eine ohne Verknüpfung
+  gepushte bliebe unverknüpft: Ihr Verbrauch würde covey's Agenten
+  angerechnet. Bei jedem Lauf `--meter-secret` angeben, oder `--no-meter`
+  bei Nutzungsabrechnung.
 - Das **Label** ist der Name des Ordners ohne das Home-Verzeichnis. Claude
   Code nennt den Ordner von `C:\Users\me\projects\shop`
   `C--Users-me-projects-shop` und den von `/home/me/shop` `-home-me-shop`
   (jedes Zeichen außer Buchstaben und Ziffern wird zu `-`); ihre Labels sind
   `projects-shop` und `shop`. Der Ordner des Home-Verzeichnisses selbst
-  heißt `~`. Das Home wird aus jedem Ordnernamen gelesen:
-  `<Laufwerk>--Users-<Name>-`, `-home-<Name>-`, `-Users-<Name>-` (macOS),
-  `-root-` und `--wsl-localhost-<Distribution>-home-<Name>-` für ein
-  WSL-Verzeichnis, das unter Windows geöffnet wurde.
+  heißt `~`.
+- **Das Home-Verzeichnis.** Wegen dieser Kodierung sagt ein Ordnername
+  nicht, wo ein Benutzername endet: `jean-marc`, `jean.marc` und
+  `jean marc` werden alle zu `jean-marc`. Der Push entfernt daher zuerst die
+  Home-Verzeichnisse, die er sicher kennt: das Verzeichnis über dem
+  genannten `.claude/projects` (aus WSL gesehen ist `/mnt/c/Users/jean.marc`
+  auch so bekannt, wie Windows es schreibt, `C--Users-jean-marc`) und das
+  Home-Verzeichnis des Benutzers, der den Push ausführt. Nur bei Ordnern
+  außerhalb davon liest er das Home aus dem Namen: `<Laufwerk>--Users-<Name>-`,
+  `-home-<Name>-`, `-Users-<Name>-` (macOS), `-root-` und
+  `--wsl-localhost-<Distribution>-home-<Name>-` für ein WSL-Verzeichnis, das
+  unter Windows geöffnet wurde; der Name ist dann ein bekannter
+  Benutzername, wenn einer passt, sonst eine Folge von Buchstaben und
+  Ziffern. Ist diese Folge nur der Anfang eines bekannten Benutzernamens
+  (`jean` von `jean-marc`), hält der Push an, statt den Rest des Namens als
+  Label zu senden.
 - `--home-prefix HOME` nennt das Home-Verzeichnis stattdessen, als Pfad
   (`C:\Users\jean.marc`, `/home/me`) oder kodiert (`C--Users-jean-marc`). Es
   darf mehrfach angegeben werden; das längste, das zu einem Ordner passt,
-  gilt, und die Ableitung ist dann aus. Ein Benutzername mit einem Zeichen
-  außer Buchstaben und Ziffern braucht es: `jean.marc` wird zu `jean-marc`,
-  und am Ordnernamen lässt sich das nicht von einem Benutzer `jean` mit einem
-  Projekt `marc-…` unterscheiden.
-- Ein Ordner, dessen Home nicht erkannt wird (ein Projekt außerhalb des
-  Home, `D:\work\x` heißt `D--work-x`), hält den Push an, der alle solchen
-  Ordner aufzählt: Sein Name könnte einen Benutzernamen enthalten.
-  `--home-prefix` oder ein `--label` angeben.
+  gilt, und nur die angegebenen werden entfernt. Nötig, wenn die Transkripte
+  nicht im `.claude/projects` ihres Benutzers liegen (eine Kopie,
+  `CLAUDE_CONFIG_DIR`) und der Benutzername ein Zeichen außer Buchstaben und
+  Ziffern enthält.
 - `--label ORDNER=LABEL` (mehrfach) benennt einen Ordner, zum Beispiel das
   Projekt des covey-Operators `"covey operator"`. Ein `--label` für einen
   Ordner, den es nicht gibt, ist ein Fehler; ein Tippfehler sendet so nicht
   das abgeleitete Label.
 - `--source PRÄFIX` ist hier optional: Damit heißt jede Quelle
-  `PRÄFIX: LABEL` (`home: covey operator`), ohne nur das Label. Jede Quelle
-  samt Präfix muss 1–64 Zeichen UTF-8 ohne NUL lang sein; eine längere hält
-  den Push an (dem Ordner ein kürzeres `--label` geben). Ebenso zwei Ordner,
-  die dieselbe Quelle bekämen. Die Ordner `C--…` und `c--…` eines
-  Windows-Verzeichnisses (Claude Code schreibt den Laufwerksbuchstaben mal
-  groß, mal klein) sind ein Projekt.
+  `PRÄFIX: LABEL` (`home: covey operator`), ohne nur das Label.
+- **Ein einzelner Ordner hält alle Quellen an.** Ein Ordner, dessen Home
+  nicht erkannt wird (ein Projekt außerhalb des Home, `D:\work\x` heißt
+  `D--work-x`) oder mehrdeutig ist, eine Quelle über 64 Zeichen oder zwei
+  Ordner mit derselben Quelle (zwei Schreibweisen, die nicht dasselbe
+  Verzeichnis sind) halten den ganzen Push an: Bis dieser Ordner ein
+  `--label` bekommt (oder das Home ein `--home-prefix`), wird nichts
+  gesendet und keine Quelle behauptet. Der Fehler zählt jeden solchen Ordner
+  auf. Nach dem Einrichten eines Rechners und nach dem ersten Arbeiten in
+  einem neuen Verzeichnis außerhalb des Home mit `--dry-run` prüfen. Die
+  Ordner `C--…` und `c--…` eines Windows-Verzeichnisses (Claude Code
+  schreibt den Laufwerksbuchstaben mal groß, mal klein) sind ein Projekt,
+  keine Kollision.
+- Ein Transkript oder Sitzungsordner ganz oben in `~/.claude/projects`,
+  neben den Projektordnern, wird mit seinem Namen abgelehnt: in seinen
+  Projektordner verschieben oder entfernen. Ein genanntes Verzeichnis, das
+  selbst Transkripte oder Sitzungsordner und keine Projektordner enthält,
+  ist ein Projekt; der Ordner einer einzelnen Sitzung wird abgelehnt.
 - **Datenschutz:** Nur das Label und die Token-Zahlen verlassen den Rechner.
   Kein Pfad, kein Ordnername, kein Benutzername, kein Inhalt. Sitzungs-ID und
   Herkunft ergeben sich wie oben aus dem Ort jeder Datei unter ihrem
-  Projektordner.
+  Projektordner; ein `subagents/` direkt im Projektordner, ohne
+  Sitzungsordner darüber, bekommt die Sitzung `unknown`, nie den Namen des
+  Ordners.
 - Jede Quelle wird in eigenen Requests mit eigenem `reported_through`
   gesendet, unter demselben `--host` und `--meter-secret`. Mit `--complete`
   behauptet jede Quelle: Sie ist ein ganzer Projektordner, ganz gelesen, also
-  schon dadurch vollständig. Ein Verzeichnis-Symlink, eine unlesbare Zeile
-  oder ein zurückgehaltener Aufruf verhindert nur die Behauptung des Ordners,
-  in dem er liegt; `--since` und ein fehlendes `--complete` verhindern jede
+  schon dadurch vollständig. Ein Verzeichnis-Symlink, eine unlesbare Zeile,
+  ein Verzeichnis oder eine Datei, die sich nicht lesen lässt, oder ein
+  zurückgehaltener Aufruf verhindert nur die Behauptung des Ordners, in dem
+  er liegt; `--since` und ein fehlendes `--complete` verhindern jede
   Behauptung. Ein Ordner mit Transkripten, aber ohne Aufruf darin sendet
   seine Behauptung trotzdem (einen Request ohne Aufrufe). Das ganze
   `~/.claude/projects` nennen, damit beide Schreibweisen eines
   Windows-Ordners gelesen werden.
-- Ein Projektordner ganz ohne `*.jsonl`-Datei (nur `memory/` liegt darin)
-  ist keine Quelle: Er wird übersprungen, braucht kein Label, und für ihn
-  wird nichts gesendet.
+- Ein Projektordner wird nur übersprungen (keine Quelle, kein Label nötig,
+  nichts gesendet), wenn er sich ganz lesen ließ und keine `*.jsonl`-Datei
+  und keinen Link enthält: Nur `memory/` liegt darin. Ein Ordner, der sich
+  nicht lesen lässt oder dessen Sitzungsordner ein Symlink oder eine
+  Junction ist, bleibt eine Quelle, deren Behauptung zurückgehalten wird.
 - **Aufräumen:** Claude Code löscht Transkripte nach `cleanupPeriodDays`
   (Standard 30). Sind alle Transkripte eines Projekts weg, wird sein Ordner
   übersprungen, und seine Quelle behauptet nicht mehr. covey zählt den
@@ -160,17 +191,33 @@ covey usage push ~/.claude/projects --source-per-project --complete --host home-
   aktiv; die Zählerstände dieses Zeitraums warten deshalb als „nicht
   gemeldet“, bis die Woche vorbei ist. Ein höheres `cleanupPeriodDays` macht
   das seltener.
-- Ein Aufruf, der in zwei Projektordnern steht, wird einmal gesendet, mit dem
-  Ordner, der die bessere Kopie hat.
+- Ein Aufruf, der in zwei Projektordnern steht (eine Sitzung, die in einem
+  anderen Verzeichnis fortgesetzt oder abgezweigt wurde), wird einmal
+  gesendet: die Kopie mit der meisten Ausgabe, dann die früheste, dann die
+  des Ordners, dessen Name zuerst sortiert; das Label spielt keine Rolle,
+  ein neues Label verschiebt also keinen Aufruf. Wird die Kopie dieses
+  Ordners aufgeräumt, während der andere Ordner noch eine hat, wird der
+  Aufruf unter der anderen Quelle erneut gesendet, und covey zählt ihn dann
+  unter beiden.
 - `--dry-run` zeigt zusätzlich eine Zeile je Quelle: Aufrufe, Tokens und ob
   sie behaupten würde. Mit `--json` stehen die Quellen unter `sources`, und
   die Hinweise gehen nach stderr, damit stdout nur das JSON enthält.
-- Ein genanntes Verzeichnis, das selbst Transkripte oder Sitzungsordner
-  enthält, ist ein Projekt; der Ordner einer einzelnen Sitzung wird
-  abgelehnt.
-- Je Rechner ab dem ersten Push festlegen. covey behält die Aufrufe einer
-  Quelle; ein Rechner, der unter einem `--source` gepusht hat und dann
-  wechselt, zählte seine Aufrufe in „außerhalb von covey“ doppelt.
+- **Wechseln oder ein Label ändern.** covey behält die Aufrufe einer
+  Quelle. Ein Rechner, der unter einem `--source` gepusht hat und zu
+  `--source-per-project` wechselt, oder ein Ordner, dessen Label sich
+  ändert, sendet seine Aufrufe unter der neuen Quelle erneut, und sie zählen
+  in „außerhalb von covey“ doppelt. Die alte Quelle mit
+  `DELETE /api/v1/cost/external-usage?source=…` entfernen (ihre Aufrufe,
+  ihre Zähler-Verknüpfung und ihre Behauptungen); bis dahin hält sie auch die
+  Aufteilung des Zählers bis zu sieben Tage nach ihrem letzten Push als
+  „nicht gemeldet“ auf.
+
+## Nach einem Update
+
+Seit 748a2a19 wird bei gleicher Ausgabe die spätere gestreamte Kopie eines
+Aufrufs behalten (wie im Mess-Skript), vorher war es die frühere. Der erste
+Push nach dem Update meldet deshalb einmalig eine Anzahl Aufrufe als
+aktualisiert; spätere Pushes melden sie als unverändert.
 
 ## Alle zehn Minuten
 
@@ -182,13 +229,13 @@ Rechner Transkripte auch anderswo, diese Verzeichnisse ebenfalls nennen oder
 cron:
 
 ```cron
-*/10 * * * * COVEY_URL=http://localhost:8494 covey usage push $HOME/.claude/projects --complete --source "operator: laptop" --key-file $HOME/.config/covey/usage.key >>$HOME/.cache/covey-usage.log 2>&1
+*/10 * * * * COVEY_URL=http://localhost:8494 covey usage push $HOME/.claude/projects --complete --source "operator: laptop" --meter-secret claude_code_oauth_token:0 --key-file $HOME/.config/covey/usage.key >>$HOME/.cache/covey-usage.log 2>&1
 ```
 
 Mit einer Quelle je Projekt:
 
 ```cron
-*/10 * * * * COVEY_URL=http://localhost:8494 covey usage push $HOME/.claude/projects --source-per-project --complete --label=-home-me-src-covey="covey operator" --key-file $HOME/.config/covey/usage.key >>$HOME/.cache/covey-usage.log 2>&1
+*/10 * * * * COVEY_URL=http://localhost:8494 covey usage push $HOME/.claude/projects --source-per-project --complete --label=-home-me-src-covey="covey operator" --meter-secret claude_code_oauth_token:0 --key-file $HOME/.config/covey/usage.key >>$HOME/.cache/covey-usage.log 2>&1
 ```
 
 systemd (Benutzer-Units):
@@ -198,7 +245,7 @@ systemd (Benutzer-Units):
 [Service]
 Type=oneshot
 Environment=COVEY_URL=http://localhost:8494
-ExecStart=%h/bin/covey usage push %h/.claude/projects --complete --source "operator: laptop" --key-file %h/.config/covey/usage.key
+ExecStart=%h/bin/covey usage push %h/.claude/projects --complete --source "operator: laptop" --meter-secret claude_code_oauth_token:0 --key-file %h/.config/covey/usage.key
 
 # ~/.config/systemd/user/covey-usage.timer
 [Timer]

@@ -1,6 +1,7 @@
 package usagepush
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -27,6 +28,7 @@ func ValidSource(s string) bool {
 // on this machine.
 type Project struct {
 	Source string // the source sent, "<prefix>: <label>" or the label alone
+	Key    string // the folder's name, its drive letter in upper case
 	// Folders are the folder's names: two when Claude Code wrote one Windows
 	// directory once with an upper and once with a lower drive letter
 	// (C--Users-… and c--Users-…); both belong to the one project.
@@ -37,53 +39,183 @@ type Project struct {
 // LabelRules say how a project folder's name becomes its source.
 type LabelRules struct {
 	Prefix string // --source; "" sends the label alone
-	// Homes are encoded home directories (C--Users-me, -home-me) stripped
-	// from the folder names; none derives the home from each folder name.
+	// Homes are the --home-prefix values (encoded, C--Users-me, -home-me).
+	// Given, they are the only homes stripped from the folder names.
 	Homes  []string
 	Labels map[string]string // --label FOLDER=LABEL
+	// Known are encoded home directories known for sure, besides the ones
+	// Projects finds itself (the home above a named .claude/projects, and
+	// this user's home directory).
+	Known []string
 }
 
-// homePatterns match the encoded home directory at the start of a folder
-// name, as Claude Code writes it (every character other than a letter or a
-// digit becomes "-"). The user name is one run of letters and digits: a name
-// with another character in it (jean.marc) needs --home-prefix.
-var homePatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)^[a-z]--users-[a-z0-9]+(-|$)`),                          // C:\Users\me
-	regexp.MustCompile(`^-home-[A-Za-z0-9]+(-|$)`),                                  // /home/me
-	regexp.MustCompile(`^-Users-[A-Za-z0-9]+(-|$)`),                                 // /Users/me (macOS)
-	regexp.MustCompile(`^-root(-|$)`),                                               // /root
-	regexp.MustCompile(`(?i)^--wsl(-localhost-|--)[a-z0-9-]*?-home-[a-z0-9]+(-|$)`), // \\wsl.localhost\<distro>\home\me
+// userHomeDir is os.UserHomeDir, replaced in tests.
+var userHomeDir = os.UserHomeDir
+
+// homeHeads match the start of an encoded home directory up to the user
+// name, as Claude Code writes it: every character other than an ASCII letter
+// or digit becomes "-", so the user name's own end cannot be read from a
+// folder name (jean.marc, jean-marc and "jean marc" are all jean-marc).
+var homeHeads = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)^[a-z]--users-`),                          // C:\Users\<name>
+	regexp.MustCompile(`^-home-`),                                     // /home/<name>
+	regexp.MustCompile(`^-Users-`),                                    // /Users/<name> (macOS)
+	regexp.MustCompile(`(?i)^--wsl(-localhost-|--)[a-z0-9-]*?-home-`), // \\wsl.localhost\<distro>\home\<name>
 }
+
+var rootHome = regexp.MustCompile(`^-root(-|$)`) // /root
+
+// Errors of HomeLabel.
+var (
+	ErrNoHome        = errors.New("no home directory recognised in the folder name")
+	ErrAmbiguousHome = errors.New("the user name in the folder name may be longer than it looks")
+)
 
 // HomeLabel is the label of the folder named folder: its name without the
-// encoded home directory, "~" for the home directory itself. homes are the
-// --home-prefix values (encoded); without any, the home is read from the
-// folder name. ok is false when no home is found: the name might then hold a
-// user name, and the folder needs --home-prefix or --label.
-func HomeLabel(folder string, homes []string) (label string, ok bool) {
-	if len(homes) == 0 {
-		for _, re := range homePatterns {
-			if m := re.FindString(folder); m != "" {
-				label, ok = folder[len(m):], true
+// encoded home directory, "~" for the home directory itself.
+//
+// homes are the --home-prefix values; given, only they are stripped. Else a
+// home in known (encoded, known for sure) is stripped; else the start of a
+// home is recognised (C--Users-, -home-, -Users-, -root, a WSL home seen from
+// Windows) and the user name after it taken from known when one fits, or as
+// one run of letters and digits. That run is refused (ErrAmbiguousHome) when
+// a known user name begins with it and goes on ("jean" of "jean-marc"): the
+// rest of the label could be the rest of the user name. ErrNoHome: the name
+// might hold a user name; the folder needs --home-prefix or --label.
+func HomeLabel(folder string, homes, known []string) (string, error) {
+	if len(homes) > 0 {
+		if l, ok := stripHome(folder, homes); ok {
+			return l, nil
+		}
+		return "", ErrNoHome
+	}
+	if l, ok := stripHome(folder, known); ok {
+		return l, nil
+	}
+	users := knownUsers(known)
+	for _, h := range homeHeads {
+		m := h.FindString(folder)
+		if m == "" {
+			continue
+		}
+		rest := folder[len(m):]
+		best := ""
+		for _, u := range users {
+			if len(u) > len(best) && hasHomePrefix(rest, u) {
+				best = u
+			}
+		}
+		if best != "" {
+			return labelAfter(rest[len(best):]), nil
+		}
+		name, after, _ := strings.Cut(rest, "-")
+		if name == "" {
+			return "", ErrNoHome
+		}
+		for _, u := range users {
+			if len(u) > len(name) && strings.EqualFold(u[:len(name)+1], name+"-") {
+				return "", ErrAmbiguousHome
+			}
+		}
+		if after == "" && !strings.HasSuffix(rest, "-") {
+			return "~", nil
+		}
+		return labelAfter("-" + after), nil
+	}
+	if m := rootHome.FindString(folder); m != "" {
+		return labelAfter(folder[len("-root"):]), nil
+	}
+	return "", ErrNoHome
+}
+
+// hasHomePrefix: s is the home h or lies below it (case-insensitive: the
+// drive letter, and Windows names, come in either case).
+func hasHomePrefix(s, h string) bool {
+	n := len(h)
+	return n > 0 && len(s) >= n && strings.EqualFold(s[:n], h) && (len(s) == n || s[n] == '-')
+}
+
+// stripHome strips the longest of homes from folder.
+func stripHome(folder string, homes []string) (string, bool) {
+	best := -1
+	for _, h := range homes {
+		if hasHomePrefix(folder, h) && len(h) > best {
+			best = len(h)
+		}
+	}
+	if best < 0 {
+		return "", false
+	}
+	return labelAfter(folder[best:]), true
+}
+
+// labelAfter makes the label of what follows a home: "-x" is x, "" is ~.
+func labelAfter(rest string) string {
+	if rest = strings.TrimPrefix(rest, "-"); rest == "" {
+		return "~"
+	}
+	return rest
+}
+
+// knownUsers are the user names of the known homes, dashes included.
+func knownUsers(known []string) []string {
+	var out []string
+	for _, k := range known {
+		for _, h := range homeHeads {
+			if m := h.FindString(k); m != "" && len(k) > len(m) {
+				out = append(out, k[len(m):])
 				break
 			}
 		}
-	} else {
-		best := -1
-		for _, h := range homes {
-			n := len(h)
-			if len(folder) >= n && strings.EqualFold(folder[:n], h) && (len(folder) == n || folder[n] == '-') && n > best {
-				best = n
+	}
+	return out
+}
+
+var mntDrive = regexp.MustCompile(`^/mnt/([a-zA-Z])/(.+)$`)
+
+// knownHomes are the homes known for sure: the directory above
+// .claude/projects in each root, and this user's home directory, encoded.
+// A Windows directory seen from WSL (/mnt/c/Users/me) is also encoded as
+// Windows writes it (C--Users-me).
+func knownHomes(roots []string) []string {
+	var out []string
+	add := func(dir string) {
+		if dir == "" {
+			return
+		}
+		if e := strings.TrimRight(EncodePath(dir), "-"); e != "" {
+			out = append(out, e)
+		}
+		if m := mntDrive.FindStringSubmatch(filepath.ToSlash(dir)); m != nil {
+			out = append(out, strings.ToUpper(m[1])+"--"+strings.TrimRight(EncodePath(m[2]), "-"))
+		}
+	}
+	for _, r := range roots {
+		cands := []string{r}
+		if a, err := filepath.Abs(r); err == nil {
+			cands = append(cands, a)
+			if e, err := filepath.EvalSymlinks(a); err == nil {
+				cands = append(cands, e)
 			}
 		}
-		if best >= 0 {
-			label, ok = strings.TrimPrefix(folder[best:], "-"), true
+		for _, c := range cands {
+			add(homeOfStore(c))
 		}
 	}
-	if ok && label == "" {
-		label = "~"
+	if h, err := userHomeDir(); err == nil {
+		add(h)
 	}
-	return label, ok
+	return out
+}
+
+// homeOfStore is the directory above .claude/projects in p, or "".
+func homeOfStore(p string) string {
+	s := strings.ReplaceAll(p, `\`, "/") + "/"
+	i := strings.LastIndex(s, "/.claude/projects/")
+	if i <= 0 {
+		return ""
+	}
+	return s[:i]
 }
 
 // EncodePath encodes a directory as Claude Code names its project folder:
@@ -125,13 +257,18 @@ func folderKey(f string) string {
 
 var uuidName = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
+// encodedName: a directory name as Claude Code names a project folder.
+var encodedName = regexp.MustCompile(`^(-|[A-Za-z]--)`)
+
 // Projects lists the project folders below the roots and gives each its
 // source. A root that holds transcripts or session folders directly is one
 // project folder; any other root holds one project per top-level directory
-// (a symlinked one is followed, as a named root is). A folder without any
-// *.jsonl below it (only memory/ left, or its transcripts cleaned up) is no
-// source: it is skipped, needs no label and sends nothing. A root without
-// any *.jsonl below it is an error, as for Read.
+// (a symlinked one is followed, as a named root is). A folder is skipped (no
+// source, no label needed, nothing sent) only when it could be walked whole
+// and holds no *.jsonl and no linked or irregular entry: only memory/ left,
+// or its transcripts cleaned up. Any other folder is a source, so that a read
+// problem in it withholds its claim. A root without any *.jsonl below it is
+// an error, as for Read.
 func Projects(roots []string, rules LabelRules) ([]Project, error) {
 	type folder struct{ name, path string }
 	var found []folder
@@ -142,7 +279,7 @@ func Projects(roots []string, rules LabelRules) ([]Project, error) {
 		if r, err := filepath.EvalSymlinks(path); err == nil {
 			key = r
 		}
-		if !hasTranscript(key) {
+		if emptyFolder(key) {
 			skipped[folderKey(name)] = true
 			return
 		}
@@ -176,7 +313,20 @@ func Projects(roots []string, rules LabelRules) ([]Project, error) {
 		if !hasTranscript(r) {
 			return nil, fmt.Errorf("no *.jsonl transcripts under %s", root)
 		}
-		if isProjectFolder(ents) {
+		if stray := sessionEntries(ents); len(stray) > 0 {
+			// A project folder named itself; but transcripts or session
+			// folders at the top of the store, beside project folders, are
+			// strays, not a project called "projects".
+			store := homeOfStore(r+string(filepath.Separator)+"x") != "" && filepath.Base(r) == "projects"
+			projects := false
+			for _, e := range ents {
+				if e.IsDir() && !uuidName.MatchString(e.Name()) && encodedName.MatchString(e.Name()) {
+					projects = true
+				}
+			}
+			if store || projects {
+				return nil, fmt.Errorf("%s holds %s beside its project folders: a transcript or session folder belongs in a project folder; move it there or away", root, strings.Join(stray, ", "))
+			}
 			add(filepath.Base(r), r)
 			continue
 		}
@@ -198,7 +348,7 @@ func Projects(roots []string, rules LabelRules) ([]Project, error) {
 		k := folderKey(f.name)
 		g := groups[k]
 		if g == nil {
-			g = &Project{}
+			g = &Project{Key: k}
 			groups[k] = g
 			keys = append(keys, k)
 		}
@@ -222,16 +372,23 @@ func Projects(roots []string, rules LabelRules) ([]Project, error) {
 		labels[k] = l
 	}
 
+	known := append(knownHomes(roots), rules.Known...)
 	var out []Project
-	var unknown []string
+	var unknown, ambiguous []string
 	bySource := map[string]string{}
 	for _, k := range keys {
 		label, ok := labels[k]
 		if !ok {
-			if label, ok = HomeLabel(k, rules.Homes); !ok {
+			l, err := HomeLabel(k, rules.Homes, known)
+			switch {
+			case errors.Is(err, ErrAmbiguousHome):
+				ambiguous = append(ambiguous, k)
+				continue
+			case err != nil:
 				unknown = append(unknown, k)
 				continue
 			}
+			label = l
 		}
 		src := strings.TrimSpace(label)
 		if rules.Prefix != "" {
@@ -248,31 +405,37 @@ func Projects(roots []string, rules LabelRules) ([]Project, error) {
 		g.Source = src
 		out = append(out, *g)
 	}
+	var errs []string
+	if len(ambiguous) > 0 {
+		errs = append(errs, fmt.Sprintf("in these project folder names the user name may go on past where it seems to end, so their labels might hold part of it: %s", strings.Join(ambiguous, ", ")))
+	}
 	if len(unknown) > 0 {
-		return nil, fmt.Errorf("the home directory in these project folder names is not known, so their labels might hold a user name: %s; give --home-prefix or --label FOLDER=LABEL", strings.Join(unknown, ", "))
+		errs = append(errs, fmt.Sprintf("the home directory in these project folder names is not known, so their labels might hold a user name: %s", strings.Join(unknown, ", ")))
+	}
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("%s; give --home-prefix or --label FOLDER=LABEL", strings.Join(errs, "; "))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Source < out[j].Source })
 	return out, nil
 }
 
-// isProjectFolder: the folder holds transcripts or session folders directly.
-func isProjectFolder(ents []fs.DirEntry) bool {
+// sessionEntries are the transcripts and session folders directly in a
+// folder: what makes it a project folder.
+func sessionEntries(ents []fs.DirEntry) []string {
+	var out []string
 	for _, e := range ents {
-		if strings.HasSuffix(e.Name(), ".jsonl") && !e.IsDir() {
-			return true
-		}
-		if e.IsDir() && uuidName.MatchString(e.Name()) {
-			return true
+		if strings.HasSuffix(e.Name(), ".jsonl") && !e.IsDir() || e.IsDir() && uuidName.MatchString(e.Name()) {
+			out = append(out, e.Name())
 		}
 	}
-	return false
+	return out
 }
 
 // hasTranscript says whether any *.jsonl lies below root (symlinks below it
 // are not followed, as in Read).
 func hasTranscript(root string) bool {
 	found := false
-	filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+	walkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -285,29 +448,56 @@ func hasTranscript(root string) bool {
 	return found
 }
 
+// emptyFolder says whether a project folder holds nothing to read: walked
+// whole without an error, it has no *.jsonl and no linked or irregular entry
+// (which read would not follow, so calls could be behind it).
+func emptyFolder(dir string) bool {
+	var st Stats
+	var files []string
+	failed := false
+	walkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			failed = true
+			return fs.SkipAll
+		}
+		visit(p, d, &st, &files)
+		if len(files) > 0 || len(st.Symlinks)+len(st.Unread)+len(st.Other) > 0 {
+			return fs.SkipAll
+		}
+		return nil
+	})
+	return !failed && len(files) == 0 && len(st.Symlinks)+len(st.Unread)+len(st.Other) == 0
+}
+
 // ProjectRead is what one project folder gave.
 type ProjectRead struct {
 	Project
 	Rows  []Row
 	Stats Stats
 	// Elsewhere counts calls of this folder also found in another project
-	// folder: each call is sent once, with the folder holding its better copy
-	// (Read's rule; on a full tie the later source).
+	// folder: each call is sent once, with one folder (see ReadProjects).
 	Elsewhere int
 }
 
 // ReadProjects reads each project as Read reads its folders, except that a
-// project without any *.jsonl (its transcripts cleaned up) gives no rows
-// rather than an error. A message id found in more than one project is kept
-// in one only: the intake keeps one row per source and message id, so it
-// would count twice.
+// project without any *.jsonl gives no rows rather than an error, and a
+// directory or file that cannot be read withholds that project's claim
+// rather than failing the push.
+//
+// A message id found in more than one project (a session resumed or forked
+// into another folder) is kept in one only: the intake keeps one row per
+// source and message id, so it would count twice. The copy with the most
+// output wins; on equal output the earliest timestamp (the original, not a
+// later copy), then the folder's name, never the label: relabelling moves no
+// call. When the winning folder's copy is later cleaned up, the other folder
+// sends the call under its own source, and covey holds it under both.
 func ReadProjects(ps []Project, host string, since time.Time) ([]ProjectRead, error) {
 	out := make([]ProjectRead, len(ps))
 	type at struct{ p, i int }
 	seen := map[string]at{}
 	drop := map[at]bool{}
 	for pi, p := range ps {
-		rows, st, err := read(p.Paths, host, since, false)
+		rows, st, err := read(p.Paths, host, since, true)
 		if err != nil {
 			return nil, err
 		}
@@ -320,7 +510,7 @@ func ReadProjects(ps []Project, host string, since time.Time) ([]ProjectRead, er
 			}
 			q := out[prev.p].Rows[prev.i]
 			better := r.Output > q.Output ||
-				r.Output == q.Output && (r.TS.After(q.TS) || r.TS.Equal(q.TS) && p.Source > ps[prev.p].Source)
+				r.Output == q.Output && (r.TS.Before(q.TS) || r.TS.Equal(q.TS) && p.Key < ps[prev.p].Key)
 			if better {
 				drop[prev] = true
 				out[prev.p].Elsewhere++

@@ -26,8 +26,9 @@ import (
 //	covey usage push DIR... --source LABEL [--url URL] [--host NAME]
 //	    [--meter-secret KEY[:SLOT]] [--since RFC3339] [--complete]
 //	    [--key-file PATH] [--dry-run] [--json]
-//	covey usage push DIR... --source-per-project [--source PREFIX]
-//	    [--home-prefix HOME]... [--label FOLDER=LABEL]... [the flags above]
+//	covey usage push DIR... --source-per-project (--meter-secret KEY[:SLOT] | --no-meter)
+//	    [--source PREFIX] [--home-prefix HOME]... [--label FOLDER=LABEL]...
+//	    [the flags above]
 //
 // The reported_through watermark says that every call of this host for this
 // source up to a time is in the push; covey books a meter reading's unsent
@@ -63,7 +64,7 @@ type pushSource struct {
 
 func runUsage(args []string, stdout io.Writer, getenv func(string) string) error {
 	if len(args) == 0 || args[0] != "push" {
-		return errors.New("usage: covey usage push DIR... (--source LABEL | --source-per-project [--source PREFIX] [--home-prefix HOME]... [--label FOLDER=LABEL]...) [--url URL] [--host NAME] [--meter-secret KEY[:SLOT]] [--since RFC3339] [--complete] [--key-file PATH] [--dry-run] [--json]")
+		return errors.New("usage: covey usage push DIR... (--source LABEL | --source-per-project (--meter-secret KEY[:SLOT] | --no-meter) [--source PREFIX] [--home-prefix HOME]... [--label FOLDER=LABEL]...) [--url URL] [--host NAME] [--meter-secret KEY[:SLOT]] [--since RFC3339] [--complete] [--key-file PATH] [--dry-run] [--json]")
 	}
 	fs := flag.NewFlagSet("covey usage push", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -75,6 +76,7 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 	url := fs.String("url", "", "covey install, e.g. http://localhost:8494 (default $COVEY_URL)")
 	host := fs.String("host", "", "host name stored on every row and claimed in reported_through (default: this machine's; WSL2 reports the Windows name, so give each transcript store its own, e.g. home-win and home-wsl)")
 	meter := fs.String("meter-secret", "", "subscription credential sharing the meter, KEY or KEY:SLOT")
+	noMeter := fs.Bool("no-meter", false, "with --source-per-project: the sessions share no subscription meter (a per-use account); --source-per-project needs this or --meter-secret")
 	since := fs.String("since", "", "only calls at or after this time (RFC 3339); no reported_through is sent")
 	complete := fs.Bool("complete", false, "the directories hold every Claude Code transcript of this host for this source; only then is reported_through sent")
 	keyFile := fs.String("key-file", "", "file holding the API key (must not be group- or world-readable)")
@@ -104,6 +106,12 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 			return errors.New("covey usage push: --source must be 1-64 characters of UTF-8 without NUL")
 		}
 		rules.Prefix = src
+		// covey links a source to its meter per source, from a push that
+		// names it: a new project pushed without --meter-secret would stay
+		// unlinked, and its use would be booked to covey's agents.
+		if (*meter == "") == !*noMeter {
+			return errors.New("covey usage push: --source-per-project needs --meter-secret KEY[:SLOT] (the subscription the sessions share), or --no-meter for a per-use account; each new project is a new source, linked to the meter only by a push that names it")
+		}
 		for _, v := range homes {
 			p, err := usagepush.HomePrefix(v)
 			if err != nil {
@@ -127,8 +135,8 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 		if !usagepush.ValidSource(src) {
 			return errors.New("covey usage push: --source is required, 1-64 characters")
 		}
-		if len(homes) > 0 || len(labelArgs) > 0 {
-			return errors.New("covey usage push: --home-prefix and --label need --source-per-project")
+		if len(homes) > 0 || len(labelArgs) > 0 || *noMeter {
+			return errors.New("covey usage push: --home-prefix, --label and --no-meter need --source-per-project")
 		}
 	}
 	var sinceT time.Time
@@ -237,7 +245,7 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 			fmt.Fprintf(usageStderr, "warning: %s is a symlinked directory; it is not followed, so calls below it are not read\n", p)
 		}
 		for _, p := range s.st.Unread {
-			fmt.Fprintf(usageStderr, "warning: %s is not a regular file and cannot be read\n", p)
+			fmt.Fprintf(usageStderr, "warning: %s cannot be read\n", p)
 		}
 		for _, p := range s.st.Other {
 			fmt.Fprintf(usageStderr, "warning: %s is neither a regular file nor a directory; it is left out\n", p)
@@ -400,7 +408,7 @@ func sourceProblems(st usagepush.Stats) []string {
 		why = append(why, fmt.Sprintf("%d symlinked directories were not followed", len(st.Symlinks)))
 	}
 	if len(st.Unread) > 0 {
-		why = append(why, fmt.Sprintf("%d transcript files could not be read", len(st.Unread)))
+		why = append(why, fmt.Sprintf("%d transcript files or directories could not be read", len(st.Unread)))
 	}
 	if st.Suspect > 0 {
 		why = append(why, fmt.Sprintf("%d lines with a usage could not be read (not just a last line still being written)", st.Suspect))

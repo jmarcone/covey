@@ -1,6 +1,8 @@
 package usagepush
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,9 +10,14 @@ import (
 	"time"
 )
 
+// The tests do not depend on the home directory of whoever runs them.
+func init() {
+	userHomeDir = func() (string, error) { return "", errors.New("no home in tests") }
+}
+
 // A folder's label is its name without the encoded home directory, so that
 // no user name leaves the machine.
-func TestHomeLabel(t *testing.T) {
+func TestHomeLabelFromTheFolderName(t *testing.T) {
 	for folder, want := range map[string]string{
 		"C--Users-marco-projects-testusage":                         "projects-testusage",
 		"c--Users-marco-projects-auction":                           "projects-auction",
@@ -23,44 +30,96 @@ func TestHomeLabel(t *testing.T) {
 		"--wsl-localhost-Ubuntu-26-04-home-jmarcone-projects-pupil": "projects-pupil",
 		"--wsl--Ubuntu-home-me-x":                                   "x",
 	} {
-		if got, ok := HomeLabel(folder, nil); !ok || got != want {
-			t.Errorf("%s: %q %v, want %q", folder, got, ok, want)
+		if got, err := HomeLabel(folder, nil, nil); err != nil || got != want {
+			t.Errorf("%s: %q %v, want %q", folder, got, err, want)
 		}
 	}
 	// no home in the name: the label might hold a user name
-	for _, folder := range []string{"D--work-x", "-opt-x", "-srv-me-x", "-homework-x", "-rootfs-x"} {
-		if got, ok := HomeLabel(folder, nil); ok {
-			t.Errorf("%s: label %q, want none", folder, got)
+	for _, folder := range []string{"D--work-x", "-opt-x", "-srv-me-x", "-homework-x", "-rootfs-x", "C--Users--x"} {
+		if got, err := HomeLabel(folder, nil, nil); !errors.Is(err, ErrNoHome) {
+			t.Errorf("%s: label %q %v, want ErrNoHome", folder, got, err)
 		}
 	}
+}
 
-	// --home-prefix, as a path or encoded; a user name with a dot needs it
-	if got, _ := HomeLabel("C--Users-jean-marc-projects-x", nil); got != "marc-projects-x" {
+// A user name with a dash, a dot or a space is encoded with dashes; the
+// folder name alone cannot tell where it ends. The home above the named
+// .claude/projects (also a Windows home seen from WSL) and this user's home
+// tell it; a folder whose user name is only the start of a known one is
+// refused rather than labelled with the rest of the name.
+func TestHomeLabelWithNamesThatHoldDashes(t *testing.T) {
+	has := func(list []string, v string) bool {
+		for _, x := range list {
+			if x == v {
+				return true
+			}
+		}
+		return false
+	}
+	for root, want := range map[string]string{
+		"/mnt/c/Users/Marco Rossi/.claude/projects":                  "C--Users-Marco-Rossi",
+		"/home/first.last/.claude/projects/-home-first-last-x":       "-home-first-last",
+		`C:\Users\jean-marc\.claude\projects`:                        "C--Users-jean-marc",
+		"/mnt/d/Users/jean-marc/.claude/projects/D--Users-jean-marc": "D--Users-jean-marc",
+	} {
+		if got := knownHomes([]string{root}); !has(got, want) {
+			t.Errorf("%s: known homes %v, want %s among them", root, got, want)
+		}
+	}
+	if got := knownHomes([]string{"/srv/transcripts"}); len(got) != 0 {
+		t.Errorf("no .claude/projects, no home: %v", got)
+	}
+	old := userHomeDir
+	userHomeDir = func() (string, error) { return "/home/first.last", nil }
+	if got := knownHomes(nil); !has(got, "-home-first-last") {
+		t.Errorf("the user's home: %v", got)
+	}
+	userHomeDir = old
+
+	known := []string{"C--Users-jean-marc", "-home-first-last", "C--Users-Marco-Rossi"}
+	for folder, want := range map[string]string{
+		"C--Users-jean-marc-projects-x":            "projects-x",
+		"c--users-jean-marc":                       "~",
+		"D--Users-jean-marc-y":                     "y", // the known user on another drive
+		"--wsl-localhost-Ubuntu-home-first-last-w": "w", // and seen from Windows
+		"-home-first-last-q":                       "q",
+		"C--Users-Marco-Rossi-p":                   "p",
+		"-home-bob-x":                              "x", // another user, nothing known of
+	} {
+		if got, err := HomeLabel(folder, nil, known); err != nil || got != want {
+			t.Errorf("%s: %q %v, want %q", folder, got, err, want)
+		}
+	}
+	for _, folder := range []string{"D--Users-jean-z", "-home-first-z", "C--Users-Marco-z", "--wsl--U-home-jean-marcx"} {
+		if got, err := HomeLabel(folder, nil, known); !errors.Is(err, ErrAmbiguousHome) {
+			t.Errorf("%s: %q %v, want ErrAmbiguousHome", folder, got, err)
+		}
+	}
+	// without anything known the name is cut at its first dash: that is
+	// why a known home comes first
+	if got, _ := HomeLabel("C--Users-jean-marc-projects-x", nil, nil); got != "marc-projects-x" {
 		t.Errorf("derived: %q", got)
 	}
+
+	// --home-prefix, as a path or encoded, replaces the rest
 	for _, v := range []string{`C:\Users\jean.marc`, `C:\Users\jean.marc\`, "C--Users-jean-marc", "c--users-jean-marc-"} {
 		p, err := HomePrefix(v)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, ok := HomeLabel("C--Users-jean-marc-projects-x", []string{p}); !ok || got != "projects-x" {
-			t.Errorf("--home-prefix %s (%s): %q %v", v, p, got, ok)
+		if got, err := HomeLabel("C--Users-jean-marc-projects-x", []string{p}, nil); err != nil || got != "projects-x" {
+			t.Errorf("--home-prefix %s (%s): %q %v", v, p, got, err)
 		}
 	}
 	unix, _ := HomePrefix("/home/u")
-	if unix != "-home-u" {
-		t.Fatalf("%q", unix)
-	}
 	homes := []string{unix, "-home-u-work"}
 	for folder, want := range map[string]string{"-home-u-x": "x", "-home-u-work-y": "y", "-home-u": "~"} {
-		if got, ok := HomeLabel(folder, homes); !ok || got != want {
-			t.Errorf("%s: %q %v, want %q", folder, got, ok, want)
+		if got, err := HomeLabel(folder, homes, nil); err != nil || got != want {
+			t.Errorf("%s: %q %v, want %q", folder, got, err, want)
 		}
 	}
-	// a prefix ends at a "-": -home-u is not the home of -home-uu-x; and a
-	// given prefix replaces the derived ones
 	for _, folder := range []string{"-home-uu-x", "C--Users-marco-x"} {
-		if got, ok := HomeLabel(folder, homes); ok {
+		if got, err := HomeLabel(folder, homes, nil); err == nil {
 			t.Errorf("%s: %q", folder, got)
 		}
 	}
@@ -69,8 +128,8 @@ func TestHomeLabel(t *testing.T) {
 	}
 }
 
-// projectsRoot makes ~/.claude/projects with the given project folders, each
-// holding one call per message id given.
+// projectsRoot makes a directory of project folders, each holding one call
+// per message id given (none: only memory/).
 func projectsRoot(t *testing.T, folders map[string][]string) string {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "projects")
@@ -116,7 +175,7 @@ func TestProjectsLabelsEachFolder(t *testing.T) {
 	if got := strings.Join(sources(ps), "|"); got != "covey operator|projects-auction|projects-quiet" {
 		t.Fatalf("sources %s", got)
 	}
-	if len(ps[1].Paths) != 2 {
+	if len(ps[1].Paths) != 2 || ps[1].Key != "C--Users-marco-projects-auction" {
 		t.Errorf("C-- and c-- of one directory are one project: %+v", ps[1])
 	}
 
@@ -143,6 +202,27 @@ func TestProjectsLabelsEachFolder(t *testing.T) {
 	}
 }
 
+// The home above the named .claude/projects is known, whatever the user name.
+func TestProjectsKnowTheHomeOfTheStore(t *testing.T) {
+	for _, user := range []string{"Marco Rossi", "first.last", "jean-marc"} {
+		home := filepath.Join(t.TempDir(), user)
+		root := filepath.Join(home, ".claude", "projects")
+		enc := EncodePath(home)
+		writeFile(t, filepath.Join(root, enc+"-projects-x", "s.jsonl"), callLine("m1", "2026-11-18T10:00:00Z", ""))
+		writeFile(t, filepath.Join(root, enc, "s.jsonl"), callLine("m2", "2026-11-18T10:00:00Z", ""))
+		ps, err := Projects([]string{root}, LabelRules{})
+		if err != nil || strings.Join(sources(ps), "|") != "projects-x|~" {
+			t.Errorf("%s: %v %v", user, sources(ps), err)
+		}
+	}
+	// a folder whose user name is only the start of a known one is refused
+	root := projectsRoot(t, map[string][]string{"C--Users-jean-marc-a": {"m1"}, "C--Users-jean-b": {"m2"}})
+	_, err := Projects([]string{root}, LabelRules{Known: []string{"C--Users-jean-marc"}})
+	if err == nil || !strings.Contains(err.Error(), "C--Users-jean-b") || strings.Contains(err.Error(), "jean-marc-a") || !strings.Contains(err.Error(), "--home-prefix") {
+		t.Fatalf("%v", err)
+	}
+}
+
 func TestProjectsRefuses(t *testing.T) {
 	root := projectsRoot(t, map[string][]string{
 		"C--Users-marco-projects-x": {"m1"},
@@ -160,16 +240,16 @@ func TestProjectsRefuses(t *testing.T) {
 		"unknown --label folder": {[]string{root}, LabelRules{Labels: map[string]string{"D--work-y": "y", "-home-marco-projects-x": "z", "C--nope": "n"}}, "no such project folder"},
 		"label too long": {[]string{root}, LabelRules{Prefix: strings.Repeat("p", 60), Labels: map[string]string{"D--work-y": "y", "-home-marco-projects-x": "z"}},
 			"give it a --label"},
-		"session folder": {[]string{filepath.Join(root, "D--work-y", "0b5c2f9e-1111-4222-8333-944445555666")}, LabelRules{}, ""},
 		"no transcripts": {[]string{t.TempDir()}, LabelRules{}, "no *.jsonl"},
 	} {
-		if c.want == "" { // the session folder must exist for this case
-			writeFile(t, filepath.Join(c.roots[0], "subagents", "a.jsonl"), callLine("q", "2026-11-18T10:00:00Z", ""))
-			c.want = "one session's folder"
-		}
 		if _, err := Projects(c.roots, c.rules); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: %v", name, err)
 		}
+	}
+	sess := filepath.Join(root, "D--work-y", "0b5c2f9e-1111-4222-8333-944445555666")
+	writeFile(t, filepath.Join(sess, "subagents", "a.jsonl"), callLine("q", "2026-11-18T10:00:00Z", ""))
+	if _, err := Projects([]string{sess}, LabelRules{}); err == nil || !strings.Contains(err.Error(), "one session's folder") {
+		t.Errorf("session folder: %v", err)
 	}
 	// the user names a home: the collision and the unknown home are gone
 	ps, err := Projects([]string{root}, LabelRules{Homes: []string{"C--Users-marco"}, Labels: map[string]string{"D--work-y": "y", "-home-marco-projects-x": "wsl x"}})
@@ -178,8 +258,25 @@ func TestProjectsRefuses(t *testing.T) {
 	}
 }
 
+// A transcript or a session folder at the top of the store is a stray, not a
+// project called "projects".
+func TestProjectsRefusesStraysAtTheTopOfTheStore(t *testing.T) {
+	store := filepath.Join(t.TempDir(), "home", ".claude", "projects")
+	writeFile(t, filepath.Join(store, "-home-u-a", "s.jsonl"), callLine("m1", "2026-11-18T10:00:00Z", ""))
+	writeFile(t, filepath.Join(store, "stray.jsonl"), callLine("m2", "2026-11-18T10:00:00Z", ""))
+	if _, err := Projects([]string{store}, LabelRules{}); err == nil || !strings.Contains(err.Error(), "stray.jsonl beside its project folders") {
+		t.Errorf("stray transcript: %v", err)
+	}
+	other := filepath.Join(t.TempDir(), "copy")
+	writeFile(t, filepath.Join(other, "-home-u-a", "s.jsonl"), callLine("m1", "2026-11-18T10:00:00Z", ""))
+	writeFile(t, filepath.Join(other, "0b5c2f9e-1111-4222-8333-944445555666", "subagents", "x.jsonl"), callLine("m2", "2026-11-18T10:00:00Z", ""))
+	if _, err := Projects([]string{other}, LabelRules{}); err == nil || !strings.Contains(err.Error(), "0b5c2f9e-1111-4222-8333-944445555666 beside") {
+		t.Errorf("stray session folder: %v", err)
+	}
+}
+
 // Each project is read on its own, with its own Stats; a call found in two
-// project folders is kept in one of them only.
+// project folders is kept in one of them only, chosen without the label.
 func TestReadProjects(t *testing.T) {
 	root := projectsRoot(t, map[string][]string{
 		"-home-u-a": {"a1", "both"},
@@ -188,19 +285,14 @@ func TestReadProjects(t *testing.T) {
 	})
 	// c has a transcript without any call: a source with no rows
 	writeFile(t, filepath.Join(root, "-home-u-c", "s.jsonl"), `{"type":"user","message":{"content":"hi"}}`)
+	// the earlier copy wins, whatever the folder
+	writeFile(t, filepath.Join(root, "-home-u-a", "late.jsonl"), callLine("early", "2026-11-18T11:00:00Z", ""))
+	writeFile(t, filepath.Join(root, "-home-u-b", "early.jsonl"), callLine("early", "2026-11-18T09:00:00Z", ""))
 	// a broken line in b, written long ago: b's problem, not a's
 	bad := filepath.Join(root, "-home-u-b", "old.jsonl")
 	writeFile(t, bad, `{"type":"assistant","message":{"usage":{"input_tok`, "{}")
 	old := time.Now().Add(-time.Hour)
 	os.Chtimes(bad, old, old)
-	ps, err := Projects([]string{root}, LabelRules{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	reads, err := ReadProjects(ps, "h", time.Time{})
-	if err != nil || len(reads) != 3 {
-		t.Fatalf("%d %v", len(reads), err)
-	}
 	ids := func(rows []Row) string {
 		var s []string
 		for _, r := range rows {
@@ -208,20 +300,119 @@ func TestReadProjects(t *testing.T) {
 		}
 		return strings.Join(s, ",")
 	}
-	a, b, c := reads[0], reads[1], reads[2]
-	if a.Source != "a" || b.Source != "b" || c.Source != "c" {
-		t.Fatalf("%s %s %s", a.Source, b.Source, c.Source)
-	}
-	// a full tie goes to the later source
-	if ids(a.Rows) != "a1" || ids(b.Rows) != "b1,both" || a.Elsewhere != 1 || b.Elsewhere != 0 {
-		t.Errorf("a %s (%d), b %s (%d)", ids(a.Rows), a.Elsewhere, ids(b.Rows), b.Elsewhere)
-	}
-	if a.Stats.Suspect != 0 || b.Stats.Suspect != 1 || len(c.Rows) != 0 || c.Stats.Files != 1 {
-		t.Errorf("stats a %+v b %+v c %+v", a.Stats, b.Stats, c.Stats)
-	}
-	for _, r := range append(a.Rows, b.Rows...) {
-		if r.SessionID != "0b5c2f9e-1111-4222-8333-944445555666" || r.Origin != OriginMain {
-			t.Errorf("%+v", r)
+	// relabelling moves no call: the same split with the labels swapped
+	for _, labels := range []map[string]string{nil, {"-home-u-a": "zz", "-home-u-b": "aa"}} {
+		ps, err := Projects([]string{root}, LabelRules{Labels: labels})
+		if err != nil {
+			t.Fatal(err)
 		}
+		reads, err := ReadProjects(ps, "h", time.Time{})
+		if err != nil || len(reads) != 3 {
+			t.Fatalf("%d %v", len(reads), err)
+		}
+		by := map[string]ProjectRead{}
+		for _, r := range reads {
+			by[r.Key] = r
+		}
+		a, b, c := by["-home-u-a"], by["-home-u-b"], by["-home-u-c"]
+		// a full tie goes to the folder whose name sorts first
+		if ids(a.Rows) != "a1,both" || ids(b.Rows) != "early,b1" || a.Elsewhere != 1 || b.Elsewhere != 1 {
+			t.Errorf("%v: a %s (%d), b %s (%d)", labels, ids(a.Rows), a.Elsewhere, ids(b.Rows), b.Elsewhere)
+		}
+		if a.Stats.Suspect != 0 || b.Stats.Suspect != 1 || len(c.Rows) != 0 || c.Stats.Files != 1 {
+			t.Errorf("stats a %+v b %+v c %+v", a.Stats, b.Stats, c.Stats)
+		}
+	}
+}
+
+// A folder that cannot be read whole, or whose session folder is a link, is
+// no empty folder: it stays a source, and its problem withholds its claim.
+func TestProjectsKeepFoldersTheyCannotReadWhole(t *testing.T) {
+	root := projectsRoot(t, map[string][]string{"-home-u-a": {"a1"}, "-home-u-empty": nil})
+	if err := os.MkdirAll(filepath.Join(root, "-home-u-locked", "locked"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	elsewhere := t.TempDir()
+	writeFile(t, filepath.Join(elsewhere, "s.jsonl"), callLine("l1", "2026-11-18T10:00:00Z", ""))
+	if err := os.MkdirAll(filepath.Join(root, "-home-u-linked"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	linked := os.Symlink(elsewhere, filepath.Join(root, "-home-u-linked", "0b5c2f9e-1111-4222-8333-944445555666")) == nil
+
+	// "locked" cannot be listed
+	old := walkDir
+	walkDir = func(root string, fn fs.WalkDirFunc) error {
+		return old(root, func(p string, d fs.DirEntry, err error) error {
+			if err == nil && d.IsDir() && d.Name() == "locked" {
+				if r := fn(p, d, nil); r != nil {
+					return r
+				}
+				if r := fn(p, d, fs.ErrPermission); r != nil {
+					return r
+				}
+				return fs.SkipDir
+			}
+			return fn(p, d, err)
+		})
+	}
+	defer func() { walkDir = old }()
+
+	ps, err := Projects([]string{root}, LabelRules{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "a|locked"
+	if linked {
+		want = "a|linked|locked"
+	}
+	if got := strings.Join(sources(ps), "|"); got != want {
+		t.Fatalf("sources %s, want %s", got, want)
+	}
+	reads, err := ReadProjects(ps, "h", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range reads {
+		switch r.Source {
+		case "a":
+			if len(r.Stats.Unread)+len(r.Stats.Symlinks) != 0 || len(r.Rows) != 1 {
+				t.Errorf("a: %+v", r.Stats)
+			}
+		case "locked":
+			if len(r.Stats.Unread) != 1 || !strings.HasSuffix(r.Stats.Unread[0], "locked") {
+				t.Errorf("locked: %+v", r.Stats)
+			}
+		case "linked":
+			if len(r.Stats.Symlinks) != 1 || len(r.Rows) != 0 {
+				t.Errorf("linked: %+v", r.Stats)
+			}
+		}
+	}
+}
+
+// Below a project folder, a subagents/ with no session folder above it never
+// takes the project folder's name (which holds the home) as its session.
+func TestReadProjectsNeverNamesASessionAfterTheFolder(t *testing.T) {
+	root := projectsRoot(t, map[string][]string{"-home-me-p": {"m1"}})
+	writeFile(t, filepath.Join(root, "-home-me-p", "subagents", "agent-a.jsonl"), callLine("s1", "2026-11-18T10:00:00Z", ""))
+	ps, err := Projects([]string{root}, LabelRules{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads, err := ReadProjects(ps, "h", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, r := range reads[0].Rows {
+		if r.MessageID == "s1" {
+			found = true
+			if r.SessionID != UnknownSession || r.Origin != OriginSubagent {
+				t.Errorf("%+v", r)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no subagent call read")
 	}
 }
