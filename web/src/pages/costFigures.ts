@@ -128,13 +128,24 @@ export type MeterWeek = {
    *  rate the server priced a step at, else the plan valid at the week's
    *  last reading. Null when no plan was valid at all. */
   rate: number | null;
+  /** Points read while the basis was usage (0151): their money is the usage
+   *  charges, so they are neither in usd nor unpriced. */
+  usagePoints: number;
+  /** The whole week is the charges': no step of it was priced by the seat
+   *  and it ended under the usage basis. It leaves no ±1 point of the seat. */
+  usage: boolean;
 };
 
 export type RealFigure = RealCost & {
   /** Points read while no plan was valid: not in the value. */
   unpricedPoints: number;
-  /** The weeks the window spans: each leaves ±1 point. */
+  /** The weeks the window spans that the seat priced: each leaves ±1 point. */
   weeks: number;
+  /** Points read under the usage basis (0151): the charges' money, not in
+   *  the value and not in `points` — the value is the seat's part only. */
+  usagePoints: number;
+  /** Weeks that were the charges' altogether: in neither figure. */
+  usageWeeks: number;
   /** Every point and every week's ±1 point has a plan price. Otherwise the
    *  value is only part of the movement, and no real figure (and no
    *  multiple) may be shown — "no plan price for N of M points" instead. */
@@ -145,19 +156,29 @@ export type RealFigure = RealCost & {
  *  it, every week ±1 point (whole percents) at the dearest rate of that
  *  week, so the range is never narrower than the truth. */
 export function realFromWeeks(weeks: readonly MeterWeek[]): RealFigure {
-  let value = 0, low = 0, high = 0, points = 0, unpriced = 0, priced = true;
+  let value = 0, low = 0, high = 0, points = 0, unpriced = 0, priced = true, usagePoints = 0, usageWeeks = 0;
   for (const w of weeks) {
+    // Points under the usage basis (0151) are the charges' money: not the
+    // seat's, so neither in its value nor in its points.
+    usagePoints += w.usagePoints;
+    unpriced += w.unpricedPoints;
+    if (w.usage) {
+      usageWeeks += 1;
+      value += w.usd;
+      points += Math.max(w.points - w.usagePoints, 0);
+      continue;
+    }
     const top = w.rate ?? 0;
     if (w.rate == null) priced = false;
     value += w.usd;
-    points += w.points;
-    unpriced += w.unpricedPoints;
+    points += Math.max(w.points - w.usagePoints, 0);
     // A week without movement still leaves "less than one point".
     low += w.points >= 1 ? Math.max(w.usd - top, 0) : 0;
     high += w.usd + top;
   }
   if (unpriced > 0) priced = false;
-  return { value, low, high, points, below: points === 0, unpricedPoints: unpriced, weeks: weeks.length, priced };
+  const seatWeeks = weeks.length - usageWeeks;
+  return { value, low, high, points, below: points === 0, unpricedPoints: unpriced, weeks: seatWeeks, priced, usagePoints, usageWeeks };
 }
 
 /** The coverage a credential's real cost is read from: the weekly all-models
@@ -172,9 +193,10 @@ export function pickMeter(meter: readonly MeterCoverage[], key: string, slot: nu
 }
 
 /** A step's points that have no plan price: what the server says, and all of
- *  them when it priced none (usd null). */
-export function stepUnpriced(st: Pick<MeterStep, "points" | "usd" | "unpriced_points">): number {
-  return st.usd == null ? st.points : st.unpriced_points;
+ *  them when it priced none (usd null) — but for the points read under the
+ *  usage basis (0151), whose money is the usage charges, not a plan. */
+export function stepUnpriced(st: Pick<MeterStep, "points" | "usd" | "unpriced_points"> & { usage_points?: number }): number {
+  return st.usd == null ? Math.max(st.points - (st.usage_points ?? 0), 0) : st.unpriced_points;
 }
 
 /** What the priced points of these steps were priced at: the one rate when
@@ -197,13 +219,14 @@ export function stepRate(steps: readonly Pick<MeterStep, "points" | "usd" | "unp
  *  them — each reading at the plan valid when it was read, never at the
  *  bucket's start. A step belongs to the last week that began before the
  *  step's period ended. Movement no step accounts for has no price. */
-export function meterWeeks(cov: MeterCoverage, steps: readonly MeterStep[], plans: readonly CredentialPlan[], bucketMs: number): MeterWeek[] {
+export function meterWeeks(cov: MeterCoverage, steps: readonly MeterStep[], plans: readonly CredentialPlan[], bucketMs: number,
+  bases?: readonly CredentialBasis[] | null): MeterWeek[] {
   const segs = cov.segments && cov.segments.length > 0
     ? cov.segments
     : [{ start_at: cov.baseline_at, end_at: cov.last_at, from_percent: cov.baseline_percent, to_percent: cov.last_percent, reset: false, points: cov.points }];
   const own = steps.filter((s) => s.secret_key === cov.secret_key && s.secret_slot === cov.secret_slot
     && s.source === cov.source && s.window_kind === cov.window_kind);
-  const weeks: MeterWeek[] = segs.map((s) => ({ points: s.points, usd: 0, unpricedPoints: 0, rate: null }));
+  const weeks: MeterWeek[] = segs.map((s) => ({ points: s.points, usd: 0, unpricedPoints: 0, rate: null, usagePoints: 0, usage: false }));
   let stepped = 0;
   for (const st of own) {
     if (st.points === 0) continue;
@@ -214,6 +237,7 @@ export function meterWeeks(cov: MeterCoverage, steps: readonly MeterStep[], plan
     const unpriced = stepUnpriced(st);
     stepped += st.points;
     w.unpricedPoints += unpriced;
+    w.usagePoints += st.usage_points ?? 0;
     w.usd += st.usd ?? 0;
     if (st.points - unpriced > 0 && st.usd != null) w.rate = Math.max(w.rate ?? 0, st.usd / (st.points - unpriced));
   }
@@ -223,8 +247,13 @@ export function meterWeeks(cov: MeterCoverage, steps: readonly MeterStep[], plan
   segs.forEach((s, i) => {
     const w = weeks[i];
     // A week without a priced step still leaves its ±1 point, at the plan
-    // valid at its last reading.
+    // valid at its last reading — unless the basis was usage then (0151):
+    // that week is the charges', the seat priced none of it.
     if (w.rate == null) {
+      if (basisAt(bases, cov.secret_key, cov.secret_slot, new Date(s.end_at)) === "usage") {
+        w.usage = true;
+        return;
+      }
       const p = planAt(plans, cov.secret_key, cov.secret_slot, new Date(s.end_at));
       w.rate = p ? pricePerPoint(p) : null;
     }
@@ -421,11 +450,22 @@ export function basisAt(bases: readonly CredentialBasis[] | null | undefined, ke
  *  its date); never a conversion of the page's own. */
 export type UsageCurrency = { currency: string; counted: number; usd: number | null; charges: number };
 
+/** What the basis was over the window: seat stands for "none set" too (the
+ *  plan prices the meter, as before 0151). */
+export type Regime = CostBasisKind;
+
 export type UsageFigure = {
-  /** The basis at the window's end; null: none set. */
+  /** The basis in effect at the window's end; null: none (none set, or only
+   *  one that starts later). Never a basis that has not begun. */
   basis: CostBasisKind | null;
+  /** The bases that held within the window, in order (seat also for the
+   *  time before the first one). */
+  regimes: Regime[];
   /** More than one basis held within the window. */
   changed: boolean;
+  /** Bases entered to start after the window's end: listed "from <date>",
+   *  in effect nowhere yet. */
+  upcoming: CredentialBasis[];
   /** The charges that reach into the window, as the server cut them. */
   charges: WindowCharge[];
   /** What the charges count, per currency, never added across currencies. */
@@ -436,13 +476,10 @@ export type UsageFigure = {
   uncounted: WindowCharge[];
 };
 
-/** A credential's basis and usage charges over the window; null when it has
- *  neither, and then nothing on the page changes. */
-export function usageFigure(cells: Pick<CostCells, "cost_bases" | "usage_charges">, key: string, slot: number, windowEnd: Date): UsageFigure | null {
-  const bases = (cells.cost_bases ?? []).filter((b) => b.secret_key === key && b.secret_slot === slot);
-  const charges = (cells.usage_charges ?? []).filter((c) => c.secret_key === key && c.secret_slot === slot);
-  if (bases.length === 0 && charges.length === 0) return null;
-  const basis = basisAt(bases, key, slot, windowEnd) ?? bases.at(-1)?.basis ?? null;
+/** The counted parts of charges, per currency in that currency: a dollar
+ *  figure only where every one of them has one; never added across
+ *  currencies. */
+export function usageCurrencies(charges: readonly WindowCharge[]): UsageCurrency[] {
   const by = new Map<string, UsageCurrency>();
   for (const c of charges) {
     if (!(c.counted_amount > 0)) continue;
@@ -453,12 +490,76 @@ export function usageFigure(cells: Pick<CostCells, "cost_bases" | "usage_charges
     u.charges += 1;
     by.set(cur, u);
   }
-  const currencies = [...by.values()].sort((a, b) => a.currency.localeCompare(b.currency));
+  return [...by.values()].sort((a, b) => a.currency.localeCompare(b.currency));
+}
+
+/** The window's start the server cut the charges at (cells.since, sent with
+ *  any basis or charge), else the first period's. */
+export function windowStartOf(cells: Pick<CostCells, "since" | "periods">): Date | null {
+  const s = cells.since ?? cells.periods?.[0];
+  return s ? new Date(s) : null;
+}
+
+/** A credential's basis and usage charges over the window; null when it has
+ *  neither, and then nothing on the page changes. */
+export function usageFigure(cells: Pick<CostCells, "cost_bases" | "usage_charges"> & Partial<Pick<CostCells, "since" | "periods">>,
+  key: string, slot: number, windowEnd: Date): UsageFigure | null {
+  const bases = (cells.cost_bases ?? []).filter((b) => b.secret_key === key && b.secret_slot === slot)
+    .sort((a, b) => Date.parse(a.valid_from) - Date.parse(b.valid_from));
+  const charges = (cells.usage_charges ?? []).filter((c) => c.secret_key === key && c.secret_slot === slot);
+  if (bases.length === 0 && charges.length === 0) return null;
+  const end = windowEnd.getTime();
+  const start = cells.since ? Date.parse(cells.since) : null;
+  // Only what is in effect: a basis that starts later is listed, not used.
+  const basis = basisAt(bases, key, slot, windowEnd);
+  const held = bases.filter((b) => Date.parse(b.valid_from) <= end && (b.valid_to == null || start == null || Date.parse(b.valid_to) > start));
+  const regimes: Regime[] = [];
+  // Before the first basis the plan priced the meter (none set = seat).
+  if (held.length === 0 || (start != null && Date.parse(held[0].valid_from) > start)) regimes.push("seat");
+  for (const b of held) if (regimes.at(-1) !== b.basis) regimes.push(b.basis);
+  const currencies = usageCurrencies(charges);
   const usd = currencies.every((c) => c.usd != null) ? currencies.reduce((a, c) => a + c.usd!, 0) : null;
   return {
-    basis, changed: bases.length > 1, charges, currencies, usd,
+    basis, regimes, changed: regimes.length > 1, upcoming: bases.filter((b) => Date.parse(b.valid_from) > end),
+    charges, currencies, usd,
     uncounted: charges.filter((c) => c.window_amount > 0 && !(c.counted_amount > 0)),
   };
+}
+
+/** The spans [from, to) in ms the counted charges cover within the window,
+ *  cut to the times a usage basis held: what their money is for. */
+export function countedSpans(u: UsageFigure, bases: readonly CredentialBasis[] | null | undefined, key: string, slot: number,
+  windowStart: number, windowEnd: number): [number, number][] {
+  const usage = (bases ?? []).filter((b) => b.secret_key === key && b.secret_slot === slot && b.basis !== "seat")
+    .map((b): [number, number] => [Date.parse(b.valid_from), b.valid_to ? Date.parse(b.valid_to) : Infinity]);
+  const out: [number, number][] = [];
+  for (const c of u.charges) {
+    if (!(c.counted_amount > 0)) continue;
+    const from = Math.max(Date.parse(c.from), windowStart), to = Math.min(Date.parse(c.to), windowEnd);
+    for (const [bf, bt] of usage) {
+      const a = Math.max(from, bf), b = Math.min(to, bt);
+      if (b > a) out.push([a, b]);
+    }
+  }
+  return out.sort((x, y) => x[0] - y[0]);
+}
+
+/** Covey's recomputed list $ of a credential's cells over the given spans:
+ *  each cell's period [p, p + bucket), cut to the window, counts by the part
+ *  of it the spans cover — pro rata by time at the periods the spans begin
+ *  or end in, as the charges themselves are cut. */
+export function listOverSpans(cells: readonly CostCell[], spans: readonly [number, number][], bucketMs: number,
+  windowStart: number, windowEnd: number): number {
+  let list = 0;
+  for (const c of cells) {
+    const p = Date.parse(c.period);
+    const from = Math.max(p, windowStart), to = Math.min(p + bucketMs, windowEnd);
+    if (!(to > from)) continue;
+    let covered = 0;
+    for (const [a, b] of spans) covered += Math.max(0, Math.min(b, to) - Math.max(a, from));
+    if (covered > 0) list += recomputedOf(c) * Math.min(covered / (to - from), 1);
+  }
+  return list;
 }
 
 // --- Per credential --------------------------------------------------------------
@@ -491,10 +592,12 @@ export type AgentFigure = {
 
 /** Why a credential billed by usage has no multiple: "rate" (a counted
  *  charge has no dollar figure: no rate with its date), "noCharge" (nothing
- *  counted in the window), "basisChanged" (the basis changed within the
- *  window: the list covers spans the charges do not), "seatAndUsage" (the
- *  seat's meter and the charges cover different spans). */
-export type NoUsageMultiple = "rate" | "noCharge" | "basisChanged" | "seatAndUsage";
+ *  counted in the window), "spanList" (covey ran nothing at list price over
+ *  the spans the counted charges cover), "basisChanged" (the basis changed
+ *  within the window: the seat's part and the charges' part are different
+ *  money over different spans), "seatAndUsage" (the seat's meter and the
+ *  charges cover different spans). */
+export type NoUsageMultiple = "rate" | "noCharge" | "spanList" | "basisChanged" | "seatAndUsage";
 
 export type CredentialFigures = {
   id: string;
@@ -528,9 +631,13 @@ export type CredentialFigures = {
   basis: CostBasisKind | null;
   /** Its basis history and usage charges over the window; null with neither. */
   usage: UsageFigure | null;
-  /** On the usage basis: covey's recomputed list $ per counted usage $ over
-   *  the window. Only with a dollar figure for every counted charge. */
+  /** On the usage basis: covey's recomputed list $ over the spans the
+   *  counted charges cover (usageList) per counted usage $. Only with a
+   *  dollar figure for every counted charge. */
   usageMultiple: number | null;
+  /** Covey's recomputed list $ over the spans the counted charges cover,
+   *  where the multiple is offered; null otherwise. */
+  usageList: number | null;
   /** The meter's real cost split between covey and the sessions outside it
    *  (#120), per chunk of readings by the chunk's list-price share; null
    *  until a source names a meter, and for a seat with no split step. */
@@ -795,8 +902,12 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
     if (a.key != null && kind !== "api_key") {
       cov = pickMeter(meter, a.key, a.slot!);
       if (cov) {
-        real = realFromWeeks(meterWeeks(cov, steps, plans, bucketMs));
+        real = realFromWeeks(meterWeeks(cov, steps, plans, bucketMs, data.cost_bases));
         aligned = cov.measured_usd ?? null;
+        // Every week of it the charges' (billed by usage all through): the
+        // seat priced nothing here, so it has no real figure of its own —
+        // never "< $x" or $0.00.
+        if (real.weeks === 0 && real.usageWeeks > 0) real = null;
       }
       if (sel.size > 0 || input.layout === "agents") noMultiple = "agents";
       else if (split && !unlinked) noMultiple = "outside";
@@ -809,30 +920,39 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
       if (mult && (outsideUnreported || unlinked)) mult = { kind: "floor", low: mult.low };
     }
 
-    // The basis (0151). Without one, nothing above changes.
+    // The basis (0151). Without one, nothing above changes. The real figure
+    // stays what the server priced, step by step, whatever the basis: under
+    // usage it priced none of the steps, so a seat that changed basis within
+    // the window keeps the dollars of the steps before (or after) the change.
     const usage = a.key == null ? null : usageFigure(data, a.key, a.slot!, windowEnd);
     const basis = usage?.basis ?? null;
-    let usageMultiple: number | null = null;
-    if (usage && basis === "usage") {
-      // The usage charges are the money: the meter's points are not (the
-      // server prices none of them while this basis holds).
-      real = null;
+    let usageMultiple: number | null = null, usageList: number | null = null;
+    const agentsView = sel.size > 0 || input.layout === "agents";
+    if (usage && kind !== "api_key" && !agentsView && usage.regimes.some((r) => r !== "seat")) {
       mult = null;
-      if (sel.size > 0 || input.layout === "agents") noMultiple = "agents";
-      else if (kind === "api_key") noMultiple = null;
-      else if (usage.changed) noMultiple = "basisChanged";
-      else if (usage.currencies.length === 0) noMultiple = "noCharge";
-      else if (usage.usd == null) noMultiple = "rate";
-      else if (usage.usd > 0 && recomputed > 0) { usageMultiple = recomputed / usage.usd; noMultiple = null; }
-      else noMultiple = "noCharge";
-    } else if (usage && basis === "seat_and_usage" && kind !== "api_key" && noMultiple !== "agents") {
-      // The meter's multiple would leave the usage charges out; the charges
-      // cover their own spans, not the meter's.
-      mult = null;
-      noMultiple = "seatAndUsage";
+      if (usage.changed) {
+        // The seat's part and the charges' part are different money over
+        // different spans: no one list covers both.
+        noMultiple = "basisChanged";
+      } else if (usage.regimes[0] === "seat_and_usage") {
+        // The meter's multiple would leave the charges out.
+        noMultiple = "seatAndUsage";
+      } else if (usage.currencies.length === 0) {
+        noMultiple = "noCharge";
+      } else if (usage.usd == null) {
+        noMultiple = "rate";
+      } else {
+        // Billed by usage all through: covey's list over exactly the spans
+        // the counted charges cover, not over the whole window.
+        const from = windowStartOf(data)?.getTime() ?? -Infinity, to = windowEnd.getTime();
+        const list = listOverSpans(a.cells, countedSpans(usage, data.cost_bases, a.key!, a.slot!, from, to), bucketMs, from, to);
+        if (!(usage.usd > 0)) noMultiple = "noCharge";
+        else if (!(list >= 0.01)) noMultiple = "spanList";
+        else { usageList = list; usageMultiple = list / usage.usd; noMultiple = null; }
+      }
     }
 
-    const billed =a.key != null && kind === "api_key" ? billedFigure(input.billed, a.key, a.slot!, windowEnd) : null;
+    const billed = a.key != null && kind === "api_key" ? billedFigure(input.billed, a.key, a.slot!, windowEnd) : null;
 
     const agents: AgentFigure[] = [...per.entries()].map(([aid, p]): AgentFigure => {
       const share = all > 0 ? p.recomputed / all : null;
@@ -882,7 +1002,7 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
       check: reported > 0 ? ((recomputed - reported) / reported) * 100 : null,
       bookedWithoutLine, meter: cov, real, aligned, multiple: mult, noMultiple, split, unlinked, outsideUnreported, billed, bookingCheck, agents,
       listAll: all, everything,
-      basis, usage, usageMultiple,
+      basis, usage, usageMultiple, usageList,
     });
   }
   out.sort((x, y) => (x.id === "" ? 1 : 0) - (y.id === "" ? 1 : 0) || y.recomputed - x.recomputed);
@@ -958,15 +1078,23 @@ export function isSeat(f: Pick<CredentialFigures, "kind" | "meter">): boolean {
 /** Real cost and bill over the whole organisation's credentials, as each tile
  *  shows them: a source is offered (non-null) only when some credential has a
  *  meter or a bill to read. */
-export function perCredentialTotals(figures: readonly CredentialFigures[]): { real: SourceTotal | null; billed: SourceTotal | null } {
+export function perCredentialTotals(figures: readonly CredentialFigures[]): {
+  real: SourceTotal | null; billed: SourceTotal | null;
+  /** The counted usage charges of all credentials (0151), per currency in
+   *  its own: in neither figure above and never added to them. Null when
+   *  none counts in the window. */
+  usage: UsageCurrency[] | null;
+} {
   // The credentials whose tile offers a real cost: a credential of another
-  // kind has none, so it is not one of the credentials the figure is "of";
-  // nor does a seat billed by usage (0151): its money is not its meter.
-  const subs = figures.filter((f) => f.secretKey != null && isSeat(f) && f.basis !== "usage");
-  const meters = subs.filter((f) => f.real != null);
+  // kind has none, so it is not one of the credentials the figure is "of".
+  // A seat billed by usage (0151) is one of them: its real figure covers the
+  // seat's part only, or is missing where the charges were all of its money,
+  // and then the total says that some are without one.
+  const subs = figures.filter((f) => f.secretKey != null && isSeat(f));
+  const meters = subs.filter((f) => f.real != null || f.meter != null);
   let real: SourceTotal | null = null;
   if (meters.length > 0) {
-    const priced = meters.filter((f) => f.real!.priced);
+    const priced = meters.filter((f) => f.real?.priced);
     real = {
       usd: priced.reduce((a, f) => a + f.real!.value, 0),
       low: priced.reduce((a, f) => a + f.real!.low, 0),
@@ -976,11 +1104,14 @@ export function perCredentialTotals(figures: readonly CredentialFigures[]): { re
       reported: null,
       // covey's list beside a meter that sessions outside covey move too
       // would read as covey's multiple over the whole movement (#120): none.
-      recomputed: priced.length > 0 && priced.every((f) => f.aligned != null && f.split == null && !f.outsideUnreported)
+      // Nor beside a seat part of a meter the charges paid the rest of.
+      recomputed: priced.length > 0 && priced.every((f) => f.aligned != null && f.split == null && !f.outsideUnreported
+        && !(f.real!.usagePoints > 0) && !(f.real!.usageWeeks > 0))
         ? priced.reduce((a, f) => a + f.aligned!, 0) : null,
       spans: meters.filter((f) => f.meter != null).map((f) => ({ id: f.id, from: new Date(f.meter!.baseline_at), to: new Date(f.meter!.last_at) })),
     };
   }
+  const counted = usageCurrencies(figures.flatMap((f) => f.usage?.charges ?? []));
   const keys = figures.filter((f) => f.billed != null);
   const measured = keys.filter((f) => f.billed!.state === "measured");
   let billed: SourceTotal | null = null;
@@ -994,7 +1125,7 @@ export function perCredentialTotals(figures: readonly CredentialFigures[]): { re
       spans: measured.filter((f) => f.billed!.window != null).map((f) => ({ id: f.id, from: f.billed!.window!.start, to: f.billed!.window!.end })),
     };
   }
-  return { real, billed };
+  return { real, billed, usage: counted.length > 0 ? counted : null };
 }
 
 // --- The dent: covey and the sessions outside it on one meter (#120) -------------

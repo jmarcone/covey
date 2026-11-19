@@ -6,6 +6,7 @@ import { api, type ExternalModelUsage, type ExternalUsage, type ModelUsageReport
 import { fmtBucket, fmtCount, fmtNumber, fmtUSD, fmtUSDBelow, fmtUSDFixed } from "../format";
 import { DEFAULT_SOURCES, SOURCES, SOURCE_INFO, isPerModel, modelFigure, sourceHint, sourceLabel, type Source } from "./costSources";
 import { isSeat, perCredentialTotals, scopeFigure, type SourceTotal } from "./costFigures";
+import { usageList } from "./CostBasis";
 import { Chip } from "./StackedCostChart";
 import { usableReadings, type CredentialFigures } from "./costFigures";
 import { OrgWide, OutsideMark, SOURCE_COLOR, Swatch, useUsageReadings } from "./StackedCostChart";
@@ -108,11 +109,23 @@ function ModelTable({ rep, figures, agents, outside = null }: {
   // it where there is one: none where the credentials with a figure are not
   // all of them. A failed sync is said in either case: a bill it left out is
   // what it explains best.
+  // The usage charges (0151) are in none of these figures: beside the real
+  // cost, per currency in its own, never added to it or across currencies.
+  const usageNote = per.usage ? t("costs.basis.headlineUsage", { list: usageList(t, per.usage) }) : "";
   const perCell = (c: Source, total: SourceTotal) => {
     const failed = total.syncError ? t("costs.fig.billedLastSyncFailed", { error: total.syncError }) : "";
+    const usage = c === "real" ? usageNote : "";
     if (total.with < total.of) {
-      return { text: "–", why: [t("costs.insights.someWithout", { n: total.of - total.with, m: total.of }), failed].filter(Boolean).join(" · ") };
+      return { text: "–", why: [t("costs.insights.someWithout", { n: total.of - total.with, m: total.of }), failed, usage].filter(Boolean).join(" · ") };
     }
+    if (usage) {
+      const inner = perCellFigure(c, total);
+      return { text: inner.text, why: [inner.why, usage].filter(Boolean).join(" · ") };
+    }
+    return perCellFigure(c, total);
+  };
+  const perCellFigure = (c: Source, total: SourceTotal) => {
+    const failed = total.syncError ? t("costs.fig.billedLastSyncFailed", { error: total.syncError }) : "";
     if (total.with === 0) return { text: "–", why: undefined };
     if (SOURCE_INFO[c].estimate) {
       if (total.below) return { text: fmtUSDBelow(total.high), why: undefined };
@@ -183,6 +196,8 @@ function ModelTable({ rep, figures, agents, outside = null }: {
     notes.push([sourceLabel(t, c) + ":", perCredential, total ? perCell(c, total).why : undefined,
       total ? spansOf(total).join("; ") : undefined].filter(Boolean).join(" "));
   }
+  // Where no real-cost row carries it, the usage charges stand on their own.
+  if (usageNote && !(visible.includes("real") && perBy.real)) notes.push(<span data-usage-note>{usageNote}</span>);
   return (
     <div>
       <div className="flex flex-wrap items-center gap-2" style={{ marginBottom: 8 }} role="group" aria-label={t("costs.filter.source")}>
@@ -320,12 +335,14 @@ function MeterFigures({ f, readings }: { f: CredentialFigures; readings: UsageRe
   const five = own.filter((x) => x.supported && !x.stale && x.window_percent != null).at(-1);
 
   let real: string;
-  // Billed by usage (0151): the meter still moves, but it is not the money.
-  if (f.basis === "usage") real = t("costs.basis.meterNotMoney");
+  // Billed by usage all through (0151): the meter still moves, but it is not
+  // the money. A seat that changed basis keeps its seat part, said as such.
+  const seatPart = r && r.usagePoints > 0 ? ` · ${t("costs.basis.realSeatPart", { n: fmtNumber(r.usagePoints, 0) })}` : "";
+  if (!r && f.usage?.regimes.length === 1 && f.usage.regimes[0] === "usage") real = t("costs.basis.meterNotMoney");
   else if (!r) real = t("costs.fig.noMeter");
   else if (!r.priced) real = r.unpricedPoints > 0 ? t("costs.fig.noPlanPricePoints", { n: r.unpricedPoints, m: r.points }) : t("costs.fig.noPlan");
-  else if (r.below) real = `${fmtUSDBelow(r.high)} · ${t("costs.fig.realBelow")}`;
-  else real = `≈ ${fmtUSD(r.value)} · ${t("costs.fig.realRange", { low: fmtUSD(r.low), high: fmtUSD(r.high), pts: r.points, pp: fmtUSDFixed(r.value / r.points, 4) })}`;
+  else if (r.below) real = `${fmtUSDBelow(r.high)} · ${t("costs.fig.realBelow")}${seatPart}`;
+  else real = `≈ ${fmtUSD(r.value)} · ${t("costs.fig.realRange", { low: fmtUSD(r.low), high: fmtUSD(r.high), pts: r.points, pp: fmtUSDFixed(r.value / r.points, 4) })}${seatPart}`;
 
   let mult: string;
   const e = f.everything;
@@ -348,8 +365,16 @@ function MeterFigures({ f, readings }: { f: CredentialFigures; readings: UsageRe
     mult = `≥ ${times(f.multiple.low)} · ${t("costs.split.multipleFloor")}`;
   } else if (f.noMultiple === "outside") {
     mult = t("costs.split.noMultipleOutside");
-  } else if (f.basis === "usage") {
-    mult = f.usageMultiple != null ? `${times(f.usageMultiple)} · ${t("costs.basis.usageMultipleSub")}` : t("costs.basis.meterNotMoney");
+  } else if (f.usageMultiple != null) {
+    mult = `${times(f.usageMultiple)} · ${t("costs.basis.usageMultipleSub", { list: fmtUSD(f.usageList ?? 0) })}`;
+  } else if (f.noMultiple === "rate") {
+    mult = t("costs.basis.noMultipleRate");
+  } else if (f.noMultiple === "noCharge") {
+    mult = t("costs.basis.noMultipleNoCharge");
+  } else if (f.noMultiple === "spanList") {
+    mult = t("costs.basis.noMultipleSpanList");
+  } else if (f.noMultiple === "basisChanged") {
+    mult = t("costs.basis.noMultipleChanged");
   } else if (f.noMultiple === "seatAndUsage") {
     mult = t("costs.basis.noMultipleBoth");
   } else mult = "–";

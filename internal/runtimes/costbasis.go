@@ -91,7 +91,8 @@ func (s *Store) CostBases(ctx context.Context, orgID, runtimeID uuid.UUID, ord i
 // SetCostBasis appends a basis to the credential at a place, valid from
 // `from` (now when zero), the way SetPlan appends a price: the basis valid at
 // that moment is closed there, one that starts later bounds the new one, and
-// a basis starting at the same moment is ErrBasisExists.
+// a basis starting at the same moment is ErrBasisExists. The basis already in
+// effect at `from` comes back as it is, and nothing is stored.
 func (s *Store) SetCostBasis(ctx context.Context, orgID, runtimeID uuid.UUID, ord int, basis string, from time.Time) (CostBasis, error) {
 	if !ValidBasis(basis) {
 		return CostBasis{}, InvalidCost{`basis must be "seat", "usage" or "seat_and_usage"`}
@@ -111,6 +112,24 @@ func (s *Store) SetCostBasis(ctx context.Context, orgID, runtimeID uuid.UUID, or
 	}
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('basis/' || $1::uuid::text || '/' || $2::text || '#' || $3::int::text))`,
 		orgID, key, slot); err != nil {
+		return CostBasis{}, err
+	}
+	// The same basis as the one in effect then: nothing changes, and no row
+	// is added — a second row would read as a change of basis that is none.
+	var cur CostBasis
+	var curOrd *int16
+	err = tx.QueryRow(ctx, `SELECT runtime_id, ord, secret_key, secret_slot, basis, valid_from, valid_to
+		FROM credential_cost_bases WHERE org_id = $1 AND secret_key = $2 AND secret_slot = $3
+		  AND valid_from <= $4 AND (valid_to IS NULL OR valid_to > $4)`, orgID, key, slot, b.ValidFrom).
+		Scan(&cur.RuntimeID, &curOrd, &cur.SecretKey, &cur.SecretSlot, &cur.Basis, &cur.ValidFrom, &cur.ValidTo)
+	switch {
+	case err == nil && cur.Basis == basis:
+		if curOrd != nil {
+			v := int(*curOrd)
+			cur.Ord = &v
+		}
+		return cur, nil
+	case err != nil && !errors.Is(err, pgx.ErrNoRows):
 		return CostBasis{}, err
 	}
 	var exists bool
@@ -163,14 +182,34 @@ type UsageCharge struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// The bounds of what the columns of 0151 hold: amount NUMERIC(14,4),
+// fx_to_usd NUMERIC(12,6) and > 0.
+const (
+	MaxChargeAmount = 9999999999.9999
+	MinFXToUSD      = 0.000001
+	MaxFXToUSD      = 999999.999999
+)
+
+var minFXDate = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// ErrChargeOverlaps: another usage charge of the credential already covers
+// part of the span. Two charges over the same time would be the same bill
+// counted twice, whatever their currencies.
+var ErrChargeOverlaps = errors.New("another usage charge of this credential already covers part of that span: delete it or enter the span next to it")
+
 // Validate normalises a charge and refuses what cannot be counted.
 func (c *UsageCharge) Validate() error {
 	c.Currency = strings.ToUpper(strings.TrimSpace(c.Currency))
 	if len(c.Currency) != 3 || strings.Trim(c.Currency, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") != "" {
 		return InvalidCost{"currency must be a three-letter code"}
 	}
-	if c.Amount < 0 || math.IsNaN(c.Amount) || math.IsInf(c.Amount, 0) || c.Amount >= 1e10 {
+	if c.Amount < 0 || math.IsNaN(c.Amount) || math.IsInf(c.Amount, 0) {
 		return InvalidCost{"amount must be a non-negative number"}
+	}
+	// The column is NUMERIC(14,4): a larger amount would reach the database
+	// and come back as its error, not as a sentence.
+	if c.Amount > MaxChargeAmount {
+		return InvalidCost{"amount must be at most 9999999999.9999"}
 	}
 	if c.From.IsZero() || c.To.IsZero() {
 		return InvalidCost{"from and to are required"}
@@ -183,13 +222,21 @@ func (c *UsageCharge) Validate() error {
 		c.FXDate = nil
 	}
 	if c.FXDate != nil {
-		if _, err := time.Parse("2006-01-02", *c.FXDate); err != nil {
+		d, err := time.Parse("2006-01-02", *c.FXDate)
+		if err != nil {
 			return InvalidCost{"fx_date must be YYYY-MM-DD"}
+		}
+		// A rate is from a day that was: not before 2000, not after tomorrow
+		// (a day ahead for the time zones east of UTC).
+		if d.Before(minFXDate) || d.After(time.Now().UTC().Truncate(24*time.Hour).Add(24*time.Hour)) {
+			return InvalidCost{"fx_date must lie between 2000-01-01 and tomorrow"}
 		}
 	}
 	if c.FXToUSD != nil {
-		if r := *c.FXToUSD; !(r > 0) || math.IsInf(r, 0) || r >= 1e6 {
-			return InvalidCost{"fx_to_usd must be a positive rate"}
+		// NUMERIC(12,6): a rate below 0.000001 would be stored as 0, one of a
+		// million or more would not fit.
+		if r := *c.FXToUSD; math.IsNaN(r) || r < MinFXToUSD || r > MaxFXToUSD {
+			return InvalidCost{"fx_to_usd must be a rate between 0.000001 and 999999.999999"}
 		}
 	}
 	if c.Currency == "USD" {
@@ -255,15 +302,40 @@ func (s *Store) AddUsageCharge(ctx context.Context, orgID, runtimeID uuid.UUID, 
 	if err := c.Validate(); err != nil {
 		return UsageCharge{}, err
 	}
-	key, slot, err := credentialSecret(ctx, s.pool, orgID, runtimeID, ord)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return UsageCharge{}, err
 	}
-	return scanCharge(s.pool.QueryRow(ctx, `INSERT INTO credential_usage_charges (id, org_id, runtime_id, ord,
+	defer tx.Rollback(ctx)
+	key, slot, err := credentialSecret(ctx, tx, orgID, runtimeID, ord)
+	if err != nil {
+		return UsageCharge{}, err
+	}
+	// One credential's charges never overlap: two over the same time are one
+	// bill entered twice (in any currency), and both would count. The lock
+	// keeps two concurrent adds from each finding the other absent.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('charge/' || $1::uuid::text || '/' || $2::text || '#' || $3::int::text))`,
+		orgID, key, slot); err != nil {
+		return UsageCharge{}, err
+	}
+	var overlaps bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM credential_usage_charges
+		WHERE org_id = $1 AND secret_key = $2 AND secret_slot = $3 AND period_from < $5 AND period_to > $4)`,
+		orgID, key, slot, c.From, c.To).Scan(&overlaps); err != nil {
+		return UsageCharge{}, err
+	}
+	if overlaps {
+		return UsageCharge{}, ErrChargeOverlaps
+	}
+	saved, err := scanCharge(tx.QueryRow(ctx, `INSERT INTO credential_usage_charges (id, org_id, runtime_id, ord,
 		secret_key, secret_slot, amount, currency, period_from, period_to, fx_to_usd, fx_date, note)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::date,$13)
 		RETURNING `+chargeColumns,
 		uuid.New(), orgID, runtimeID, ord, key, slot, c.Amount, c.Currency, c.From, c.To, c.FXToUSD, c.FXDate, c.Note))
+	if err != nil {
+		return UsageCharge{}, err
+	}
+	return saved, tx.Commit(ctx)
 }
 
 // DeleteUsageCharge removes a charge of the credential at a place. A charge

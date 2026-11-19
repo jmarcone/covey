@@ -750,6 +750,9 @@ export type MeterStep = {
   longest_gap_secs: number;
   usd: number | null;
   unpriced_points: number;
+  /** Points read while the basis was usage (0151): the usage charges are
+   *  their money — neither in usd nor unpriced. Absent without one. */
+  usage_points?: number;
 };
 
 /** One week of a credential's meter within the window. */
@@ -783,6 +786,8 @@ export type MeterCoverage = {
   /** The credential's recomputed list $ with created_at in (baseline_at, last_at],
    *  by the lines' own timestamps: what the multiple divides. */
   measured_usd?: number;
+  /** Points read under the usage basis (0151), summed; absent without one. */
+  usage_points?: number;
 };
 
 /** A credential's dated plan price (0145), for measurement only. */
@@ -866,8 +871,9 @@ export type UsageCharge = {
 
 /** A usage charge in the cost cells: with the part the window holds and the
  *  part a usage basis counts, both in its currency, and the counted part in
- *  USD only where it is in USD or a rate with its date was given. */
-export type WindowCharge = UsageCharge & {
+ *  USD only where it is in USD or a rate with its date was given. No note:
+ *  every role reads the cells; the note is in the credential's own list. */
+export type WindowCharge = Omit<UsageCharge, "note"> & {
   window_amount: number;
   counted_amount: number;
   counted_usd: number | null;

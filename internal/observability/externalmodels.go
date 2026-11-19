@@ -93,11 +93,18 @@ func (s *Store) ExternalUsageByModel(ctx context.Context, orgID uuid.UUID, bucke
 	if err != nil {
 		return out, err
 	}
-	_, coverage, err := s.meterSteps(ctx, orgID, bucket, since, plans)
+	// The cost basis (0151) as CostCellsFor reads it: a plan prices nothing
+	// while its credential is billed by usage.
+	bases, err := s.costBasesFor(ctx, orgID, since)
 	if err != nil {
 		return out, err
 	}
-	ext, err := s.externalFor(ctx, orgID, bucket, since, coverage, plans)
+	priced := seatPlans(plans, bases)
+	_, coverage, err := s.meterSteps(ctx, orgID, bucket, since, priced, bases)
+	if err != nil {
+		return out, err
+	}
+	ext, err := s.externalFor(ctx, orgID, bucket, since, coverage, priced)
 	if err != nil {
 		return out, err
 	}

@@ -517,10 +517,25 @@ func (s *Server) handleGetCostBasis(w http.ResponseWriter, r *http.Request) {
 	}
 	bases, err := s.Runtimes.CostBases(r.Context(), p.OrgID, id, ord)
 	if err != nil {
-		mapErr(w, err)
+		s.costErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, bases)
+}
+
+// costErr answers a cost basis or usage charge request that failed for none
+// of the reasons its handler names: "not found" as everywhere, anything else
+// a flat 500 — never the database's wording, which names columns and types
+// and says nothing about what to do.
+func (s *Server) costErr(w http.ResponseWriter, err error) {
+	if errors.Is(err, runtimes.ErrNotFound) {
+		mapErr(w, err)
+		return
+	}
+	if s.Log != nil {
+		s.Log.Error("cost basis or usage charge request failed", "err", err)
+	}
+	writeErr(w, http.StatusInternalServerError, "the cost basis or usage charges could not be read or stored")
 }
 
 // handlePutCostBasis appends a basis (seat | usage | seat_and_usage) valid
@@ -555,7 +570,7 @@ func (s *Server) handlePutCostBasis(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, err.Error())
 		return
 	case err != nil:
-		mapErr(w, err)
+		s.costErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, saved)
@@ -571,7 +586,7 @@ func (s *Server) handleListUsageCharges(w http.ResponseWriter, r *http.Request) 
 	}
 	charges, err := s.Runtimes.UsageCharges(r.Context(), p.OrgID, id, ord)
 	if err != nil {
-		mapErr(w, err)
+		s.costErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, charges)
@@ -616,8 +631,11 @@ func (s *Server) handleAddUsageCharge(w http.ResponseWriter, r *http.Request) {
 	case errors.As(err, &invalid):
 		writeErr(w, http.StatusBadRequest, invalid.Error())
 		return
+	case errors.Is(err, runtimes.ErrChargeOverlaps):
+		writeErr(w, http.StatusConflict, err.Error())
+		return
 	case err != nil:
-		mapErr(w, err)
+		s.costErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, saved)
@@ -636,7 +654,7 @@ func (s *Server) handleDeleteUsageCharge(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := s.Runtimes.DeleteUsageCharge(r.Context(), p.OrgID, id, ord, charge); err != nil {
-		mapErr(w, err)
+		s.costErr(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
