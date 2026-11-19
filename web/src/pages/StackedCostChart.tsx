@@ -23,6 +23,7 @@ import {
   stepRate,
   type CredentialFigures,
   type SplitPeriod,
+  EMPTY_SPLIT_PERIOD,
 } from "./costFigures";
 import { PlanPrice } from "./PlanPrice";
 
@@ -631,11 +632,12 @@ function CredentialTiles({ f, filtered }: { f: CredentialFigures; filtered: bool
         sub={r.unpricedPoints > 0 ? t("costs.fig.noPlanPricePoints", { n: r.unpricedPoints, m: r.points }) : t("costs.fig.noPlan")}
         color={SOURCE_COLOR.real} hatched />);
     } else if (filtered && r) {
-      // With outside sessions on the meter, of covey's part only; without a
-      // split step, at most this much (the meter may carry outside use).
+      // With outside sessions on the meter, of covey's part only, which is
+      // an upper bound (F3b: the unattributed part is a lower one); without
+      // a split step, at most this much (the meter may carry outside use).
       const known = f.agents.filter((x) => x.realShare != null);
       const share = known.reduce((a, x) => a + x.realShare!, 0);
-      const value = known.length === 0 ? "–" : `${f.outsideUnreported ? "≤" : "≈"} ${fmtUSD(share)}`;
+      const value = known.length === 0 ? "–" : `${f.outsideUnreported || f.split ? "≤" : "≈"} ${fmtUSD(share)}`;
       const sub = known.length === 0 ? t("costs.split.agentsUnsplit")
         : f.split ? t("costs.split.shareOfCoveySub", { usd: fmtUSD(f.split.covey_real_usd), whole: fmtUSD(r.value) })
         : t("costs.fig.shareOfRealSub", { usd: fmtUSD(r.value) });
@@ -772,7 +774,7 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
   const splitPer = useMemo(() => {
     if (!f.split || f.secretKey == null) return null;
     const by = splitPerPeriod(data.external, f.secretKey, f.slot!, bucket);
-    return periods.map((p) => by.get(Date.parse(p)) ?? { covey: 0, outside: 0, unsplit: 0, unsplitSteps: 0, unpricedSteps: 0 });
+    return periods.map((p) => by.get(Date.parse(p)) ?? EMPTY_SPLIT_PERIOD);
   }, [f.split, f.secretKey, f.slot, data.external, bucket, periods]);
   // The unsplit part's label, by why its readings were not split: n and m
   // are the numbers as shown.
@@ -788,6 +790,9 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
     return [
       { key: "covey", label: t("costs.split.covey"), color: SPLIT_COLOR.covey, value: sp.covey },
       { key: "outside", label: t("costs.split.outside"), color: SPLIT_COLOR.outside, value: sp.outside },
+      // Neither covey's agents nor the reported sessions explain it (F3b):
+      // booked to nobody.
+      { key: "unattributed", label: t("costs.split.unattributed"), color: SPLIT_COLOR.unattributed, value: sp.unattributed },
       { key: "unsplit", label: unsplitLabel(sp),
         color: SPLIT_COLOR.unsplit, dashed: SPLIT_COLOR.unsplitEdge, value: sp.unsplit },
     ];
@@ -936,6 +941,7 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
       )}
       {showReal && f.split && <p className="muted text-xs mt-1 mb-0" data-split-note>
         {t("costs.split.chartNote")}
+        {(f.split.unattributed_real_usd ?? 0) >= 0.005 && <> {t("costs.split.unattributedNote", { usd: fmtUSD(f.split.unattributed_real_usd) })}</>}
         {splitNotReported > 0 && <> {t("costs.split.unsplitNote", { n: fmtNumber(splitNotReported, 0),
           usd: fmtUSD(f.split.unsplit_real_usd - f.split.outside_unpriced_real_usd) })}</>}
         {f.split.outside_unpriced_steps > 0 && <> {t("costs.split.unsplitUnpricedNote", {
@@ -1012,7 +1018,7 @@ function ColourKey({ split }: { split: boolean }) {
       {items.map(([s, label, h]) => (
         <span key={s} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Swatch color={SOURCE_COLOR[s]} hatched={h} /> {label}</span>
       ))}
-      {split && (["outside", "unsplit"] as const).map((k) => (
+      {split && (["outside", "unattributed", "unsplit"] as const).map((k) => (
         <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 6 }} data-split-key={k}>
           <Swatch color={SPLIT_COLOR[k]} hatched dashed={k === "unsplit" ? SPLIT_COLOR.unsplitEdge : undefined} /> {t(`costs.split.key_${k}`)}
         </span>
