@@ -491,7 +491,7 @@ describe("Costs — the headline", () => {
     const bar = document.querySelector(`[data-period="${H19}"]`)!;
     fireEvent.focus(bar);
     const tip = await screen.findByRole("tooltip");
-    expect(tip.textContent).toMatch(new RegExp(`Unattributed${fmtUSD(38 / 3 * PP).replace(/[$.]/g, "\\$&")}`));
+    expect(tip.textContent).toContain(`Unattributed${fmtUSD(38 / 3 * PP)}`);
     expect(tip.textContent).toMatch(/covey's agents/);
     expect(document.querySelector('[data-split-key="unattributed"]')!.textContent).toMatch(/Real cost unattributed/);
     expect(document.querySelector("[data-split-note]")!.textContent).toContain(
