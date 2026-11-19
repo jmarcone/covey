@@ -1138,19 +1138,65 @@ export function usableReadings(rs: readonly UsageReading[], key: string, slot: n
     .sort((a, b) => Date.parse(a.fetched_at) - Date.parse(b.fetched_at));
 }
 
-/** The meter's whole-percent crossings in each period: "10 % → 11 %". */
-export function meterCrossings(cov: MeterCoverage, steps: readonly MeterStep[]): Map<string, { from: number; to: number; reset: boolean }> {
-  const own = steps
-    .filter((s) => s.secret_key === cov.secret_key && s.secret_slot === cov.secret_slot && s.source === cov.source && s.window_kind === cov.window_kind)
-    .sort((a, b) => Date.parse(a.period) - Date.parse(b.period));
-  const out = new Map<string, { from: number; to: number; reset: boolean }>();
-  let level = cov.baseline_percent;
-  for (const s of own) {
-    const reset = s.resets > 0;
-    const from = reset ? 0 : level;
-    const to = from + s.points;
-    level = to;
-    if (s.points > 0 || reset) out.set(s.period, { from, to, reset });
+/** One drawn reading of the weekly meter's line. */
+export type MeterPoint = {
+  /** The reading's fetched_at, as the server sent it. */
+  at: string;
+  /** The weekly meter in percent. */
+  pct: number;
+  /** The index of the reading's bucket among the chart's periods. */
+  slot: number;
+  /** How far into its bucket the reading lies, 0 to 1. */
+  frac: number;
+  /** The line part it belongs to: a new part begins after every gap, where readings are missing. */
+  part: number;
+  /** The first reading of a new week, read right after the last of the old one
+   *  (no gap between them): the line falls from the previous point to it. */
+  reset: boolean;
+};
+
+/** The start of the bucket after the one that starts at `start`. */
+export function nextBucket(start: number, bucket: string): number {
+  if (bucket === "month") {
+    const d = new Date(start);
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
+  }
+  return start + (bucket === "hour" ? 3600_000 : bucket === "week" ? 7 * 86400_000 : 86400_000);
+}
+
+/** The y of the weekly meter on the chart's right-hand axis: 0 % on the
+ *  baseline, 100 % at the top of the plot. */
+export function meterY(pct: number, padT: number, plotH: number): number {
+  return padT + plotH - (pct / 100) * plotH;
+}
+
+/** The points of the weekly meter's line: the usable readings of the
+ *  credential whose bucket is one of the chart's periods, each with its week
+ *  (the server's segment that holds its time — the server's rule, not a
+ *  second one) and its place in its bucket. A reading in no segment is not
+ *  drawn. Consecutive readings share a part only when their buckets are the
+ *  same or adjacent in calendar time, so a line never crosses an hour the
+ *  axis skips: where readings are missing it breaks. A reset between two
+ *  readings that exist stays in the part and is marked (`reset`): the line
+ *  falls from the old week's last value to the new week's first. */
+export function meterPoints(rs: readonly UsageReading[], cov: MeterCoverage, periods: readonly string[], bucket: string): MeterPoint[] {
+  const segs = (cov.segments ?? []).map((g) => [Date.parse(g.start_at), Date.parse(g.end_at)] as const);
+  if (segs.length === 0) return [];
+  const slots = new Map(periods.map((p, i) => [Date.parse(p), i]));
+  const out: MeterPoint[] = [];
+  let part = -1, lastSeg = -1, lastStart = NaN;
+  for (const r of usableReadings(rs, cov.secret_key, cov.secret_slot, cov.source)) {
+    const at = Date.parse(r.fetched_at);
+    const seg = segs.findIndex(([a, b]) => at >= a && at <= b);
+    const start = bucketStart(at, bucket);
+    const slot = slots.get(start);
+    if (seg < 0 || slot == null) continue;
+    const next = nextBucket(start, bucket);
+    const gap = start !== lastStart && start !== nextBucket(lastStart, bucket);
+    if (gap) part++;
+    out.push({ at: r.fetched_at, pct: r.week_percent!, slot, frac: (at - start) / (next - start), part, reset: !gap && lastSeg >= 0 && seg !== lastSeg });
+    lastSeg = seg;
+    lastStart = start;
   }
   return out;
 }

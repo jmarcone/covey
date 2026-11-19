@@ -209,6 +209,12 @@ picture { display: contents; }
   --cost-origin-subagent: light-dark(#4f46e5, #a78bfa);
   --cost-origin-workflow: light-dark(#7c83f0, #6d5df0);
   --cost-origin-unknown: light-dark(#6b7280, #9ca3af);
+  /* The weekly meter's line over the bars, on its own right-hand axis: a
+     neutral ink, no hue of a source, cost type or agent (ΔE76 ≥ 22.9 from each
+     in both themes), 13.2:1 (light) and 16.7:1 (dark) against --surface-1,
+     16.4:1 and 13.9:1 against --surface-2. It is drawn dashed, which no bar
+     outline is. */
+  --cost-meter: light-dark(#1f1f24, #ececef);
   /* Cost and token types: one blue family, light (cheap, plentiful) to dark
      (dear). Only for types — never for a source or an agent. */
   --cost-type-input: light-dark(#7d9fd0, #9dbbe8);
