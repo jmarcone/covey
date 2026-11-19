@@ -469,7 +469,11 @@ sends no author, so GitHub records the account the token belongs to — with tha
 account's own address, on a public repository. A `git config` in the agent's
 checkout never reaches that request. With this variable the platform adds author
 and committer to the request itself, and puts `GIT_AUTHOR_*`/`GIT_COMMITTER_*`
-into the run's environment for an agent that runs `git commit` in its sandbox.
+into the environment of the run's own process, for an agent that runs
+`git commit` in its sandbox. Two kinds of git process do not get them: a
+`dev agent` sub-run, and the shells `dev exec` and `dev start` open. Nothing
+pushes local git history from there; what a sub-run changes reaches GitHub as
+files through the `commit` action, which does carry the identity.
 
 Use the account's noreply address, `<id>+<login>@users.noreply.github.com`
 (GitHub → Settings → Emails): the commit stays linked to the account and the

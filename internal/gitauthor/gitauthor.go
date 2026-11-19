@@ -12,8 +12,10 @@
 // So the platform sets the identity where the request is made: the daemon puts
 // the agent's identity into the context of every action, and the transport
 // below adds author and committer to a commit-creating request that has none.
-// The same identity goes into the run's environment, for the agent that does
-// run git in its sandbox.
+// The same identity goes into the environment of the run's own process, for
+// the agent that does run git in its sandbox. A `dev agent` sub-run and the
+// shells of `dev exec`/`dev start` do not get it; nothing pushes their local
+// history, and what a sub-run changes goes out through the commit action.
 package gitauthor
 
 import (
