@@ -16,7 +16,7 @@ keine Tool-Ausgabe verlässt den Rechner.
 export COVEY_URL=http://localhost:8494
 export COVEY_API_KEY=covey_…            # Schlüssel eines org_admin- oder security-Sitzes
 covey usage push ~/.claude/projects/<projekt> --source "operator: laptop" \
-  --meter-secret claude_code_oauth_token:0
+  --host laptop --meter-secret claude_code_oauth_token:0
 ```
 
 - `--source` benennt die Sitzungen auf der Kostenseite (1–64 Zeichen; mit
@@ -30,14 +30,14 @@ covey usage push ~/.claude/projects/<projekt> --source "operator: laptop" \
 - `--since 2026-11-18T00:00:00Z` sendet nur Aufrufe ab diesem Zeitpunkt. Weil
   ältere Aufrufe fehlen, sendet ein Push mit `--since` kein `reported_through`
   (siehe unten) und sagt das.
-- `--host NAME` ist der Rechner, unter dem die Aufrufe und die Behauptung
-  abgelegt werden. Standard ist der Name der Maschine, und WSL2 meldet den
-  Windows-Namen; ein Push aus WSL und einer aus Windows würden also als ein
-  Rechner behaupten, obwohl sie verschiedene Transkript-Ablagen lesen. Für
-  **jede Transkript-Ablage ein eigenes `--host`** verwenden: `home-win` und
-  `home-wsl`, ein anderer OS-Benutzer oder ein mit `CLAUDE_CONFIG_DIR`
-  gesetztes Verzeichnis. Mit `--source-per-project` ist es Pflicht (siehe
-  unten).
+- `--host NAME` (Pflicht) ist der Rechner, unter dem die Aufrufe und die
+  Behauptung abgelegt werden. Einen Standard gibt es nicht: Der Name der
+  Maschine enthält oft einen Benutzernamen (`DESKTOP-MARCO`), und WSL2
+  meldet den Windows-Namen; ein Push aus WSL und einer aus Windows würden
+  also als ein Rechner behaupten, obwohl sie verschiedene Transkript-Ablagen
+  lesen. Für **jede Transkript-Ablage ein eigenes `--host`** verwenden:
+  `home-win` und `home-wsl`, ein anderer OS-Benutzer oder ein mit
+  `CLAUDE_CONFIG_DIR` gesetztes Verzeichnis.
 - `--complete` besagt, dass die genannten Verzeichnisse **alle**
   Claude-Code-Transkripte dieses Rechners für diese Quelle enthalten (in der
   Regel das ganze `~/.claude/projects`). Nur dann sendet der Push
@@ -74,12 +74,17 @@ covey usage push ~/.claude/projects/<projekt> --source "operator: laptop" \
   Zählers auf einen Push mit `--complete` wartet. Auch ein Lauf ohne neue
   Aufrufe sendet die Behauptung, also den Push auch auf ruhigen Rechnern
   planen.
-- Eine Zeile mit „usage“, die sich nicht lesen lässt (kaputtes JSON, keine
-  Nachrichten-ID, kein Zeitstempel), zählt als übersprungen, und die Zahl wird
-  ausgegeben. Nur die letzte Zeile einer Datei, die in den letzten 30 Minuten
-  geändert wurde, gilt als noch in Arbeit, und nur wenn ihr Text keinen Zeitstempel enthält, der
-  älter als fünfzehn Minuten ist (eine durch einen Absturz abgeschnittene Zeile,
-  an die der nächste Eintrag angehängt wurde, hat einen); jede andere übersprungene Zeile
+- Jede Zeile muss vollständiges JSON sein. Eine Zeile, die es nicht ist (von
+  einem abgebrochenen Prozess abgeschnitten; ihr „usage“ fehlt dann zuerst,
+  weil der Inhalt davor steht), und eine Zeile mit „usage“, die keinen
+  Aufruf ergibt (keine Nachrichten-ID, kein Zeitstempel), zählt als
+  übersprungen, und die Zahl wird ausgegeben. Nur die letzte Zeile einer
+  Datei, die in den letzten fünfzehn Minuten geändert wurde, also nach dem
+  Zeitpunkt, für den behauptet wird, gilt als noch in Arbeit, und nur wenn
+  ihr Text keinen Zeitstempel enthält, der älter als fünfzehn Minuten ist
+  (eine durch einen Absturz abgeschnittene Zeile, an die der nächste Eintrag
+  angehängt wurde, hat einen); die Behauptung bleibt dann unter dem
+  Änderungszeitpunkt dieser Datei. Jede andere übersprungene Zeile
   verhindert die Behauptung. Aufrufe mit einer Zahl über einer Milliarde oder
   unter null oder mit einem Text über 256 Bytes lehnt covey ab; der Push hält
   sie zurück und listet sie auf. Ein leeres Modell wird als `unknown`
@@ -96,7 +101,10 @@ covey usage push ~/.claude/projects/<projekt> --source "operator: laptop" \
   (das genannte Verzeichnis, wenn es ein Sitzungsordner ist) oder der
   Dateiname eines Haupttranskripts. Alles andere (der Name eines
   Projektordners, eine Agent-Datei tiefer als
-  `subagents/workflows/<Lauf>/`) bekommt die Sitzung `unknown`.
+  `subagents/workflows/<Lauf>/`) bekommt die Sitzung `unknown`. Ein allein
+  genannter Ordner `subagents/` oder `workflows/` enthält Subagent- bzw.
+  Workflow-Aufrufe, mit der Sitzung `unknown` (der Ordner darüber wird nicht
+  angesehen).
 - Mehrere Verzeichnisse sind möglich. Gelesen werden Hauptsitzungen,
   `subagents/` und `workflows/`; gestreamte Kopien eines Aufrufs zählen einmal.
 
@@ -184,8 +192,8 @@ covey usage push ~/.claude/projects --source-per-project --complete --host home-
   abgeleitet, wenn das Home im Ordnernamen sicher bekannt ist, sonst hält
   der Push an. Ein `--label` wird so gesendet, wie es angegeben ist; ein
   `--home-prefix` wird entfernt, nicht gesendet, und was im Ordnernamen
-  darauf folgt, geht als Label hinaus. `--host` ist hier Pflicht, weil der
-  Standard, der Name des Rechners, oft einen Benutzernamen enthält.
+  darauf folgt, geht als Label hinaus. `--host` wird so gesendet, wie es
+  angegeben ist.
 - Jede Quelle wird in eigenen Requests mit eigenem `reported_through`
   gesendet, unter demselben `--host` und `--meter-secret`. Mit `--complete`
   behauptet jede Quelle: Sie ist ein ganzer Projektordner, ganz gelesen, also
@@ -241,7 +249,7 @@ Rechner Transkripte auch anderswo, diese Verzeichnisse ebenfalls nennen oder
 cron:
 
 ```cron
-*/10 * * * * COVEY_URL=http://localhost:8494 covey usage push $HOME/.claude/projects --complete --source "operator: laptop" --meter-secret claude_code_oauth_token:0 --key-file $HOME/.config/covey/usage.key >>$HOME/.cache/covey-usage.log 2>&1
+*/10 * * * * COVEY_URL=http://localhost:8494 covey usage push $HOME/.claude/projects --complete --source "operator: laptop" --host laptop --meter-secret claude_code_oauth_token:0 --key-file $HOME/.config/covey/usage.key >>$HOME/.cache/covey-usage.log 2>&1
 ```
 
 Mit einer Quelle je Projekt:
@@ -257,7 +265,7 @@ systemd (Benutzer-Units):
 [Service]
 Type=oneshot
 Environment=COVEY_URL=http://localhost:8494
-ExecStart=%h/bin/covey usage push %h/.claude/projects --complete --source "operator: laptop" --meter-secret claude_code_oauth_token:0 --key-file %h/.config/covey/usage.key
+ExecStart=%h/bin/covey usage push %h/.claude/projects --complete --source "operator: laptop" --host laptop --meter-secret claude_code_oauth_token:0 --key-file %h/.config/covey/usage.key
 
 # ~/.config/systemd/user/covey-usage.timer
 [Timer]

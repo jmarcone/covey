@@ -186,7 +186,7 @@ func usage() {
   covey config lint       check agent configs for known pitfalls (changes nothing)
   covey plugin lint <f>   check a target-system plugin file (manifest or MCP config)
   covey style stats|check measure texts, or check one against a TONE.md profile
-  covey usage push DIR... --source LABEL   send token counts of Claude Code sessions outside covey (no text)
+  covey usage push        send token counts of Claude Code sessions outside covey (no text): DIR... --host NAME --source LABEL
   covey skills validate   check skill directories or zips against the Agent Skills format
   covey settings [k v]    show the instance's settings, or set one (e.g. signup.mode waitlist)
   covey waitlist          list waitlist codes | new [-label L] [-uses N] [-days D] | revoke <hash>

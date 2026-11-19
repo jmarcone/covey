@@ -114,13 +114,10 @@ const (
 // the intake wants a model on every row.
 const UnknownModel = "unknown"
 
-// MidWriteWindow: an unreadable last line in a file modified this recently is
-// taken for a line still being written, not for damage.
-const MidWriteWindow = 30 * time.Minute
-
 // WatermarkMargin is left between the run's time and the claim, for replies
-// still being written and for clock skew. A broken last line is also only
-// excused when none of its timestamps is older than this.
+// still being written and for clock skew. A broken last line is taken for
+// one still being written only in a file modified within it (after the time
+// the claim is made for), and only when none of its timestamps is older.
 const WatermarkMargin = 15 * time.Minute
 
 // tsInText finds the timestamps in a line too broken to decode.
@@ -151,13 +148,18 @@ type Stats struct {
 	Lines     int // assistant lines with a usage
 	Copies    int // streamed copies dropped by the dedup
 	Synthetic int // placeholder messages left out
-	// Skipped counts lines holding a "usage" that gave no call: unreadable
-	// JSON, no message id, no valid timestamp.
+	// Skipped counts lines that are no well-formed JSON (whatever they hold:
+	// a line cut short loses its "usage" first, the content comes before it)
+	// and lines with a usage that gave no call: no message id, no valid
+	// timestamp.
 	Skipped int
 	// Suspect is the part of Skipped that is not just the last line of a file
-	// modified within MidWriteWindow. Calls may be missing then, so the
+	// modified within WatermarkMargin. Calls may be missing then, so the
 	// caller must not claim to have sent every call.
 	Suspect int
+	// MidWrite is the earliest change time of a file whose broken last line
+	// was taken for one still being written; a claim must stay below it.
+	MidWrite time.Time
 	// Symlinks lists symlinked directories below a root. They are not
 	// followed, so calls below them are not read.
 	Symlinks []string
@@ -225,9 +227,8 @@ func Read(roots []string, host string, since time.Time) ([]Row, Stats, error) {
 
 // read is Read; with project set it reads project folders for
 // --source-per-project: a root without any *.jsonl gives no rows rather than
-// an error, a directory or file that cannot be read is listed in Unread (it
-// withholds the claim of that source only) rather than failing the push, and
-// a session is never named after the root (see place).
+// an error, and a directory or file that cannot be read is listed in Unread
+// (it withholds the claim of that source only) rather than failing the push.
 func read(roots []string, host string, since time.Time, project bool) ([]Row, Stats, error) {
 	var st Stats
 	type kept struct {
@@ -271,7 +272,8 @@ func read(roots []string, host string, since time.Time, project bool) ([]Row, St
 			}
 			session, origin := place(root, abs)
 			st.Files++
-			err = readFile(f, func(l *line, no int) bool {
+			midWrite := false
+			mtime, err := readFile(f, func(l *line, no int) bool {
 				m := l.Message
 				st.Lines++
 				if m.ID == "" {
@@ -327,6 +329,7 @@ func read(roots []string, host string, since time.Time, project bool) ([]Row, St
 				return true
 			}, func(no int, tolerated bool) {
 				st.Skipped++
+				midWrite = midWrite || tolerated
 				if !tolerated {
 					st.Suspect++
 					if len(st.SuspectAt) < MaxListed {
@@ -340,6 +343,9 @@ func read(roots []string, host string, since time.Time, project bool) ([]Row, St
 					continue
 				}
 				return nil, st, fmt.Errorf("read %s: %w", f, err)
+			}
+			if midWrite && (st.MidWrite.IsZero() || mtime.Before(st.MidWrite)) {
+				st.MidWrite = mtime
 			}
 		}
 	}
@@ -378,12 +384,14 @@ func read(roots []string, host string, since time.Time, project bool) ([]Row, St
 // <session>/subagents/workflows/<wf>/<file> a workflow agent, and any other
 // file a main session named after the file. The root may be all projects, one
 // project, or one session's folder (then <session> is the root's own name).
-// Nothing above the root is looked at. A session is named only by a uuid,
-// as Claude Code names session folders and main transcripts: the folder
-// above subagents/ (the root itself when subagents/ lies directly in it, a
-// session folder pushed alone), or a main transcript's file name. Any other
-// name (a project folder's, which holds its home directory, or an agent's
-// file nested deeper than this layout) gives UnknownSession.
+// The root's own name counts for the layout, so a subagents/ or workflows/
+// pushed alone holds subagent or workflow calls; nothing above the root is
+// looked at. A session is named only by a uuid, as Claude Code names session
+// folders and main transcripts: the folder above subagents/ (the root itself
+// when subagents/ lies directly in it, a session folder pushed alone), or a
+// main transcript's file name. Any other name (a project folder's, which
+// holds its home directory, an agent's file nested deeper than this layout,
+// the folder above a subagents/ pushed alone) gives UnknownSession.
 func place(root, abs string) (session, origin string) {
 	rel, err := filepath.Rel(root, abs)
 	if err == nil && rel == "." { // the root is the file itself
@@ -392,13 +400,15 @@ func place(root, abs string) (session, origin string) {
 	if err != nil {
 		rel = filepath.Base(abs)
 	}
-	parts := strings.Split(filepath.ToSlash(rel), "/")
+	// The root's own name counts for the layout (a subagents/ pushed alone
+	// holds subagent calls); nothing above it is looked at.
+	parts := append([]string{filepath.Base(root)}, strings.Split(filepath.ToSlash(rel), "/")...)
 	n := len(parts)
 	sessionAt := func(k int) string { // the directory just above parts[k]
 		if k > 0 {
 			return sessionOf(parts[k-1])
 		}
-		return sessionOf(filepath.Base(root))
+		return UnknownSession
 	}
 	for k := 0; k < n-1; k++ {
 		if parts[k] != "subagents" {
@@ -410,6 +420,9 @@ func place(root, abs string) (session, origin string) {
 		if k+1 < n-1 && parts[k+1] == "workflows" && k+3 == n-1 {
 			return sessionAt(k), OriginWorkflow
 		}
+	}
+	if parts[0] == "workflows" && n == 3 { // a workflows/ pushed alone
+		return UnknownSession, OriginWorkflow
 	}
 	return sessionOf(strings.TrimSuffix(parts[n-1], ".jsonl")), OriginMain
 }
@@ -452,35 +465,51 @@ func visit(p string, d fs.DirEntry, st *Stats, files *[]string) {
 }
 
 // readFile calls each for every assistant line with a usage; each says false
-// when the line gave no call. skip is called for every line with a "usage"
-// that gave none (tolerated: only the last line of a file touched within
-// MidWriteWindow, probably still being written).
-func readFile(path string, each func(l *line, lineNo int) bool, skip func(lineNo int, tolerated bool)) error {
+// when the line gave no call. skip is called for every line that is no
+// well-formed JSON, and for every line with a usage that gave none
+// (tolerated: only a broken last line of a file changed within
+// WatermarkMargin, after the time a claim is made for, whose text holds no
+// older timestamp: probably still being written). It returns the file's
+// change time.
+func readFile(path string, each func(l *line, lineNo int) bool, skip func(lineNo int, tolerated bool)) (time.Time, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return err
+		return time.Time{}, err
 	}
 	defer f.Close()
 	fi, err := f.Stat()
 	if err != nil {
-		return err
+		return time.Time{}, err
 	}
-	recent := clock().Sub(fi.ModTime()) < MidWriteWindow
+	mtime := fi.ModTime()
+	recent := clock().Sub(mtime) < WatermarkMargin
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 1<<20), 64<<20)
-	// An unreadable line, so far the last one; stale when its text holds a
+	// A broken line, so far the last one; stale when its text holds a
 	// timestamp older than the margin (a crash-glued line: the broken record
 	// then the next one appended).
 	pending, pendingStale, pendingNo, no := false, false, 0, 0
 	for sc.Scan() {
 		no++
-		b := sc.Bytes()
-		if len(bytes.TrimSpace(b)) == 0 {
+		b := bytes.TrimSpace(sc.Bytes())
+		if len(b) == 0 {
 			continue
 		}
 		if pending {
 			skip(pendingNo, false)
 			pending = false
+		}
+		// Every line must be whole JSON, before the cheap usage filter: a
+		// line cut short (a killed process) loses its "usage" first, since
+		// the content comes before it, and could have been a call.
+		if !json.Valid(b) {
+			pending, pendingNo, pendingStale = true, no, false
+			for _, m := range tsInText.FindAllSubmatch(b, -1) {
+				if t, ok := parseTS(string(m[1])); ok && clock().Sub(t) > WatermarkMargin {
+					pendingStale = true
+				}
+			}
+			continue
 		}
 		// Cheap filter before decoding, as the script does: most lines are
 		// user turns and tool results without a usage.
@@ -489,12 +518,7 @@ func readFile(path string, each func(l *line, lineNo int) bool, skip func(lineNo
 		}
 		var l line
 		if json.Unmarshal(b, &l) != nil {
-			pending, pendingNo, pendingStale = true, no, false
-			for _, m := range tsInText.FindAllSubmatch(b, -1) {
-				if t, ok := parseTS(string(m[1])); ok && clock().Sub(t) > WatermarkMargin {
-					pendingStale = true
-				}
-			}
+			skip(no, false) // valid JSON of another shape: not a cut line
 			continue
 		}
 		if l.Type != "assistant" || l.Message == nil || l.Message.Usage == nil {
@@ -505,12 +529,12 @@ func readFile(path string, each func(l *line, lineNo int) bool, skip func(lineNo
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return err
+		return mtime, err
 	}
 	if pending {
 		skip(pendingNo, recent && !pendingStale)
 	}
-	return nil
+	return mtime, nil
 }
 
 // Totals sums rows per origin and model, for --dry-run and the tests.

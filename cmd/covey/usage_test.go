@@ -16,7 +16,7 @@ import (
 func TestUsagePushDryRunSendsNothing(t *testing.T) {
 	var out bytes.Buffer
 	// No URL and no key: a dry run must not need either, and must not try to send.
-	err := runUsage([]string{"push", "../../internal/usagepush/testdata/transcripts", "--source", "operator: home", "--dry-run"},
+	err := runUsage([]string{"push", "../../internal/usagepush/testdata/transcripts", "--source", "operator: home", "--host", "home-wsl", "--dry-run"},
 		&out, func(string) string { return "" })
 	if err != nil {
 		t.Fatal(err)
@@ -29,8 +29,9 @@ func TestUsagePushDryRunSendsNothing(t *testing.T) {
 func TestUsagePushRefusesBadInput(t *testing.T) {
 	env := func(string) string { return "" }
 	for _, args := range [][]string{
-		{"push", "--source", "x"}, // no directory
-		{"push", "dir"},           // no source
+		{"push", "--source", "x", "--host", "h"}, // no directory
+		{"push", "dir", "--source", "x"},         // no host: the machine's name is no default
+		{"push", "dir"},                          // no source
 		{"push", "dir", "--source", strings.Repeat("x", 65)},
 		{"push", "dir", "--source", "x", "--since", "yesterday"},
 		{"push", "dir", "--source", "x", "--meter-secret", "k:one"},
@@ -49,10 +50,10 @@ func TestUsagePushRefusesBadInput(t *testing.T) {
 	}
 	// A real push without a URL or a key is refused before anything is sent.
 	dir := t.TempDir()
-	if err := runUsage([]string{"push", dir, "--source", "x"}, &bytes.Buffer{}, env); err == nil || !strings.Contains(err.Error(), "COVEY_URL") {
+	if err := runUsage([]string{"push", dir, "--source", "x", "--host", "h"}, &bytes.Buffer{}, env); err == nil || !strings.Contains(err.Error(), "COVEY_URL") {
 		t.Errorf("no URL: %v", err)
 	}
-	if err := runUsage([]string{"push", dir, "--source", "x", "--url", "http://127.0.0.1:1"}, &bytes.Buffer{}, env); err == nil || !strings.Contains(err.Error(), "COVEY_API_KEY") {
+	if err := runUsage([]string{"push", dir, "--source", "x", "--host", "h", "--url", "http://127.0.0.1:1"}, &bytes.Buffer{}, env); err == nil || !strings.Contains(err.Error(), "COVEY_API_KEY") {
 		t.Errorf("no key: %v", err)
 	}
 }
@@ -174,14 +175,14 @@ func TestUsagePushWatermarkMargin(t *testing.T) {
 }
 
 func TestUsagePushRefusesAnEmptyRootAmongOthers(t *testing.T) {
-	err := runUsage([]string{"push", transcriptDir(t), t.TempDir(), "--source", "x", "--dry-run"}, &bytes.Buffer{}, func(string) string { return "" })
+	err := runUsage([]string{"push", transcriptDir(t), t.TempDir(), "--source", "x", "--host", "h", "--dry-run"}, &bytes.Buffer{}, func(string) string { return "" })
 	if err == nil || !strings.Contains(err.Error(), "no *.jsonl") {
 		t.Fatalf("%v", err)
 	}
 }
 
 func TestUsagePushHostMustBeValidText(t *testing.T) {
-	for _, h := range []string{"a\x00b", "\xff\xfe", strings.Repeat("h", 257)} {
+	for _, h := range []string{"a\x00b", "\xff\xfe", strings.Repeat("h", 257), "", " "} {
 		err := runUsage([]string{"push", transcriptDir(t), "--source", "x", "--host", h, "--dry-run"}, &bytes.Buffer{}, func(string) string { return "" })
 		if err == nil {
 			t.Errorf("host %q accepted", h)
@@ -223,5 +224,46 @@ func TestUsagePushListsTheLinesThatBlockTheClaim(t *testing.T) {
 	if !strings.Contains(out, "bad.jsonl:1\n") || !strings.Contains(out, "bad.jsonl:20\n") || strings.Contains(out, "bad.jsonl:21\n") ||
 		!strings.Contains(out, "and 5 more") || strings.Contains(out, "SECRETTEXT") {
 		t.Errorf("output:\n%s", out)
+	}
+}
+
+// A broken last line is taken for one still being written only in a file
+// changed after the claim time; then the claim stays below that change.
+// One older (20 minutes, inside the old 30-minute window) withholds it, as
+// does a line cut short before its "usage", wherever it is.
+func TestUsagePushBrokenLinesAndTheClaim(t *testing.T) {
+	claim := func(name string, age time.Duration, lines ...string) (time.Time, bool, string) {
+		t.Helper()
+		dir := transcriptDir(t)
+		f := filepath.Join(dir, name)
+		os.WriteFile(f, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
+		at := time.Now().Add(-age)
+		os.Chtimes(f, at, at)
+		bodies, out, _, err := pushTo(t, dir, "--source", "x", "--host", "h1", "--complete")
+		if err != nil || len(bodies) != 1 {
+			t.Fatalf("%s: %v %d", name, err, len(bodies))
+		}
+		rt, ok := bodies[0]["reported_through"].(map[string]any)
+		if !ok {
+			return time.Time{}, false, out
+		}
+		ts, _ := time.Parse(time.RFC3339, rt["h1"].(string))
+		return ts, true, out + " mtime " + at.UTC().Format(time.RFC3339)
+	}
+	call := `{"type":"assistant","timestamp":"2026-11-18T10:00:00Z","message":{"id":"m9","model":"claude-opus-5-5","usage":{"input_tokens":1,"output_tokens":2}}}`
+	cutCall := `{"type":"assistant","message":{"usage":{"input_tok`
+	cutUser := `{"type":"user","message":{"content":"a long answer, cut off by a killed pro`
+	if _, ok, out := claim("old.jsonl", 20*time.Minute, call, cutCall); ok {
+		t.Errorf("a broken last line 20 minutes old: claim sent\n%s", out)
+	}
+	if _, ok, out := claim("cut.jsonl", 2*time.Hour, cutUser, call); ok || !strings.Contains(out, "cut.jsonl:1") {
+		t.Errorf("a line cut before its usage: claim sent\n%s", out)
+	}
+	if _, ok, out := claim("cutlast.jsonl", 20*time.Minute, call, cutUser); ok {
+		t.Errorf("a cut last line 20 minutes old: claim sent\n%s", out)
+	}
+	at, ok, out := claim("fresh.jsonl", time.Minute, call, cutUser)
+	if !ok || !at.Before(time.Now().Add(-time.Minute)) {
+		t.Errorf("a line being written a minute ago: claim %v %v\n%s", at, ok, out)
 	}
 }

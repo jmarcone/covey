@@ -23,10 +23,10 @@ import (
 // outside covey to a covey install (#120, part B). It runs where the
 // transcripts are and needs neither database nor master key.
 //
-//	covey usage push DIR... --source LABEL [--url URL] [--host NAME]
+//	covey usage push DIR... --host NAME --source LABEL [--url URL]
 //	    [--meter-secret KEY[:SLOT]] [--since RFC3339] [--complete]
 //	    [--key-file PATH] [--dry-run] [--json]
-//	covey usage push DIR... --source-per-project (--meter-secret KEY[:SLOT] | --no-meter)
+//	covey usage push DIR... --host NAME --source-per-project (--meter-secret KEY[:SLOT] | --no-meter)
 //	    [--source PREFIX] [--home-prefix HOME]... [--label FOLDER=LABEL]...
 //	    [the flags above]
 //
@@ -64,7 +64,7 @@ type pushSource struct {
 
 func runUsage(args []string, stdout io.Writer, getenv func(string) string) error {
 	if len(args) == 0 || args[0] != "push" {
-		return errors.New("usage: covey usage push DIR... (--source LABEL | --source-per-project (--meter-secret KEY[:SLOT] | --no-meter) [--source PREFIX] [--home-prefix HOME]... [--label FOLDER=LABEL]...) [--url URL] [--host NAME] [--meter-secret KEY[:SLOT]] [--since RFC3339] [--complete] [--key-file PATH] [--dry-run] [--json]")
+		return errors.New("usage: covey usage push DIR... --host NAME (--source LABEL | --source-per-project (--meter-secret KEY[:SLOT] | --no-meter) [--source PREFIX] [--home-prefix HOME]... [--label FOLDER=LABEL]...) [--url URL] [--meter-secret KEY[:SLOT]] [--since RFC3339] [--complete] [--key-file PATH] [--dry-run] [--json]")
 	}
 	fs := flag.NewFlagSet("covey usage push", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -74,7 +74,7 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 	fs.Var(&homes, "home-prefix", "with --source-per-project: the home directory to strip from the folder names, as a path (C:\\Users\\me, /home/me) or encoded (C--Users-me); repeatable; default: read from each folder name")
 	fs.Var(&labelArgs, "label", "with --source-per-project: FOLDER=LABEL labels one project folder; repeatable")
 	url := fs.String("url", "", "covey install, e.g. http://localhost:8494 (default $COVEY_URL)")
-	host := fs.String("host", "", "host name stored on every row and claimed in reported_through (default: this machine's; WSL2 reports the Windows name, so give each transcript store its own, e.g. home-win and home-wsl)")
+	host := fs.String("host", "", "required: host name stored on every row and claimed in reported_through, one per transcript store, e.g. home-win and home-wsl")
 	meter := fs.String("meter-secret", "", "subscription credential sharing the meter, KEY or KEY:SLOT")
 	noMeter := fs.Bool("no-meter", false, "with --source-per-project: the sessions share no subscription meter (a per-use account); --source-per-project needs this or --meter-secret")
 	since := fs.String("since", "", "only calls at or after this time (RFC 3339); no reported_through is sent")
@@ -106,11 +106,6 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 			return errors.New("covey usage push: --source must be 1-64 characters of UTF-8 without NUL")
 		}
 		rules.Prefix = src
-		// The default host, this machine's name, often holds a user name
-		// (DESKTOP-MARCO, marcos-mbp): a per-project push names it.
-		if strings.TrimSpace(*host) == "" {
-			return errors.New("covey usage push: --source-per-project needs --host NAME: the default, this machine's name, often holds a user name")
-		}
 		// covey links a source to its meter per source, from a push that
 		// names it: a new project pushed without --meter-secret would stay
 		// unlinked, and its use would be booked to covey's agents.
@@ -164,12 +159,12 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 			m.SecretSlot = n
 		}
 	}
+	// No default from the machine's name: it often holds a user name
+	// (DESKTOP-MARCO, marcos-mbp), and WSL2 reports the Windows one for
+	// another transcript store.
 	h := strings.TrimSpace(*host)
-	if h == "" {
-		h, _ = os.Hostname()
-	}
 	if h == "" || !usagepush.ValidText(h) {
-		return errors.New("covey usage push: --host is required (1-256 bytes of UTF-8, no NUL) when the host name is unknown")
+		return errors.New("covey usage push: --host NAME is required (1-256 bytes of UTF-8, no NUL), one per transcript store, e.g. home-win and home-wsl")
 	}
 
 	// A real push checks its URL and key before reading anything.
@@ -264,7 +259,13 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 			}
 		}
 		if len(why) == 0 && len(own) == 0 {
-			s.through = map[string]time.Time{h: claimAt}
+			// A line still being written lies in a file changed after the
+			// claim time; the claim stays below that change.
+			at := claimAt
+			if mw := s.st.MidWrite; !mw.IsZero() && !at.Before(mw) {
+				at = mw.Add(-time.Second).Truncate(time.Second)
+			}
+			s.through = map[string]time.Time{h: at}
 		}
 		listed("unreadable line", s.st.SuspectAt, s.st.Suspect)
 		listed("held back", s.st.InvalidWhy, s.st.Invalid)
@@ -326,7 +327,7 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 			fmt.Fprintf(stdout, "%s .. %s\n", sum.First.Format(time.RFC3339), sum.Last.Format(time.RFC3339))
 		}
 		if !*perProject && srcs[0].through != nil {
-			fmt.Fprintf(stdout, "reported_through %s: %s\n", h, claimAt.Format(time.RFC3339))
+			fmt.Fprintf(stdout, "reported_through %s: %s\n", h, srcs[0].through[h].Format(time.RFC3339))
 		}
 		printTotals(stdout, "all", &sum.All)
 		for _, group := range []map[string]*usagepush.Totals{sum.ByOrigin, sum.ByModel} {
@@ -340,7 +341,7 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 				t := usagepush.Summarize(s.rows).All
 				claim := "no reported_through"
 				if s.through != nil {
-					claim = "reported_through " + h + ": " + claimAt.Format(time.RFC3339)
+					claim = "reported_through " + h + ": " + s.through[h].Format(time.RFC3339)
 				}
 				fmt.Fprintf(stdout, "  source %-40q calls %6d  input %12d  output %12d  cache_read %14d  cache_write_5m %12d  cache_write_1h %12d  %s\n",
 					s.name, t.Rows, t.Input, t.Output, t.CacheRead, t.CacheWrite5m, t.CacheWrite1h, claim)
@@ -391,7 +392,7 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 		if *perProject && len(p.batches) > 0 {
 			claim := ""
 			if p.s.through != nil {
-				claim = ", reported_through " + claimAt.Format(time.RFC3339)
+				claim = ", reported_through " + p.s.through[h].Format(time.RFC3339)
 			}
 			fmt.Fprintf(stdout, "  %q: %d calls in %d requests: %d new, %d updated, %d unchanged%s\n",
 				p.s.name, sub.Received, len(p.batches), sub.Inserted, sub.Updated, sub.Unchanged, claim)

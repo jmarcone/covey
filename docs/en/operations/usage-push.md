@@ -15,7 +15,7 @@ counts. No prompt, answer or tool output leaves the machine.
 export COVEY_URL=http://localhost:8494
 export COVEY_API_KEY=covey_…            # a key of an org_admin or security seat
 covey usage push ~/.claude/projects/<project> --source "operator: laptop" \
-  --meter-secret claude_code_oauth_token:0
+  --host laptop --meter-secret claude_code_oauth_token:0
 ```
 
 - `--source` names the sessions on the cost page (1–64 characters; with
@@ -29,13 +29,13 @@ covey usage push ~/.claude/projects/<project> --source "operator: laptop" \
 - `--since 2026-11-18T00:00:00Z` sends only calls from then on. Because older
   calls are left out, a `--since` push sends no `reported_through` (see below)
   and says so.
-- `--host NAME` is the host the calls and the claim are filed under. It
-  defaults to the machine's name, and WSL2 reports the Windows name, so a push
-  from WSL and one from Windows would claim as one host although they read
-  different transcript stores. Use **one distinct `--host` per transcript
-  store**: `home-win` and `home-wsl`, another OS user, or a directory set with
-  `CLAUDE_CONFIG_DIR`. With `--source-per-project` it is required (see
-  below).
+- `--host NAME` (required) is the host the calls and the claim are filed
+  under. There is no default: the machine's name often holds a user name
+  (`DESKTOP-MARCO`), and WSL2 reports the Windows name, so a push from WSL
+  and one from Windows would claim as one host although they read different
+  transcript stores. Use **one distinct `--host` per transcript store**:
+  `home-win` and `home-wsl`, another OS user, or a directory set with
+  `CLAUDE_CONFIG_DIR`.
 - `--complete` says that the directories named hold **every** Claude Code
   transcript of this host for this source (normally the whole
   `~/.claude/projects`). Only then does the push send `reported_through`.
@@ -66,12 +66,15 @@ covey usage push ~/.claude/projects/<project> --source "operator: laptop" \
   held-back call (twenty at most; never their contents). Without `--complete` it sends the calls only and says that
   the meter split waits until a `--complete` push. A run with no new calls
   still sends the claim, so schedule the push even on quiet machines.
-- A line with a usage that cannot be read (broken JSON, no message id, no
-  timestamp) is counted as skipped, and the count is printed. Only the last
-  line of a file changed in the last 30 minutes is taken for a reply still
-  being written, and only if its text holds no timestamp older than fifteen
-  minutes (a line cut off by a crash and followed by the next record has
-  one); any other skipped line sends no claim. Calls with a count
+- Every line must be whole JSON. A line that is not (cut short by a killed
+  process; it loses its `usage` first, as the content comes before it), and
+  a line with a usage that gives no call (no message id, no timestamp), is
+  counted as skipped, and the count is printed. Only the last line of a file
+  changed in the last fifteen minutes, so after the time the claim is made
+  for, is taken for a reply still being written, and only if its text holds
+  no timestamp older than fifteen minutes (a line cut off by a crash and
+  followed by the next record has one); the claim then stays below that
+  file's change time. Any other skipped line sends no claim. Calls with a count
   above one billion or below zero, or with a text over 256 bytes, are
   refused by covey; the push holds them back and lists them. An empty model
   is sent as `unknown`.
@@ -86,7 +89,9 @@ covey usage push ~/.claude/projects/<project> --source "operator: laptop" \
   transcripts: the folder above `subagents/` (the directory named, when it
   is a session folder), or a main transcript's file name. Anything else (a
   project folder's name, an agent file nested deeper than
-  `subagents/workflows/<run>/`) gets the session `unknown`.
+  `subagents/workflows/<run>/`) gets the session `unknown`. A `subagents/`
+  or `workflows/` folder named alone holds subagent or workflow calls, with
+  the session `unknown` (the folder above it is not looked at).
 - Several directories may be named at once. Main sessions, `subagents/` and
   `workflows/` transcripts are read; streamed copies of one call count once.
 
@@ -163,8 +168,7 @@ covey usage push ~/.claude/projects --source-per-project --complete --host home-
   no content: a label is derived only when the home in the folder name is
   known for sure, and otherwise the push stops. A `--label` is sent as you
   give it; a `--home-prefix` is stripped, not sent, and what follows it in
-  the folder name goes out as the label. `--host` is required here, as the
-  default, this machine's name, often holds a user name.
+  the folder name goes out as the label. `--host` is sent as you give it.
 - Each source is sent in its own requests with its own `reported_through`,
   under the same `--host` and `--meter-secret`. With `--complete` each source
   claims: it is one whole project folder, read whole, so it is complete by
@@ -211,7 +215,7 @@ elsewhere too, name those directories as well, or leave `--complete` out.
 cron:
 
 ```cron
-*/10 * * * * COVEY_URL=http://localhost:8494 covey usage push $HOME/.claude/projects --complete --source "operator: laptop" --meter-secret claude_code_oauth_token:0 --key-file $HOME/.config/covey/usage.key >>$HOME/.cache/covey-usage.log 2>&1
+*/10 * * * * COVEY_URL=http://localhost:8494 covey usage push $HOME/.claude/projects --complete --source "operator: laptop" --host laptop --meter-secret claude_code_oauth_token:0 --key-file $HOME/.config/covey/usage.key >>$HOME/.cache/covey-usage.log 2>&1
 ```
 
 With one source per project:
@@ -227,7 +231,7 @@ systemd (user units):
 [Service]
 Type=oneshot
 Environment=COVEY_URL=http://localhost:8494
-ExecStart=%h/bin/covey usage push %h/.claude/projects --complete --source "operator: laptop" --meter-secret claude_code_oauth_token:0 --key-file %h/.config/covey/usage.key
+ExecStart=%h/bin/covey usage push %h/.claude/projects --complete --source "operator: laptop" --host laptop --meter-secret claude_code_oauth_token:0 --key-file %h/.config/covey/usage.key
 
 # ~/.config/systemd/user/covey-usage.timer
 [Timer]

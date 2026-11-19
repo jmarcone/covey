@@ -507,3 +507,60 @@ func TestReadSingleFileRoot(t *testing.T) {
 		t.Fatalf("%+v %v", rows, err)
 	}
 }
+
+// Every line must be whole JSON: a line cut short loses its "usage" first
+// (the content comes before it), so the usage filter alone would pass it by.
+func TestReadCountsLinesCutBeforeTheirUsage(t *testing.T) {
+	dir := t.TempDir()
+	cut := `{"type":"user","message":{"content":"a long answer, cut off by a killed pro`
+	f := filepath.Join(dir, "s.jsonl")
+	writeFile(t, f, callLine("m1", "2026-11-18T10:00:00Z", ""), cut, callLine("m2", "2026-11-18T10:01:00Z", ""))
+	rows, st, err := Read([]string{dir}, "h", time.Time{})
+	if err != nil || len(rows) != 2 || st.Skipped != 1 || st.Suspect != 1 || st.SuspectAt[0] != f+":2" {
+		t.Fatalf("cut line in the middle: %d rows %+v %v", len(rows), st, err)
+	}
+	// valid JSON of any kind is no cut line
+	writeFile(t, f, callLine("m1", "2026-11-18T10:00:00Z", ""), `{"type":"user","message":{"content":"x"}}`, `[1,2]`)
+	_, st, _ = Read([]string{dir}, "h", time.Time{})
+	if st.Skipped != 0 {
+		t.Fatalf("whole lines: %+v", st)
+	}
+	// a cut last line: still being written only in a file changed within
+	// the margin, and then MidWrite holds the change time
+	writeFile(t, f, callLine("m1", "2026-11-18T10:00:00Z", ""), cut)
+	_, st, _ = Read([]string{dir}, "h", time.Time{})
+	fi, _ := os.Stat(f)
+	if st.Skipped != 1 || st.Suspect != 0 || !st.MidWrite.Equal(fi.ModTime()) {
+		t.Fatalf("fresh cut last line: %+v", st)
+	}
+	for _, age := range []time.Duration{16 * time.Minute, 20 * time.Minute, time.Hour} {
+		at := time.Now().Add(-age)
+		os.Chtimes(f, at, at)
+		_, st, _ = Read([]string{dir}, "h", time.Time{})
+		if st.Suspect != 1 || !st.MidWrite.IsZero() {
+			t.Errorf("cut last line %v old: %+v", age, st)
+		}
+	}
+}
+
+// A subagents/ or workflows/ folder pushed alone holds subagent or workflow
+// calls; the folder above it is not looked at, so the session is unknown.
+func TestReadSubagentsFolderAlone(t *testing.T) {
+	root := filepath.Join(t.TempDir(), sess1)
+	writeFile(t, filepath.Join(root, "subagents", "agent-a.jsonl"), callLine("s1", "2026-11-18T10:00:00Z", ""))
+	writeFile(t, filepath.Join(root, "subagents", "workflows", "wf", "agent-b.jsonl"), callLine("w1", "2026-11-18T10:00:00Z", ""))
+	for dir, want := range map[string]map[string]string{
+		filepath.Join(root, "subagents"):              {"s1": OriginSubagent, "w1": OriginWorkflow},
+		filepath.Join(root, "subagents", "workflows"): {"w1": OriginWorkflow},
+	} {
+		rows, _, err := Read([]string{dir}, "h", time.Time{})
+		if err != nil || len(rows) != len(want) {
+			t.Fatalf("%s: %d rows %v", dir, len(rows), err)
+		}
+		for _, r := range rows {
+			if r.Origin != want[r.MessageID] || r.SessionID != UnknownSession {
+				t.Errorf("%s: %+v", dir, r)
+			}
+		}
+	}
+}
