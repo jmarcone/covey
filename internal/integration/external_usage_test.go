@@ -1360,6 +1360,27 @@ func TestExternalUsageHostWithoutAWatermark(t *testing.T) {
 		t.Errorf("after the desktop's push: steps %+v, unsplit %v; want the reading not reported, %v unsplit", m.Steps,
 			m.UnsplitRealUSD, 2*pp)
 	}
+	// The laptop pushes again, its watermark now past the desktop's push (as
+	// a newer uploader every few minutes beside an hourly older one): still
+	// counted, the reading still not reported. On e82d640f the source's
+	// earliest watermark moved on with the laptop's, so the desktop was left
+	// out again and the page flipped back to split (review of e82d640f, F5).
+	up = extUpload("operator: home", out("a", "laptop", h1.Add(5*time.Minute)))
+	up["reported_through"] = map[string]any{"laptop": time.Now().UTC().Add(time.Hour)}
+	res := admin.expect(http.MethodPost, externalPath, up, http.StatusOK)
+	var firstAt, through string
+	for _, h := range res["hosts"].([]any) {
+		if h := h.(map[string]any); h["host"] == "laptop" {
+			firstAt, through = fmt.Sprint(h["first_reported_at"]), fmt.Sprint(h["reported_through"])
+		}
+	}
+	if firstAt == through || firstAt == "<nil>" {
+		t.Errorf("laptop: first_reported_at %s, reported_through %s; want the first watermark's push, earlier", firstAt, through)
+	}
+	m = cellsExternal(t, admin, "days=2&bucket=hour").Meter
+	if len(m.Steps) != 1 || m.Steps[0].Reported || math.Abs(m.UnsplitRealUSD-2*pp) > 1e-6 {
+		t.Errorf("after the laptop's next push: steps %+v, unsplit %v; want the reading still not reported", m.Steps, m.UnsplitRealUSD)
+	}
 
 	// More than 100 hosts in one push are refused.
 	var rows []map[string]any
@@ -1383,9 +1404,76 @@ func TestExternalUsageHostWithoutAWatermark(t *testing.T) {
 		!strings.Contains(msg, "at most 100") {
 		t.Errorf("39 more hosts: HTTP %d %s; want 400 naming 101 hosts, at most 100", code, msg)
 	}
-	res := admin.expect(http.MethodPost, externalPath, extUpload("operator: home", hosts("r", 38)...), http.StatusOK)
+	res = admin.expect(http.MethodPost, externalPath, extUpload("operator: home", hosts("r", 38)...), http.StatusOK)
 	if hs, _ := res["hosts"].([]any); len(hs) != 100 {
 		t.Errorf("%d hosts stored, want 100 (none of the refused push)", len(hs))
+	}
+
+	// Two pushes at once passed the bound by one (101 active, as a race
+	// leaves it): a push of hosts that were active already is taken — on
+	// e82d640f every later push was refused for up to 7 days — and one that
+	// names a new host is refused (review of e82d640f, F6).
+	f.exec(t, `INSERT INTO external_usage_hosts (org_id, source, host, pushed_at) VALUES ($1, 'operator: home', 'raced', now())`, f.org)
+	admin.expect(http.MethodPost, externalPath, extUpload("operator: home", out("a", "laptop", h1.Add(5*time.Minute)),
+		out("b", "desktop", h1.Add(6*time.Minute))), http.StatusOK)
+	body, _ = json.Marshal(extUpload("operator: home", out("a", "laptop", h1.Add(5*time.Minute)), out("n", "new-host", h1.Add(5*time.Minute))))
+	if code, msg := postRaw(t, admin, body); code != http.StatusBadRequest || !strings.Contains(msg, "102 hosts") {
+		t.Errorf("a new host at 101 active: HTTP %d %s; want 400 naming 102 hosts", code, msg)
+	}
+}
+
+// The floor's list leaves out what began before since (review of e82d640f,
+// finding 3). since is a day ago, base half an hour before it: readings at
+// base + 20 min (before since) and base + 70 min (+10 points), so the
+// range's one step spans (base + 20, base + 70] across since. In it covey
+// has a line spread from base (began before the step), one that began at
+// base + 25 (before since, not spread), and the outside sessions two calls
+// of one size, at base + 25 (before since) and base + 50. The floor list is
+// the second call alone: half the step's outside list, none of covey's.
+func TestExternalUsageFloorListLeavesOutWhatBeganBeforeSince(t *testing.T) {
+	base := time.Now().UTC().Add(-24*time.Hour - 30*time.Minute)
+	_, admin, f, cred, _ := meterSeatFixture(t, "boden", base, []struct {
+		at  time.Time
+		pct float64
+	}{{base.Add(-30 * time.Hour), 10}, {base.Add(20 * time.Minute), 20}, {base.Add(70 * time.Minute), 30}})
+	f.line(t, cred, base.Add(60*time.Minute), 1_000_000)
+	f.exec(t, `UPDATE model_usage SET started_at = $1 WHERE created_at = $2`, base, base.Add(60*time.Minute))
+	f.line(t, cred, base.Add(65*time.Minute), 1_000_000)
+	f.exec(t, `UPDATE model_usage SET started_at = $1 WHERE created_at = $2`, base.Add(25*time.Minute), base.Add(65*time.Minute))
+	out := func(id string, at time.Time) map[string]any {
+		r := extRow(id, at, "claude-opus-5-5", 50_000)
+		r["input"], r["cache_read"], r["cache_write_1h"], r["host"] = 0, 0, 0, "laptop"
+		return r
+	}
+	up := extUpload("operator: home", out("a", base.Add(25*time.Minute)), out("b", base.Add(50*time.Minute)))
+	up["meter_credential"] = map[string]any{"secret_key": "claude_code_oauth_token", "secret_slot": 0}
+	up["reported_through"] = map[string]any{"laptop": time.Now().UTC()}
+	admin.expect(http.MethodPost, externalPath, up, http.StatusOK)
+
+	m := cellsExternal(t, admin, "days=1&bucket=hour").Meter
+	if len(m.Steps) != 1 || len(m.Credentials) != 1 || m.Steps[0].RealUSD == nil {
+		t.Fatalf("steps %+v; want the one priced step across since", m.Steps)
+	}
+	st, c := m.Steps[0], m.Credentials[0]
+	if st.CoveyListUSD <= 0 || st.ExternalListUSD <= 0 || math.Abs(m.FloorListUSD-st.ExternalListUSD/2) > 1e-9 ||
+		math.Abs(c.FloorListUSD-m.FloorListUSD) > 1e-9 {
+		t.Errorf("step lists covey %v outside %v; floor list %v (seat %v); want half the outside list, %v", st.CoveyListUSD,
+			st.ExternalListUSD, m.FloorListUSD, c.FloorListUSD, st.ExternalListUSD/2)
+	}
+	if !st.Split || math.Abs(m.SplitExternalFloorListUSD-st.ExternalListUSD/2) > 1e-9 || m.SplitCoveyFloorListUSD != 0 {
+		t.Errorf("split %v, floor lists outside %v covey %v; want split, %v, 0", st.Split, m.SplitExternalFloorListUSD,
+			m.SplitCoveyFloorListUSD, st.ExternalListUSD/2)
+	}
+	// Over two days nothing is cut: the floor list is the metered list.
+	m = cellsExternal(t, admin, "days=2&bucket=hour").Meter
+	var metered float64
+	for _, st := range m.Steps {
+		if st.RealUSD != nil {
+			metered += st.CoveyListUSD + st.ExternalListUSD
+		}
+	}
+	if metered <= 0 || math.Abs(m.FloorListUSD-metered) > 1e-9 {
+		t.Errorf("two days: floor list %v, metered %v; want them equal", m.FloorListUSD, metered)
 	}
 }
 

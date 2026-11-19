@@ -71,11 +71,19 @@ CREATE TABLE external_usage_meters (
 -- reported_through: a machine that pushed or had a call in the 7 days before
 -- a reading is active for it. NULL reported_through: the host's rows came
 -- without one.
+--
+-- first_reported_at is the push that brought the host's first watermark, set
+-- once and never moved: since when the source's uploader claims watermarks.
+-- A host of the source that never sent one and has neither pushed nor had a
+-- call since then is a name from before (not waited for); one that has is an
+-- older uploader still running, and is waited for.
 CREATE TABLE external_usage_hosts (
-    org_id           UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    source           TEXT NOT NULL,
-    host             TEXT NOT NULL,
-    reported_through TIMESTAMPTZ,
-    pushed_at        TIMESTAMPTZ NOT NULL,
-    PRIMARY KEY (org_id, source, host)
+    org_id            UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    source            TEXT NOT NULL,
+    host              TEXT NOT NULL,
+    reported_through  TIMESTAMPTZ,
+    first_reported_at TIMESTAMPTZ,
+    pushed_at         TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (org_id, source, host),
+    CHECK ((reported_through IS NULL) = (first_reported_at IS NULL))
 );

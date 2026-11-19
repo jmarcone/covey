@@ -1702,3 +1702,278 @@ func TestUnmarkedBefore(t *testing.T) {
 		}
 	}
 }
+
+// Review of e82d640f, F5: a newer uploader pushes every 15 minutes with
+// watermarks from 09:00, an older one hourly without from 09:20. Dated by
+// the earliest of the current watermarks (e82d640f), the older machine was
+// left out whenever the newer one's latest watermark had passed its latest
+// push, 45 minutes of each hour, and the split flipped on and off. Dated by
+// the first watermark's arrival (watermarksFrom), it is counted from its
+// first push after 09:00 on, at every minute. A host the table has no
+// first_reported_at for is dated by its watermark.
+func TestWatermarksFromStaysPut(t *testing.T) {
+	t0 := tm("09:00")
+	last := func(now time.Time, first time.Time, every time.Duration) time.Time {
+		return first.Add(now.Sub(first) / every * every)
+	}
+	oldDrops, newDrops := 0, 0
+	for now := t0.Add(20 * time.Minute); now.Before(t0.Add(4 * time.Hour)); now = now.Add(time.Minute) {
+		mark := last(now, t0, 15*time.Minute)
+		first := t0
+		hosts := []ExternalHost{
+			{Host: "laptop", ReportedThrough: &mark, FirstReportedAt: &first, PushedAt: mark},
+			{Host: "desktop", PushedAt: last(now, t0.Add(20*time.Minute), time.Hour)},
+		}
+		e, ok := watermarksFrom(hosts)
+		if !ok || !e.Equal(t0) {
+			t.Fatalf("at %s: from %v %v, want 09:00", now.Format("15:04"), e, ok)
+		}
+		if unmarkedBefore(hosts[1].PushedAt, nil, e) {
+			newDrops++
+		}
+		if unmarkedBefore(hosts[1].PushedAt, nil, mark) {
+			oldDrops++
+		}
+	}
+	if newDrops != 0 || oldDrops < 100 {
+		t.Errorf("the hourly machine left out %d minutes (on e82d640f's rule %d); want 0 (and the old rule flipping)", newDrops, oldDrops)
+	}
+	w := tm("11:00")
+	if e, ok := watermarksFrom([]ExternalHost{{Host: "a", ReportedThrough: &w}, {Host: "b"}}); !ok || !e.Equal(w) {
+		t.Errorf("without first_reported_at: %v %v, want the watermark", e, ok)
+	}
+	if _, ok := watermarksFrom([]ExternalHost{{Host: "b"}}); ok {
+		t.Error("a source without a watermark has a start")
+	}
+}
+
+// Review of e82d640f, finding 1: a share takes each spread line at its
+// proportional part, so a back-loaded turn's list lands in the chunk before
+// its use; the parts' slack covers the share's whole range. At k* = 0.1 and
+// $1 a point every true multiple is 10×: a covey line of $100 over two
+// readings, all its use in the second, beside $100 outside in the first
+// (e82d640f: outside "≥ 12.5×"), and the same front-loaded with $300 outside
+// (covey "≥ 12.5×").
+func TestSplitSeatShareRangeOfSpreadLines(t *testing.T) {
+	a := uuid.MustParse("00000000-0000-0000-0000-0000000000a1")
+	for _, c := range []struct {
+		name   string
+		points [2]float64
+		out    float64
+	}{{"back-loaded", [2]float64{10, 10}, 100}, {"front-loaded", [2]float64{40, 0}, 300}} {
+		ss := steps10(shareStep{Points: c.points[0], LOut: c.out, SrcOut: map[string]float64{"src": c.out}, Reported: true},
+			shareStep{Points: c.points[1], Reported: true})
+		spreadLine(ss, 1, ss[0].From, ss[1].At, a, 100)
+		tot, _ := splitSeat(meterSeat{"seat", 0}, []string{"src"}, ss)
+		if f := tot.SplitExternalFloorListUSD / (tot.ExternalRealUSD + tot.SplitExternalSlackUSD); f > 10+1e-9 {
+			t.Errorf("%s: the outside sessions' floor %.2f×, over the true 10×", c.name, f)
+		}
+		if f := tot.SplitCoveyFloorListUSD / (tot.CoveyRealUSD + tot.SplitCoveySlackUSD); f > 10+1e-9 {
+			t.Errorf("%s: covey's floor %.2f×, over the true 10×", c.name, f)
+		}
+		if !near(tot.SplitExternalSlackPoints+tot.SplitCoveySlackPoints, tot.SplitExternalSlackUSD+tot.SplitCoveySlackUSD) {
+			t.Errorf("%s: slack points %v + %v, $ %v + %v; want the same at $1", c.name, tot.SplitExternalSlackPoints,
+				tot.SplitCoveySlackPoints, tot.SplitExternalSlackUSD, tot.SplitCoveySlackUSD)
+		}
+	}
+	// No spread line: the range adds nothing (the slack of e82d640f).
+	tot, _ := splitSeat(meterSeat{"seat", 0}, []string{"src"}, steps10(shareStep{Points: 6, LOut: 30, LCov: 30, Reported: true}))
+	if !near(tot.SplitExternalSlackUSD, 1) || !near(tot.SplitCoveySlackUSD, 1) {
+		t.Errorf("no spread line: slack %v / %v, want 1 / 1", tot.SplitExternalSlackUSD, tot.SplitCoveySlackUSD)
+	}
+}
+
+// Review of e82d640f, finding 3: the floor's list leaves out what began
+// before since. A $150 line over two readings, all its use (15 points) in
+// the first; the second holds $50 outside (5 points) and is the range. The
+// metered list is $125 ($75 of the line, its proportional part), and
+// 125 / (5 + 2) read "at least 17.86×" for a true 10×; the floor list is $50:
+// 7.14×. The calls and the lines that were not spread but began before since
+// (BeforeSinceOut / BeforeSinceCov, from stepLists) are left out too, per
+// party; without since the floor lists are the lists.
+func TestSplitSeatFloorList(t *testing.T) {
+	a := uuid.MustParse("00000000-0000-0000-0000-0000000000a1")
+	ss := steps10(shareStep{Points: 15, Reported: true}, shareStep{Points: 5, LOut: 50, SrcOut: map[string]float64{"src": 50}, Reported: true})
+	spreadLine(ss, 1, ss[0].From, ss[1].At, a, 150)
+	tot, steps := splitSeatSince(meterSeat{"seat", 0}, []string{"src"}, ss, ss[1].From.Add(time.Second))
+	if len(steps) != 1 || !near(steps[0].CoveyListUSD+steps[0].ExternalListUSD, 125) || !near(tot.FloorListUSD, 50) ||
+		!near(tot.SplitExternalFloorListUSD, 50) || !near(tot.SplitCoveyFloorListUSD, 0) || tot.FloorListUSD/(tot.RealUSD+2) > 10 {
+		t.Errorf("metered %v, floor list %v (outside %v, covey %v), real %v; want 125, 50 (50, 0), floor ≤ 10×",
+			steps[0].CoveyListUSD+steps[0].ExternalListUSD, tot.FloorListUSD, tot.SplitExternalFloorListUSD, tot.SplitCoveyFloorListUSD, tot.RealUSD)
+	}
+	if m := meterSums([]ExternalMeterTotal{tot, tot}, nil); !near(m.FloorListUSD, 100) || !near(m.SplitExternalFloorListUSD, 100) {
+		t.Errorf("the whole: floor list %v, outside %v; want 100, 100", m.FloorListUSD, m.SplitExternalFloorListUSD)
+	}
+	ss = steps10(shareStep{Points: 6, LOut: 30, LCov: 40, BeforeSinceOut: 10, BeforeSinceCov: 15, Reported: true})
+	tot, _ = splitSeatSince(meterSeat{"seat", 0}, []string{"src"}, ss, ss[0].From.Add(time.Minute))
+	if !near(tot.FloorListUSD, 45) || !near(tot.SplitExternalFloorListUSD, 20) || !near(tot.SplitCoveyFloorListUSD, 25) ||
+		!near(tot.SplitExternalListUSD, 30) || !near(tot.SplitCoveyListUSD, 40) {
+		t.Errorf("floor list %v (outside %v, covey %v), lists %v / %v; want 45 (20, 25), 30 / 40", tot.FloorListUSD,
+			tot.SplitExternalFloorListUSD, tot.SplitCoveyFloorListUSD, tot.SplitExternalListUSD, tot.SplitCoveyListUSD)
+	}
+	ss = steps10(shareStep{Points: 15, Reported: true}, shareStep{Points: 5, LOut: 50, Reported: true})
+	spreadLine(ss, 1, ss[0].From, ss[1].At, a, 150)
+	if tot, _ := splitSeat(meterSeat{"seat", 0}, []string{"src"}, ss); tot.FloorListUSD != 200 ||
+		tot.SplitCoveyFloorListUSD != tot.SplitCoveyListUSD || tot.SplitExternalFloorListUSD != tot.SplitExternalListUSD {
+		t.Errorf("without since: floor list %v, split %v / %v of %v / %v; want the lists", tot.FloorListUSD,
+			tot.SplitExternalFloorListUSD, tot.SplitCoveyFloorListUSD, tot.SplitExternalListUSD, tot.SplitCoveyListUSD)
+	}
+}
+
+// Review of e82d640f, finding 4: one booking without a line in a chunk with
+// list made it incomplete (no unattributed part), so the other machine's
+// points beside covey's $10 and the outside sessions' $10 (22 points, k
+// 0.11: 17.8 beyond the rate) were all split, ~9 of them booked to covey.
+// A lineless step no more joins a chunk with list than the other way round:
+// it is a chunk of its own, covey's, and the 22 points keep their
+// unattributed 17.8 — after closed chunks and inside an open one alike.
+func TestSplitSeatLinelessStepNeverJoinsAListChunk(t *testing.T) {
+	x := uuid.MustParse("00000000-0000-0000-0000-0000000000a1")
+	pre := []shareStep{{Points: 10, LCov: 100, Reported: true}, {Points: 10, LCov: 100, Reported: true}}
+	unl := shareStep{Points: 1, UnlinedBookings: 1, UnlinedAgents: map[uuid.UUID]float64{x: 0.1}, Reported: true}
+	list := shareStep{Points: 22, LCov: 10, LOut: 10, Reported: true}
+	// Inside an open chunk the covey point before the lineless one is a
+	// chunk of its own that extends the stretch: k = 23/210.
+	for _, c := range []struct {
+		name   string
+		in     []shareStep
+		k      float64
+		before float64
+	}{
+		{"after closed chunks", append(append([]shareStep{}, pre...), unl, list), 0.11, 1},
+		{"inside an open chunk", append(append([]shareStep{}, pre...), shareStep{Points: 1, LCov: 10, Reported: true}, unl, list), 23.0 / 210, 2},
+	} {
+		ss := steps10(c.in...)
+		tot, steps := splitSeat(meterSeat{"seat", 0}, []string{"src"}, ss)
+		lastStep := steps[len(steps)-1]
+		u := 22 - 2 - c.k*20
+		part := (22 - u) / 2
+		if !nearP(tot.PointsPerListUSD, c.k) || !near(lastStep.UnattributedPoints, u) || !nearP(lastStep.CoveyRealUSD, part) ||
+			!nearP(lastStep.ExternalRealUSD, part) || !near(tot.CoveyRealUSD, 20+c.before+part) || tot.IncompleteChunks != 1 {
+			t.Errorf("%s: k %v, last step unattributed %v covey %v outside %v; covey %v, incomplete %d; want %v, %v, %v, %v, %v, 1",
+				c.name, tot.PointsPerListUSD, lastStep.UnattributedPoints, lastStep.CoveyRealUSD, lastStep.ExternalRealUSD,
+				tot.CoveyRealUSD, tot.IncompleteChunks, c.k, u, part, part, 20+c.before+part)
+		}
+		reasons := make([]string, len(ss))
+		for i := range ss {
+			reasons[i] = stepReason(ss[i])
+		}
+		_, chunks := seatChunks(ss, reasons)
+		for j, ch := range chunks {
+			for _, k := range ch.steps {
+				lineless := ss[k].UnlinedBookings > 0 && ss[k].LOut+ss[k].LCov == 0
+				if lineless && ch.list() > 0 {
+					t.Errorf("%s: chunk %d has list and the lineless step %d", c.name, j, k)
+				}
+			}
+		}
+	}
+}
+
+// The page's "at least" claims under the model the bounds assume (the
+// outside review of e82d640f, its fuzz): the meter moves k* = 0.1 points per
+// list $ of every call, plus another machine's points and covey's use
+// without a line, read in whole percents with up to a point of lag; spread
+// lines with their use anywhere in their run, and since anywhere. Then k ≥
+// k*, the part beyond the rate is at most the other machine's points, and
+// every floor — the lead's (FloorListUSD over the real cost and 2 points),
+// the outside sessions', covey's and both together (their floor lists over
+// their real parts and slack) — is at most the true 10×.
+func TestSplitSeatFloorsHoldUnderTheModel(t *testing.T) {
+	const kStar = 0.1
+	r := mathrand.New(mathrand.NewSource(11))
+	ag := uuid.MustParse("00000000-0000-0000-0000-0000000000a1")
+	for iter := 0; iter < 30000; iter++ {
+		n := 2 + r.Intn(25)
+		ss := make([]shareStep, n)
+		lo, lc, x, un, line := make([]float64, n), make([]float64, n), make([]float64, n), make([]float64, n), make([]float64, n)
+		for i := range ss {
+			if r.Intn(2) == 0 {
+				lo[i] = float64(r.Intn(60))
+			}
+			if r.Intn(2) == 0 {
+				lc[i] = float64(r.Intn(60))
+			}
+			if r.Intn(5) == 0 {
+				x[i] = float64(r.Intn(15))
+			}
+			if r.Intn(12) == 0 {
+				un[i] = r.Float64() * 2
+				ss[i].UnlinedBookings, ss[i].UnlinedAgents = 1, map[uuid.UUID]float64{ag: 0.2}
+			}
+			ss[i].Reported = true
+		}
+		ss = steps10(ss...)
+		for i := range ss {
+			if lo[i] > 0 {
+				ss[i].LOut, ss[i].SrcOut = lo[i], map[string]float64{"s1": lo[i] * 0.3, "s2": lo[i] * 0.7}
+			}
+			if lc[i] > 0 {
+				addCovList(&ss[i], ag, lc[i])
+			}
+		}
+		for s := r.Intn(3); s > 0; s-- {
+			a := r.Intn(n)
+			b := a + r.Intn(n-a)
+			if b == a {
+				continue
+			}
+			w := float64(10 + r.Intn(150))
+			spreadLine(ss, b, ss[a].From.Add(time.Duration(r.Intn(int(10*time.Minute)-1))),
+				ss[b].From.Add(time.Duration(1+r.Intn(int(10*time.Minute)-1))), ag, w)
+			ws, sum := make([]float64, b-a+1), 0.0
+			for j := range ws {
+				if r.Intn(3) != 0 {
+					ws[j] = r.Float64()
+				}
+				sum += ws[j]
+			}
+			if sum == 0 {
+				ws[len(ws)-1], sum = 1, 1
+			}
+			for j := range ws {
+				line[a+j] += w * ws[j] / sum
+			}
+		}
+		cum, prev := 0.0, 0.0
+		for i := range ss {
+			cum += kStar*(lo[i]+lc[i]+line[i]) + x[i] + un[i]
+			read := math.Max(prev, math.Floor(cum-r.Float64()))
+			ss[i].Points, prev = read-prev, read
+		}
+		var since time.Time
+		si := 0
+		if r.Intn(2) == 0 {
+			si = r.Intn(n)
+			since = ss[si].At.Add(-time.Second)
+		}
+		tot, _ := splitSeatSince(meterSeat{"seat", 0}, []string{"s1", "s2"}, ss, since)
+		fail := func(what string, v float64) {
+			t.Fatalf("iteration %d: %s %.4f; steps %+v, since step %d", iter, what, v, ss, si)
+		}
+		if k := tot.PointsPerListUSD; k != nil && *k < kStar-1e-9 {
+			fail("k under k*", *k)
+		}
+		var xin float64
+		for i := si; i < n; i++ {
+			xin += x[i]
+		}
+		if beyond := tot.UnattributedPoints - tot.UnattributedNoCallPoints; beyond > xin+1e-6 {
+			fail("beyond the rate over the other machine's points", beyond-xin)
+		}
+		for _, f := range []struct {
+			name           string
+			list, real, sl float64
+		}{
+			{"the lead's floor", tot.FloorListUSD, tot.RealUSD, 2},
+			{"the outside sessions' floor", tot.SplitExternalFloorListUSD, tot.ExternalRealUSD, tot.SplitExternalSlackUSD},
+			{"covey's floor", tot.SplitCoveyFloorListUSD, tot.CoveyRealUSD, tot.SplitCoveySlackUSD},
+			{"the floor together", tot.SplitExternalFloorListUSD + tot.SplitCoveyFloorListUSD, tot.ExternalRealUSD + tot.CoveyRealUSD,
+				tot.SplitSlackUSD},
+		} {
+			if f.list > 0 && f.real+f.sl < kStar*f.list-1e-6 {
+				fail(f.name, kStar*f.list/(f.real+f.sl))
+			}
+		}
+	}
+}

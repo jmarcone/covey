@@ -66,7 +66,9 @@ import (
 //     call, or idle) right after a chunk that closed at its size, with
 //     nothing closing it in between, is the meter's lag after that chunk's
 //     use: it joins that chunk rather than standing as a chunk with no
-//     list; k is taken on the chunks as they closed, before this.
+//     list; k is taken on the chunks as they closed, before this. A step
+//     with covey bookings without a line and no list shares no chunk with
+//     list, nor with movement with no call.
 //     Per chunk c: P_c, L_c = Σ (L_out + L_cov),
 //     Lo_c and Lc_c, and S_c = 2 points of slack (the two ends' whole
 //     percents and one point of lag at the end, as meterQuery reads a drop
@@ -172,10 +174,12 @@ type ExternalUploadResult struct {
 
 // ExternalHost is one machine of a source: ReportedThrough, the watermark
 // its pushes gave (every call of the host with ts at or before it has been
-// sent; nil when none did), and PushedAt, its latest push.
+// sent; nil when none did), FirstReportedAt, when its first watermark
+// arrived (nil when none did), and PushedAt, its latest push.
 type ExternalHost struct {
 	Host            string     `json:"host"`
 	ReportedThrough *time.Time `json:"reported_through"`
+	FirstReportedAt *time.Time `json:"first_reported_at"`
 	PushedAt        time.Time  `json:"pushed_at"`
 }
 
@@ -432,10 +436,25 @@ func (s *Store) UpsertExternalUsage(ctx context.Context, orgID uuid.UUID, source
 		for _, host := range hosts {
 			ats = append(ats, marks[host])
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO external_usage_hosts (org_id, source, host, reported_through, pushed_at)
-			SELECT $1, $2, h.host, h.at, $5 FROM unnest($3::text[], $4::timestamptz[]) AS h(host, at)
+		activeFrom := now.UTC().Add(-externalActiveFor)
+		// The hosts of the push that were active before it: a push naming
+		// only these never adds an active host (F6 below).
+		var wasActive int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM external_usage_hosts
+			WHERE org_id = $1 AND source = $2 AND host = ANY($3) AND pushed_at > $4`,
+			orgID, source, hosts, activeFrom).Scan(&wasActive); err != nil {
+			return res, err
+		}
+		// first_reported_at: when the host's first watermark arrived, set
+		// once (review of e82d640f, F5): hostMarks dates the source's claim to
+		// watermarks by it, not by the watermarks, which move on every push.
+		if _, err := tx.Exec(ctx, `INSERT INTO external_usage_hosts (org_id, source, host, reported_through,
+				first_reported_at, pushed_at)
+			SELECT $1, $2, h.host, h.at, CASE WHEN h.at IS NOT NULL THEN $5::timestamptz END, $5
+			FROM unnest($3::text[], $4::timestamptz[]) AS h(host, at)
 			ON CONFLICT (org_id, source, host) DO UPDATE SET
 				reported_through = GREATEST(external_usage_hosts.reported_through, EXCLUDED.reported_through),
+				first_reported_at = COALESCE(external_usage_hosts.first_reported_at, EXCLUDED.first_reported_at),
 				pushed_at = GREATEST(external_usage_hosts.pushed_at, EXCLUDED.pushed_at)`,
 			orgID, source, hosts, ats, now.UTC()); err != nil {
 			return res, err
@@ -443,16 +462,20 @@ func (s *Store) UpsertExternalUsage(ctx context.Context, orgID uuid.UUID, source
 		// At most externalMaxHosts machines of a source active at once (they
 		// pushed in the last externalActiveFor, this push included): each is
 		// waited for by stepReported, and a source can otherwise grow them
-		// 100 a push (review of d3498bee, F6). Refused whole, as a 400. Two
-		// pushes of the source at once each count without the other's new
-		// hosts, so they may pass it by one push's hosts at most.
+		// 100 a push (review of d3498bee, F6). A push that names a host not
+		// active before it and takes the count past the bound is refused
+		// whole, as a 400. Two pushes of the source at once each count
+		// without the other's new hosts, so they may pass it by one push's
+		// hosts at most; a push of hosts that were all active already is
+		// never refused, so such an overshoot locks no machine out (review of
+		// e82d640f, F6): it shrinks as hosts stop pushing.
 		var active int
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM external_usage_hosts
 			WHERE org_id = $1 AND source = $2 AND pushed_at > $3`,
-			orgID, source, now.UTC().Add(-externalActiveFor)).Scan(&active); err != nil {
+			orgID, source, activeFrom).Scan(&active); err != nil {
 			return res, err
 		}
-		if active > externalMaxHosts {
+		if active > externalMaxHosts && wasActive < len(hosts) {
 			return res, ErrInvalidExternal{Reason: fmt.Sprintf("source %q would have %d hosts that pushed in the last 7 days, "+
 				"at most %d; push under fewer host names, or wait until old ones have not pushed for 7 days", source, active, externalMaxHosts)}
 		}
@@ -470,7 +493,7 @@ func (s *Store) UpsertExternalUsage(ctx context.Context, orgID uuid.UUID, source
 func externalHosts(ctx context.Context, q interface {
 	Query(context.Context, string, ...any) (pgx.Rows, error)
 }, orgID uuid.UUID, sources []string) (map[string][]ExternalHost, error) {
-	rows, err := q.Query(ctx, `SELECT source, host, reported_through, pushed_at FROM external_usage_hosts
+	rows, err := q.Query(ctx, `SELECT source, host, reported_through, first_reported_at, pushed_at FROM external_usage_hosts
 		WHERE org_id = $1 AND source = ANY($2) ORDER BY source, host`, orgID, sources)
 	if err != nil {
 		return nil, err
@@ -482,12 +505,16 @@ func externalHosts(ctx context.Context, q interface {
 			src string
 			h   ExternalHost
 		)
-		if err := rows.Scan(&src, &h.Host, &h.ReportedThrough, &h.PushedAt); err != nil {
+		if err := rows.Scan(&src, &h.Host, &h.ReportedThrough, &h.FirstReportedAt, &h.PushedAt); err != nil {
 			return nil, err
 		}
 		if h.ReportedThrough != nil {
 			at := h.ReportedThrough.UTC()
 			h.ReportedThrough = &at
+		}
+		if h.FirstReportedAt != nil {
+			at := h.FirstReportedAt.UTC()
+			h.FirstReportedAt = &at
 		}
 		h.PushedAt = h.PushedAt.UTC()
 		out[src] = append(out[src], h)
@@ -699,6 +726,20 @@ type ExternalMeterSums struct {
 	// split steps, the list prices the three multiples divide.
 	SplitExternalListUSD float64 `json:"split_external_list_usd"`
 	SplitCoveyListUSD    float64 `json:"split_covey_list_usd"`
+	// FloorListUSD: the list a floor ("at least M×") may divide, over the
+	// priced steps (the steps the page's metered list sums, covey's and the
+	// outside sessions' together): their L_out + L_cov without the parts of
+	// covey lines that began before since and without the calls of the
+	// first step's span that lie before since (review of e82d640f, finding
+	// 3). A line that began before the range may have moved the meter before
+	// its first reading, so its part in the range is no use the range's real
+	// cost is known to hold. SplitExternalFloorListUSD /
+	// SplitCoveyFloorListUSD: the same over the split steps, per party (the
+	// parts' floors). Without since cutting a line or a span they equal
+	// the lists; the ≈ multiples keep dividing the lists themselves.
+	FloorListUSD              float64 `json:"floor_list_usd"`
+	SplitExternalFloorListUSD float64 `json:"split_external_floor_list_usd"`
+	SplitCoveyFloorListUSD    float64 `json:"split_covey_floor_list_usd"`
 	// Points: the priced movement, the dent in points. SplitPoints: the
 	// split steps' part of it, SplitExternalPoints / SplitCoveyPoints the
 	// share-weighted parts of their attributed points (Σ s_c·(points_i −
@@ -726,6 +767,8 @@ type ExternalMeterSums struct {
 	// part's true coefficient a_c·s_c·rate_k has a TV at most the one given.
 	// Across chunks a_c changes, and a sum over contiguous chunks would not
 	// bound it: each chunk is its own term, so the ranges stay wide enough.
+	// A chunk with spread lines adds the range of its share itself
+	// (chunkShareRange) to the outside sessions' and covey's.
 	SplitRuns                int     `json:"split_runs"`
 	SplitSlackPoints         float64 `json:"split_slack_points"`
 	SplitSlackUSD            float64 `json:"split_slack_usd"`
@@ -1253,6 +1296,12 @@ type shareStep struct {
 	UnlinedBookings int64
 	UnlinedAgents   map[uuid.UUID]float64
 	Reported        bool
+	// BeforeSinceOut: the part of LOut whose calls lie before since (the
+	// span of the range's first step that precedes it); BeforeSinceCov: the
+	// part of LCov of lines that began before since and were not spread
+	// (spread ones are in Spread). The floor lists leave both out
+	// (floorCovExcluded).
+	BeforeSinceOut, BeforeSinceCov float64
 }
 
 // seatSteps builds a seat's steps from its meter's readings (the source the
@@ -1292,7 +1341,7 @@ func (s *Store) seatSteps(ctx context.Context, orgID uuid.UUID, since time.Time,
 	if len(steps) == 0 {
 		return nil, cov, nil
 	}
-	if err := s.stepLists(ctx, orgID, seat, sources, steps); err != nil {
+	if err := s.stepLists(ctx, orgID, seat, sources, steps, since); err != nil {
 		return nil, cov, err
 	}
 	if len(sources) == 0 {
@@ -1357,16 +1406,19 @@ func externalStepUSD(model string, t ModelTokens, hasReported bool, reported flo
 // started_at in an earlier span (a long turn, started_at = created_at −
 // duration_ms) is spread over the spans it ran in, in proportion to its time
 // in each (spreadLine), so its list does not land after the meter moved for
-// it. An outside call has one time only and stays in its span.
-func (s *Store) stepLists(ctx context.Context, orgID uuid.UUID, seat meterSeat, sources []string, steps []shareStep) error {
+// it. An outside call has one time only and stays in its span. Each step
+// also keeps the part of its lists that lies (calls) or began (lines not
+// spread) before since, which the floor lists leave out.
+func (s *Store) stepLists(ctx context.Context, orgID uuid.UUID, seat meterSeat, sources []string, steps []shareStep,
+	since time.Time) error {
 	from, to := spanArrays(steps)
 	if len(sources) > 0 {
-		rows, err := s.pool.Query(ctx, `SELECT s.i, e.source, e.model, e.reported_usd IS NOT NULL, count(*),
+		rows, err := s.pool.Query(ctx, `SELECT s.i, e.source, e.model, e.reported_usd IS NOT NULL, e.ts < $5, count(*),
 			SUM(e.input), SUM(e.output), SUM(e.cache_read), SUM(e.cache_write_5m), SUM(e.cache_write_1h),
 			COALESCE(SUM(e.reported_usd), 0)::float8
 			FROM unnest($2::timestamptz[], $3::timestamptz[]) WITH ORDINALITY AS s(f, t, i)
 			JOIN external_usage e ON e.org_id = $1 AND e.source = ANY($4) AND e.ts > s.f AND e.ts <= s.t
-			GROUP BY 1, 2, 3, 4`, orgID, from, to, sources)
+			GROUP BY 1, 2, 3, 4, 5`, orgID, from, to, sources, since)
 		if err != nil {
 			return err
 		}
@@ -1375,17 +1427,21 @@ func (s *Store) stepLists(ctx context.Context, orgID uuid.UUID, seat meterSeat, 
 				i             int64
 				source, model string
 				hasReported   bool
+				before        bool
 				calls         int64
 				t             ModelTokens
 				reported      float64
 			)
-			if err := rows.Scan(&i, &source, &model, &hasReported, &calls, &t.Input, &t.Output, &t.CacheRead,
+			if err := rows.Scan(&i, &source, &model, &hasReported, &before, &calls, &t.Input, &t.Output, &t.CacheRead,
 				&t.CacheWrite5m, &t.CacheWrite1h, &reported); err != nil {
 				rows.Close()
 				return err
 			}
 			st := &steps[i-1]
 			if usd, ok := externalStepUSD(model, t, hasReported, reported); ok {
+				if before {
+					st.BeforeSinceOut += usd
+				}
 				st.LOut += usd
 				if st.SrcOut == nil {
 					st.SrcOut = map[string]float64{}
@@ -1406,13 +1462,14 @@ func (s *Store) stepLists(ctx context.Context, orgID uuid.UUID, seat meterSeat, 
 	// model; one that began before it (started_at < the span's start) is its
 	// own group, spread over the spans it ran in.
 	rows, err := s.pool.Query(ctx, `SELECT s.i, m.agent_id, m.model,
-		CASE WHEN m.started_at < s.f THEN m.id END, MIN(m.started_at), MAX(m.created_at),
+		CASE WHEN m.started_at < s.f THEN m.id END, COALESCE(m.started_at, m.created_at) < $6,
+		MIN(m.started_at), MAX(m.created_at),
 		SUM(m.input_tokens), SUM(m.output_tokens), SUM(m.cache_read_tokens), SUM(m.cache_write_5m_tokens),
 		SUM(m.cache_write_1h_tokens), SUM(m.web_search_requests), SUM(m.engine_usd)::float8
 		FROM unnest($2::timestamptz[], $3::timestamptz[]) WITH ORDINALITY AS s(f, t, i)
 		JOIN model_usage m ON m.org_id = $1 AND m.secret_key = $4 AND m.secret_slot = $5
 			AND m.created_at > s.f AND m.created_at <= s.t
-		GROUP BY 1, 2, 3, 4`, orgID, from, to, seat.key, seat.slot)
+		GROUP BY 1, 2, 3, 4, 5`, orgID, from, to, seat.key, seat.slot, since)
 	if err != nil {
 		return err
 	}
@@ -1423,12 +1480,13 @@ func (s *Store) stepLists(ctx context.Context, orgID uuid.UUID, seat meterSeat, 
 			agent     uuid.UUID
 			model     string
 			spread    *int64
+			before    bool
 			started   *time.Time
 			createdAt time.Time
 			t         ModelTokens
 			engine    float64
 		)
-		if err := rows.Scan(&i, &agent, &model, &spread, &started, &createdAt, &t.Input, &t.Output, &t.CacheRead,
+		if err := rows.Scan(&i, &agent, &model, &spread, &before, &started, &createdAt, &t.Input, &t.Output, &t.CacheRead,
 			&t.CacheWrite5m, &t.CacheWrite1h, &t.WebSearches, &engine); err != nil {
 			return err
 		}
@@ -1437,8 +1495,13 @@ func (s *Store) stepLists(ctx context.Context, orgID uuid.UUID, seat meterSeat, 
 			usd = pr.Cost(t)
 		}
 		if spread != nil && started != nil {
+			// Its part before since is left out of the floor lists by
+			// floorCovExcluded, from its Started.
 			spreadLine(steps, int(i-1), *started, createdAt, agent, usd)
 			continue
+		}
+		if before {
+			steps[i-1].BeforeSinceCov += usd
 		}
 		addCovList(&steps[i-1], agent, usd)
 	}
@@ -1533,14 +1596,49 @@ func spreadLine(steps []shareStep, i int, started, ended time.Time, agent uuid.U
 		// Its part before the first span is in no step: no stretch holds it.
 		first = -1
 	}
-	steps[i].Spread = append(steps[i].Spread, spreadSpan{First: first, USD: usd})
+	steps[i].Spread = append(steps[i].Spread, spreadSpan{First: first, USD: usd, Started: started, Ended: ended})
 }
 
 // spreadSpan is one line spread by spreadLine: First, the first step it ran
-// in (−1 when it began before the first step's span); USD, its whole list.
+// in (−1 when it began before the first step's span); USD, its whole list;
+// Started and Ended, the time it ran.
 type spreadSpan struct {
-	First int
-	USD   float64
+	First          int
+	USD            float64
+	Started, Ended time.Time
+}
+
+// floorCovExcluded is, per step, the covey list the floor lists leave out
+// (review of e82d640f, finding 3): the parts of the spread lines that began
+// before since, and the step's lines that were not spread but began before
+// since (BeforeSinceCov). Such a line's use may have moved the meter before
+// the range's first reading, so its proportional part in the range is no
+// list the range's real cost is known to have paid for: a front-loaded turn
+// read 17.86× for a true 10×. Zero since leaves nothing out.
+func floorCovExcluded(steps []shareStep, since time.Time) []float64 {
+	out := make([]float64, len(steps))
+	for e := range steps {
+		out[e] += steps[e].BeforeSinceCov
+		for _, ln := range steps[e].Spread {
+			dur := ln.Ended.Sub(ln.Started)
+			if !ln.Started.Before(since) || dur <= 0 {
+				continue
+			}
+			for j := e; j >= 0 && steps[j].At.After(ln.Started); j-- {
+				lo, hi := steps[j].From, steps[j].At
+				if ln.Started.After(lo) {
+					lo = ln.Started
+				}
+				if ln.Ended.Before(hi) {
+					hi = ln.Ended
+				}
+				if hi.After(lo) {
+					out[j] += ln.USD * float64(hi.Sub(lo)) / float64(dur)
+				}
+			}
+		}
+	}
+	return out
 }
 
 // unmeteredList is L_out of the linked calls in the window that lie in no
@@ -1668,7 +1766,8 @@ func stepReported(at time.Time, hosts []hostMark) bool {
 // they can make it active; its latest one before a reading is found by
 // binary search. A machine that never sent a watermark is left out when
 // another machine of its source has sent one and it has neither pushed nor
-// had a call after the earliest of them (unmarkedBefore): the source's
+// had a call since the first of them arrived (watermarksFrom,
+// unmarkedBefore): the source's
 // uploader claims watermarks, so such a host is a name from before it did
 // (rows uploaded before the hosts table, an older uploader), not a machine
 // that will ever report — counted, it would hold every reading of the seat
@@ -1689,14 +1788,12 @@ func (s *Store) hostMarks(ctx context.Context, orgID uuid.UUID, sources []string
 			known[k] = h
 		}
 	}
-	// earliest: per source with a machine that sent a watermark, the
-	// earliest of its machines' watermarks.
+	// earliest: per source with a machine that sent a watermark, when the
+	// first of them arrived (watermarksFrom).
 	earliest := map[string]time.Time{}
-	for _, k := range keys {
-		if rt := known[k].ReportedThrough; rt != nil {
-			if e, ok := earliest[k.source]; !ok || rt.Before(e) {
-				earliest[k.source] = *rt
-			}
+	for _, src := range sources {
+		if e, ok := watermarksFrom(hosts[src]); ok {
+			earliest[src] = e
 		}
 	}
 	// The latest call of each machine without a watermark in such a source.
@@ -1818,11 +1915,33 @@ func (s *Store) hostMarks(ctx context.Context, orgID uuid.UUID, sources []string
 	}, nil
 }
 
-// unmarkedBefore: a machine without a watermark, in a source whose earliest
-// watermark is earliest, last pushed at pushedAt (zero when the hosts table
-// does not know it) and last called at lastCall (nil without a call), dates
-// from before its source claimed watermarks: neither is later than earliest
-// (hostMarks leaves it out).
+// watermarksFrom is when a source began to send watermarks: the earliest
+// first_reported_at of its machines (a machine's watermark itself where the
+// table has none). It stays put once set, where the earliest watermark moved
+// on with every push: an older uploader pushing hourly beside a newer one
+// pushing every few minutes was left out whenever the newer one's latest
+// watermark had passed its latest push — three quarters of each hour — and
+// the page flipped between split and unsplit (review of e82d640f, F5).
+func watermarksFrom(hosts []ExternalHost) (time.Time, bool) {
+	var e time.Time
+	ok := false
+	for _, h := range hosts {
+		at := h.FirstReportedAt
+		if at == nil {
+			at = h.ReportedThrough
+		}
+		if at != nil && (!ok || at.Before(e)) {
+			e, ok = *at, true
+		}
+	}
+	return e, ok
+}
+
+// unmarkedBefore: a machine without a watermark, in a source that began to
+// send watermarks at earliest (watermarksFrom), last pushed at pushedAt
+// (zero when the hosts table does not know it) and last called at lastCall
+// (nil without a call), dates from before its source claimed watermarks:
+// neither is later than earliest (hostMarks leaves it out).
 func unmarkedBefore(pushedAt time.Time, lastCall *time.Time, earliest time.Time) bool {
 	return !pushedAt.After(earliest) && (lastCall == nil || !lastCall.After(earliest))
 }
@@ -2027,7 +2146,9 @@ func (c *meterChunk) add(i int, in shareStep, counts bool) {
 // one it follows (an idle step, with neither, rides along at its own price).
 // While the open chunk has no list, a step with covey bookings without a
 // line closes it before itself when it holds movement with no call, and the
-// other way round (each opens a chunk of its own, following none).
+// other way round (each opens a chunk of its own, following none). Likewise
+// a step with such bookings and no list never joins a chunk with list, and
+// a step with list never joins a chunk of such bookings only.
 // chunkOf[i] is step i's chunk, −1 for none. A chunk opened right after one
 // that closed at its size, with nothing closing it in between (no unsplit
 // or unpriced step, no reset, no change of plan price), records it in
@@ -2069,6 +2190,19 @@ func seatChunks(steps []shareStep, reasons []string) ([]int, []meterChunk) {
 		// joined to the other would book the other's movement to it.
 		if cur >= 0 && chunks[cur].list() <= 0 && in.LOut+in.LCov <= 0 {
 			if a, b := chunks[cur].noListKind(), stepNoListKind(in); a != noListNone && b != noListNone && a != b {
+				cur = -1
+			}
+		}
+		// Nor do they share one with list (review of e82d640f, finding 4): a
+		// chunk with list and a booking without a line is incomplete, with
+		// no unattributed part, so one lineless +1 in it would hide what its
+		// list measures beyond the rate (another machine's points went to the
+		// parts). A step with such bookings and no list closes a chunk with
+		// list before itself, and a step with list closes a chunk of such
+		// bookings only.
+		if cur >= 0 {
+			c, lists := &chunks[cur], in.LOut+in.LCov > 0
+			if (!lists && in.UnlinedBookings > 0 && c.list() > 0) || (lists && c.list() <= 0 && c.unlined > 0) {
 				cur = -1
 			}
 		}
@@ -2285,6 +2419,37 @@ func chunkListHigh(chunks []meterChunk, chunkOf []int, steps []shareStep) {
 	}
 }
 
+// chunkShareRange is the range of a chunk's true outside share however its
+// spread lines' use fell in time (review of e82d640f, finding 1): lo = Lo_c /
+// lHigh, every spread line that ran in it at its whole list; hi = Lo_c / (L_c
+// − its spread parts), none of them (0 without outside list). rate is the
+// chunk's plan price, 0 without one. A chunk with no list has lo = hi = 0.
+func chunkShareRange(c meterChunk, steps []shareStep) (lo, hi, rate float64) {
+	if c.rate != nil {
+		rate = *c.rate
+	}
+	if c.list() <= 0 || c.lOut <= 0 {
+		return 0, 0, rate
+	}
+	spread, lines := 0.0, false
+	for _, k := range c.steps {
+		spread += steps[k].LCovSpread
+		lines = lines || steps[k].LCovSpread > 0
+	}
+	if !lines && c.lHigh <= c.list() {
+		return c.share(), c.share(), rate
+	}
+	hi = 1
+	if d := c.list() - spread; d > 0 {
+		hi = math.Min(1, c.lOut/d)
+	}
+	lo = c.share()
+	if c.lHigh > 0 {
+		lo = math.Min(lo, c.lOut/c.lHigh)
+	}
+	return lo, math.Max(hi, c.share()), rate
+}
+
 // rateTV is ½·TV of the steps' plan prices over a chunk, ½(r_1 +
 // Σ|r_{k+1} − r_k| + r_n), each step at its own price and 0 without a plan
 // (#126 findings 24 and 26): the $ range of a part whose share is 1 over
@@ -2437,10 +2602,14 @@ func splitSeatSince(seat meterSeat, sources []string, steps []shareStep, since t
 
 	hours := map[time.Time]bool{}
 	rates := map[float64]bool{}
+	excluded := floorCovExcluded(steps, since)
 	for i, in := range steps {
 		if in.At.Before(since) {
 			continue
 		}
+		// The step's floor lists (FloorListUSD): its lists without what lay or
+		// began before since.
+		floorOut, floorCov := math.Max(0, in.LOut-in.BeforeSinceOut), math.Max(0, in.LCov-excluded[i])
 		st := ExternalMeterStep{At: in.At, From: in.From, SecretKey: seat.key, SecretSlot: seat.slot,
 			Points: in.Points, Reset: in.Reset, ExternalListUSD: in.LOut, CoveyListUSD: in.LCov, Reported: in.Reported}
 		tot.StepCount++
@@ -2471,6 +2640,7 @@ func splitSeatSince(seat meterSeat, sources []string, steps []shareStep, since t
 		st.RealUSD = &r
 		tot.RealUSD += r
 		tot.Points += in.Points
+		tot.FloorListUSD += floorOut + floorCov
 		var c *meterChunk
 		if chunkOf[i] >= 0 {
 			c = &chunks[chunkOf[i]]
@@ -2519,6 +2689,8 @@ func splitSeatSince(seat meterSeat, sources []string, steps []shareStep, since t
 			tot.CoveyRealUSD += rCov
 			tot.SplitExternalListUSD += in.LOut
 			tot.SplitCoveyListUSD += in.LCov
+			tot.SplitExternalFloorListUSD += floorOut
+			tot.SplitCoveyFloorListUSD += floorCov
 			tot.SplitPoints += in.Points
 			tot.SplitExternalPoints += attrPoints * share
 			tot.SplitCoveyPoints += attrPoints * (1 - share)
@@ -2585,6 +2757,27 @@ func splitSeatSince(seat meterSeat, sources []string, steps []shareStep, since t
 		tot.SplitExternalSlackUSD += s * tv
 		tot.SplitCoveySlackPoints += (chunkSlackPoints + cut.extraPoints) * (1 - s)
 		tot.SplitCoveySlackUSD += (1 - s) * tv
+		// The share's own range (review of e82d640f, finding 1): s takes each
+		// spread line at its proportional part, which may put its list in the
+		// wrong chunk (a back-loaded turn's in an earlier one). The chunk's
+		// true outside share lies in [s_lo, s_hi]: s_lo = Lo_c / lHigh (every
+		// spread line that ran in it whole), s_hi = Lo_c / (L_c − its spread
+		// parts) (none of them), 0 without outside list. Each part's slack
+		// adds the distance from s to its end of the range on the chunk's
+		// attributed points in the range, its extra points and S_c.
+		if lo, sp, rs := chunkShareRange(c, steps); lo < s || sp > s {
+			var b float64
+			for _, k := range c.steps {
+				if !steps[k].At.Before(since) {
+					b += steps[k].Points * (1 - cut.frac)
+				}
+			}
+			b += cut.extraPoints + chunkSlackPoints
+			tot.SplitExternalSlackPoints += b * (sp - s)
+			tot.SplitExternalSlackUSD += b * (sp - s) * rs
+			tot.SplitCoveySlackPoints += b * (s - lo)
+			tot.SplitCoveySlackUSD += b * (s - lo) * rs
+		}
 	}
 	tot.PointRateMixed = len(rates) > 1
 	tot.HoursWithReading = len(hours)
@@ -2626,6 +2819,9 @@ func meterSums(totals []ExternalMeterTotal, steps []ExternalMeterStep) ExternalM
 		a.IncompleteChunks += b.IncompleteChunks
 		a.SplitExternalListUSD += b.SplitExternalListUSD
 		a.SplitCoveyListUSD += b.SplitCoveyListUSD
+		a.FloorListUSD += b.FloorListUSD
+		a.SplitExternalFloorListUSD += b.SplitExternalFloorListUSD
+		a.SplitCoveyFloorListUSD += b.SplitCoveyFloorListUSD
 		a.Points += b.Points
 		a.SplitPoints += b.SplitPoints
 		a.SplitExternalPoints += b.SplitExternalPoints
