@@ -6,8 +6,8 @@ import { api, ApiError, type IndicatorReport, type Principal, type RunCost } fro
 import { exact, fmtBucket, fmtCount, fmtUSD } from "../format";
 import { PriceList } from "../components/PriceList";
 import { CostInsights } from "./CostInsights";
-import { credentialFigures, headline, subscriptionDent } from "./costFigures";
-import { SubscriptionDentRow } from "./SubscriptionDent";
+import { credentialFigures, headline, payPerTokenHeadline, subscriptionDent } from "./costFigures";
+import { PayPerTokenRow, SubscriptionDentRow } from "./SubscriptionDent";
 import { canSetPlan } from "./PlanPrice";
 import { OutsideOverview } from "./OutsideSessions";
 import { COVEY_ONLY_PARAM, COVEY_ONLY_VALUE, PRICES_PARAM, PRICES_RECOMPUTED, RANGES, beforeRange, bucketOptions, kpiLead, listedSources,
@@ -321,6 +321,8 @@ export default function Costs({ me }: { me?: Principal }) {
   // and the sessions outside covey (#120): null until a source names a meter.
   const dent = useMemo(() => subscriptionDent(cells.data?.external), [cells.data]);
   const head = useMemo(() => headline(cells.data), [cells.data]);
+  const ppt = useMemo(() => payPerTokenHeadline(cells.data, orgFigures, BUCKET_MS[bucket] ?? BUCKET_MS.day, new Date()),
+    [cells.data, orgFigures, bucket]);
 
   // KPIs over the same lines as the charts, narrowed by the same filter.
   const totals = useMemo(() => cellTotals(cells.data, selected), [cells.data, selected]);
@@ -399,6 +401,9 @@ export default function Costs({ me }: { me?: Principal }) {
           const s = sourcesListed.find((x) => x.source === p.source);
           return s ? [{ ...p, before: beforeRange(s, realParts) }] : [];
         })} />}
+      {/* Pay per token (0152): an API key's bill, usage charges and the
+          monthly meter — its own headline, never added to the seats'. */}
+      {ppt && <PayPerTokenRow h={ppt} filtered={selected.size > 0} />}
 
       {/* KPIs: over every credential, dollars and tokens of the same lines.
           One list-price figure leads (#120): Claude Code's price of each

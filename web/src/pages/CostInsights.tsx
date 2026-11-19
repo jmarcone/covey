@@ -6,7 +6,7 @@ import { api, type ExternalModelUsage, type ExternalUsage, type ModelUsageReport
 import { fmtBucket, fmtCount, fmtNumber, fmtUSD, fmtUSDBelow, fmtUSDFixed } from "../format";
 import { DEFAULT_SOURCES, SOURCES, SOURCE_INFO, isPerModel, modelFigure, sourceHint, sourceLabel, type Source } from "./costSources";
 import { isSeat, perCredentialTotals, scopeFigure, type SourceTotal } from "./costFigures";
-import { usageList } from "./CostBasis";
+import { MonthlyMeters, usageList } from "./CostBasis";
 import { Chip } from "./StackedCostChart";
 import { usableReadings, type CredentialFigures } from "./costFigures";
 import { OrgWide, OutsideMark, SOURCE_COLOR, Swatch, useUsageReadings } from "./StackedCostChart";
@@ -470,6 +470,7 @@ export function CostInsights({ days, figures, agents = NO_AGENTS, outside = null
   const rs = useMemo(() => readings.data ?? [], [readings.data]);
   const filtered = agents.size > 0;
   const metered = figures.filter((f) => f.meter != null && isSeat(f));
+  const monthly = figures.filter((f) => (f.monthly ?? []).length > 0);
 
   return (
     <div className="grid gap-4 mt-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(420px, 100%), 1fr))" }}>
@@ -481,8 +482,15 @@ export function CostInsights({ days, figures, agents = NO_AGENTS, outside = null
       <div className="card">
         <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.insights.meterTitle")}{filtered && <OrgWide />}</div>
         <p className="muted text-xs mb-3">{t("costs.insights.meterHint")}</p>
-        {metered.length === 0 && <div className="muted text-sm">{t("costs.insights.noReadings")}</div>}
+        {metered.length === 0 && monthly.length === 0 && <div className="muted text-sm">{t("costs.insights.noReadings")}</div>}
         {metered.map((f) => <MeterFigures key={f.id} f={f} readings={rs} outside={outside} />)}
+        {/* A monthly usage limit's meter (0152): its own lines, never in the weekly seat meter's figures. */}
+        {monthly.map((f) => (
+          <div key={`monthly/${f.id}`} className="mb-4" data-monthly={f.id}>
+            <div className="text-xs" style={{ fontWeight: 600, marginBottom: 4 }}>{`${f.secretKey} #${f.slot}`}</div>
+            <MonthlyMeters f={f} readings={rs} />
+          </div>
+        ))}
         <p className="muted text-xs mt-2 mb-0">{t("costs.fig.accountWideCaveat")}</p>
       </div>
     </div>

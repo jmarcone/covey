@@ -13,11 +13,12 @@ import type {
   ExternalUsage,
   MeterCoverage,
   MeterStep,
+  UsageLimit,
   UsageReading,
   WindowCharge,
 } from "../api";
 import type { Source } from "./costSources";
-import { beforeRange, isOperatorSource, listedSource, perUseSource, outsideKpis, sourceLead, sourceRealParts, type OutsideKpis } from "./outsideFigures";
+import { beforeRange, cellLead, isOperatorSource, listedSource, perUseSource, outsideKpis, sourceLead, sourceRealParts, type OutsideKpis } from "./outsideFigures";
 
 /* The figures of the Costs page, as pure functions — no React, no fetch.
  *
@@ -224,6 +225,52 @@ export function pickMeter(meter: readonly MeterCoverage[], key: string, slot: nu
   const own = meter.filter((m) => m.secret_key === key && m.secret_slot === slot && m.window_kind === "seven_day");
   own.sort((a, b) => b.readings - a.readings || rank(a.source) - rank(b.source));
   return own[0] ?? null;
+}
+
+/** A seat's weekly (or five-hour) window: the plan's meter. Any other window
+ *  (overage, 0152) is a monthly meter of its own, never mixed into it. */
+export const isWeeklyWindow = (w: string): boolean => w === "" || w.startsWith("seven_day") || w.startsWith("five_hour");
+
+/** A credential's monthly meter (0152): its coverage of a window other than
+ *  the weekly ones, the limit valid at its last reading (else its latest),
+ *  and the money the server made of its movement (meter charges). */
+export type MonthlyMeter = {
+  coverage: MeterCoverage;
+  limit: UsageLimit | null;
+  charges: WindowCharge[];
+};
+
+/** The monthly meters of a credential, one per window: the source with the
+ *  most readings, as pickMeter takes it. */
+export function monthlyMeters(meter: readonly MeterCoverage[], limits: readonly UsageLimit[], charges: readonly WindowCharge[],
+  key: string, slot: number): MonthlyMeter[] {
+  const order = ["usage_cmd", "manual", "inband"];
+  const rank = (s: string) => (order.indexOf(s) < 0 ? order.length : order.indexOf(s));
+  const best = new Map<string, MeterCoverage>();
+  for (const m of meter) {
+    if (m.secret_key !== key || m.secret_slot !== slot || isWeeklyWindow(m.window_kind)) continue;
+    const cur = best.get(m.window_kind);
+    if (!cur || m.readings > cur.readings || (m.readings === cur.readings && rank(m.source) < rank(cur.source))) best.set(m.window_kind, m);
+  }
+  return [...best.values()].sort((a, b) => a.window_kind.localeCompare(b.window_kind)).map((cov) => {
+    const own = limits.filter((l) => l.secret_key === key && l.secret_slot === slot && l.window_kind === cov.window_kind)
+      .sort((a, b) => Date.parse(a.valid_from) - Date.parse(b.valid_from));
+    const at = Date.parse(cov.last_at);
+    const limit = own.find((l) => at >= Date.parse(l.valid_from) && (l.valid_to == null || at < Date.parse(l.valid_to))) ?? own.at(-1) ?? null;
+    return { coverage: cov, limit,
+      charges: charges.filter((c) => isMeterCharge(c) && c.secret_key === key && c.secret_slot === slot && c.window_kind === cov.window_kind) };
+  });
+}
+
+/** The reset the latest reading of a credential's window names (resets_at), or null. */
+export function windowResetsAt(readings: readonly UsageReading[], key: string, slot: number, window: string): string | null {
+  let at = NaN, out: string | null = null;
+  for (const r of readings) {
+    if (r.secret_key !== key || r.secret_slot !== slot || r.window_kind !== window || !r.resets_at) continue;
+    const t = Date.parse(r.fetched_at);
+    if (!(t <= at)) { at = t; out = r.resets_at; }
+  }
+  return out;
 }
 
 /** A step's points that have no plan price: what the server says, and all of
@@ -508,7 +555,29 @@ export function basisAt(bases: readonly CredentialBasis[] | null | undefined, ke
 /** The counted usage charges of one currency, in that currency. usd: their
  *  dollar figure, only when every one of them has one (in USD, or a rate with
  *  its date); never a conversion of the page's own. */
-export type UsageCurrency = { currency: string; counted: number; usd: number | null; charges: number };
+export type UsageCurrency = {
+  currency: string; counted: number; usd: number | null;
+  /** The charges entered by hand among them (0152: not the meter's). */
+  charges: number;
+  /** Of `counted`, what the monthly meter counted (0152); absent without one. */
+  meter?: number;
+};
+
+// --- Usage charge kinds (0152) ---------------------------------------------------
+
+/** A charge entered by hand: money, counted under a usage basis. */
+export const isHandCharge = (c: Pick<WindowCharge, "kind">): boolean => c.kind == null || (c.kind as string) === "" || (c.kind as string) === "charge";
+/** A usage export: what the provider said, entered to check — never money. */
+export const isExportCharge = (c: Pick<WindowCharge, "kind">): boolean => c.kind === "export";
+/** The money a monthly usage limit makes of its meter's movement: no id of its own. */
+export const isMeterCharge = (c: Pick<WindowCharge, "kind">): boolean => c.kind === "meter";
+/** Only what is stored can be deleted: a meter charge is computed. */
+export const chargeDeletable = (c: Pick<WindowCharge, "kind">): boolean => !isMeterCharge(c);
+/** A key for a charge in a list: its id, but a meter charge has the zero id
+ *  (several of them share it), so its window, span and limit name it. */
+export function chargeKey(c: Pick<WindowCharge, "id" | "kind" | "window_kind" | "from" | "to" | "limit_amount" | "currency">): string {
+  return isMeterCharge(c) ? `meter:${c.window_kind ?? ""}:${c.from}:${c.to}:${c.limit_amount ?? ""}${c.currency}` : c.id;
+}
 
 /** What the basis was over the window: seat stands for "none set" too (the
  *  plan prices the meter, as before 0151). */
@@ -532,9 +601,46 @@ export type UsageFigure = {
   currencies: UsageCurrency[];
   /** The counted total in USD: only when every currency has a dollar figure. */
   usd: number | null;
-  /** Charges in the window that count nowhere: no usage basis at their time. */
+  /** Charges in the window that count nowhere: no usage basis at their time.
+   *  Not an export (a check, never counted) and not a charge the monthly
+   *  meter superseded (0152). */
   uncounted: WindowCharge[];
+  /** The usage exports in the window (0152), each beside the counted figure
+   *  over its span. */
+  exports: ExportCheck[];
 };
+
+/** A usage export beside the counted figure (0152). */
+export type ExportCheck = {
+  charge: WindowCharge;
+  /** The counted charges (by hand and the meter's) of its currency over the
+   *  export's span within the window, pro rata by time; null where none of
+   *  its currency counts there. */
+  counted: number | null;
+  /** counted − the export's part in the window; null without a counted figure. */
+  diff: number | null;
+  /** Only charges of another currency count over its span: no difference. */
+  otherCurrency: boolean;
+};
+
+/** Each export of a credential beside what its counted charges say over the
+ *  same span within [windowStart, windowEnd), in its own currency only. */
+export function exportChecks(charges: readonly WindowCharge[], windowStart: number, windowEnd: number): ExportCheck[] {
+  const part = (c: WindowCharge): [number, number] => [Math.max(Date.parse(c.from), windowStart), Math.min(Date.parse(c.to), windowEnd)];
+  const counted = charges.filter((c) => !isExportCharge(c) && c.counted_amount > 0);
+  return charges.filter(isExportCharge).map((e) => {
+    const [ef, et] = part(e);
+    let sum: number | null = null, other = false;
+    for (const c of counted) {
+      const [cf, ct] = part(c);
+      const over = Math.min(ct, et) - Math.max(cf, ef);
+      if (!(over > 0) || !(ct > cf)) continue;
+      if (c.currency.toUpperCase() !== e.currency.toUpperCase()) { other = true; continue; }
+      sum = (sum ?? 0) + c.counted_amount * Math.min(over / (ct - cf), 1);
+    }
+    return { charge: e, counted: sum, diff: sum == null ? null : sum - e.window_amount, otherCurrency: sum == null && other };
+  });
+}
 
 /** The counted parts of charges, per currency in that currency: a dollar
  *  figure only where every one of them has one; never added across
@@ -542,12 +648,14 @@ export type UsageFigure = {
 export function usageCurrencies(charges: readonly WindowCharge[]): UsageCurrency[] {
   const by = new Map<string, UsageCurrency>();
   for (const c of charges) {
-    if (!(c.counted_amount > 0)) continue;
+    // An export is a check, never money (0152), whatever it carries.
+    if (!(c.counted_amount > 0) || isExportCharge(c)) continue;
     const cur = c.currency.toUpperCase();
-    const u = by.get(cur) ?? { currency: cur, counted: 0, usd: 0, charges: 0 };
+    const u: UsageCurrency = by.get(cur) ?? { currency: cur, counted: 0, usd: 0, charges: 0 };
     u.counted += c.counted_amount;
     u.usd = u.usd == null || c.counted_usd == null ? null : u.usd + c.counted_usd;
-    u.charges += 1;
+    if (isMeterCharge(c)) u.meter = (u.meter ?? 0) + c.counted_amount;
+    else u.charges += 1;
     by.set(cur, u);
   }
   return [...by.values()].sort((a, b) => a.currency.localeCompare(b.currency));
@@ -582,7 +690,8 @@ export function usageFigure(cells: Pick<CostCells, "cost_bases" | "usage_charges
   return {
     basis, regimes, changed: regimes.length > 1, upcoming: bases.filter((b) => Date.parse(b.valid_from) > end),
     charges, currencies, usd,
-    uncounted: charges.filter((c) => c.window_amount > 0 && !(c.counted_amount > 0)),
+    uncounted: charges.filter((c) => !isExportCharge(c) && c.window_amount > 0 && !(c.counted_amount > 0) && !((c.superseded_amount ?? 0) > 0)),
+    exports: exportChecks(charges, start ?? -Infinity, end),
   };
 }
 
@@ -608,8 +717,8 @@ export function countedSpans(u: UsageFigure, bases: readonly CredentialBasis[] |
  *  each cell's period [p, p + bucket), cut to the window, counts by the part
  *  of it the spans cover — pro rata by time at the periods the spans begin
  *  or end in, as the charges themselves are cut. */
-export function listOverSpans(cells: readonly CostCell[], spans: readonly [number, number][], bucketMs: number,
-  windowStart: number, windowEnd: number): number {
+export function listOverSpans<T extends Pick<CostCell, "period">>(cells: readonly T[], spans: readonly [number, number][], bucketMs: number,
+  windowStart: number, windowEnd: number, value: (c: T) => number = (c) => recomputedOf(c as unknown as CostCell)): number {
   let list = 0;
   for (const c of cells) {
     const p = Date.parse(c.period);
@@ -617,7 +726,7 @@ export function listOverSpans(cells: readonly CostCell[], spans: readonly [numbe
     if (!(to > from)) continue;
     let covered = 0;
     for (const [a, b] of spans) covered += Math.max(0, Math.min(b, to) - Math.max(a, from));
-    if (covered > 0) list += recomputedOf(c) * Math.min(covered / (to - from), 1);
+    if (covered > 0) list += value(c) * Math.min(covered / (to - from), 1);
   }
   return list;
 }
@@ -727,6 +836,9 @@ export type CredentialFigures = {
    *  multiple of everything on this meter, on a seat a source names — org-wide,
    *  under an agent filter too; null otherwise. */
   everything: EverythingMultiple | null;
+  /** Its monthly meters (0152): windows other than the weekly one, each on
+   *  its own, never in `meter` or `real`. Absent: none. */
+  monthly?: MonthlyMeter[];
 };
 
 /** List $ per real $ of everything on one meter (#120): covey's agents, the
@@ -1148,6 +1260,7 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
       bookedWithoutLine, meter: cov, real, aligned, multiple: mult, noMultiple, split, unlinked, outsideUnreported, billed, bookingCheck, agents,
       listAll: all, everything,
       basis, usage, usageMultiple, usageList, usageShared, meterOnUsage,
+      monthly: a.key == null ? [] : monthlyMeters(meter, data.usage_limits ?? [], data.usage_charges ?? [], a.key, a.slot!),
     });
   }
   out.sort((x, y) => (x.id === "" ? 1 : 0) - (y.id === "" ? 1 : 0) || y.recomputed - x.recomputed);
@@ -1619,5 +1732,147 @@ export function subscriptionDent(ext: ExternalUsage | null | undefined): Subscri
       unpricedPoints: c.unpriced_points, usagePoints: c.usage_points ?? 0, usageSteps: c.usage_steps ?? 0, split: c.split_steps > 0,
       pointsPerList: c.points_per_list_usd ?? null, olderPlan: c.points_per_list_older_plan_usd ?? null, steps: c.step_count,
     })),
+  };
+}
+
+// --- The pay-per-token headline (0152) -------------------------------------------
+//
+// An organisation whose real money is per token — an API key's bill, or the
+// usage charges of a credential billed by usage all through the range (by
+// hand and from the monthly meter) — has no subscription meter to divide by.
+// Its headline sets the lead figure (as reported by Claude Code: covey's
+// agents and the outside sessions linked to the credential) over the spans
+// that money covers against that money: in USD where all of it is, and then
+// one multiple; per currency otherwise, with no multiple and why. A charge in
+// another currency is in USD only at the rate a person entered with its date
+// (the server's counted_usd): that is intended, and the rate stands beside
+// the multiple; covey never converts at a rate of its own. Apart from the
+// subscription headline and never added to a weekly meter's real cost; a
+// credential the subscription headline covers (external.meter.credentials,
+// whose list and usage charges it already shows) is not in it at all.
+
+/** One credential whose money is per token. */
+export type PayPerTokenCredential = {
+  id: string;
+  name: string;
+  /** bill: Anthropic's bill (USD), over its window; charges: the counted usage
+   *  charges, over the spans they cover. */
+  money: "bill" | "charges";
+  /** The lead figure over those spans: covey's agents, and the outside
+   *  sessions linked to the credential (their calls' lead price). */
+  coveyList: number;
+  outsideList: number;
+  billed: number | null;
+  currencies: UsageCurrency[];
+};
+
+export type PayPerTokenHeadline = {
+  credentials: PayPerTokenCredential[];
+  list: number;
+  coveyList: number;
+  outsideList: number;
+  /** The API keys' bills, USD; null without a measured bill among them. */
+  billed: number | null;
+  billedPending: boolean;
+  /** The counted usage charges, per currency in its own, never added across currencies. */
+  charges: UsageCurrency[];
+  /** All the real money in USD: only where every part has a USD figure. */
+  realUsd: number | null;
+  /** list $ per real $; null with a reason. */
+  multiple: number | null;
+  /** "rate": a currency without a USD figure (no rate with its date); "list":
+   *  no work at token prices over the spans; "money": no real money. */
+  why: "rate" | "list" | "money" | null;
+  /** The currencies with no USD figure. */
+  noRate: string[];
+  /** The rates the counted non-USD charges are in USD at: each one a person
+   *  entered with its date, never one covey looked up. Shown beside the
+   *  multiple. */
+  rates: { currency: string; rate: number; date: string }[];
+};
+
+/** Counted charges of several credentials, per currency: summed within a
+ *  currency only, a USD figure only where every part has one. */
+export function mergeCurrencies(lists: readonly (readonly UsageCurrency[])[]): UsageCurrency[] {
+  const by = new Map<string, UsageCurrency>();
+  for (const l of lists) for (const c of l) {
+    const u: UsageCurrency = by.get(c.currency) ?? { currency: c.currency, counted: 0, usd: 0, charges: 0 };
+    u.counted += c.counted;
+    u.usd = u.usd == null || c.usd == null ? null : u.usd + c.usd;
+    u.charges += c.charges;
+    if (c.meter) u.meter = (u.meter ?? 0) + c.meter;
+    by.set(c.currency, u);
+  }
+  return [...by.values()].sort((a, b) => a.currency.localeCompare(b.currency));
+}
+
+/** Spans as one set: overlapping ones merged, so no time counts twice. */
+function unionSpans(spans: readonly [number, number][]): [number, number][] {
+  const out: [number, number][] = [];
+  for (const [a, b] of [...spans].sort((x, y) => x[0] - y[0])) {
+    const last = out.at(-1);
+    if (last && a <= last[1]) last[1] = Math.max(last[1], b);
+    else out.push([a, b]);
+  }
+  return out;
+}
+
+/** The pay-per-token headline over the organisation's credentials (the
+ *  figures without an agent filter); null when none is paid per token. An
+ *  API key with a measured bill counts by its bill (a charge entered beside
+ *  it would be the same money); any other credential by its counted usage
+ *  charges where it was billed by usage all through the range. */
+export function payPerTokenHeadline(cells: CostCells | null | undefined, figures: readonly CredentialFigures[], bucketMs: number,
+  windowEnd: Date): PayPerTokenHeadline | null {
+  if (!cells) return null;
+  const ext = cells.external;
+  const realParts = sourceRealParts(ext);
+  const from = windowStartOf(cells)?.getTime() ?? -Infinity, to = windowEnd.getTime();
+  const creds: PayPerTokenCredential[] = [];
+  const rates = new Map<string, { currency: string; rate: number; date: string }>();
+  // The seats the subscription headline (headline()) shows, their list and
+  // their usage charges with them: never a second time here.
+  const covered = new Set((ext?.meter?.credentials ?? []).map((c) => credId(c.secret_key, c.secret_slot)));
+  let pending = false;
+  for (const f of figures) {
+    if (f.secretKey == null || covered.has(f.id)) continue;
+    const key = f.secretKey, slot = f.slot!;
+    const linked = new Set((ext?.sources ?? []).filter((s) => listedSource(s, realParts)
+      && s.meter_credential?.secret_key === key && s.meter_credential.secret_slot === slot).map((s) => s.source));
+    const outCells = (ext?.cells ?? []).filter((c) => linked.has(c.source));
+    const outside = (spans: [number, number][]) => listOverSpans(outCells, spans, bucketMs, from, to, (c) => cellLead(c).lead ?? 0);
+    const name = `${key} #${slot}`;
+    if (f.kind === "api_key" && f.billed?.state === "measured") {
+      const w = f.billed.window;
+      creds.push({ id: f.id, name, money: "bill", coveyList: f.billed.reported,
+        outsideList: w ? outside([[w.start.getTime(), w.comparedUntil.getTime()]]) : 0, billed: f.billed.usd, currencies: [] });
+      if (f.billed.status.state === "pending") pending = true;
+      continue;
+    }
+    const u = f.usage;
+    if (!u || u.currencies.length === 0 || !u.regimes.every((r) => r === "usage")) continue;
+    const spans = unionSpans(countedSpans(u, cells.cost_bases, key, slot, from, to));
+    const own = cells.cells.filter((c) => credId(c.secret_key, c.secret_slot) === f.id);
+    creds.push({ id: f.id, name, money: "charges", coveyList: listOverSpans(own, spans, bucketMs, from, to, leadOf),
+      outsideList: outside(spans), billed: null, currencies: u.currencies });
+    for (const c of u.charges) {
+      const cur = c.currency.toUpperCase();
+      if (isExportCharge(c) || !(c.counted_amount > 0) || cur === "USD" || c.fx_to_usd == null || !c.fx_date) continue;
+      rates.set(`${cur}/${c.fx_to_usd}/${c.fx_date}`, { currency: cur, rate: c.fx_to_usd, date: c.fx_date });
+    }
+  }
+  if (creds.length === 0) return null;
+  const bills = creds.filter((c) => c.billed != null);
+  const billed = bills.length > 0 ? bills.reduce((a, c) => a + c.billed!, 0) : null;
+  const charges = mergeCurrencies(creds.map((c) => c.currencies));
+  const noRate = charges.filter((c) => c.usd == null).map((c) => c.currency);
+  const realUsd = noRate.length > 0 ? null : (billed ?? 0) + charges.reduce((a, c) => a + c.usd!, 0);
+  const coveyList = creds.reduce((a, c) => a + c.coveyList, 0), outsideList = creds.reduce((a, c) => a + c.outsideList, 0);
+  const list = coveyList + outsideList;
+  const why: PayPerTokenHeadline["why"] = noRate.length > 0 ? "rate" : !(realUsd! > 0) ? "money" : !(list >= 0.01) ? "list" : null;
+  return {
+    credentials: creds, list, coveyList, outsideList, billed, billedPending: pending, charges, realUsd,
+    multiple: why == null ? list / realUsd! : null, why, noRate,
+    rates: [...rates.values()].sort((a, b) => a.currency.localeCompare(b.currency) || a.date.localeCompare(b.date)),
   };
 }

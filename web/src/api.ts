@@ -847,7 +847,31 @@ export type CostCells = {
   /** The usage charges that reach into the window, each in its own currency;
    *  absent when there are none. */
   usage_charges?: WindowCharge[] | null;
+  /** The dated monthly usage limits valid in the window (0152): what turns
+   *  a monthly meter's points into money. Absent when none is. */
+  usage_limits?: UsageLimit[] | null;
 };
+
+/** A credential's monthly usage limit (0152), valid over [valid_from,
+ *  valid_to): the amount per month in its currency that its monthly meter
+ *  window (overage) counts against; a rate to USD only with its date. */
+export type UsageLimit = {
+  runtime_id?: string | null;
+  ord?: number | null;
+  secret_key: string;
+  secret_slot: number;
+  window_kind: string;
+  amount: number;
+  currency: string;
+  fx_to_usd: number | null;
+  fx_date: string | null;
+  valid_from: string;
+  valid_to: string | null;
+};
+
+/** charge: money entered by hand; export: what the provider's own usage page
+ *  or export said, entered only to check the figures (never counted). */
+export type UsageChargeKind = "charge" | "export";
 
 /** seat: the plan prices the meter; usage: the usage charges are the money;
  *  seat_and_usage: both. */
@@ -875,16 +899,35 @@ export type UsageCharge = {
   fx_to_usd: number | null;
   fx_date: string | null;
   note: string;
+  /** 0152; absent from older servers (a charge). */
+  kind?: UsageChargeKind;
 };
 
 /** A usage charge in the cost cells: with the part the window holds and the
  *  part a usage basis counts, both in its currency, and the counted part in
  *  USD only where it is in USD or a rate with its date was given. No note:
  *  every role reads the cells; the note is in the credential's own list. */
-export type WindowCharge = Omit<UsageCharge, "note"> & {
+export type WindowCharge = Omit<UsageCharge, "note" | "kind"> & {
   window_amount: number;
   counted_amount: number;
   counted_usd: number | null;
+  /** 0152: absent for a charge entered by hand; "export" for a usage export
+   *  (a check: counted_amount 0, counted_usd null, never money); "meter" for
+   *  the money a monthly usage limit makes of its meter's movement (a zero
+   *  id: not stored, not deletable). */
+  kind?: "export" | "meter";
+  /** Of a hand-entered charge: the part over times a monthly usage limit
+   *  held, not counted (the meter is that time's money). */
+  superseded_amount?: number;
+  /** Of a meter charge: its window, the limit per month, the points it moved
+   *  in the range (all, and those a usage basis counted), and the counted
+   *  amount's range (±1 point per month). */
+  window_kind?: string;
+  limit_amount?: number;
+  points?: number;
+  counted_points?: number;
+  counted_low?: number;
+  counted_high?: number;
 };
 
 /** A subscription credential named by its secret, as the meter readings name it. */
