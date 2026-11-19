@@ -381,6 +381,7 @@
       "incompleteNote": "Chunks of readings with outside calls of no list price or covey bookings without a line: {{n}}. They set no rate and nothing in them counts as unattributed, so their parts are approximate and may hold use that is not theirs.",
       "seats": "Per meter",
       "seatLine": "{{seat}}: ≈ {{real}} ({{pts}} points) — covey agents (internal) ≈ {{covey}}, outside covey ≈ {{outside}}, unattributed ≈ {{unattributed}}, not split ≈ {{unsplit}}",
+      "seatLineSplit": "{{seat}}: ≈ {{real}} ({{pts}} points) — covey agents (internal) ≈ {{covey}}, covey operator ≈ {{operator}}, other projects ≈ {{projects}}, unattributed ≈ {{unattributed}}, not split ≈ {{unsplit}}",
       "seatNoPrice": "{{seat}}: – ({{n}} points without a plan price)",
       "seatUsage": "{{seat}}: – (billed by usage: {{n}} points, their money is the usage charges)",
       "noMultipleUsage": "No multiples here: the meter readings in the range were billed by usage. A seat's usage multiple, covey's list over its charges, is on its credential.",
@@ -415,7 +416,7 @@
       },
       "operator": "covey operator",
       "projects": "Other projects",
-      "partSubSource": "{{pct}} of the dent · list price {{list}} in the split readings"
+      "partSubSource": "{{pct}} of the dent"
     },
     "split": {
       "covey": "covey agents (internal)",
@@ -441,7 +442,7 @@
       "usageSeat": "Billed by usage over the whole range: the meter's readings are not split, their points are the usage charges'.",
       "key_outside": "Real cost, sessions outside covey",
       "key_unsplit": "Real cost not split (outside sessions had not reported, or their calls had no price)",
-      "key_unattributed": "Real cost unattributed (not explained by covey agents (internal) or the reported sessions)",
+      "key_unattributed": "Real cost unattributed: not explained by covey agents (internal) or the reported sessions",
       "chartNoteUnlinked": "No outside source names this meter: the real bar is split per chunk of at least 5 points of readings between covey agents (internal) and the movement beyond the rate, unattributed (booked to nobody).",
       "unlinkedSeat": "No outside source reports on this meter, but it may carry use outside covey. covey's part is the server's estimate per chunk of readings, the movement beyond the rate is unattributed (booked to nobody), and the multiple is a lower bound.",
       "agentBeforeWindow": "its lines fall in a reading's span that began before the range",
@@ -682,7 +683,7 @@
       "lineOperator": "covey operator {{usd}}",
       "lineProjects": "other projects {{usd}}",
       "inRange": "in the range: {{line}}",
-      "everythingShared": "The outside part is shared between the covey operator and the other projects by each one's lead price over the range.",
+      "everythingShared": "The outside part is shared between the covey operator and the other projects by each one's figure at token prices over the range.",
       "meterListOperator": "List price, covey operator",
       "meterListProjects": "List price, other projects"
     },

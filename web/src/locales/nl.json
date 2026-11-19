@@ -381,6 +381,7 @@
       "incompleteNote": "Blokken standen met externe aanroepen zonder lijstprijs of covey-boekingen zonder regel: {{n}}. Ze bepalen geen tarief en niets erin telt als niet toegerekend, dus hun delen zijn bij benadering en kunnen gebruik van anderen bevatten.",
       "seats": "Per meter",
       "seatLine": "{{seat}}: ≈ {{real}} ({{pts}} punten) – agents van covey (intern) ≈ {{covey}}, buiten covey ≈ {{outside}}, niet toegerekend ≈ {{unattributed}}, niet verdeeld ≈ {{unsplit}}",
+      "seatLineSplit": "{{seat}}: ≈ {{real}} ({{pts}} punten) – agents van covey (intern) ≈ {{covey}}, covey-operator ≈ {{operator}}, andere projecten ≈ {{projects}}, niet toegerekend ≈ {{unattributed}}, niet verdeeld ≈ {{unsplit}}",
       "seatNoPrice": "{{seat}}: – ({{n}} punten zonder planprijs)",
       "seatUsage": "{{seat}}: – (op gebruik gefactureerd: {{n}} punten, hun geld zijn de gebruikskosten)",
       "noMultipleUsage": "Hier geen veelvouden: de meteraflezingen in de periode werden op gebruik gefactureerd. Het gebruiksveelvoud van een stoel, covey's lijstprijs over zijn kosten, staat bij zijn inloggegevens.",
@@ -415,7 +416,7 @@
       },
       "operator": "covey-operator",
       "projects": "Andere projecten",
-      "partSubSource": "{{pct}} van de deuk · lijstprijs {{list}} in de verdeelde aflezingen"
+      "partSubSource": "{{pct}} van de deuk"
     },
     "split": {
       "covey": "Agents van covey (intern)",
@@ -441,7 +442,7 @@
       "usageSeat": "De hele periode op gebruik gefactureerd: de aflezingen van de meter worden niet verdeeld, hun punten horen bij de gebruikskosten.",
       "key_outside": "Echte kosten, sessies buiten covey",
       "key_unsplit": "Echte kosten niet verdeeld (externe sessies hadden niet gerapporteerd, of hun aanroepen hadden geen prijs)",
-      "key_unattributed": "Echte kosten niet toegerekend (niet verklaard door de agents van covey (intern) of de gerapporteerde sessies)",
+      "key_unattributed": "Echte kosten niet toegerekend: niet verklaard door de agents van covey (intern) of de gerapporteerde sessies",
       "chartNoteUnlinked": "Geen bron buiten covey noemt deze meter: de echte balk is per blok van minstens 5 punten aan aflezingen verdeeld tussen de covey-agents (intern) en de beweging boven het tarief, niet toegewezen (aan niemand geboekt).",
       "unlinkedSeat": "Geen bron buiten covey meldt op deze meter, maar hij kan gebruik buiten covey dragen. Het deel van covey is de schatting van de server per blok aflezingen, de beweging boven het tarief is niet toegewezen (aan niemand geboekt) en het veelvoud is een ondergrens.",
       "agentBeforeWindow": "zijn regels vallen in de spanne van een aflezing die vóór de periode begon",

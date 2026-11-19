@@ -16,7 +16,7 @@ import type {
   WindowCharge,
 } from "../api";
 import type { Source } from "./costSources";
-import { beforeRange, listedSource, outsideKpis, sourceLead, sourceRealParts, type OutsideKpis } from "./outsideFigures";
+import { OPERATOR_SOURCE, beforeRange, listedSource, outsideKpis, sourceLead, sourceRealParts, type OutsideKpis } from "./outsideFigures";
 
 /* The figures of the Costs page, as pure functions — no React, no fetch.
  *
@@ -1300,9 +1300,16 @@ export type DentPart = { real: number; share: number | null; points: number; lis
  *  null when no stretch of adjacent complete chunks of split readings moved
  *  10 points; olderPlan: the plan price per point k is at when that is not
  *  the seat's latest one, else null. */
+/** The real cost of some sources' parts; null where there are none. */
+const partReal = (ps: readonly { real_usd: number }[]): number | null => (ps.length > 0 ? ps.reduce((a, p) => a + p.real_usd, 0) : null);
+
 export type DentSeat = {
   key: string; slot: number; sources: string[];
   real: number | null; points: number; covey: number; outside: number; unattributed: number; unsplit: number;
+  /** The seat's outside part (real cost) per party, from its source_parts: the covey operator and the other projects (#163);
+   *  null where the server sent none (the seat has no split steps); a party is null where no source of it is on the seat.
+   *  The two add up to `outside`. */
+  outsideParts: { operator: number | null; projects: number | null } | null;
   unpricedPoints: number; split: boolean; pointsPerList: number | null; olderPlan: number | null;
   /** Points read while the seat was billed by usage (0151): not in the dent,
    *  not unpriced; usageSteps: those readings, idle ones included. */
@@ -1572,6 +1579,9 @@ export function subscriptionDent(ext: ExternalUsage | null | undefined): Subscri
       key: c.secret_key, slot: c.secret_slot, sources: c.sources,
       real: meterPriced(c) ? c.real_usd : null, points: c.points,
       covey: c.covey_real_usd, outside: c.external_real_usd, unattributed: c.unattributed_real_usd ?? 0, unsplit: c.unsplit_real_usd,
+      outsideParts: c.source_parts && c.source_parts.length > 0 ? {
+        operator: partReal(c.source_parts.filter((p) => p.source === OPERATOR_SOURCE)),
+        projects: partReal(c.source_parts.filter((p) => p.source !== OPERATOR_SOURCE)) } : null,
       unpricedPoints: c.unpriced_points, usagePoints: c.usage_points ?? 0, usageSteps: c.usage_steps ?? 0, split: c.split_steps > 0,
       pointsPerList: c.points_per_list_usd ?? null, olderPlan: c.points_per_list_older_plan_usd ?? null, steps: c.step_count,
     })),

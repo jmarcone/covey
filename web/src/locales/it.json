@@ -381,6 +381,7 @@
       "incompleteNote": "Blocchi di letture con chiamate esterne senza prezzo di listino o registrazioni di covey senza riga: {{n}}. Non fissano alcuna tariffa e nulla in essi conta come non attribuito, quindi le loro parti sono approssimative e possono contenere uso altrui.",
       "seats": "Per contatore",
       "seatLine": "{{seat}}: ≈ {{real}} ({{pts}} punti) – agenti di covey (interni) ≈ {{covey}}, fuori da covey ≈ {{outside}}, non attribuito ≈ {{unattributed}}, non suddiviso ≈ {{unsplit}}",
+      "seatLineSplit": "{{seat}}: ≈ {{real}} ({{pts}} punti) – agenti di covey (interni) ≈ {{covey}}, operatore covey ≈ {{operator}}, altri progetti ≈ {{projects}}, non attribuito ≈ {{unattributed}}, non suddiviso ≈ {{unsplit}}",
       "seatNoPrice": "{{seat}}: – ({{n}} punti senza prezzo del piano)",
       "seatUsage": "{{seat}}: – (fatturato a utilizzo: {{n}} punti, il loro denaro sono gli addebiti d'utilizzo)",
       "noMultipleUsage": "Qui nessun multiplo: le letture del contatore nel periodo sono state fatturate a utilizzo. Il multiplo d'utilizzo di un posto, il listino di covey sui suoi addebiti, è sulla sua credenziale.",
@@ -415,7 +416,7 @@
       },
       "operator": "operatore covey",
       "projects": "Altri progetti",
-      "partSubSource": "{{pct}} del consumo · prezzo di listino {{list}} nelle letture ripartite"
+      "partSubSource": "{{pct}} del consumo"
     },
     "split": {
       "covey": "Agenti di covey (interni)",
@@ -441,7 +442,7 @@
       "usageSeat": "Fatturato a utilizzo per tutto il periodo: le letture del contatore non sono ripartite, i loro punti sono degli addebiti d'utilizzo.",
       "key_outside": "Costo reale, sessioni fuori da covey",
       "key_unsplit": "Costo reale non suddiviso (sessioni esterne non segnalate, o chiamate senza prezzo)",
-      "key_unattributed": "Costo reale non attribuito (non spiegato né dagli agenti di covey (interni) né dalle sessioni segnalate)",
+      "key_unattributed": "Costo reale non attribuito: non spiegato né dagli agenti di covey (interni) né dalle sessioni segnalate",
       "chartNoteUnlinked": "Nessuna fonte esterna indica questo contatore: la barra reale è ripartita per blocchi di almeno 5 punti di letture tra gli agenti covey (interni) e il movimento oltre il tasso, non attribuito (assegnato a nessuno).",
       "unlinkedSeat": "Nessuna fonte esterna riporta su questo contatore, ma può portare un uso fuori da covey. La parte di covey è la stima del server per blocco di letture, il movimento oltre il tasso non è attribuito (assegnato a nessuno) e il multiplo è un limite inferiore.",
       "agentBeforeWindow": "le sue righe cadono nell’intervallo di una lettura iniziata prima del periodo",

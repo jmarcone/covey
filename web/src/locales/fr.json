@@ -381,6 +381,7 @@
       "incompleteNote": "Blocs de relevés avec des appels externes sans prix catalogue ou des enregistrements covey sans ligne : {{n}}. Ils ne fixent aucun taux et rien en eux ne compte comme non attribué ; leurs parts sont donc approximatives et peuvent contenir un usage qui n'est pas le leur.",
       "seats": "Par compteur",
       "seatLine": "{{seat}} : ≈ {{real}} ({{pts}} points) – agents de covey (internes) ≈ {{covey}}, hors de covey ≈ {{outside}}, non attribué ≈ {{unattributed}}, non réparti ≈ {{unsplit}}",
+      "seatLineSplit": "{{seat}} : ≈ {{real}} ({{pts}} points) – agents de covey (internes) ≈ {{covey}}, opérateur covey ≈ {{operator}}, autres projets ≈ {{projects}}, non attribué ≈ {{unattributed}}, non réparti ≈ {{unsplit}}",
       "seatNoPrice": "{{seat}} : – ({{n}} points sans prix de forfait)",
       "seatUsage": "{{seat}} : – (facturé à l'usage : {{n}} points, leur argent sont les montants d'usage)",
       "noMultipleUsage": "Pas de multiples ici : les relevés du compteur sur la période ont été facturés à l'usage. Le multiple d'usage d'un siège, la liste de covey sur ses montants, figure sur son identifiant.",
@@ -415,7 +416,7 @@
       },
       "operator": "opérateur covey",
       "projects": "Autres projets",
-      "partSubSource": "{{pct}} de l'entame · prix catalogue {{list}} dans les relevés répartis"
+      "partSubSource": "{{pct}} de l'entame"
     },
     "split": {
       "covey": "Agents de covey (internes)",
@@ -441,7 +442,7 @@
       "usageSeat": "Facturé à l'usage sur toute la période : les relevés du compteur ne sont pas répartis, leurs points appartiennent aux montants d'usage.",
       "key_outside": "Coût réel, sessions hors de covey",
       "key_unsplit": "Coût réel non réparti (sessions externes non déclarées, ou appels sans prix)",
-      "key_unattributed": "Coût réel non attribué (expliqué ni par les agents de covey (internes) ni par les sessions déclarées)",
+      "key_unattributed": "Coût réel non attribué: expliqué ni par les agents de covey (internes) ni par les sessions déclarées",
       "chartNoteUnlinked": "Aucune source externe ne nomme ce compteur : la barre réelle est répartie par tranche d’au moins 5 points de relevés entre les agents covey (internes) et le mouvement au-delà du taux, non attribué (imputé à personne).",
       "unlinkedSeat": "Aucune source externe ne déclare sur ce compteur, mais il peut porter un usage hors covey. La part de covey est l’estimation du serveur par tranche de relevés, le mouvement au-delà du taux n’est pas attribué (imputé à personne) et le multiple est un minimum.",
       "agentBeforeWindow": "ses lignes tombent dans l’intervalle d’un relevé commencé avant la période",

@@ -404,7 +404,7 @@ function MeterFigures({ f, readings, outside = null }: {
     [["operator", split.operator, within.operator], ["projects", split.projects, within.projects]] as const
   ).flatMap(([key, k, usd]) => !k || k.calls === 0 ? [] : [
     <Fragment key={key}>{row(t(key === "operator" ? "costs.incl.meterListOperator" : "costs.incl.meterListProjects"),
-      withinMoney(t, usd, { priced: e.outsidePriced, calls: k.calls, unpricedTokens: kpiLead(k).unpricedTokens, recomputed: kpiLead(k).recomputed }),
+      withinMoney(t, usd, { priced: e.outsidePriced && kpiLead(k).lead != null, calls: k.calls, unpricedTokens: kpiLead(k).unpricedTokens, recomputed: kpiLead(k).recomputed }),
       SOURCE_COLOR.recomputed)}</Fragment>]) : null;
   return (
     <div className="mb-4" data-meter={f.id}>

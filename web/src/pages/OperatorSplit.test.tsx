@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import Costs from "./Costs";
 import type { CostCells, ExternalCell, ExternalMeterStep, ExternalMeterSums, ExternalMeterTotal, ExternalUsage } from "../api";
 import i18n from "../i18n";
@@ -193,6 +193,10 @@ describe("the outside sessions in three parts (#163)", () => {
     expect(kpi(LEAD).querySelector("[data-part='projects']")!.getAttribute("title")).toBe(
       `${WORK}: ${fmtUSD(1)}\n${SY}: ${fmtUSD(2)} + ${fmtCount(1000)} tokens with no list price`);
     expect(kpi(LEAD).querySelector("[data-part='operator']")!.getAttribute("title")).toBeNull();
+    // The hover is also the line's description, for the keyboard and touch screens (N6).
+    expect(kpi(LEAD).querySelector("[data-part='projects']")!.getAttribute("aria-description")).toBe(
+      `${WORK}: ${fmtUSD(1)}; ${SY}: ${fmtUSD(2)} + ${fmtCount(1000)} tokens with no list price`);
+    expect(kpi(LEAD).querySelector("[data-part='operator']")!.getAttribute("aria-description")).toBeNull();
   });
 
   it("has no line for other projects where only the operator reports", async () => {
@@ -241,6 +245,20 @@ describe("the outside sessions in three parts (#163)", () => {
     expect(op.textContent).toContain(`≈ ${fmtUSD(PP)}`);
     expect(pr.textContent).toContain(`≈ ${fmtUSD(PP)}`);
     expect(pr.getAttribute("title")).toBe(`${SY}: ≈ ${fmtUSD(PP)}`);
+    expect(pr.getAttribute("aria-description")).toBe(`${SY}: ≈ ${fmtUSD(PP)}`);
+    // Each card says its real share and its share of the dent, and no list
+    // price: the server's per source is the list price, the covey card beside
+    // them is at the lead price, so a list there would be on another basis
+    // than the sentence below (#163 review, M2).
+    expect(op.textContent).not.toMatch(/list price/i);
+    expect(pr.textContent).not.toMatch(/list price/i);
+    expect(op.textContent).toContain("of the dent");
+    expect(pr.textContent).toContain("of the dent");
+    // The per-source list stays in the lines below, at the list price they name.
+    const lines = [...row.querySelectorAll("[data-dent-source-part]")].map((e) => e.textContent);
+    expect(lines).toEqual([
+      `${OP}: real share ≈ ${fmtUSD(PP)} (list price ${fmtUSD(2.5)} in the split readings)`,
+      `${SY}: real share ≈ ${fmtUSD(PP)} (list price ${fmtUSD(2.5)} in the split readings)`]);
     const d = subscriptionDent(cells().external)!;
     expect(PP + PP).toBeCloseTo(d.outside.real, 12);
     // The wording: the agents' part says internal.
@@ -259,6 +277,64 @@ describe("the outside sessions in three parts (#163)", () => {
     expect(card.textContent).toContain(`${t("costs.incl.meterListProjects")}${fmtUSD(1.85)}`);
     expect(3.25 + 1.85).toBeCloseTo(5.1, 9);
     expect(card.textContent).not.toContain("List price, outside sessions");
+  });
+
+  it("says each seat's outside part in the estimate as the operator and the other projects, from its source parts", async () => {
+    serve();
+    const row = await screen.findByRole("region", { name: t("costs.dent.title") });
+    const d = subscriptionDent(cells().external)!;
+    expect(d.seats[0].outsideParts).toEqual({ operator: PP, projects: PP });
+    // The seat lines show only where there are several seats or one has no figure: the wording is read directly.
+    expect(t("costs.dent.seatLineSplit", { seat: `${SEAT} #0`, real: "$1", pts: "6", covey: "$2", operator: "$0.50", projects: "$0.25",
+      unattributed: "$0", unsplit: "$0" })).toContain("covey operator ≈ $0.50, other projects ≈ $0.25");
+    expect(row.querySelector("[data-dent='operator']")).toBeTruthy();
+    // Only the operator on the seat: no other projects in the numbers.
+    expect(subscriptionDent(operatorOnly().external)!.seats[0].outsideParts).toEqual({ operator: PP, projects: null });
+  });
+
+  it("keeps the everything tile's parts adding up to its figure whatever the source chips say (#163 review, M1)", async () => {
+    serve();
+    const text = async () => (await screen.findByRole("group", { name: t("costs.incl.everything") })).textContent ?? "";
+    const parts = async () => {
+      const m = (await text()).match(/\(covey agents \(internal\) \$([\d.]+)(?: · covey operator \$([\d.]+))?(?: · other projects \$([\d.]+))?/);
+      return m ? [m[1], m[2], m[3]].map((x) => (x == null ? 0 : Number(x))) : null;
+    };
+    await waitFor(async () => expect(await parts()).not.toBeNull());
+    const [covey, op0, pr0] = (await parts())!;
+    expect(op0).toBeCloseTo(3.25, 2);
+    expect(pr0).toBeCloseTo(1.85, 2);
+    const whole = op0 + pr0;
+    // The operator chip off: the tile is the whole seat's still; the operator's share is not booked as other projects.
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${OP}`) }));
+    const [c1, op1, pr1] = (await parts())!;
+    expect([c1, op1, pr1]).toEqual([covey, op0, pr0]);
+    // Both chips off: the same figure, the same parts.
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${SY}`) }));
+    const [c2, op2, pr2] = (await parts())!;
+    expect([c2, op2, pr2]).toEqual([covey, op0, pr0]);
+    expect(op2 + pr2).toBeCloseTo(whole, 9);
+  });
+
+  it("says 'no list price' for a part whose calls have none, never $0.00, though the other part is priced (#163 review, N4)", async () => {
+    const data = cells();
+    const ext = data.external!;
+    // The operator's calls carry no reported cost and no list price.
+    for (const c of ext.cells.filter((x) => x.source === OP)) {
+      Object.assign(c, { list_usd: null, measured: {}, reported_usd: null, reported_calls: 0, lead_usd: null, unpriced_calls: c.calls,
+        unpriced_tokens: 500, lead_unpriced_calls: c.calls, lead_unpriced_tokens: 500 });
+    }
+    const src = ext.sources.find((x) => x.source === OP)!;
+    Object.assign(src, { list_usd: null, reported_usd: null, lead_usd: null, unpriced_tokens: 1000, lead_unpriced_tokens: 1000 });
+    serve(data);
+    const tile = await screen.findByRole("group", { name: t("costs.incl.everything") });
+    await waitFor(() => expect(tile.textContent).toContain("covey operator no list price"));
+    expect(tile.textContent).not.toContain("covey operator $0.00");
+    const card = await waitFor(() => {
+      const c = document.querySelector(`[data-meter="${SEAT}#0"]`);
+      if (!c) throw new Error("no meter card yet");
+      return c;
+    });
+    expect(card.textContent).toContain(`${t("costs.incl.meterListOperator")}no list price`);
   });
 
   it("splits the part of everything on the meter between the operator and the other projects, to the cent, whatever the total", () => {

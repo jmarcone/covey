@@ -381,6 +381,7 @@
       "incompleteNote": "Bloki odczytów z wywołaniami zewnętrznymi bez ceny katalogowej lub księgowaniami covey bez linii: {{n}}. Nie wyznaczają stawki i nic w nich nie liczy się jako nieprzypisane, więc ich części są przybliżone i mogą zawierać cudze użycie.",
       "seats": "Na licznik",
       "seatLine": "{{seat}}: ≈ {{real}} ({{pts}} pkt) – agenci covey (wewnętrzni) ≈ {{covey}}, poza covey ≈ {{outside}}, nieprzypisane ≈ {{unattributed}}, niepodzielone ≈ {{unsplit}}",
+      "seatLineSplit": "{{seat}}: ≈ {{real}} ({{pts}} pkt) – agenci covey (wewnętrzni) ≈ {{covey}}, operator covey ≈ {{operator}}, inne projekty ≈ {{projects}}, nieprzypisane ≈ {{unattributed}}, niepodzielone ≈ {{unsplit}}",
       "seatNoPrice": "{{seat}}: – ({{n}} pkt bez ceny planu)",
       "seatUsage": "{{seat}}: – (rozliczane według użycia: {{n}} pkt, ich pieniądze to opłaty za użycie)",
       "noMultipleUsage": "Tu brak mnożników: odczyty licznika w zakresie były rozliczane według użycia. Mnożnik użycia miejsca, lista covey wobec jego opłat, jest przy jego poświadczeniu.",
@@ -415,7 +416,7 @@
       },
       "operator": "operator covey",
       "projects": "Inne projekty",
-      "partSubSource": "{{pct}} zużycia · cena katalogowa {{list}} w podzielonych odczytach"
+      "partSubSource": "{{pct}} zużycia"
     },
     "split": {
       "covey": "Agenci covey (wewnętrzni)",
@@ -441,7 +442,7 @@
       "usageSeat": "Rozliczane według użycia przez cały zakres: odczyty licznika nie są dzielone, ich punkty należą do opłat za użycie.",
       "key_outside": "Rzeczywisty koszt, sesje poza covey",
       "key_unsplit": "Rzeczywisty koszt niepodzielony (sesje zewnętrzne nie zaraportowały lub ich wywołania nie miały ceny)",
-      "key_unattributed": "Rzeczywisty koszt nieprzypisany (niewyjaśniony ani przez agentów covey (wewnętrznych), ani przez zaraportowane sesje)",
+      "key_unattributed": "Rzeczywisty koszt nieprzypisany: niewyjaśniony ani przez agentów covey (wewnętrznych), ani przez zaraportowane sesje",
       "chartNoteUnlinked": "Żadne źródło spoza covey nie wskazuje tego licznika: słupek realnego kosztu jest dzielony na bloki co najmniej 5 punktów odczytów między agentów covey (wewnętrznych) a ruch powyżej stawki, nieprzypisany (nikomu).",
       "unlinkedSeat": "Żadne źródło spoza covey nie raportuje na tym liczniku, ale może on nieść użycie spoza covey. Część covey to szacunek serwera na blok odczytów, ruch powyżej stawki jest nieprzypisany (nikomu), a krotność jest dolną granicą.",
       "agentBeforeWindow": "jego wiersze przypadają na zakres odczytu, który zaczął się przed okresem",

@@ -55,7 +55,8 @@ function Part({ label, value, sub, color, dashed, hatch, test, title }: {
   label: string; value: string; sub: string; color?: string; dashed?: string; hatch?: number; test: string; title?: string;
 }) {
   return (
-    <div role="group" aria-label={label} data-dent={test} title={title}
+    // The hover is also the card's accessible description, which the keyboard and touch screens reach where a title is not.
+    <div role="group" aria-label={label} data-dent={test} title={title} aria-description={title?.split("\n").join("; ")}
       style={{ padding: "10px 14px", borderRadius: 8, border: "1px solid var(--border)", minWidth: 170, flex: "1 1 170px" }}>
       <div className="muted text-xs" style={{ display: "flex", alignItems: "center", gap: 6 }}>
         {color && <Swatch color={color} hatched dashed={dashed} hatch={hatch} />}
@@ -180,13 +181,15 @@ export function SubscriptionDentRow({ d, filtered, h = null, sourceParts = [] }:
   if (un.noCall >= 0.005) unParts.push(t("costs.dent.unattributedNoCall", { usd: fmtUSD(un.noCall) }));
   const sources = d.sources.join(", ");
   // The outside part per source (the server's source_parts), in the covey
-  // operator and the other projects: each with its real share and its list
-  // price in the split readings (#163).
+  // operator and the other projects: each with its real share and its share of
+  // the dent. No list price on the cards: the server's per source is the list
+  // price, the cards beside them state the lead price (#163 review, M2); the
+  // per-source list is in the lines below.
   const shown = sourceParts.filter((p) => p.list_usd > 0 || p.real_usd > 0);
   const outsideParts = (["operator", "projects"] as const).flatMap((key) => {
     const ps = shown.filter((p) => (p.source === OPERATOR_SOURCE) === (key === "operator"));
     if (ps.length === 0) return [];
-    return [{ key, real: ps.reduce((a, p) => a + p.real_usd, 0), list: ps.reduce((a, p) => a + p.list_usd, 0),
+    return [{ key, real: ps.reduce((a, p) => a + p.real_usd, 0),
       title: key === "projects" ? ps.map((p) => `${p.source}: ≈ ${fmtUSD(p.real_usd)}`).join("\n") : undefined }];
   });
   const seat = (s: SubscriptionDent["seats"][number]) => `${s.key} #${s.slot}`;
@@ -238,7 +241,7 @@ export function SubscriptionDentRow({ d, filtered, h = null, sourceParts = [] }:
               projects, the latter with each project as its hover. Without per-source parts, the one outside part. */}
           {outsideParts.length > 0 ? outsideParts.map((o) => (
             <Part key={o.key} test={o.key} label={t(o.key === "operator" ? "costs.dent.operator" : "costs.dent.projects")} value={`≈ ${fmtUSD(o.real)}`}
-              sub={t("costs.dent.partSubSource", { pct: pctOf(d.real! > 0 ? o.real / d.real! : null), list: fmtUSD(o.list) })}
+              sub={t("costs.dent.partSubSource", { pct: pctOf(d.real! > 0 ? o.real / d.real! : null) })}
               title={o.title} color={SPLIT_COLOR.outside} hatch={SPLIT_HATCH.outside} />
           )) : (
             <Part test="outside" label={t("costs.dent.outside")} value={`≈ ${fmtUSD(d.outside.real)}`} sub={part(d.outside)} color={SPLIT_COLOR.outside} hatch={SPLIT_HATCH.outside} />
@@ -328,8 +331,10 @@ export function SubscriptionDentRow({ d, filtered, h = null, sourceParts = [] }:
                   : s.usageSteps > 0 && s.unpricedPoints === 0 ? t("costs.dent.seatUsage", { seat: seat(s), n: pts(s.usagePoints) })
                   : s.usageSteps > 0 ? t("costs.dent.seatNoPriceAndUsage", { seat: seat(s), n: pts(s.unpricedPoints), m: pts(s.usagePoints) })
                   : t("costs.dent.seatNoPrice", { seat: seat(s), n: pts(s.unpricedPoints) }))
-                : t("costs.dent.seatLine", { seat: seat(s), real: fmtUSD(s.real), pts: pts(s.points),
-                  covey: fmtUSD(s.covey), outside: fmtUSD(s.outside), unattributed: fmtUSD(s.unattributed), unsplit: fmtUSD(s.unsplit) })}
+                : t(s.outsideParts?.operator != null && s.outsideParts.projects != null ? "costs.dent.seatLineSplit" : "costs.dent.seatLine", {
+                  seat: seat(s), real: fmtUSD(s.real), pts: pts(s.points), covey: fmtUSD(s.covey), outside: fmtUSD(s.outside),
+                  operator: fmtUSD(s.outsideParts?.operator ?? 0), projects: fmtUSD(s.outsideParts?.projects ?? 0),
+                  unattributed: fmtUSD(s.unattributed), unsplit: fmtUSD(s.unsplit) })}
               {s.sources.length === 0 && t("costs.dent.seatNoSource")}
             </li>
           ))}

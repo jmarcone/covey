@@ -814,11 +814,14 @@ export function SplitParts({ lines, stacked = false }: { lines: SplitLine[]; sta
   const { t } = useTranslation();
   const mark = (l: SplitLine) => (l.recomputed ? `${l.text} *` : l.text);
   const note = lines.some((l) => l.recomputed);
+  // A line's hover is also its accessible description, which the keyboard and
+  // touch screens reach where a title is not (#163 review, N6).
+  const about = (l: SplitLine) => l.title?.split("\n").join("; ");
   if (!stacked) {
-    return <>{lines.map((l, i) => <Fragment key={l.key}>{i > 0 && " · "}<span data-part={l.key} title={l.title}>{mark(l)}</span></Fragment>)}</>;
+    return <>{lines.map((l, i) => <Fragment key={l.key}>{i > 0 && " · "}<span data-part={l.key} title={l.title} aria-description={about(l)}>{mark(l)}</span></Fragment>)}</>;
   }
   return <>
-    {lines.map((l) => <div key={l.key} data-part={l.key} title={l.title}>{mark(l)}</div>)}
+    {lines.map((l) => <div key={l.key} data-part={l.key} title={l.title} aria-description={about(l)}>{mark(l)}</div>)}
     {note && <div data-part-footnote>* {t("costs.lead.recomputedMark")}</div>}
   </>;
 }
@@ -984,10 +987,12 @@ function realSpan(t: TFunction, f: CredentialFigures, key = "costs.fig.realSince
 }
 
 /** The tiles of one credential. */
-function CredentialTiles({ f, filtered, narrowed, out, split, full }: {
+function CredentialTiles({ f, filtered, narrowed, out, split, seatSplit, full }: {
   f: CredentialFigures; filtered: boolean; out: OutsideKpis | null;
   /** The same sources in two parts: the covey operator and the other projects (#163). */
   split: OutsideSplit | null;
+  /** Every source on the seat in the same two parts, the chips ignored: the everything tile is the whole seat's. */
+  seatSplit: OutsideSplit | null;
   /** The page is narrowed to agents: an org-wide figure says so. */
   narrowed: boolean;
   /** Claude Code's figure and covey's price table as two tiles (the toggle); else the one lead tile. */
@@ -1061,11 +1066,11 @@ function CredentialTiles({ f, filtered, narrowed, out, split, full }: {
       if (e.multiple && e.estimate != null) {
         // The outside part in its two parts (#163), each marked where it
         // holds recomputed calls; said once, in brackets, after the parts.
-        const within = split ? withinSplit(e.outsideList, split) : null;
-        const kinds = split ? ([["operator", split.operator, within!.operator], ["projects", split.projects, within!.projects]] as const)
+        const within = seatSplit ? withinSplit(e.outsideList, seatSplit) : null;
+        const kinds = seatSplit ? ([["operator", seatSplit.operator, within!.operator], ["projects", seatSplit.projects, within!.projects]] as const)
           .filter(([, k]) => k && k.calls > 0) : [];
         const outsideLines = kinds.map(([key, k, usd]) => t(key === "operator" ? "costs.incl.lineOperator" : "costs.incl.lineProjects",
-          { usd: withinMoney(t, usd, { priced: e.outsidePriced, calls: k!.calls, unpricedTokens: kpiLead(k!).unpricedTokens,
+          { usd: withinMoney(t, usd, { priced: e.outsidePriced && kpiLead(k!).lead != null, calls: k!.calls, unpricedTokens: kpiLead(k!).unpricedTokens,
             recomputed: kpiLead(k!).recomputed }, false) }));
         const recomputed = kinds.some(([, k]) => kpiLead(k!).recomputed > 0);
         const parts = [t(filtered ? "costs.incl.lineCoveySelected" : "costs.incl.lineCovey", { usd: fmtUSD(e.coveyList) }), ...outsideLines].join(" · ")
@@ -1206,6 +1211,11 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
     ? seatSources(outside.ext, f.secretKey, f.slot!).filter((s) => outside.on.has(s.source)) : []), [outside, f.secretKey, f.slot]);
   const mineKpis = useMemo(() => (outside && mine.length > 0 ? outsideKpis(outside.ext, new Set(mine.map((s) => s.source))) : null), [outside, mine]);
   const mineSplit = useMemo(() => (outside && mine.length > 0 ? outsideSplit(outside.ext, new Set(mine.map((s) => s.source))) : null), [outside, mine]);
+  // The everything tile is the whole seat's, whatever the chips say (as the
+  // meter card's is): its parts are over every source on the seat, so they add
+  // up to its figure with chips off (#163 review, M1).
+  const seatSplit = useMemo(() => (outside && f.secretKey != null
+    ? outsideSplit(outside.ext, new Set(seatSources(outside.ext, f.secretKey, f.slot!).map((s) => s.source))) : null), [outside, f.secretKey, f.slot]);
   const steps = useMemo(() => (f.meter ? (data.subscription ?? []).filter((s) => s.secret_key === f.meter!.secret_key
     && s.secret_slot === f.meter!.secret_slot && s.source === f.meter!.source && s.window_kind === f.meter!.window_kind) : []), [data.subscription, f.meter]);
   // The bill inside the tile's window, in the chart's buckets.
@@ -1437,7 +1447,7 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
       </div>
       {subscription && <PlanPrice f={f} name={name} readings={readings} editable={canSetPlan} />}
       {f.secretKey != null && <CostBasisPanel f={f} name={name} editable={canSetPlan} />}
-      <CredentialTiles f={f} filtered={filtered || layout === "agents"} narrowed={filtered} out={mineKpis} split={mineSplit} full={full} />
+      <CredentialTiles f={f} filtered={filtered || layout === "agents"} narrowed={filtered} out={mineKpis} split={mineSplit} seatSplit={seatSplit} full={full} />
       <NoMultiple f={f} />
       {/* Outside every reading's span: before the meter's first reading
           (no meter data, never a real share) and after its last (pending). */}

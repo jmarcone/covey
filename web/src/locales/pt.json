@@ -381,6 +381,7 @@
       "incompleteNote": "Blocos de leituras com chamadas externas sem preço de tabela ou lançamentos do covey sem linha: {{n}}. Não fixam taxa e nada neles conta como sem atribuição, então as suas partes são aproximadas e podem conter uso alheio.",
       "seats": "Por medidor",
       "seatLine": "{{seat}}: ≈ {{real}} ({{pts}} pontos) – agentes do covey (internos) ≈ {{covey}}, fora do covey ≈ {{outside}}, sem atribuição ≈ {{unattributed}}, não dividido ≈ {{unsplit}}",
+      "seatLineSplit": "{{seat}}: ≈ {{real}} ({{pts}} pontos) – agentes do covey (internos) ≈ {{covey}}, operador do covey ≈ {{operator}}, outros projetos ≈ {{projects}}, sem atribuição ≈ {{unattributed}}, não dividido ≈ {{unsplit}}",
       "seatNoPrice": "{{seat}}: – ({{n}} pontos sem preço de plano)",
       "seatUsage": "{{seat}}: – (faturado por uso: {{n}} pontos, o seu dinheiro são as cobranças de uso)",
       "noMultipleUsage": "Aqui não há múltiplos: as leituras do contador no período foram faturadas por uso. O múltiplo de uso de um assento, a lista do covey sobre as suas cobranças, está na sua credencial.",
@@ -415,7 +416,7 @@
       },
       "operator": "operador do covey",
       "projects": "Outros projetos",
-      "partSubSource": "{{pct}} do desgaste · preço de tabela {{list}} nas leituras divididas"
+      "partSubSource": "{{pct}} do desgaste"
     },
     "split": {
       "covey": "Agentes do covey (internos)",
@@ -441,7 +442,7 @@
       "usageSeat": "Faturado por uso durante todo o período: as leituras do contador não são repartidas, os seus pontos são das cobranças de uso.",
       "key_outside": "Custo real, sessões fora do covey",
       "key_unsplit": "Custo real não dividido (sessões externas não tinham reportado, ou as suas chamadas não tinham preço)",
-      "key_unattributed": "Custo real sem atribuição (não explicado pelos agentes do covey (internos) nem pelas sessões reportadas)",
+      "key_unattributed": "Custo real sem atribuição: não explicado pelos agentes do covey (internos) nem pelas sessões reportadas",
       "chartNoteUnlinked": "Nenhuma fonte externa indica este medidor: a barra real é dividida por blocos de pelo menos 5 pontos de leituras entre os agentes do covey (internos) e o movimento acima da taxa, não atribuído (lançado a ninguém).",
       "unlinkedSeat": "Nenhuma fonte externa informa sobre este medidor, mas ele pode carregar uso fora do covey. A parte do covey é a estimativa do servidor por bloco de leituras, o movimento acima da taxa não é atribuído (lançado a ninguém) e o múltiplo é um limite inferior.",
       "agentBeforeWindow": "suas linhas caem no intervalo de uma leitura que começou antes do período",

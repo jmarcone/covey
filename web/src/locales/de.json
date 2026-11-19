@@ -381,6 +381,7 @@
       "incompleteNote": "Blöcke von Ablesungen mit Aufrufen außerhalb ohne Listenpreis oder covey-Buchungen ohne Zeile: {{n}}. Sie setzen keinen Satz, und nichts in ihnen gilt als nicht zugeordnet; ihre Teile sind daher nur ungefähr und können fremde Nutzung enthalten.",
       "seats": "Je Zähler",
       "seatLine": "{{seat}}: ≈ {{real}} ({{pts}} Punkte) – covey-Agenten (intern) ≈ {{covey}}, außerhalb von covey ≈ {{outside}}, nicht zugeordnet ≈ {{unattributed}}, nicht aufgeteilt ≈ {{unsplit}}",
+      "seatLineSplit": "{{seat}}: ≈ {{real}} ({{pts}} Punkte) – covey-Agenten (intern) ≈ {{covey}}, covey-Operator ≈ {{operator}}, andere Projekte ≈ {{projects}}, nicht zugeordnet ≈ {{unattributed}}, nicht aufgeteilt ≈ {{unsplit}}",
       "seatNoPrice": "{{seat}}: – ({{n}} Punkte ohne Planpreis)",
       "seatUsage": "{{seat}}: – (nach Nutzung abgerechnet: {{n}} Punkte, ihr Geld sind die Nutzungsbeträge)",
       "noMultipleUsage": "Hier keine Vielfachen: Die Zählerablesungen im Zeitraum wurden nach Nutzung abgerechnet. Das Nutzungsvielfache eines Sitzes, covey's Liste über seinen Beträgen, steht bei seiner Zugangsdaten-Zeile.",
@@ -415,7 +416,7 @@
       },
       "operator": "covey-Operator",
       "projects": "Andere Projekte",
-      "partSubSource": "{{pct}} der Delle · Listenpreis {{list}} in den aufgeteilten Ablesungen"
+      "partSubSource": "{{pct}} der Delle"
     },
     "split": {
       "covey": "covey-Agenten (intern)",
@@ -441,7 +442,7 @@
       "usageSeat": "Über den ganzen Zeitraum nach Nutzung abgerechnet: Die Ablesungen des Zählers werden nicht aufgeteilt, ihre Punkte gehören zu den Nutzungsbeträgen.",
       "key_outside": "Echte Kosten, Sitzungen außerhalb von covey",
       "key_unsplit": "Echte Kosten nicht aufgeteilt (Sitzungen außerhalb hatten nicht gemeldet, oder ihre Aufrufe hatten keinen Preis)",
-      "key_unattributed": "Echte Kosten nicht zugeordnet (weder durch covey-Agenten (intern) noch durch die gemeldeten Sitzungen erklärt)",
+      "key_unattributed": "Echte Kosten nicht zugeordnet: weder durch covey-Agenten (intern) noch durch die gemeldeten Sitzungen erklärt",
       "chartNoteUnlinked": "Keine Quelle außerhalb nennt diesen Zähler: Der Echt-Balken ist je Abschnitt von mindestens 5 Punkten an Ablesungen aufgeteilt zwischen den covey-Agenten (intern) und der Bewegung über dem Satz, nicht zugeordnet (niemandem gebucht).",
       "unlinkedSeat": "Keine Quelle außerhalb meldet auf diesem Zähler, er kann aber Nutzung außerhalb von covey tragen. Der Anteil von covey ist die Schätzung des Servers je Abschnitt von Ablesungen, die Bewegung über dem Satz ist nicht zugeordnet (niemandem gebucht), und das Vielfache ist eine Untergrenze.",
       "agentBeforeWindow": "seine Zeilen fallen in die Spanne einer Ablesung, die vor dem Zeitraum begann",
