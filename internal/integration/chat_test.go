@@ -413,22 +413,29 @@ func TestChatTriageSurvivesARestart(t *testing.T) {
 
 	s.srv.NachholenOffeneTriage(ctx)
 
-	wartenAuf(t, "the left-over message becomes a task", func() bool {
-		tasks, err := s.backlog.ListByAgent(ctx, agent.ID, false)
-		if err != nil {
+	/* The task row is not the end of the turn: the triage creates the task and
+	   then, in a second statement, points the message at it. Waiting for the
+	   row alone and reading the link at once raced that second statement
+	   (#12), so the wait is for the link, and the task it names is the one. */
+	var taskID *uuid.UUID
+	wartenAuf(t, "the left-over message points at the task it became", func() bool {
+		if err := s.pool.QueryRow(ctx, `SELECT task_id FROM conversation_messages WHERE id=$1`, id).Scan(&taskID); err != nil {
 			t.Fatal(err)
 		}
-		return len(tasks) == 1 && tasks[0].Title == "Die Wartung von morgen absagen"
+		return taskID != nil
 	})
 
 	/* Und sie hängt an der Nachricht: Der Verlauf zeigt das Gesagte und das
 	   Daraus-Gewordene als eine Zeile, nicht als zwei. */
-	var taskID *uuid.UUID
-	if err := s.pool.QueryRow(ctx, `SELECT task_id FROM conversation_messages WHERE id=$1`, id).Scan(&taskID); err != nil {
+	tasks, err := s.backlog.ListByAgent(ctx, agent.ID, false)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if taskID == nil {
-		t.Fatal("the caught-up message has to point at the task it became")
+	if len(tasks) != 1 || tasks[0].Title != "Die Wartung von morgen absagen" {
+		t.Fatalf("the left-over message has to become exactly one task, got %+v", tasks)
+	}
+	if tasks[0].ID != *taskID {
+		t.Fatalf("the message points at task %s, the task it became is %s", *taskID, tasks[0].ID)
 	}
 }
 
