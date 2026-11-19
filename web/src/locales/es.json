@@ -656,7 +656,8 @@
       "monthlyResets": "se reinicia el {{date}}",
       "monthlyNoLimit": "sin límite introducido: su movimiento aún no es dinero",
       "monthlyMoney": "del contador: {{amount}}",
-      "noPlace": "Esperando a que cargue el runtime de esta credencial: se podrá guardar en cuanto esté."
+      "noPlace": "Esperando a que cargue el runtime de esta credencial: se podrá guardar en cuanto esté.",
+      "errReadingExists": "Ya existe una lectura de esta credencial y ventana en ese momento. Elige otra hora."
     },
     "incl": {
       "split": "agentes de covey {{covey}} · sesiones externas {{outside}}",

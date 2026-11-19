@@ -656,7 +656,8 @@
       "monthlyResets": "{{date}} にリセット",
       "monthlyNoLimit": "上限未入力: その変動はまだ金額になりません",
       "monthlyMoney": "メーターから: {{amount}}",
-      "noPlace": "この認証情報のランタイムを読み込み中です。読み込み後に保存できます。"
+      "noPlace": "この認証情報のランタイムを読み込み中です。読み込み後に保存できます。",
+      "errReadingExists": "この認証情報とウィンドウのその時点の値はすでにあります。別の時刻を選んでください。"
     },
     "incl": {
       "split": "covey のエージェント {{covey}} · covey 外のセッション {{outside}}",

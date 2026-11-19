@@ -185,11 +185,14 @@ function hasSyncedBill(f: Pick<CredentialFigures, "kind" | "billed">): boolean {
   return f.kind === "api_key" && f.billed != null && !["unavailable", "unconfigured", "unmapped"].includes(f.billed.state);
 }
 
-function saveError(t: TFunction, err: Error, what: "basis" | "charge" | "limit" = "basis"): string {
+const CONFLICT = { basis: "costs.basis.errConflict", charge: "costs.basis.errOverlap", limit: "costs.basis.errLimitExists",
+  reading: "costs.basis.errReadingExists" } as const;
+
+function saveError(t: TFunction, err: Error, what: keyof typeof CONFLICT = "basis"): string {
   if (err instanceof ApiError) {
-    // Three 409s: a basis or a limit at the same moment, or a charge over
-    // another's span.
-    if (err.status === 409) return t(what === "charge" ? "costs.basis.errOverlap" : what === "limit" ? "costs.basis.errLimitExists" : "costs.basis.errConflict");
+    // Four 409s: a basis, a limit or a reading at the same moment, or a
+    // charge over another's span.
+    if (err.status === 409) return t(CONFLICT[what]);
     if (err.status === 400) return t("costs.basis.errInvalid", { msg: err.message });
     if (err.status === 403) return t("costs.basis.errForbidden", { msg: err.message });
   }
@@ -338,7 +341,7 @@ export function CostBasisPanel({ f, name, editable }: { f: CredentialFigures; na
   const readingValid = /^[a-z][a-z0-9_]{0,39}$/.test(window_) && Number.isFinite(percentNum) && percentNum >= 0 && percentNum <= 1000
     && Number.isFinite(resetsMs) && Number.isFinite(readMs);
   const error = saveBasis.error ? saveError(t, saveBasis.error) : saveCharge.error ? saveError(t, saveCharge.error, "charge")
-    : saveLimit.error ? saveError(t, saveLimit.error, "limit") : saveReading.error ? saveError(t, saveReading.error)
+    : saveLimit.error ? saveError(t, saveLimit.error, "limit") : saveReading.error ? saveError(t, saveReading.error, "reading")
     : remove.error ? saveError(t, remove.error) : null;
   const exportOf = new Map((u?.exports ?? []).map((x) => [x.charge.id, x]));
   const deleteButton = (id: string) => editable && base && (

@@ -656,7 +656,8 @@
       "monthlyResets": "{{date}} 重置",
       "monthlyNoLimit": "未录入上限: 其变动尚不构成金额",
       "monthlyMoney": "来自计量: {{amount}}",
-      "noPlace": "正在等待此凭据的运行时加载: 加载完成后即可保存。"
+      "noPlace": "正在等待此凭据的运行时加载: 加载完成后即可保存。",
+      "errReadingExists": "此凭据和窗口在该时刻的读数已存在。请选择其他时间。"
     },
     "incl": {
       "split": "covey 智能体 {{covey}} · covey 外会话 {{outside}}",

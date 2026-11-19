@@ -656,7 +656,8 @@
       "monthlyResets": "resets {{date}}",
       "monthlyNoLimit": "no limit entered: its movement is no money yet",
       "monthlyMoney": "from the meter: {{amount}}",
-      "noPlace": "Waiting for this credential's runtime to load: saving is possible once it has."
+      "noPlace": "Waiting for this credential's runtime to load: saving is possible once it has.",
+      "errReadingExists": "A reading of this credential and window at that moment exists already. Pick another time."
     },
     "incl": {
       "split": "covey agents {{covey}} · outside sessions {{outside}}",

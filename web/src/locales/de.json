@@ -656,7 +656,8 @@
       "monthlyResets": "setzt zurück am {{date}}",
       "monthlyNoLimit": "kein Limit eingetragen: seine Bewegung ist noch kein Geld",
       "monthlyMoney": "aus dem Zähler: {{amount}}",
-      "noPlace": "Warte darauf, dass die Laufzeit dieser Zugangsdaten geladen ist: Speichern geht, sobald sie da ist."
+      "noPlace": "Warte darauf, dass die Laufzeit dieser Zugangsdaten geladen ist: Speichern geht, sobald sie da ist.",
+      "errReadingExists": "Ein Stand dieser Zugangsdaten und dieses Fensters zu diesem Zeitpunkt existiert bereits. Wähle eine andere Zeit."
     },
     "incl": {
       "split": "covey-Agenten {{covey}} · Sitzungen außerhalb {{outside}}",

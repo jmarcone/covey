@@ -656,7 +656,8 @@
       "monthlyResets": "reset op {{date}}",
       "monthlyNoLimit": "geen limiet ingevoerd: de beweging is nog geen geld",
       "monthlyMoney": "uit de teller: {{amount}}",
-      "noPlace": "Wachten tot de runtime van deze inloggegevens is geladen: opslaan kan zodra die er is."
+      "noPlace": "Wachten tot de runtime van deze inloggegevens is geladen: opslaan kan zodra die er is.",
+      "errReadingExists": "Er bestaat al een stand van deze inloggegevens en dit venster op dat moment. Kies een andere tijd."
     },
     "incl": {
       "split": "covey-agents {{covey}} · sessies buiten covey {{outside}}",

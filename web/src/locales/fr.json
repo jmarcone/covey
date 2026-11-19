@@ -656,7 +656,8 @@
       "monthlyResets": "réinitialisé le {{date}}",
       "monthlyNoLimit": "aucune limite saisie : son mouvement n'est pas encore de l'argent",
       "monthlyMoney": "du compteur : {{amount}}",
-      "noPlace": "En attente du chargement du runtime de cet identifiant : l'enregistrement sera possible ensuite."
+      "noPlace": "En attente du chargement du runtime de cet identifiant : l'enregistrement sera possible ensuite.",
+      "errReadingExists": "Un relevé de cet identifiant et de cette fenêtre existe déjà à ce moment. Choisissez une autre heure."
     },
     "incl": {
       "split": "agents covey {{covey}} · sessions externes {{outside}}",

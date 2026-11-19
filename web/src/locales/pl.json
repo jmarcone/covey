@@ -656,7 +656,8 @@
       "monthlyResets": "reset {{date}}",
       "monthlyNoLimit": "nie wpisano limitu: jego ruch nie jest jeszcze pieniędzmi",
       "monthlyMoney": "z licznika: {{amount}}",
-      "noPlace": "Czekam na załadowanie środowiska tego poświadczenia: zapis będzie możliwy, gdy się załaduje."
+      "noPlace": "Czekam na załadowanie środowiska tego poświadczenia: zapis będzie możliwy, gdy się załaduje.",
+      "errReadingExists": "Odczyt tego poświadczenia i okna w tym momencie już istnieje. Wybierz inny czas."
     },
     "incl": {
       "split": "agenci covey {{covey}} · sesje spoza covey {{outside}}",
