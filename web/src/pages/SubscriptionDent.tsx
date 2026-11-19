@@ -2,7 +2,7 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { fmtNumber, fmtUSD } from "../format";
 import { SPLIT_COLOR, SPLIT_HATCH } from "./costSources";
-import type { DentPart, FloorMultiple, Headline, SubscriptionDent } from "./costFigures";
+import type { DentPart, FloorMultiple, Headline, PayPerTokenHeadline, SubscriptionDent } from "./costFigures";
 import { OrgWide, Swatch, outsideMoney, priceTableLine } from "./StackedCostChart";
 import { usageList } from "./CostBasis";
 
@@ -317,6 +317,45 @@ export function SubscriptionDentRow({ d, filtered, h = null, sourceParts = [] }:
       )}
       </details>
       <p className="muted text-xs mb-0" style={{ fontStyle: "italic" }}>{t("costs.dent.caveat")}</p>
+    </section>
+  );
+}
+
+/** The pay-per-token headline (0152): the lead figure over the spans an API
+ *  key's bill and the counted usage charges (by hand and the monthly meter's)
+ *  cover, against that money — one multiple where all of it is in USD, each
+ *  currency on its own and why otherwise. Its own section: never added to a
+ *  subscription meter's real cost. */
+export function PayPerTokenRow({ h, filtered }: { h: PayPerTokenHeadline; filtered: boolean }) {
+  const { t } = useTranslation();
+  const parts = [
+    h.billed != null ? t("costs.ppt.bill", { usd: fmtUSD(h.billed) }) : null,
+    h.charges.length > 0 ? t("costs.ppt.charges", { list: usageList(t, h.charges) }) : null,
+  ].filter((x): x is string => x != null);
+  const plainUsd = parts.length === 1 && h.charges.every((c) => c.currency === "USD" && !c.meter);
+  const real = h.realUsd == null ? parts.join(" + ") : plainUsd ? fmtUSD(h.realUsd) : `${fmtUSD(h.realUsd)} (${parts.join(" + ")})`;
+  const split = h.outsideList >= 0.005 ? ` (${t("costs.ppt.parts", { covey: fmtUSD(h.coveyList), outside: fmtUSD(h.outsideList) })})` : "";
+  const args = { list: fmtUSD(h.list), parts: split, real };
+  return (
+    <section className="card mb-4" aria-label={t("costs.ppt.title")} data-ppt>
+      <div style={{ fontWeight: 600, marginBottom: 4 }}>
+        {t("costs.ppt.title")}
+        {filtered && <OrgWide />}
+      </div>
+      <p className="text-sm mb-1" style={{ fontWeight: 600 }} data-ppt-sentence>
+        {h.multiple != null ? t("costs.ppt.sentence", { ...args, x: `≈ ${fmtNumber(h.multiple, 2)}×` }) : t("costs.ppt.sentenceNoMultiple", args)}
+      </p>
+      {h.why && (
+        <p className="muted text-xs mb-1" data-ppt-no-multiple={h.why}>
+          {h.why === "rate" ? t("costs.ppt.noMultipleRate", { currencies: h.noRate.join(", ") })
+            : h.why === "list" ? t("costs.ppt.noMultipleList") : t("costs.ppt.noMultipleMoney")}
+        </p>
+      )}
+      {h.billedPending && <p className="muted text-xs mb-1" data-ppt-pending>{t("costs.ppt.billPending")}</p>}
+      <p className="muted text-xs mb-0" data-ppt-credentials>
+        {t("costs.ppt.credentials", { list: h.credentials.map((c) => `${c.name} (${t(c.money === "bill" ? "costs.ppt.byBill" : "costs.ppt.byCharges")})`).join(", ") })}
+        {" "}{t("costs.ppt.hint")}
+      </p>
     </section>
   );
 }
