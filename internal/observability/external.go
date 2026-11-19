@@ -747,6 +747,39 @@ type ExternalMeterSums struct {
 	// step's span (after the seat's last reading, or with no reading at
 	// all): no real share yet.
 	UnmeteredListUSD float64 `json:"unmetered_list_usd"`
+	// UnmeteredCoveyListUSD: L_cov likewise, covey's lines on the seat in the
+	// window that lie in no step's span: no real share yet either.
+	UnmeteredCoveyListUSD float64 `json:"unmetered_covey_list_usd"`
+	// SourceParts: the outside part per source (F3c per source): source s's
+	// real part of a split step is the step's outside real × Lo_s,c / Lo_c,
+	// its share of the chunk's outside list; its list is Σ Lo_s over the
+	// split steps. They add up to ExternalRealUSD and SplitExternalListUSD.
+	// A seat lists every source linked to it, by name; the whole meter every
+	// source of its seats. (Not "sources": a seat's Sources names the linked
+	// sources already.)
+	SourceParts []ExternalMeterSourcePart `json:"source_parts"`
+}
+
+// ExternalMeterSourcePart is one outside source's part of the split movement.
+type ExternalMeterSourcePart struct {
+	Source  string  `json:"source"`
+	ListUSD float64 `json:"list_usd"`
+	RealUSD float64 `json:"real_usd"`
+}
+
+// addSourceParts merges parts into a list by source, sorted by source.
+func addSourceParts(into []ExternalMeterSourcePart, parts ...ExternalMeterSourcePart) []ExternalMeterSourcePart {
+	for _, p := range parts {
+		i := sort.Search(len(into), func(i int) bool { return into[i].Source >= p.Source })
+		if i == len(into) || into[i].Source != p.Source {
+			into = append(into, ExternalMeterSourcePart{})
+			copy(into[i+1:], into[i:])
+			into[i] = ExternalMeterSourcePart{Source: p.Source}
+		}
+		into[i].ListUSD += p.ListUSD
+		into[i].RealUSD += p.RealUSD
+	}
+	return into
 }
 
 // ExternalMeterStep is one reading of one seat's meter and its split.
@@ -783,6 +816,10 @@ type ExternalMeterStep struct {
 	UnattributedRealUSD float64  `json:"unattributed_real_usd"`
 	UnattributedPoints  float64  `json:"unattributed_points"`
 	UnsplitRealUSD      float64  `json:"unsplit_real_usd"`
+	// SourceParts: a split step's outside part per source, R_out × Lo_s,c /
+	// Lo_c, with the source's own list in the step; absent on a step that
+	// is not split or whose chunk has no outside list.
+	SourceParts []ExternalMeterSourcePart `json:"source_parts,omitempty"`
 }
 
 // ExternalMeterHour is one UTC hour of one seat: the sums of the steps
@@ -806,6 +843,8 @@ type ExternalMeterHour struct {
 	SplitSteps          int      `json:"split_steps"`
 	UnattributedSteps   int      `json:"unattributed_steps"`
 	UnpricedPoints      float64  `json:"unpriced_points"`
+	// SourceParts: the steps' outside parts per source, summed.
+	SourceParts []ExternalMeterSourcePart `json:"source_parts"`
 }
 
 // ExternalMeterTotal is one seat credential over the window.
@@ -1075,6 +1114,9 @@ func (s *Store) externalFor(ctx context.Context, orgID uuid.UUID, bucket string,
 		if tot.UnmeteredListUSD, err = s.unmeteredList(ctx, orgID, since, linked[seat], in[n:]); err != nil {
 			return out, err
 		}
+		if tot.UnmeteredCoveyListUSD, err = s.unmeteredCoveyList(ctx, orgID, since, seat, in[n:]); err != nil {
+			return out, err
+		}
 		totals, steps = append(totals, tot), append(steps, st...)
 	}
 	out.Meter = meterSums(totals, steps)
@@ -1082,7 +1124,8 @@ func (s *Store) externalFor(ctx context.Context, orgID uuid.UUID, bucket string,
 }
 
 func emptyMeter() ExternalMeter {
-	return ExternalMeter{Steps: []ExternalMeterStep{}, Hours: []ExternalMeterHour{}, Credentials: []ExternalMeterTotal{}}
+	return ExternalMeter{Steps: []ExternalMeterStep{}, Hours: []ExternalMeterHour{}, Credentials: []ExternalMeterTotal{},
+		ExternalMeterSums: ExternalMeterSums{SourceParts: []ExternalMeterSourcePart{}}}
 }
 
 // originOrder sorts a cell's origin: main, subagent, workflow, unsaid.
@@ -1173,6 +1216,8 @@ type shareStep struct {
 	Reset bool
 	LOut  float64
 	LCov  float64
+	// SrcOut: each linked source's part of LOut.
+	SrcOut map[string]float64
 	// Agents: each agent's part of LCov.
 	Agents                        map[uuid.UUID]float64
 	UnpricedCalls, UnpricedTokens int64
@@ -1290,25 +1335,25 @@ func externalStepUSD(model string, t ModelTokens, hasReported bool, reported flo
 func (s *Store) stepLists(ctx context.Context, orgID uuid.UUID, seat meterSeat, sources []string, steps []shareStep) error {
 	from, to := spanArrays(steps)
 	if len(sources) > 0 {
-		rows, err := s.pool.Query(ctx, `SELECT s.i, e.model, e.reported_usd IS NOT NULL, count(*),
+		rows, err := s.pool.Query(ctx, `SELECT s.i, e.source, e.model, e.reported_usd IS NOT NULL, count(*),
 			SUM(e.input), SUM(e.output), SUM(e.cache_read), SUM(e.cache_write_5m), SUM(e.cache_write_1h),
 			COALESCE(SUM(e.reported_usd), 0)::float8
 			FROM unnest($2::timestamptz[], $3::timestamptz[]) WITH ORDINALITY AS s(f, t, i)
 			JOIN external_usage e ON e.org_id = $1 AND e.source = ANY($4) AND e.ts > s.f AND e.ts <= s.t
-			GROUP BY 1, 2, 3`, orgID, from, to, sources)
+			GROUP BY 1, 2, 3, 4`, orgID, from, to, sources)
 		if err != nil {
 			return err
 		}
 		for rows.Next() {
 			var (
-				i           int64
-				model       string
-				hasReported bool
-				calls       int64
-				t           ModelTokens
-				reported    float64
+				i             int64
+				source, model string
+				hasReported   bool
+				calls         int64
+				t             ModelTokens
+				reported      float64
 			)
-			if err := rows.Scan(&i, &model, &hasReported, &calls, &t.Input, &t.Output, &t.CacheRead,
+			if err := rows.Scan(&i, &source, &model, &hasReported, &calls, &t.Input, &t.Output, &t.CacheRead,
 				&t.CacheWrite5m, &t.CacheWrite1h, &reported); err != nil {
 				rows.Close()
 				return err
@@ -1316,6 +1361,10 @@ func (s *Store) stepLists(ctx context.Context, orgID uuid.UUID, seat meterSeat, 
 			st := &steps[i-1]
 			if usd, ok := externalStepUSD(model, t, hasReported, reported); ok {
 				st.LOut += usd
+				if st.SrcOut == nil {
+					st.SrcOut = map[string]float64{}
+				}
+				st.SrcOut[source] += usd
 			} else {
 				st.UnpricedCalls += calls
 				st.UnpricedTokens += t.Input + t.Output + t.CacheRead + t.CacheWrite5m + t.CacheWrite1h
@@ -1479,6 +1528,46 @@ func (s *Store) unmeteredList(ctx context.Context, orgID uuid.UUID, since time.T
 		}
 		if v, ok := externalStepUSD(model, t, hasReported, reported); ok {
 			usd += v
+		}
+	}
+	return usd, rows.Err()
+}
+
+// unmeteredCoveyList is L_cov of the seat's lines in the window that lie in
+// no step's span, priced as stepLists prices them: covey's list price after
+// the seat's last reading (or with no reading at all), with no real share
+// yet.
+func (s *Store) unmeteredCoveyList(ctx context.Context, orgID uuid.UUID, since time.Time, seat meterSeat, steps []shareStep) (float64, error) {
+	from, to := since, since
+	if len(steps) > 0 {
+		from, to = steps[0].From, steps[len(steps)-1].At
+	}
+	rows, err := s.pool.Query(ctx, `SELECT model,
+		SUM(input_tokens), SUM(output_tokens), SUM(cache_read_tokens), SUM(cache_write_5m_tokens),
+		SUM(cache_write_1h_tokens), SUM(web_search_requests), SUM(engine_usd)::float8
+		FROM model_usage
+		WHERE org_id = $1 AND secret_key = $2 AND secret_slot = $3 AND created_at >= $4
+			AND NOT (created_at > $5 AND created_at <= $6)
+		GROUP BY 1`, orgID, seat.key, seat.slot, since, from, to)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	var usd float64
+	for rows.Next() {
+		var (
+			model  string
+			t      ModelTokens
+			engine float64
+		)
+		if err := rows.Scan(&model, &t.Input, &t.Output, &t.CacheRead, &t.CacheWrite5m, &t.CacheWrite1h,
+			&t.WebSearches, &engine); err != nil {
+			return 0, err
+		}
+		if pr, ok := ListPrice(model); ok {
+			usd += pr.Cost(t)
+		} else {
+			usd += engine
 		}
 	}
 	return usd, rows.Err()
@@ -1674,6 +1763,8 @@ type meterChunk struct {
 	// of Lc_c.
 	points, lOut, lCov float64
 	agents             map[uuid.UUID]float64
+	// srcOut: each source's part of Lo_c (Lo_s,c).
+	srcOut map[string]float64
 	// kPoints, kList: its points and list without a reset step's, for k.
 	kPoints, kList float64
 	// rate: the plan price per point of its steps that moved or have list
@@ -1753,6 +1844,12 @@ func (c *meterChunk) add(i int, in shareStep, counts bool) {
 		}
 		c.unlinedAgents[id] += u
 		c.unlinedUSD += u
+	}
+	for src, l := range in.SrcOut {
+		if c.srcOut == nil {
+			c.srcOut = map[string]float64{}
+		}
+		c.srcOut[src] += l
 	}
 }
 
@@ -1988,6 +2085,11 @@ func splitSeat(seat meterSeat, sources []string, steps []shareStep) (ExternalMet
 func splitSeatSince(seat meterSeat, sources []string, steps []shareStep, since time.Time) (ExternalMeterTotal, []ExternalMeterStep) {
 	tot := ExternalMeterTotal{SecretKey: seat.key, SecretSlot: seat.slot, Sources: append([]string{}, sources...),
 		Agents: []ExternalMeterAgent{}, PlanRates: []ExternalMeterPlanRate{}}
+	// Every linked source has a part, $0 until a split step gives it one.
+	tot.SourceParts = []ExternalMeterSourcePart{}
+	for _, src := range sources {
+		tot.SourceParts = addSourceParts(tot.SourceParts, ExternalMeterSourcePart{Source: src})
+	}
 	out := make([]ExternalMeterStep, 0, len(steps))
 	agents := map[uuid.UUID]*ExternalMeterAgent{}
 	agent := func(id uuid.UUID) *ExternalMeterAgent {
@@ -2118,6 +2220,26 @@ func splitSeatSince(seat meterSeat, sources []string, steps []shareStep, since t
 			for id, l := range in.Agents {
 				agent(id).SplitListUSD += l
 			}
+			// The outside part goes to the sources by their share of the
+			// chunk's L_out (Lo_s,c / Lo_c), as covey's goes to the agents;
+			// each source's list is its own in the step.
+			if c.lOut > 0 || len(in.SrcOut) > 0 {
+				names := map[string]bool{}
+				for src := range c.srcOut {
+					names[src] = true
+				}
+				for src := range in.SrcOut {
+					names[src] = true
+				}
+				for src := range names {
+					p := ExternalMeterSourcePart{Source: src, ListUSD: in.SrcOut[src]}
+					if c.lOut > 0 {
+						p.RealUSD = rOut * c.srcOut[src] / c.lOut
+					}
+					st.SourceParts = addSourceParts(st.SourceParts, p)
+				}
+				tot.SourceParts = addSourceParts(tot.SourceParts, st.SourceParts...)
+			}
 			// covey's part goes to the agents by their share of the chunk's
 			// L_cov, not the step's; in a chunk with no list (covey's whole),
 			// by their share of its bookings without a line.
@@ -2223,6 +2345,8 @@ func meterSums(totals []ExternalMeterTotal, steps []ExternalMeterStep) ExternalM
 		a.UnpricedCalls += b.UnpricedCalls
 		a.UnpricedTokens += b.UnpricedTokens
 		a.UnmeteredListUSD += b.UnmeteredListUSD
+		a.UnmeteredCoveyListUSD += b.UnmeteredCoveyListUSD
+		a.SourceParts = addSourceParts(a.SourceParts, b.SourceParts...)
 	}
 	out.PointRateMixed = out.PointRateMixed || len(rates) > 1
 	if split := out.ExternalRealUSD + out.CoveyRealUSD; split > 0 {
@@ -2251,7 +2375,7 @@ func meterSums(totals []ExternalMeterTotal, steps []ExternalMeterStep) ExternalM
 		k := hk{st.At.Truncate(time.Hour), st.SecretKey, st.SecretSlot}
 		h, ok := byHour[k]
 		if !ok {
-			h = &ExternalMeterHour{Hour: k.h, SecretKey: k.key, SecretSlot: k.slot}
+			h = &ExternalMeterHour{Hour: k.h, SecretKey: k.key, SecretSlot: k.slot, SourceParts: []ExternalMeterSourcePart{}}
 			byHour[k] = h
 		}
 		h.Steps++
@@ -2273,6 +2397,7 @@ func meterSums(totals []ExternalMeterTotal, steps []ExternalMeterStep) ExternalM
 			h.SplitSteps++
 			h.ExternalRealUSD += *st.ExternalRealUSD
 			h.CoveyRealUSD += *st.CoveyRealUSD
+			h.SourceParts = addSourceParts(h.SourceParts, st.SourceParts...)
 		}
 	}
 	for _, h := range byHour {

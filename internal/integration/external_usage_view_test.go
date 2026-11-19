@@ -516,7 +516,6 @@ func TestExternalUsageByModelLeavesTheAgentsFiguresAlone(t *testing.T) {
 	}
 }
 
-
 // F3c in the detailed view: /cost/external-usage carries /cost/cells' meter
 // as is. A reading that moved with no reported call right after a chunk is
 // the meter's lag: it is split with that chunk at the chunk's share and

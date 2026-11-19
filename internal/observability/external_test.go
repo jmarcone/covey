@@ -1420,3 +1420,96 @@ func TestValidateExternalHosts(t *testing.T) {
 		t.Error("60 hosts in rows and 41 more in reported_through passed")
 	}
 }
+
+// Two outside sources on one seat (#120, per-source real share): source s
+// gets R_out × Lo_s,c / Lo_c of each split step, its share of the chunk's
+// outside list, not of the step's. At $1 a point: chunk 1 is 3 + 3 points
+// over Lo 3 / 5 (a: 3 in the first step; b: 1 and 4) and Lc 2 + 2, share
+// 8/12, no rate (6 points), so R_out = 2 per step, a 2 × 3/8 = 0.75 and b
+// 1.25 in each — a has 0.75 of the second step with no list of its own
+// there. Chunk 2 is 5 points over a: 2 and covey 2, with b's calls
+// unpriced: incomplete (as before), share ½, R_out 2.5 all a's, b none. A
+// linked source with no call, c, is listed at 0. The parts add up to the
+// outside part in every step, hour, seat and the whole.
+func TestSplitSeatPerSource(t *testing.T) {
+	steps := []shareStep{
+		{From: tm("10:00"), At: tm("11:00"), Points: 3, Rate: rate(1), LOut: 4, LCov: 2,
+			SrcOut: map[string]float64{"a": 3, "b": 1}, Reported: true},
+		{From: tm("11:00"), At: tm("12:00"), Points: 3, Rate: rate(1), LOut: 4, LCov: 2,
+			SrcOut: map[string]float64{"b": 4}, Reported: true},
+		{From: tm("12:00"), At: tm("13:00"), Points: 5, Rate: rate(1), LOut: 2, LCov: 2,
+			SrcOut: map[string]float64{"a": 2}, UnpricedCalls: 3, UnpricedTokens: 300, Reported: true},
+	}
+	tot, out := splitSeat(meterSeat{"seat", 0}, []string{"a", "b", "c"}, steps)
+	want := map[string][2]float64{"a": {5, 4}, "b": {5, 2.5}, "c": {0, 0}}
+	if len(tot.SourceParts) != 3 {
+		t.Fatalf("source parts = %+v, want a, b and c", tot.SourceParts)
+	}
+	for i, name := range []string{"a", "b", "c"} {
+		p := tot.SourceParts[i]
+		if p.Source != name || !near(p.ListUSD, want[name][0]) || !near(p.RealUSD, want[name][1]) {
+			t.Errorf("seat part %d = %+v, want %s list %v real %v", i, p, name, want[name][0], want[name][1])
+		}
+	}
+	if tot.IncompleteChunks != 1 || !near(tot.ExternalRealUSD, 6.5) || !near(tot.SplitExternalListUSD, 10) {
+		t.Errorf("incomplete %d, outside %v, outside list %v; want 1, 6.5, 10", tot.IncompleteChunks, tot.ExternalRealUSD,
+			tot.SplitExternalListUSD)
+	}
+	stepWant := []map[string][2]float64{
+		{"a": {3, 0.75}, "b": {1, 1.25}},
+		{"a": {0, 0.75}, "b": {4, 1.25}},
+		{"a": {2, 2.5}},
+	}
+	for i, st := range out {
+		if len(st.SourceParts) != len(stepWant[i]) {
+			t.Errorf("step %d parts = %+v, want %v", i, st.SourceParts, stepWant[i])
+			continue
+		}
+		var sum float64
+		for _, p := range st.SourceParts {
+			w := stepWant[i][p.Source]
+			if !near(p.ListUSD, w[0]) || !near(p.RealUSD, w[1]) {
+				t.Errorf("step %d %s = %+v, want list %v real %v", i, p.Source, p, w[0], w[1])
+			}
+			sum += p.RealUSD
+		}
+		if !near(sum, *st.ExternalRealUSD) {
+			t.Errorf("step %d: parts %v, outside %v", i, sum, *st.ExternalRealUSD)
+		}
+	}
+
+	// A second seat with a only: the whole merges them by source.
+	tot2, out2 := splitSeat(meterSeat{"seat", 1}, []string{"a"}, []shareStep{
+		{From: tm("10:00"), At: tm("11:30"), Points: 5, Rate: rate(1), LOut: 1, LCov: 1, SrcOut: map[string]float64{"a": 1}, Reported: true},
+	})
+	m := meterSums([]ExternalMeterTotal{tot, tot2}, append(out, out2...))
+	sums := map[string]ExternalMeterSourcePart{}
+	var real, list float64
+	for _, p := range m.SourceParts {
+		sums[p.Source] = p
+		real += p.RealUSD
+		list += p.ListUSD
+	}
+	if len(m.SourceParts) != 3 || !near(sums["a"].RealUSD, 6.5) || !near(sums["a"].ListUSD, 6) || !near(sums["b"].RealUSD, 2.5) {
+		t.Errorf("whole parts = %+v, want a 6.5 (list 6), b 2.5, c 0", m.SourceParts)
+	}
+	if !near(real, m.ExternalRealUSD) || !near(list, m.SplitExternalListUSD) {
+		t.Errorf("whole: parts %v / list %v, outside %v / list %v", real, list, m.ExternalRealUSD, m.SplitExternalListUSD)
+	}
+	for _, h := range m.Hours {
+		var sum float64
+		for _, p := range h.SourceParts {
+			sum += p.RealUSD
+		}
+		if !near(sum, h.ExternalRealUSD) {
+			t.Errorf("hour %v seat %d: parts %v, outside %v", h.Hour, h.SecretSlot, sum, h.ExternalRealUSD)
+		}
+	}
+	// A seat no source names lists none, and an empty meter has an empty list.
+	if tot, _ := splitSeat(meterSeat{"seat", 2}, nil, nil); tot.SourceParts == nil || len(tot.SourceParts) != 0 {
+		t.Errorf("unlinked seat parts = %#v, want []", tot.SourceParts)
+	}
+	if e := emptyMeter(); e.SourceParts == nil {
+		t.Error("the empty meter has no source_parts list")
+	}
+}

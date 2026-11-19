@@ -1348,3 +1348,164 @@ func TestExternalUsageHostWithoutAWatermark(t *testing.T) {
 	}
 	admin.expect(http.MethodPost, externalPath, extUpload("operator: home", rows...), http.StatusBadRequest)
 }
+
+// Two outside sources on one seat, one per project folder (#120, the
+// per-source real share). At $200 a month (pp a point), covey has $1 of
+// Opus output in each of h1, h2 and h3:
+//
+//   - "covey operator" has $3 in h1 and $2 in h3; "projects-sylius" has $1
+//     in h1 and $4 in h2, and in h3 one call of a model the list does not
+//     know, without a reported cost.
+//   - h1:40 +3 and h2:40 +3 points are chunk 1: Lo 8 (3 / 5), Lc 2, share
+//     0.8, no rate. Each step's R_out = 2.4·pp goes 3/8 : 5/8 — 0.9·pp to
+//     the operator in h2 too, where it had no call.
+//   - h3:40 +5 points is chunk 2: Lo 2 (the operator's), Lc 1, and sylius's
+//     unpriced call: incomplete, share 2/3, all of R_out the operator's.
+//   - After the last reading, covey's $1 and the operator's $2 in h4: list
+//     with no real share yet, covey's and the outside sessions' apart.
+//
+// The parts add up to the outside part per step, hour, seat and the whole,
+// and the view's meter is /cost/cells' own.
+func TestExternalUsageMeterSharePerSource(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	admin := login(t, s, "admin@test.local", "admin-passwort")
+	agent := s.newSupportAgent("je-quelle")
+	rt, err := s.runtimes.Create(ctx, s.orgID, "claude-code", "Claude", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ord := s.seat(t, rt.ID, daemon.CredSubscription, "claude_code_oauth_token", "sitz", "A")
+	h1 := time.Now().UTC().Truncate(time.Hour).Add(-5 * time.Hour)
+	h2, h3, h4 := h1.Add(time.Hour), h1.Add(2*time.Hour), h1.Add(3*time.Hour)
+	admin.expect(http.MethodPut, fmt.Sprintf("/api/v1/runtime-instances/%s/credentials/%d/plan", rt.ID, ord),
+		map[string]any{"plan_name": "Max", "amount": 200, "currency": "USD", "period": "month", "tax_basis": "net",
+			"valid_from": h1.Add(-48 * time.Hour)}, http.StatusOK)
+	pp := 200.0 * 12 / 52 / 100
+	cred := observability.CredentialRef{RuntimeID: rt.ID, Ord: ord, SecretKey: "claude_code_oauth_token", Kind: "subscription"}
+	for _, r := range []struct {
+		at  time.Time
+		pct float64
+	}{{h1.Add(-30 * time.Hour), 10}, {h1.Add(40 * time.Minute), 13}, {h2.Add(40 * time.Minute), 16},
+		{h3.Add(40 * time.Minute), 21}} {
+		if err := s.obs.AddUsageReading(ctx, s.orgID, observability.MeterReading{Credential: cred,
+			Supported: true, WindowPercent: -1, WeekPercent: r.pct, FetchedAt: r.at}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f := billingFixture{s: s, ctx: ctx, agent: agent.ID, org: s.orgID}
+	for _, h := range []time.Time{h1, h2, h3, h4} {
+		f.line(t, cred, h.Add(10*time.Minute), 50_000)
+	}
+	out := func(id string, at time.Time, usd float64) map[string]any {
+		r := extRow(id, at, "claude-opus-5-5", int64(usd*1e6/20))
+		r["input"], r["cache_read"], r["cache_write_1h"] = 0, 0, 0
+		return r
+	}
+	link := func(up map[string]any) map[string]any {
+		up["meter_credential"] = map[string]any{"secret_key": "claude_code_oauth_token", "secret_slot": 0}
+		up["reported_through"] = map[string]any{"laptop": h3.Add(50 * time.Minute)}
+		return up
+	}
+	const op, sy = "covey operator", "projects-sylius-experiment-personal"
+	admin.expect(http.MethodPost, externalPath, link(extUpload(op, out("o1", h1.Add(5*time.Minute), 3),
+		out("o2", h3.Add(5*time.Minute), 2), out("o3", h4.Add(5*time.Minute), 2))), http.StatusOK)
+	admin.expect(http.MethodPost, externalPath, link(extUpload(sy, out("s1", h1.Add(20*time.Minute), 1),
+		out("s2", h2.Add(20*time.Minute), 4), extRow("s3", h3.Add(20*time.Minute), "claude-sonnet-5-7", 1000))), http.StatusOK)
+
+	nearV := func(v, want float64) bool { return math.Abs(v-want) < 1e-9 }
+	parts := func(ps []observability.ExternalMeterSourcePart) map[string]observability.ExternalMeterSourcePart {
+		m := map[string]observability.ExternalMeterSourcePart{}
+		for _, p := range ps {
+			m[p.Source] = p
+		}
+		return m
+	}
+	sumReal := func(ps []observability.ExternalMeterSourcePart) (v float64) {
+		for _, p := range ps {
+			v += p.RealUSD
+		}
+		return v
+	}
+	m := cellsExternal(t, admin, "days=2&bucket=hour").Meter
+	if len(m.Steps) != 3 || len(m.Credentials) != 1 {
+		t.Fatalf("steps %+v, credentials %+v; want three steps on one seat", m.Steps, m.Credentials)
+	}
+	stepWant := []map[string][2]float64{
+		{op: {3, 0.9 * pp}, sy: {1, 1.5 * pp}},
+		{op: {0, 0.9 * pp}, sy: {4, 1.5 * pp}},
+		{op: {2, 10 * pp / 3}},
+	}
+	for i, st := range m.Steps {
+		if !st.Split || len(st.SourceParts) != len(stepWant[i]) {
+			t.Errorf("step %d = %+v, want split with parts %v", i, st, stepWant[i])
+			continue
+		}
+		got := parts(st.SourceParts)
+		for name, w := range stepWant[i] {
+			if p := got[name]; !nearV(p.ListUSD, w[0]) || !nearV(p.RealUSD, w[1]) {
+				t.Errorf("step %d %s = %+v, want list %v real %v", i, name, p, w[0], w[1])
+			}
+		}
+		if !nearV(sumReal(st.SourceParts), *st.ExternalRealUSD) {
+			t.Errorf("step %d: parts %v, outside %v", i, sumReal(st.SourceParts), *st.ExternalRealUSD)
+		}
+	}
+	seat := m.Credentials[0]
+	got := parts(seat.SourceParts)
+	if len(seat.SourceParts) != 2 || seat.SourceParts[0].Source != op ||
+		!nearV(got[op].ListUSD, 5) || !nearV(got[op].RealUSD, 1.8*pp+10*pp/3) ||
+		!nearV(got[sy].ListUSD, 5) || !nearV(got[sy].RealUSD, 3*pp) {
+		t.Errorf("seat parts = %+v, want %s list 5 real %v, %s list 5 real %v", seat.SourceParts, op, 1.8*pp+10*pp/3, sy, 3*pp)
+	}
+	if seat.IncompleteChunks != 1 || !nearV(sumReal(seat.SourceParts), seat.ExternalRealUSD) ||
+		!nearV(got[op].ListUSD+got[sy].ListUSD, seat.SplitExternalListUSD) {
+		t.Errorf("seat: incomplete %d, parts %v outside %v, split list %v", seat.IncompleteChunks, sumReal(seat.SourceParts),
+			seat.ExternalRealUSD, seat.SplitExternalListUSD)
+	}
+	if !nearV(sumReal(m.SourceParts), m.ExternalRealUSD) || len(m.SourceParts) != 2 {
+		t.Errorf("whole parts = %+v, outside %v", m.SourceParts, m.ExternalRealUSD)
+	}
+	for _, h := range m.Hours {
+		if !nearV(sumReal(h.SourceParts), h.ExternalRealUSD) {
+			t.Errorf("hour %v: parts %+v, outside %v", h.Hour, h.SourceParts, h.ExternalRealUSD)
+		}
+	}
+	if !nearV(seat.UnmeteredListUSD, 2) || !nearV(seat.UnmeteredCoveyListUSD, 1) || !nearV(m.UnmeteredCoveyListUSD, 1) {
+		t.Errorf("after the last reading: outside %v covey %v (whole %v); want 2 and 1", seat.UnmeteredListUSD,
+			seat.UnmeteredCoveyListUSD, m.UnmeteredCoveyListUSD)
+	}
+	// The view carries /cost/cells' meter, parts and all, at every bucket.
+	for _, bucket := range []string{"hour", "10min", "10hour", "day"} {
+		var view observability.ExternalModelUsage
+		if err := json.Unmarshal(rawGet(t, admin, externalPath+"?days=2&bucket="+bucket), &view); err != nil {
+			t.Fatal(err)
+		}
+		if mustJSON(t, view.Meter) != mustJSON(t, m) {
+			t.Errorf("%s: the view's meter differs from /cost/cells'", bucket)
+		}
+	}
+	// The wire names.
+	var raw struct {
+		External struct {
+			Meter map[string]any `json:"meter"`
+		} `json:"external"`
+	}
+	if err := json.Unmarshal(rawGet(t, admin, "/api/v1/cost/cells?days=2&bucket=hour"), &raw); err != nil {
+		t.Fatal(err)
+	}
+	seatRaw, _ := raw.External.Meter["credentials"].([]any)[0].(map[string]any)
+	stepRaw, _ := raw.External.Meter["steps"].([]any)[0].(map[string]any)
+	hourRaw, _ := raw.External.Meter["hours"].([]any)[0].(map[string]any)
+	for name, obj := range map[string]map[string]any{"meter": raw.External.Meter, "seat": seatRaw, "step": stepRaw, "hour": hourRaw} {
+		if _, ok := obj["source_parts"].([]any); !ok {
+			t.Errorf("the %s has no source_parts list: %v", name, obj["source_parts"])
+		}
+	}
+	if _, ok := seatRaw["unmetered_covey_list_usd"]; !ok {
+		t.Error("the seat has no unmetered_covey_list_usd")
+	}
+	if names, _ := seatRaw["sources"].([]any); len(names) != 2 || names[0] != op {
+		t.Errorf("the seat's sources = %v, still the linked sources' names", seatRaw["sources"])
+	}
+}
