@@ -270,6 +270,7 @@ describe("leben", () => {
     const start = new Map(l.figuren.map((f) => [f.id, { ...f.pos }]));
     const bewegt = new Set<string>();
     const vorher = new Map<string, Punkt | null>();
+    let frei = 0;
     for (let t = 0; t < 3000; t++) {
       l.tick(0.05);
       for (const f of l.figuren) {
@@ -280,10 +281,13 @@ describe("leben", () => {
           const ri = raumAn(plan, ziel);
           const erlaubt = nah(ziel, f.sitz) || nah(ziel, plan.treppe) || (ri != null && istFrei(felder, ri, ziel));
           expect(erlaubt, JSON.stringify(ziel)).toBe(true);
+          if (!nah(ziel, f.sitz) && !nah(ziel, plan.treppe)) frei++;
         }
         vorher.set(f.id, ziel);
       }
     }
+    /* The grid claim above only holds if it was checked at all. */
+    expect(frei).toBeGreaterThan(5);
     expect([...bewegt].sort()).toEqual(["k0", "k1", "k2", "k3"]);
   });
 });
