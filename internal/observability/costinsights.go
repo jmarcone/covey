@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // Cost insights (migrations 0142, 0144): what a run consumed per model, and
@@ -228,10 +229,13 @@ func usageEach(x func(name string) string, p string) string {
 //   - the line belongs to this line's run (the same task, no run started
 //     since): that run's report is still to come, and holds the line.
 //
-// A run killed (kill switch, budget pause, sandbox gone) never reports; what
-// BookUnreported books instead is the run's rows, and a failed line has none.
-// Neither has a run whose BookRun failed, nor one booked from its rows
-// (from_deltas). The share of such a line is the gap's.
+// A run killed (kill switch, budget pause, sandbox gone) never reports, nor
+// does one whose BookRun failed; its end files its failed lines once more
+// (FileFailedLines) and BookUnreported books their rows, so for this gap they
+// are filed lines like any other. What stays here is a failed line of a run
+// booked from its rows (from_deltas), and one the run's end could not file
+// (that filing failed too, or the control plane went down before the run's
+// end): the share of such a line is the gap's.
 //
 // Those lines are looked for in the recording of the session's tasks only —
 // the tasks its filed lines belong to, this line's, and the tasks this line's
@@ -257,7 +261,7 @@ func usageEach(x func(name string) string, p string) string {
 // none of whose lines was filed yet, or earlier recordings already pruned —
 // nothing is filed: a gap is only booked where both ends are known.
 //
-// It books nothing twice, but for the first case it cannot see (below):
+// It books nothing twice, but for the case it cannot see (below):
 //
 //   - After a process WITH a result line, the running total grew by that
 //     line's share and this one's: no gap, where the earlier line was filed
@@ -276,9 +280,9 @@ func usageEach(x func(name string) string, p string) string {
 // What it cannot see: a failed line before the bound whose total is larger
 // than every filed line's (a failure and an out-of-order arrival together:
 // the next line's gap holds its share again, booked twice where its run
-// reported), and a run killed after a failed line of its own was followed by
-// a filed one (that line's gap counted the failed line as its run's, still
-// to come: its share is booked too little).
+// reported). A run killed after a failed line of its own was followed by a
+// filed one is no longer among them: that line's gap counts the failed line
+// as its run's, still to come, and the run's end files it (FileFailedLines).
 //
 // Only a difference above a millionth of a dollar is filed, and only upwards:
 // a negative difference is never booked. Tokens follow the money, each floored
@@ -487,6 +491,95 @@ func (s *Store) fileModelUsage(ctx context.Context, id int64, cred CredentialRef
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+// failedLines selects the result lines of a task's latest run ($1 the task,
+// $2 its agent) whose filing failed and that only filing them now can book,
+// oldest first — see FileFailedLines. The run starts at the task's latest
+// lifecycle record "working"; the orchestrator writes one per run.
+//
+//   - A line that left no model_usage row (no row of its event, any basis).
+//   - Of a session whose run did not report: no entry of the task since the
+//     run's start, of that session or of none (a daemon from before the
+//     field names no session), with a basis other than gap or unreported. An
+//     invocation report holds the line already; a from_deltas or legacy one
+//     leaves its share to the gap, as modelUsageGapInsert says.
+//   - Above every earlier filed line of its session: a line whose running
+//     total is not is a copy or an old line arriving late, its share inside
+//     that filed line's total (the gap's bound, the same rule).
+//   - Without model_usage_since_last_result, only where no later line of the
+//     session was filed: a later derived row is the running total minus the
+//     earlier rows, the failed line's share included.
+//
+// Copies of one line count once, the first: the same session and running
+// total, as the gap counts them (a copy carries the line's uuid, and a line
+// without one its total).
+var failedLines = `
+WITH run AS (
+	SELECT r.id, r.created_at FROM recording_events r
+	WHERE r.task_id = $1 AND r.kind = '` + KindLifecycle + `' AND r.payload->>'status' = 'working'
+	ORDER BY r.id DESC LIMIT 1),
+l AS (
+	SELECT r.id, COALESCE(r.payload->>'session_id', '') AS session_id, run.created_at AS started,
+		jsonb_typeof(r.payload->'model_usage_since_last_result') = 'object' AS since_last,
+		` + lineTotal("r.payload") + ` AS total
+	FROM run, recording_events r
+	WHERE r.task_id = $1 AND r.id > run.id AND r.agent_id = $2
+	  AND r.kind = '` + KindRuntime + `' AND r.payload->>'type' = 'result'
+	  AND (jsonb_typeof(r.payload->'modelUsage') = 'object' OR jsonb_typeof(r.payload->'model_usage_since_last_result') = 'object')
+	  AND NOT EXISTS (SELECT 1 FROM model_usage mu WHERE mu.event_id = r.id)),
+u AS (
+	SELECT DISTINCT ON (l.session_id, l.total) l.*
+	FROM l
+	ORDER BY l.session_id, l.total, l.id)
+SELECT u.id FROM u
+WHERE NOT EXISTS (
+	SELECT 1 FROM cost_entries c
+	WHERE c.task_id = $1 AND c.agent_id = $2 AND c.created_at >= u.started
+	  AND c.session_id IN (u.session_id, '')
+	  AND c.basis NOT IN ('` + BasisGap + `', '` + BasisUnreported + `'))
+  AND NOT EXISTS (
+	SELECT 1 FROM model_usage p JOIN recording_events f ON f.id = p.event_id
+	WHERE u.session_id <> '' AND p.session_id = u.session_id AND p.event_id < u.id
+	  AND ` + lineTotal("f.payload") + ` >= u.total)
+  AND (u.since_last OR NOT EXISTS (
+	SELECT 1 FROM model_usage p
+	WHERE u.session_id <> '' AND p.session_id = u.session_id AND p.event_id > u.id))
+ORDER BY u.id`
+
+// FileFailedLines files once more the result lines of the task's latest run
+// whose filing failed, when nothing else will book them (failedLines says
+// which): at the end of a run that never reported — killed, paused at its
+// budget, its sandbox gone, or its booking failed — before BookUnreported,
+// which then books their rows like any other line's. Each line goes through
+// fileModelUsage on its own, oldest first, against cred, the run's
+// credential: its rows, the gap it reveals and the gap's booking.
+//
+// A line filed this way is a filed line for every gap after it, so a line
+// of the session resumed later does not count it among the failed ones: it
+// is booked once. Left unfiled, nothing would book it where no later line of
+// the session comes, and a later line of the same run would subtract it as
+// its run's, the report still to come.
+//
+// It returns how many lines it filed. The first failure ends it, the lines
+// before it staying filed: a line filed after a failed one would subtract
+// that one as its run's, the report still to come, and lose it. Left
+// unfiled, both stay with the gap of the session's next line.
+func (s *Store) FileFailedLines(ctx context.Context, agentID, taskID uuid.UUID, cred CredentialRef) (int, error) {
+	rows, err := s.pool.Query(ctx, failedLines, taskID, agentID)
+	if err != nil {
+		return 0, err
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[int64])
+	if err != nil {
+		return 0, err
+	}
+	for i, id := range ids {
+		if err := s.fileModelUsage(ctx, id, cred); err != nil {
+			return i, fmt.Errorf("model usage of recording event %d: %w", id, err)
+		}
+	}
+	return len(ids), nil
 }
 
 // ModelTokens is what one model consumed, with the cache writes split by TTL.
