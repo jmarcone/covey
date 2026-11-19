@@ -123,6 +123,10 @@ type CostCells struct {
 	// its own currency, with the part the window holds and the part a usage
 	// basis counts. Absent when there are none.
 	UsageCharges []WindowCharge `json:"usage_charges,omitempty"`
+	// UsageLimits are the dated monthly usage limits valid in the window
+	// (0152): what turns a monthly meter's points into money. Absent when
+	// none is.
+	UsageLimits []UsageLimit `json:"usage_limits,omitempty"`
 }
 
 // cellDepartments fills in the department of every agent in the cells. A
@@ -410,8 +414,22 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 	if out.External, err = s.externalFor(ctx, orgID, bucket, since, coverage, priced, bases); err != nil {
 		return out, err
 	}
-	if out.UsageCharges, err = s.usageChargesFor(ctx, orgID, since, time.Now(), bases); err != nil {
+	now := time.Now()
+	if out.UsageCharges, err = s.usageChargesFor(ctx, orgID, since, now, bases); err != nil {
 		return out, err
+	}
+	// A monthly usage limit (0152) turns its meter's movement into money.
+	limits, err := s.usageLimitsFor(ctx, orgID, since)
+	if err != nil {
+		return out, err
+	}
+	if len(limits) > 0 {
+		out.UsageLimits = limits
+		rows, err := s.meterRows(ctx, orgID, since)
+		if err != nil {
+			return out, err
+		}
+		out.UsageCharges = append(out.UsageCharges, meterLimitCharges(rows, since, limits, bases)...)
 	}
 	return out, nil
 }
@@ -591,8 +609,9 @@ func planAt(plans []CredentialPlan, key string, slot int, t time.Time) (Credenti
 }
 
 // meterQuery computes each reading's step, per credential (by its secret),
-// source and window, over the window and the eight days before it, in one
-// pass of window functions:
+// source and window, over the window and the eight days before it — 35 for a
+// window other than the weekly ones (a monthly usage limit, 0152, whose
+// baseline may be read rarely) — in one pass of window functions:
 //
 //   - stale and unsupported readings are dropped: an hour-old figure read as
 //     current turns a lag into movement;
@@ -625,7 +644,8 @@ WITH r0 AS (
 			ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS seen_resets
 	FROM usage_readings
 	WHERE org_id = $1 AND supported AND NOT stale AND week_percent IS NOT NULL AND secret_key IS NOT NULL
-	  AND fetched_at >= $2::timestamptz - interval '8 days'),
+	  AND (fetched_at >= $2::timestamptz - interval '8 days'
+	    OR (window_kind NOT LIKE 'seven\_day%' AND fetched_at >= $2::timestamptz - interval '35 days'))),
 r AS (
 	SELECT id, secret_key, secret_slot, source, window_kind, credential_kind, fetched_at, pct, resets_at
 	FROM r0

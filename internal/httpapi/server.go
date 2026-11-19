@@ -702,6 +702,10 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/runtime-instances/{id}/credentials/{ord}/usage-charges", s.rbac(securityRoles, s.handleListUsageCharges))
 	mux.Handle("POST /api/v1/runtime-instances/{id}/credentials/{ord}/usage-charges", s.rbac(securityRoles, s.handleAddUsageCharge))
 	mux.Handle("DELETE /api/v1/runtime-instances/{id}/credentials/{ord}/usage-charges/{charge}", s.rbac(securityRoles, s.handleDeleteUsageCharge))
+	// The monthly money limit a pay-per-token seat's monthly meter counts
+	// against (0152): what makes its movement real spend in its currency.
+	mux.Handle("GET /api/v1/runtime-instances/{id}/credentials/{ord}/usage-limit", s.rbac(securityRoles, s.handleGetUsageLimit))
+	mux.Handle("PUT /api/v1/runtime-instances/{id}/credentials/{ord}/usage-limit", s.rbac(securityRoles, s.handlePutUsageLimit))
 	// Which Anthropic API key the credential's value is (0146): what joins
 	// the bill to the runs.
 	mux.Handle("PATCH /api/v1/runtime-instances/{id}/credentials/{ord}/billing-key", s.rbac(securityRoles, s.handleSetBillingKey))

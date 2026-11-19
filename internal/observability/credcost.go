@@ -25,6 +25,13 @@ import (
 // person gave a rate with its date, or where it is in dollars already; covey
 // never converts on its own.
 
+// Usage charge kinds (0152; runtimes.ChargeKind*): a hand-entered charge
+// carries none in the cells.
+const (
+	ChargeKindExport = "export"
+	ChargeKindMeter  = "meter"
+)
+
 // Cost bases (runtimes.Basis*, repeated here: observability does not import
 // the runtimes store).
 const (
@@ -70,6 +77,21 @@ type WindowCharge struct {
 	// CountedUSD is CountedAmount in dollars: the amount itself for a USD
 	// charge, at the given rate otherwise; nil without a rate.
 	CountedUSD *float64 `json:"counted_usd"`
+	// Kind (0152): absent for a charge entered by hand; "export" for a usage
+	// export entered to check the figures against (listed, its WindowAmount
+	// set, never counted); "meter" for the money a monthly usage limit makes
+	// of its meter's movement (limitcharges.go), which has no ID.
+	Kind string `json:"kind,omitempty"`
+	// Of a meter charge: the window it was read from, the limit per month,
+	// the points it moved in the range (all, and those a usage basis
+	// counted), and the counted amount's range — the meter shows whole
+	// percents, so each month segment is known to ±1 point.
+	WindowKind    string   `json:"window_kind,omitempty"`
+	LimitAmount   float64  `json:"limit_amount,omitempty"`
+	Points        *float64 `json:"points,omitempty"`
+	CountedPoints *float64 `json:"counted_points,omitempty"`
+	CountedLow    *float64 `json:"counted_low,omitempty"`
+	CountedHigh   *float64 `json:"counted_high,omitempty"`
 }
 
 // costBasesFor returns the organisation's bases valid at any point since
@@ -100,7 +122,7 @@ func (s *Store) costBasesFor(ctx context.Context, orgID uuid.UUID, since time.Ti
 // with its window and counted parts.
 func (s *Store) usageChargesFor(ctx context.Context, orgID uuid.UUID, since, now time.Time, bases []CredentialBasis) ([]WindowCharge, error) {
 	rows, err := s.pool.Query(ctx, `SELECT id, secret_key, secret_slot, amount::float8, currency, period_from, period_to,
-		fx_to_usd::float8, to_char(fx_date, 'YYYY-MM-DD')
+		fx_to_usd::float8, to_char(fx_date, 'YYYY-MM-DD'), kind
 		FROM credential_usage_charges
 		WHERE org_id = $1 AND period_to > $2 AND period_from < $3
 		ORDER BY secret_key, secret_slot, period_from, created_at`, orgID, since, now)
@@ -111,11 +133,18 @@ func (s *Store) usageChargesFor(ctx context.Context, orgID uuid.UUID, since, now
 	var out []WindowCharge
 	for rows.Next() {
 		var c WindowCharge
+		var kind string
 		if err := rows.Scan(&c.ID, &c.SecretKey, &c.SecretSlot, &c.Amount, &c.Currency, &c.From, &c.To,
-			&c.FXToUSD, &c.FXDate); err != nil {
+			&c.FXToUSD, &c.FXDate, &kind); err != nil {
 			return nil, err
 		}
-		out = append(out, chargeInWindow(c, since, now, bases))
+		c = chargeInWindow(c, since, now, bases)
+		if kind == ChargeKindExport {
+			// A check, never money: what it says stands beside the counted
+			// figures, the window's part of it included.
+			c.Kind, c.CountedAmount, c.CountedUSD = ChargeKindExport, 0, nil
+		}
+		out = append(out, c)
 	}
 	return out, rows.Err()
 }
