@@ -168,7 +168,10 @@ export function erschaffeKamera(buehne: HTMLElement, ruhig = false): Steuerung {
 
   function zentrieren(p: Punkt, zoomAuf: number): void {
     if (!plan) return;
-    blick.set(p.x - plan.breite / 2, 0, p.y - plan.hoehe / 2);
+    /* At the height the start view looks at (`MITTE`), so the room one is
+       taken to sits where the building's middle sits there — not half a
+       building height above the picture's centre. */
+    blick.set(p.x - plan.breite / 2, MITTE.y, p.y - plan.hoehe / 2);
     zoom = Math.max(0.6, Math.min(4.5, zoomAuf));
     zaeumen();
     stellen();
@@ -235,14 +238,16 @@ export function erschaffeKamera(buehne: HTMLElement, ruhig = false): Steuerung {
    * does not find one of them takes the view for nailed down.
    *
    *   Pan     drag · two fingers · wheel · arrow keys · double-click on the
-   *           spot
+   *           spot — all of them once zoomed in
    *   Scale   ⌘/Ctrl+wheel · + and − · the two buttons
    *   Turn    ↺ ↻ · Q/E — in quarter turns, never on the pointer
    *
-   * Dragging pans, always. The first draft turned on drag and panned only
-   * with Shift or the right button — the gesture everyone makes first did
-   * what one wants least, and tilted the building too. A floor plan is a
-   * map: what one grabs stays under the finger.
+   * Dragging pans once zoomed in — at the start scale the whole building is
+   * in the picture and there is nothing to pan to (`zaeumen`). The first
+   * draft turned on drag and panned only with Shift or the right button —
+   * the gesture everyone makes first did what one wants least, and tilted
+   * the building too. A floor plan is a map: what one grabs stays under the
+   * finger.
    *
    * The wheel does not pan and zoom at once, because both would sit on the
    * same event and the pointer would do one thing one time and the other the
@@ -326,10 +331,13 @@ export function erschaffeKamera(buehne: HTMLElement, ruhig = false): Steuerung {
          on — the same handover a text field makes at the end of its content.
          In the start view there is nothing to pan (`zaeumen`), so the wheel
          always scrolls the page there; it used to push the whole building
-         towards a corner while one scrolled down to the stage's neighbours. */
+         towards a corner while one scrolled down to the stage's neighbours.
+         A sideways swipe is the exception: the page has nothing to scroll
+         sideways, so an unconsumed one would reach the browser as "back" (the
+         history swipe on a trackpad) and take the person off the page. */
       vorRad.copy(blick);
       schieben(-e.deltaX, -e.deltaY);
-      if (!blick.equals(vorRad)) e.preventDefault();
+      if (!blick.equals(vorRad) || (zoom <= 1 && Math.abs(e.deltaX) > Math.abs(e.deltaY))) e.preventDefault();
     };
 
     /* A double-click moves the clicked spot to the middle. For a building
@@ -342,7 +350,7 @@ export function erschaffeKamera(buehne: HTMLElement, ruhig = false): Steuerung {
         ((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), kamera);
       const treffer = new THREE.Vector3();
       if (!strahl.ray.intersectPlane(boden, treffer)) return;
-      blick.copy(treffer);
+      blick.set(treffer.x, MITTE.y, treffer.z);
       zaeumen();
       stellen();
     };
@@ -363,7 +371,12 @@ export function erschaffeKamera(buehne: HTMLElement, ruhig = false): Steuerung {
         "0": zurueck,
       };
       const t = taten[e.key] || taten[e.key.toLowerCase()];
-      if (t) { e.preventDefault(); t(); }
+      if (!t) return;
+      /* An arrow key that finds nothing to pan (the start view) goes on to the
+         page, which scrolls with it — the same handover the wheel makes. */
+      vorRad.copy(blick);
+      t();
+      if (!e.key.startsWith("Arrow") || !blick.equals(vorRad)) e.preventDefault();
     };
 
     buehne.addEventListener("pointerdown", runter);
