@@ -163,17 +163,18 @@ describe("the sessions outside covey on the cost page, included by default (#120
     await waitFor(() => expect(kpiParts("Reported by Claude Code")).not.toBeNull());
     // covey reported 9, the outside sessions 2.5 + 1 (sylius reported none).
     expect(kpiValue("Reported by Claude Code")).toBe(fmtUSD(9 + 3.5));
-    // The outside part in two (#163): the covey operator, and the other projects (sylius, work).
+    // The outside part in three (#163, #166 F1): the covey operator, the other projects on the meter (sylius reported none),
+    // and work, billed per use, on no meter.
     expect(kpiParts("Reported by Claude Code")).toBe(
-      `covey agents (internal) ${fmtUSD(9)} · covey operator ${fmtUSD(2.5)} · other projects ${fmtUSD(1)} (4 of 9 calls reported a cost)`);
+      `covey agents (internal) ${fmtUSD(9)} · covey operator ${fmtUSD(2.5)} · other projects no reported cost · per use ${fmtUSD(1)}`);
     expect(kpiValue("Recomputed from tokens")).toBe(fmtUSD(10 + 6.5));
     expect(kpiParts("Recomputed from tokens")).toBe(
-      `covey agents (internal) ${fmtUSD(10)} · covey operator ${fmtUSD(3)} · other projects ${fmtUSD(3.5)} + ${fmtCount(1000)} tokens with no list price`);
+      `covey agents (internal) ${fmtUSD(10)} · covey operator ${fmtUSD(3)} · other projects ${fmtUSD(2)} + ${fmtCount(1000)} tokens with no list price · per use ${fmtUSD(1.5)}`);
     // Tokens: covey's 500 + 500 input, 10M cache read, 500k output; outside 4 × 1000 input, 300k cache read, 170k output.
     const coveyIn = 1000 + 10_000_000, outIn = 4000 + 300_000;
     expect(kpiValue(t("costs.inputTokens"))).toBe(fmtCount(coveyIn + outIn));
     expect(kpiParts(t("costs.inputTokens"))).toBe(
-      `covey agents (internal) ${fmtCount(coveyIn)} · covey operator ${fmtCount(OP_IN)} · other projects ${fmtCount(outIn - OP_IN)}`);
+      `covey agents (internal) ${fmtCount(coveyIn)} · covey operator ${fmtCount(OP_IN)} · other projects ${fmtCount(1000)} · per use ${fmtCount(outIn - OP_IN - 1000)}`);
     expect(kpiValue(t("costs.outputTokens"))).toBe(fmtCount(500_000 + 170_000));
     expect(kpiValue(t("costs.totalTokens"))).toBe(fmtCount(coveyIn + outIn + 670_000));
     // The note names the sources with calls — never one of 0 calls.
@@ -210,7 +211,7 @@ describe("the sessions outside covey on the cost page, included by default (#120
     fireEvent.click(await screen.findByRole("button", { name: /^Coordinator/ }));
     await waitFor(() => expect(kpiParts("Recomputed from tokens")).toMatch(/^selected agents/));
     expect(kpiParts("Recomputed from tokens")).toBe(
-      `selected agents (internal) ${fmtUSD(10)} · covey operator ${fmtUSD(3)} · other projects ${fmtUSD(3.5)} + ${fmtCount(1000)} tokens with no list price`);
+      `selected agents (internal) ${fmtUSD(10)} · covey operator ${fmtUSD(3)} · other projects ${fmtUSD(2)} + ${fmtCount(1000)} tokens with no list price · per use ${fmtUSD(1.5)}`);
     expect(document.querySelector("[data-inclusion-note]")!.textContent).toMatch(/the outside sessions are not agents/);
   });
 
@@ -309,8 +310,8 @@ describe("the sessions outside covey on the cost page, included by default (#120
     expect(tile.textContent).toContain(`≈ ${times(12.75 / (6 * PP))}`);
     expect(tile.textContent).toContain(`at least ${times(12.75 / (8 * PP))}`);
     // Labelled apart from the tiles' pairs, which are the range's (L5).
-    expect(tile.textContent).toContain(`within the meter's readings: at token prices ${fmtUSD(12.75)} (covey agents (internal) ${fmtUSD(8.75)} · covey operator ${fmtUSD(2.22)} · ` +
-      `other projects ${fmtUSD(1.78)} (recomputed for sources without a reported cost)) over the meter's real cost ≈ ${fmtUSD(6 * PP)}`);
+    expect(tile.textContent).toContain(`within the meter's readings: at token prices ${fmtUSD(12.75)} (covey agents (internal) ${fmtUSD(8.75)} · covey operator ≈ ${fmtUSD(2.22)} · ` +
+      `other projects ≈ ${fmtUSD(1.78)} (recomputed for sources without a reported cost)) over the meter's real cost ≈ ${fmtUSD(6 * PP)}`);
     expect(tile.textContent).toContain(`at least list ÷ (real + ${fmtUSD(2 * PP)})`);
     const rec = screen.getAllByRole("group", { name: t("costs.lead.label") }).find((g) => g.closest(`[data-credential="${SEAT}#0"]`))!;
     expect(rec.querySelector("[data-parts]")!.textContent).toMatch(/^in the range: covey agents \(internal\) /);

@@ -416,7 +416,8 @@
       },
       "operator": "covey オペレーター",
       "projects": "他のプロジェクト",
-      "partSubSource": "消費の {{pct}}"
+      "partSubSource": "消費の {{pct}}",
+      "outsideRest": "外部、未配分"
     },
     "split": {
       "covey": "covey のエージェント（内部）",
@@ -685,7 +686,11 @@
       "inRange": "期間内: {{line}}",
       "everythingShared": "外部の取り分は、期間内の各ソースの価格に応じて covey オペレーターと他のプロジェクトに分けています。",
       "meterListOperator": "定価、covey オペレーター",
-      "meterListProjects": "定価、他のプロジェクト"
+      "meterListProjects": "定価、他のプロジェクト",
+      "linePerUse": "従量課金 {{usd}}",
+      "lineOutsideUnsplit": "covey オペレーターと他のプロジェクト {{usd}}（内訳は不明）",
+      "meterListUnsplit": "定価、covey オペレーターと他のプロジェクト",
+      "splitUnknown": "{{usd}}（内訳は不明）"
     },
     "lead": {
       "label": "トークン価格（Claude Code の報告値）",

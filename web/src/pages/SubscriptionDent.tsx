@@ -4,7 +4,7 @@ import { fmtNumber, fmtUSD } from "../format";
 import { SPLIT_COLOR, SPLIT_HATCH } from "./costSources";
 import type { DentPart, FloorMultiple, Headline, SubscriptionDent } from "./costFigures";
 import { OrgWide, Swatch, outsideMoney, priceTableLine } from "./StackedCostChart";
-import { OPERATOR_SOURCE } from "./outsideFigures";
+import { isOperatorSource } from "./outsideFigures";
 import { usageList } from "./CostBasis";
 
 /* The headline of the Costs page once Claude Code sessions outside covey
@@ -85,7 +85,7 @@ function HeadlineSentence({ h }: { h: Headline }) {
       lead: priced.length > 0 ? priced.reduce((a, s) => a + s.list!, 0) : null,
       leadRecomputed: ss.reduce((a, s) => a + s.recomputed, 0), leadUnpricedTokens: ss.reduce((a, s) => a + s.unpricedTokens, 0) };
   };
-  const op = group((s) => s.source === OPERATOR_SOURCE), pr = group((s) => s.source !== OPERATOR_SOURCE);
+  const op = group((s) => isOperatorSource(s.source)), pr = group((s) => !isOperatorSource(s.source));
   const lines = [t("costs.incl.lineCovey", { usd: fmtUSD(h.coveyList) })];
   if (op.calls > 0) lines.push(t("costs.incl.lineOperator", { usd: outsideMoney(t, op, "lead", false) }));
   if (pr.calls > 0) lines.push(t("costs.incl.lineProjects", { usd: outsideMoney(t, pr, "lead", false) }));
@@ -186,12 +186,19 @@ export function SubscriptionDentRow({ d, filtered, h = null, sourceParts = [] }:
   // price, the cards beside them state the lead price (#163 review, M2); the
   // per-source list is in the lines below.
   const shown = sourceParts.filter((p) => p.list_usd > 0 || p.real_usd > 0);
-  const outsideParts = (["operator", "projects"] as const).flatMap((key) => {
-    const ps = shown.filter((p) => (p.source === OPERATOR_SOURCE) === (key === "operator"));
+  const outsideParts: { key: "operator" | "projects" | "rest"; real: number; title?: string }[] = (["operator", "projects"] as const).flatMap((key) => {
+    const ps = shown.filter((p) => isOperatorSource(p.source) === (key === "operator"));
     if (ps.length === 0) return [];
     return [{ key, real: ps.reduce((a, p) => a + p.real_usd, 0),
       title: key === "projects" ? ps.map((p) => `${p.source}: ≈ ${fmtUSD(p.real_usd)}`).join("\n") : undefined }];
   });
+  // The cards must add up to the outside part: what the per-source shares do
+  // not carry (a seat with outside real cost and no source parts, a source
+  // with no calls in the range) is its own card, never lost (#166 review,
+  // F2); where they carry more than the outside part, the one card stands.
+  const sourced = outsideParts.reduce((a, o) => a + o.real, 0), gap = d.outside.real - sourced;
+  if (outsideParts.length > 0 && gap >= 0.005) outsideParts.push({ key: "rest", real: gap });
+  const splitCards = outsideParts.length > 0 && gap > -0.005;
   const seat = (s: SubscriptionDent["seats"][number]) => `${s.key} #${s.slot}`;
   // The unsplit readings by why: the outside sessions had not reported them,
   // or their outside calls all had no price. n is the number as shown.
@@ -239,8 +246,8 @@ export function SubscriptionDentRow({ d, filtered, h = null, sourceParts = [] }:
           <Part test="covey" label={t("costs.dent.covey")} value={`≈ ${fmtUSD(d.covey.real)}`} sub={part(d.covey)} color={SPLIT_COLOR.covey} />
           {/* The outside part in two (#163), from the server's real share per source: the covey operator and the other
               projects, the latter with each project as its hover. Without per-source parts, the one outside part. */}
-          {outsideParts.length > 0 ? outsideParts.map((o) => (
-            <Part key={o.key} test={o.key} label={t(o.key === "operator" ? "costs.dent.operator" : "costs.dent.projects")} value={`≈ ${fmtUSD(o.real)}`}
+          {splitCards ? outsideParts.map((o) => (
+            <Part key={o.key} test={o.key} label={t(o.key === "operator" ? "costs.dent.operator" : o.key === "projects" ? "costs.dent.projects" : "costs.dent.outsideRest")} value={`≈ ${fmtUSD(o.real)}`}
               sub={t("costs.dent.partSubSource", { pct: pctOf(d.real! > 0 ? o.real / d.real! : null) })}
               title={o.title} color={SPLIT_COLOR.outside} hatch={SPLIT_HATCH.outside} />
           )) : (

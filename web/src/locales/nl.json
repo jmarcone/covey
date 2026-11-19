@@ -416,7 +416,8 @@
       },
       "operator": "covey-operator",
       "projects": "Andere projecten",
-      "partSubSource": "{{pct}} van de deuk"
+      "partSubSource": "{{pct}} van de deuk",
+      "outsideRest": "Extern, niet verdeeld"
     },
     "split": {
       "covey": "Agents van covey (intern)",
@@ -685,7 +686,11 @@
       "inRange": "in de periode: {{line}}",
       "everythingShared": "Het externe deel is verdeeld tussen de covey-operator en de andere projecten naar de prijs van elk over de periode.",
       "meterListOperator": "Lijstprijs, covey-operator",
-      "meterListProjects": "Lijstprijs, andere projecten"
+      "meterListProjects": "Lijstprijs, andere projecten",
+      "linePerUse": "per gebruik {{usd}}",
+      "lineOutsideUnsplit": "covey-operator en andere projecten {{usd}} (verdeling onbekend)",
+      "meterListUnsplit": "Lijstprijs, covey-operator en andere projecten",
+      "splitUnknown": "{{usd}} (verdeling onbekend)"
     },
     "lead": {
       "label": "Tegen tokenprijzen (zoals gemeld door Claude Code)",

@@ -416,7 +416,8 @@
       },
       "operator": "covey 操作员",
       "projects": "其他项目",
-      "partSubSource": "占消耗的 {{pct}}"
+      "partSubSource": "占消耗的 {{pct}}",
+      "outsideRest": "外部，未划分"
     },
     "split": {
       "covey": "covey 的智能体（内部）",
@@ -685,7 +686,11 @@
       "inRange": "期间内：{{line}}",
       "everythingShared": "外部部分按各来源在期间内的价格，在 covey 操作员与其他项目之间分摊。",
       "meterListOperator": "标价，covey 操作员",
-      "meterListProjects": "标价，其他项目"
+      "meterListProjects": "标价，其他项目",
+      "linePerUse": "按用量计费 {{usd}}",
+      "lineOutsideUnsplit": "covey 操作员和其他项目 {{usd}}（划分未知）",
+      "meterListUnsplit": "标价，covey 操作员和其他项目",
+      "splitUnknown": "{{usd}}（划分未知）"
     },
     "lead": {
       "label": "按 token 价格（Claude Code 报告值）",

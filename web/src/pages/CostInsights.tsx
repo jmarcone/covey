@@ -400,12 +400,14 @@ function MeterFigures({ f, readings, outside = null }: {
   const seatNames = outside ? new Set(seatSources(outside, m.secret_key, m.secret_slot).map((s) => s.source)) : null;
   const split = outside && seatNames ? outsideSplit(outside, seatNames) : null;
   const within = e && split ? withinSplit(e.outsideList, split) : null;
-  const outsideRows = e && split && within ? (
+  const outsideRows = e && split && within ? (within.known ? (
     [["operator", split.operator, within.operator], ["projects", split.projects, within.projects]] as const
   ).flatMap(([key, k, usd]) => !k || k.calls === 0 ? [] : [
     <Fragment key={key}>{row(t(key === "operator" ? "costs.incl.meterListOperator" : "costs.incl.meterListProjects"),
-      withinMoney(t, usd, { priced: e.outsidePriced && kpiLead(k).lead != null, calls: k.calls, unpricedTokens: kpiLead(k).unpricedTokens, recomputed: kpiLead(k).recomputed }),
-      SOURCE_COLOR.recomputed)}</Fragment>]) : null;
+      withinMoney(t, usd, { priced: e.outsidePriced && kpiLead(k).lead != null, calls: k.calls, unpricedTokens: kpiLead(k).unpricedTokens, recomputed: kpiLead(k).recomputed }, true, within.shared),
+      SOURCE_COLOR.recomputed)}</Fragment>])
+    // One part has no price: the seat's outside part stands whole, its split not known.
+    : [<Fragment key="unsplit">{row(t("costs.incl.meterListUnsplit"), t("costs.incl.splitUnknown", { usd: fmtUSD(e.outsideList) }), SOURCE_COLOR.recomputed)}</Fragment>]) : null;
   return (
     <div className="mb-4" data-meter={f.id}>
       <div className="text-xs" style={{ fontWeight: 600, marginBottom: 4 }}>{`${m.secret_key} #${m.secret_slot} · ${source}`}</div>
@@ -416,6 +418,7 @@ function MeterFigures({ f, readings, outside = null }: {
       {row(t("costs.fig.realEstimate"), real, SOURCE_COLOR.real, true)}
       {row(t("costs.insights.meterList"), f.aligned != null ? fmtUSD(f.aligned) : "–", SOURCE_COLOR.recomputed)}
       {e && outsideRows}
+      {e && within?.shared && within.known && <div className="muted text-xs" data-meter-shared>{t("costs.incl.everythingShared")}</div>}
       {row(e ? t("costs.incl.everything") : t("costs.fig.multiple"), mult)}
       <p className="muted text-xs mt-1 mb-0">
         {five

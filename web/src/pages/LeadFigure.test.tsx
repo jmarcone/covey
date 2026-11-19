@@ -205,17 +205,19 @@ describe("the lead figure per source (#120)", () => {
     serve();
     // covey $9 reported; outside: op $3.50, sylius $2 (at the list), work $1.
     await waitFor(() => expect(kpi(LEAD)?.querySelector("[data-kpi-value]")?.textContent).toBe(fmtUSD(9 + 6.5)));
-    // One line per part (#163): covey's agents, the operator, the other projects (sylius, work); the mark said once.
+    // One line per part (#163): covey's agents, the operator, the other projects on the meter (sylius), per use (work); the mark said once.
     const lines = [...kpi(LEAD)!.querySelectorAll("[data-parts] [data-part]")].map((e) => e.textContent);
     expect(lines).toEqual([
       `covey agents (internal) ${fmtUSD(9)}`,
       `covey operator ${fmtUSD(3.5)} *`,
-      `other projects ${fmtUSD(3)} + ${fmtCount(1000)} tokens with no list price *`,
+      `other projects ${fmtUSD(2)} + ${fmtCount(1000)} tokens with no list price *`,
+      `per use ${fmtUSD(1)}`,
     ]);
     expect(kpi(LEAD)!.querySelector("[data-part-footnote]")!.textContent).toBe(`* ${MARK.slice(1, -1)}`);
     // The other projects' hover lists each project with its amount.
     expect(kpi(LEAD)!.querySelector("[data-part='projects']")!.getAttribute("title")).toBe(
-      `${WORK}: ${fmtUSD(1)}\n${SY}: ${fmtUSD(2)} + ${fmtCount(1000)} tokens with no list price`);
+      `${SY}: ${fmtUSD(2)} + ${fmtCount(1000)} tokens with no list price`);
+    expect(kpi(LEAD)!.querySelector("[data-part='perUse']")!.getAttribute("title")).toBe(`${WORK}: ${fmtUSD(1)}`);
     // covey's price table: $10 + $6.50 = $16.50, $1 (6.5 %) more: one line.
     expect(kpi(LEAD)!.querySelector("[data-price-check]")!.textContent).toBe(
       `covey's own price table gives ${fmtUSD(16.5)}, ${fmtNumber(6.5, 1)} % more than Claude Code reported`);
@@ -392,7 +394,7 @@ describe("the headline's X is the lead figure (#120)", () => {
       "It is in the totals above; its real share is pending until the meter is read again, so it is not in the multiple.");
     // The multiple of everything on the meter divides the same lead figure.
     const tile = screen.getByRole("group", { name: t("costs.incl.everything") });
-    expect(tile.textContent).toContain(`at token prices ${fmtUSD(14.5 - 0.6)} (covey agents (internal) ${fmtUSD(9 - 0.2)} · covey operator ${fmtUSD(3.25)} · other projects ${fmtUSD(5.1 - 3.25)}`);
+    expect(tile.textContent).toContain(`at token prices ${fmtUSD(14.5 - 0.6)} (covey agents (internal) ${fmtUSD(9 - 0.2)} · covey operator ≈ ${fmtUSD(3.25)} · other projects ≈ ${fmtUSD(5.1 - 3.25)}`);
   });
 
   it("splits the outside overview's unmetered list price the same way", () => {

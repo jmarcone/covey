@@ -461,30 +461,50 @@ export function outsideKpis(ext: ExternalUsage | null | undefined, only?: Readon
   return out;
 }
 
-/** The source the Claude Code session that drives covey from outside reports
- *  as (#163). Every other outside source is another project on the same
- *  machine and plan. */
+/** The source the Claude Code session that drives covey from outside
+ *  reports as (#163). Every other outside source is another project on the
+ *  same machine and plan. */
 export const OPERATOR_SOURCE = "covey operator";
 
-/** The outside sessions in two parts (#163): the covey operator, and the
- *  other projects, each with its sources' figures; projectList: every
- *  project on its own, for a hover. A part is null where no source of it
- *  is listed. Over every source, or the given ones. */
+/** Whether an outside source is the covey operator: the one rule everywhere
+ *  (the tile, the headline, the dent), trimmed and case-insensitive, so
+ *  "Covey Operator " is not another project (#166 review, F3). */
+export function isOperatorSource(source: string): boolean {
+  return source.trim().toLowerCase() === OPERATOR_SOURCE;
+}
+
+/** A listed source billed per use: it names no subscription meter, so it has
+ *  no real share and the headline's sum leaves it out (#120 review, M6). The
+ *  one rule of the tile, the token tiles and the headline's per-use line. */
+export function perUseSource(s: Pick<ExternalSource, "meter_credential">): boolean {
+  return !s.meter_credential;
+}
+
+/** The outside sessions in three parts (#163): the covey operator and the
+ *  other projects, both on a subscription meter, and what is billed per use
+ *  on none (#166 review, F1), each with its sources' figures; projectList and
+ *  perUseList: every source on its own, for a hover. A part is null where no
+ *  source of it is listed. A source billed per use is a per-use part
+ *  whatever it is called, as in the headline. Over every source, or the
+ *  given ones. */
 export type OutsideSplit = {
   operator: OutsideKpis | null;
   projects: OutsideKpis | null;
+  perUse: OutsideKpis | null;
   projectList: { source: string; kpis: OutsideKpis }[];
+  perUseList: { source: string; kpis: OutsideKpis }[];
 };
 
 export function outsideSplit(ext: ExternalUsage | null | undefined, only?: ReadonlySet<string>): OutsideSplit {
-  const names = listedSources(ext).map((s) => s.source).filter((n) => !only || only.has(n));
-  const projects = names.filter((n) => n !== OPERATOR_SOURCE);
+  const listed = listedSources(ext).filter((s) => !only || only.has(s.source));
+  const names = (of: (s: ExternalSource) => boolean) => listed.filter(of).map((s) => s.source);
+  const operator = names((s) => !perUseSource(s) && isOperatorSource(s.source));
+  const projects = names((s) => !perUseSource(s) && !isOperatorSource(s.source)).sort();
+  const perUse = names(perUseSource).sort();
   const by = outsideKpisBySource(ext);
-  return {
-    operator: names.includes(OPERATOR_SOURCE) ? outsideKpis(ext, new Set([OPERATOR_SOURCE])) : null,
-    projects: projects.length > 0 ? outsideKpis(ext, new Set(projects)) : null,
-    projectList: projects.sort().flatMap((source) => { const kpis = by.get(source); return kpis ? [{ source, kpis }] : []; }),
-  };
+  const each = (ns: string[]) => ns.flatMap((source) => { const kpis = by.get(source); return kpis ? [{ source, kpis }] : []; });
+  const part = (ns: string[]) => (ns.length > 0 ? outsideKpis(ext, new Set(ns)) : null);
+  return { operator: part(operator), projects: part(projects), perUse: part(perUse), projectList: each(projects), perUseList: each(perUse) };
 }
 
 /** Every listed source's figures, in one pass over the cells (computed once
@@ -510,7 +530,7 @@ export function outsideKpisBySource(ext: ExternalUsage | null | undefined): Map<
  *  on a subscription meter (a seat they name), or billed per use (none). */
 export function sourcesByMeter(ext: ExternalUsage | null | undefined): { meter: Set<string>; perUse: Set<string> } {
   const meter = new Set<string>(), perUse = new Set<string>();
-  for (const s of listedSources(ext)) (s.meter_credential ? meter : perUse).add(s.source);
+  for (const s of listedSources(ext)) (perUseSource(s) ? perUse : meter).add(s.source);
   return { meter, perUse };
 }
 

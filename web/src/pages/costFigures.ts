@@ -16,7 +16,7 @@ import type {
   WindowCharge,
 } from "../api";
 import type { Source } from "./costSources";
-import { OPERATOR_SOURCE, beforeRange, listedSource, outsideKpis, sourceLead, sourceRealParts, type OutsideKpis } from "./outsideFigures";
+import { beforeRange, isOperatorSource, listedSource, perUseSource, outsideKpis, sourceLead, sourceRealParts, type OutsideKpis } from "./outsideFigures";
 
 /* The figures of the Costs page, as pure functions — no React, no fetch.
  *
@@ -1303,12 +1303,21 @@ export type DentPart = { real: number; share: number | null; points: number; lis
 /** The real cost of some sources' parts; null where there are none. */
 const partReal = (ps: readonly { real_usd: number }[]): number | null => (ps.length > 0 ? ps.reduce((a, p) => a + p.real_usd, 0) : null);
 
+/** A seat's outside real cost per party, from its source_parts; null without them, or where they do not add up to the
+ *  seat's own outside figure (a card or line that left money out would be wrong, F2). */
+function seatOutsideParts(c: Pick<ExternalMeterTotal, "source_parts" | "external_real_usd">): DentSeat["outsideParts"] {
+  const ps = c.source_parts ?? [];
+  if (ps.length === 0 || Math.abs(ps.reduce((a, p) => a + p.real_usd, 0) - c.external_real_usd) >= 0.005) return null;
+  return { operator: partReal(ps.filter((p) => isOperatorSource(p.source))), projects: partReal(ps.filter((p) => !isOperatorSource(p.source))) };
+}
+
 export type DentSeat = {
   key: string; slot: number; sources: string[];
   real: number | null; points: number; covey: number; outside: number; unattributed: number; unsplit: number;
   /** The seat's outside part (real cost) per party, from its source_parts: the covey operator and the other projects (#163);
-   *  null where the server sent none (the seat has no split steps); a party is null where no source of it is on the seat.
-   *  The two add up to `outside`. */
+   *  null where the server sent none (the seat has no split steps) or where the parts do not add up to `outside` (a share
+   *  the sources do not carry: the seat's one outside figure then stands, #166 review, F2); a party is null where no source
+   *  of it is on the seat. */
   outsideParts: { operator: number | null; projects: number | null } | null;
   unpricedPoints: number; split: boolean; pointsPerList: number | null; olderPlan: number | null;
   /** Points read while the seat was billed by usage (0151): not in the dent,
@@ -1489,7 +1498,7 @@ export function headline(cells: CostCells | null | undefined): Headline | null {
   const usageSeats = m.credentials.filter((c) => (c.usage_steps ?? 0) > 0).map((c) => `${c.secret_key} #${c.secret_slot}`);
   const counted = usageCurrencies((cells.usage_charges ?? []).filter((c) => seats.has(credId(c.secret_key, c.secret_slot))));
   if (outsideList == null && outsideCalls === 0) outsideList = 0;
-  const pu = listed.filter((s) => !s.meter_credential);
+  const pu = listed.filter(perUseSource);
   const perUse = pu.length === 0 ? null : outsideKpis(ext, new Set(pu.map((s) => s.source)));
   // Each source on the seats at its lead price.
   const byLead = new Map(own.map((s) => [s.source, sourceLead(s, ext!.cells)]));
@@ -1579,9 +1588,7 @@ export function subscriptionDent(ext: ExternalUsage | null | undefined): Subscri
       key: c.secret_key, slot: c.secret_slot, sources: c.sources,
       real: meterPriced(c) ? c.real_usd : null, points: c.points,
       covey: c.covey_real_usd, outside: c.external_real_usd, unattributed: c.unattributed_real_usd ?? 0, unsplit: c.unsplit_real_usd,
-      outsideParts: c.source_parts && c.source_parts.length > 0 ? {
-        operator: partReal(c.source_parts.filter((p) => p.source === OPERATOR_SOURCE)),
-        projects: partReal(c.source_parts.filter((p) => p.source !== OPERATOR_SOURCE)) } : null,
+      outsideParts: seatOutsideParts(c),
       unpricedPoints: c.unpriced_points, usagePoints: c.usage_points ?? 0, usageSteps: c.usage_steps ?? 0, split: c.split_steps > 0,
       pointsPerList: c.points_per_list_usd ?? null, olderPlan: c.points_per_list_older_plan_usd ?? null, steps: c.step_count,
     })),

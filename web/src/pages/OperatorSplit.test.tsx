@@ -5,14 +5,15 @@ import type { CostCells, ExternalCell, ExternalMeterStep, ExternalMeterSums, Ext
 import i18n from "../i18n";
 import { fmtCount, fmtUSD } from "../format";
 import { mockFetch, renderWithProviders } from "../test/render";
-import { subscriptionDent } from "./costFigures";
-import { OPERATOR_SOURCE, outsideKpis, outsideSplit } from "./outsideFigures";
+import { headline, subscriptionDent } from "./costFigures";
+import { OPERATOR_SOURCE, isOperatorSource, kpiLead, outsideKpis, outsideSplit } from "./outsideFigures";
 import { withinSplit } from "./StackedCostChart";
 
 // #163: the sessions outside covey are not one number. Where the cost page
-// names them, it names three parts: covey's own agents (internal), the covey
-// operator (the Claude Code session that drives covey from outside) and the
-// other projects on the same machine and plan. The parts of a figure add up
+// names them, it names its parts: covey's own agents (internal), the covey
+// operator (the Claude Code session that drives covey from outside), the
+// other projects on the same machine and plan, and what is billed per use,
+// on no subscription meter (#166 review, F1). The parts of a figure add up
 // to the figure, the operator is the source labelled "covey operator", and
 // the line of the other projects is there only where there are other
 // projects, with each of them in its hover.
@@ -168,6 +169,9 @@ function operatorOnly(): CostCells {
   seat.sources = [OP];
   seat.source_parts = seat.source_parts?.filter((p) => p.source === OP);
   ext.meter.source_parts = ext.meter.source_parts?.filter((p) => p.source === OP);
+  // The other projects' real share is gone with them, from the seat and the meter.
+  seat.external_real_usd = PP;
+  ext.meter.external_real_usd = PP;
   return data;
 }
 
@@ -176,26 +180,27 @@ describe("the outside sessions in three parts (#163)", () => {
 
   it("splits the lead tile into covey's agents (internal), the covey operator and the other projects, one line each, and they add up to the tile", async () => {
     serve();
-    // covey $9 as Claude Code reported it; the operator $3.50; sylius $2 and work $1.
+    // covey $9 as Claude Code reported it; the operator $3.50; sylius $2 (on the meter); work $1 (per use, on no meter).
     await waitFor(() => expect(kpi(LEAD)?.querySelector("[data-kpi-value]")?.textContent).toBe(fmtUSD(9 + 3.5 + 3)));
     const parts = lines(LEAD);
-    expect(parts).toHaveLength(3);
+    expect(parts).toHaveLength(4);
     expect(parts[0]).toBe(`covey agents (internal) ${fmtUSD(9)}`);
     expect(parts[1]).toBe(`covey operator ${fmtUSD(3.5)} *`);
-    expect(parts[2]).toBe(`other projects ${fmtUSD(3)} + ${fmtCount(1000)} tokens with no list price *`);
+    expect(parts[2]).toBe(`other projects ${fmtUSD(2)} + ${fmtCount(1000)} tokens with no list price *`);
+    expect(parts[3]).toBe(`per use ${fmtUSD(1)}`);
     // The lines are one under the other, and add up to the tile's figure.
-    expect(kpi(LEAD).querySelectorAll("[data-parts] > div")).toHaveLength(4);
+    expect(kpi(LEAD).querySelectorAll("[data-parts] > div")).toHaveLength(5);
     expect(parts.reduce((a, p) => a + usd(p), 0)).toBeCloseTo(usd(kpi(LEAD).querySelector("[data-kpi-value]")!.textContent), 9);
     // The mark, said once: a short footnote, not on every line.
     expect(kpi(LEAD).querySelector("[data-part-footnote]")!.textContent).toBe("* recomputed for sources without a reported cost");
     expect(kpi(LEAD).textContent).not.toContain(MARK);
-    // The other projects: each one with its amount, as the hover.
-    expect(kpi(LEAD).querySelector("[data-part='projects']")!.getAttribute("title")).toBe(
-      `${WORK}: ${fmtUSD(1)}\n${SY}: ${fmtUSD(2)} + ${fmtCount(1000)} tokens with no list price`);
+    // The other projects and the per-use sources: each one with its amount, as the hover.
+    expect(kpi(LEAD).querySelector("[data-part='projects']")!.getAttribute("title")).toBe(`${SY}: ${fmtUSD(2)} + ${fmtCount(1000)} tokens with no list price`);
+    expect(kpi(LEAD).querySelector("[data-part='perUse']")!.getAttribute("title")).toBe(`${WORK}: ${fmtUSD(1)}`);
     expect(kpi(LEAD).querySelector("[data-part='operator']")!.getAttribute("title")).toBeNull();
     // The hover is also the line's description, for the keyboard and touch screens (N6).
     expect(kpi(LEAD).querySelector("[data-part='projects']")!.getAttribute("aria-description")).toBe(
-      `${WORK}: ${fmtUSD(1)}; ${SY}: ${fmtUSD(2)} + ${fmtCount(1000)} tokens with no list price`);
+      `${SY}: ${fmtUSD(2)} + ${fmtCount(1000)} tokens with no list price`);
     expect(kpi(LEAD).querySelector("[data-part='operator']")!.getAttribute("aria-description")).toBeNull();
   });
 
@@ -212,18 +217,18 @@ describe("the outside sessions in three parts (#163)", () => {
     expect(document.body.textContent).not.toContain("other projects");
   });
 
-  it("names the three parts in the token tiles, and they add up to each tile", async () => {
+  it("names the parts in the token tiles, per use included, and they add up to each tile", async () => {
     serve();
-    // covey: 1,000 input and 500,000 output; the operator 200 and 20,000; sylius and work 200 and 20,000.
-    const tiles: [string, number, number, number][] = [
-      [t("costs.inputTokens"), 1000, 200, 200],
-      [t("costs.outputTokens"), 500_000, 20_000, 20_000],
-      [t("costs.totalTokens"), 501_000, 20_200, 20_200],
+    // covey: 1,000 input and 500,000 output; the operator 200 and 20,000; sylius 100 and 10,000; work (per use) 100 and 10,000.
+    const tiles: [string, number, number, number, number][] = [
+      [t("costs.inputTokens"), 1000, 200, 100, 100],
+      [t("costs.outputTokens"), 500_000, 20_000, 10_000, 10_000],
+      [t("costs.totalTokens"), 501_000, 20_200, 10_100, 10_100],
     ];
-    for (const [label, covey, op, others] of tiles) {
-      await waitFor(() => expect(kpi(label)?.querySelector("[data-kpi-value]")?.textContent).toBe(fmtCount(covey + op + others)));
+    for (const [label, covey, op, projects, perUse] of tiles) {
+      await waitFor(() => expect(kpi(label)?.querySelector("[data-kpi-value]")?.textContent).toBe(fmtCount(covey + op + projects + perUse)));
       expect(lines(label)).toEqual([
-        `covey agents (internal) ${fmtCount(covey)}`, `covey operator ${fmtCount(op)}`, `other projects ${fmtCount(others)}`]);
+        `covey agents (internal) ${fmtCount(covey)}`, `covey operator ${fmtCount(op)}`, `other projects ${fmtCount(projects)}`, `per use ${fmtCount(perUse)}`]);
     }
   });
 
@@ -233,6 +238,9 @@ describe("the outside sessions in three parts (#163)", () => {
     // $9 + $3.50 + $2 (sylius, on the meter; work is billed per use, on none) = $14.50.
     expect(row.querySelector("[data-head-sentence]")!.textContent).toContain(
       `${fmtUSD(14.5)} = covey agents (internal) ${fmtUSD(9)} + covey operator ${fmtUSD(3.5)} + other projects ${fmtUSD(2)} + ${fmtCount(1000)} tokens with no list price ${MARK}`);
+    // The per-use source is said on its own line below the sentence, at the figure the tile's "per use" line has (#166 review, F1).
+    expect(row.querySelector("[data-head-per-use]")!.textContent).toContain(fmtUSD(1));
+    expect(kpi(LEAD).querySelector("[data-part='perUse']")!.textContent).toBe(`per use ${fmtUSD(1)}`);
   });
 
   it("splits the estimate's outside card into the operator and the other projects, and they add up to it", async () => {
@@ -273,8 +281,10 @@ describe("the outside sessions in three parts (#163)", () => {
       return c;
     });
     // The seat's outside part within the readings is $5.10 at the lead price (the operator and sylius; work is per use).
-    expect(card.textContent).toContain(`${t("costs.incl.meterListOperator")}${fmtUSD(3.25)}`);
-    expect(card.textContent).toContain(`${t("costs.incl.meterListProjects")}${fmtUSD(1.85)}`);
+    // The two rows are an estimate (a share by lead price), marked ≈, with the note said once (#166 review, F4).
+    expect(card.textContent).toContain(`${t("costs.incl.meterListOperator")}≈ ${fmtUSD(3.25)}`);
+    expect(card.textContent).toContain(`${t("costs.incl.meterListProjects")}≈ ${fmtUSD(1.85)}`);
+    expect(card.querySelector("[data-meter-shared]")!.textContent).toBe(t("costs.incl.everythingShared"));
     expect(3.25 + 1.85).toBeCloseTo(5.1, 9);
     expect(card.textContent).not.toContain("List price, outside sessions");
   });
@@ -296,7 +306,7 @@ describe("the outside sessions in three parts (#163)", () => {
     serve();
     const text = async () => (await screen.findByRole("group", { name: t("costs.incl.everything") })).textContent ?? "";
     const parts = async () => {
-      const m = (await text()).match(/\(covey agents \(internal\) \$([\d.]+)(?: · covey operator \$([\d.]+))?(?: · other projects \$([\d.]+))?/);
+      const m = (await text()).match(/\(covey agents \(internal\) \$([\d.]+)(?: · covey operator ≈ \$([\d.]+))?(?: · other projects ≈ \$([\d.]+))?/);
       return m ? [m[1], m[2], m[3]].map((x) => (x == null ? 0 : Number(x))) : null;
     };
     await waitFor(async () => expect(await parts()).not.toBeNull());
@@ -315,7 +325,7 @@ describe("the outside sessions in three parts (#163)", () => {
     expect(op2 + pr2).toBeCloseTo(whole, 9);
   });
 
-  it("says 'no list price' for a part whose calls have none, never $0.00, though the other part is priced (#163 review, N4)", async () => {
+  it("says the split is not known, never gives the priced part all of it, where one part has no price (#163 review, N4; #166 review, F4)", async () => {
     const data = cells();
     const ext = data.external!;
     // The operator's calls carry no reported cost and no list price.
@@ -325,36 +335,175 @@ describe("the outside sessions in three parts (#163)", () => {
     }
     const src = ext.sources.find((x) => x.source === OP)!;
     Object.assign(src, { list_usd: null, reported_usd: null, lead_usd: null, unpriced_tokens: 1000, lead_unpriced_tokens: 1000 });
+    expect(withinSplit(1.6, outsideSplit(ext))).toEqual({ operator: 0, projects: 0, shared: true, known: false });
     serve(data);
     const tile = await screen.findByRole("group", { name: t("costs.incl.everything") });
-    await waitFor(() => expect(tile.textContent).toContain("covey operator no list price"));
+    // One line for both parts with the seat's figure, said as not split: not "other projects $1.60" with the operator at nothing.
+    await waitFor(() => expect(tile.textContent).toContain("covey operator and other projects $1.60 (split not known)"));
+    expect(tile.textContent).not.toContain("other projects ≈");
     expect(tile.textContent).not.toContain("covey operator $0.00");
+    expect(tile.textContent).not.toContain(t("costs.incl.everythingShared"));
     const card = await waitFor(() => {
       const c = document.querySelector(`[data-meter="${SEAT}#0"]`);
       if (!c) throw new Error("no meter card yet");
       return c;
     });
-    expect(card.textContent).toContain(`${t("costs.incl.meterListOperator")}no list price`);
+    expect(card.textContent).toContain(`${t("costs.incl.meterListUnsplit")}$1.60 (split not known)`);
+    expect(card.textContent).not.toMatch(/List price, covey operator[≈$]/);
+    expect(card.querySelector("[data-meter-shared]")).toBeNull();
   });
 
   it("splits the part of everything on the meter between the operator and the other projects, to the cent, whatever the total", () => {
     const ext = cells().external!;
     const split = outsideSplit(ext);
     expect(split.operator!.sources).toEqual([OP]);
-    expect(split.projects!.sources).toEqual([WORK, SY]);
-    expect(split.projectList.map((p) => p.source)).toEqual([WORK, SY]);
-    // Operator $3.50, projects $3: 7/13 and 6/13 of the whole.
+    expect(split.projects!.sources).toEqual([SY]);
+    expect(split.projectList.map((p) => p.source)).toEqual([SY]);
+    // work names no meter: per use, a part of its own, not another project.
+    expect(split.perUse!.sources).toEqual([WORK]);
+    expect(split.perUseList.map((p) => p.source)).toEqual([WORK]);
+    // Operator $3.50, projects $2 (work is per use, in neither): 7/11 and 4/11 of the whole.
     for (const total of [0, 0.01, 4, 5.1, 13.37, 1234.56]) {
       const w = withinSplit(total, split);
       expect(w.operator + w.projects).toBeCloseTo(total, 9);
       expect(w.operator).toBe(Math.round(w.operator * 100) / 100);
       expect(w.shared).toBe(true);
     }
-    expect(withinSplit(13, split).operator).toBe(7);
+    expect(withinSplit(11, split).operator).toBe(7);
     // One part alone has all of it, and nothing is shared.
-    expect(withinSplit(5.1, outsideSplit(ext, new Set([OP])))).toEqual({ operator: 5.1, projects: 0, shared: false });
-    expect(withinSplit(5.1, outsideSplit(ext, new Set([SY])))).toEqual({ operator: 0, projects: 5.1, shared: false });
+    expect(withinSplit(5.1, outsideSplit(ext, new Set([OP])))).toEqual({ operator: 5.1, projects: 0, shared: false, known: true });
+    expect(withinSplit(5.1, outsideSplit(ext, new Set([SY])))).toEqual({ operator: 0, projects: 5.1, shared: false, known: true });
     // The two parts hold every source's calls: nothing is lost between them.
-    expect(split.operator!.calls + split.projects!.calls).toBe(outsideKpis(ext)!.calls);
+    expect(split.operator!.calls + split.projects!.calls + split.perUse!.calls).toBe(outsideKpis(ext)!.calls);
+  });
+});
+
+/** The outside sessions as three sources of one figure each (#166 review, F1): the operator $10 and a project $30, both on the seat's
+ *  meter, and a per-use source $20 (an API key: no meter), each one cell of one call at the list price. */
+function scenario(): CostCells {
+  const data = cells();
+  const ext = data.external!;
+  const one = (source: string, usd: number, link: boolean) => ({
+    ...ext.sources[0], source, meter_credential: link ? { secret_key: SEAT, secret_slot: 0 } : null, calls: 1, list_usd: usd, reported_usd: usd,
+    unpriced_tokens: 0, unpriced_calls: 0, unpriced_models: [], lead_usd: usd, lead_unpriced_calls: 0, lead_unpriced_tokens: 0 });
+  ext.sources = [one(OP, 10, true), one(SY, 30, true), one(WORK, 20, false)];
+  ext.cells = [cell(H18, OP, { calls: 1, list_usd: 10, measured: { output: 10 }, reported_usd: 10, reported_calls: 1, lead_usd: 10 }),
+    cell(H18, SY, { calls: 1, list_usd: 30, measured: { output: 30 }, reported_usd: 30, reported_calls: 1, lead_usd: 30 }),
+    cell(H19, WORK, { calls: 1, list_usd: 20, measured: { output: 20 }, reported_usd: 20, reported_calls: 1, lead_usd: 20 })];
+  return data;
+}
+
+const sum = (xs: number[]) => xs.reduce((a, x) => a + x, 0);
+
+describe("a source billed per use is a part of its own, everywhere the parts are named (#166 review, F1)", () => {
+  beforeEach(async () => { await i18n.changeLanguage("en"); });
+
+  it("keeps it out of the other projects: the operator $10, the projects $30, per use $20", () => {
+    const split = outsideSplit(scenario().external);
+    expect(split.operator!.sources).toEqual([OP]);
+    expect(split.projects!.sources).toEqual([SY]);
+    expect(split.perUse!.sources).toEqual([WORK]);
+    expect([split.operator, split.projects, split.perUse].map((k) => kpiLead(k!).lead)).toEqual([10, 30, 20]);
+    // The headline carves out the same source by the same rule.
+    const h = headline(scenario())!;
+    expect(h.perUse!.sources).toEqual([WORK]);
+    expect(kpiLead(h.perUse!).lead).toBe(20);
+    expect(h.sources.map((s) => s.source).sort()).toEqual([OP, SY].sort());
+  });
+
+  it("says it as its own line on the lead tile, with the figure of the headline's per-use line, and the lines add up to the tile", async () => {
+    serve(scenario());
+    await waitFor(() => expect(kpi(LEAD)?.querySelector("[data-kpi-value]")?.textContent).toBe(fmtUSD(9 + 10 + 30 + 20)));
+    const parts = lines(LEAD);
+    expect(parts).toEqual([`covey agents (internal) ${fmtUSD(9)}`, `covey operator ${fmtUSD(10)}`, `other projects ${fmtUSD(30)}`, `per use ${fmtUSD(20)}`]);
+    expect(sum(parts.map((p) => usd(p)))).toBeCloseTo(usd(kpi(LEAD).querySelector("[data-kpi-value]")!.textContent), 9);
+    // The sentence's other projects are the tile's: $30, and the per-use $20 stands below it, not inside either.
+    const row = await screen.findByRole("region", { name: t("costs.dent.title") });
+    expect(row.querySelector("[data-head-sentence]")!.textContent).toContain(`covey operator ${fmtUSD(10)} + other projects ${fmtUSD(30)}`);
+    expect(row.querySelector("[data-head-per-use]")!.textContent).toContain(fmtUSD(20));
+  });
+
+  it("splits the headline's sentence into parts that add up to its list price, a source with no calls in the range included", () => {
+    const data = scenario();
+    // A source listed for its real share only: no calls in the range, no list price.
+    data.external!.sources.push({ ...data.external!.sources[1], source: "projects-early", calls: 0, list_usd: null, reported_usd: null, lead_usd: null,
+      unpriced_tokens: 0, first_at: null, last_at: null });
+    for (const d of [data, cells()]) {
+      const h = headline(d)!;
+      expect(h.coveyList + sum(h.sources.map((s) => s.list ?? 0))).toBeCloseTo(h.list, 9);
+    }
+  });
+});
+
+describe("the operator is one source however it is written (#166 review, F3)", () => {
+  beforeEach(async () => { await i18n.changeLanguage("en"); });
+
+  it("matches without regard to case or surrounding space, and nothing else", () => {
+    for (const n of ["covey operator", "Covey Operator", " covey operator ", "COVEY OPERATOR\t"]) expect(isOperatorSource(n)).toBe(true);
+    for (const n of ["covey operators", "covey  operator", "operator", "projects-sylius", ""]) expect(isOperatorSource(n)).toBe(false);
+  });
+
+  it("is the operator on the tile and in the dent, not another project", async () => {
+    const data = cells();
+    const NAME = "Covey Operator ";
+    const ext = data.external!;
+    for (const s of ext.sources) if (s.source === OP) s.source = NAME;
+    for (const c of ext.cells) if (c.source === OP) c.source = NAME;
+    const seat = ext.meter.credentials[0];
+    seat.sources = [NAME, SY];
+    for (const list of [seat.source_parts, ext.meter.source_parts, ...ext.meter.steps.map((st) => st.source_parts)]) {
+      for (const p of list ?? []) if (p.source === OP) p.source = NAME;
+    }
+    expect(outsideSplit(ext).operator!.sources).toEqual([NAME]);
+    expect(outsideSplit(ext).projects!.sources).toEqual([SY]);
+    expect(subscriptionDent(ext)!.seats[0].outsideParts).toEqual({ operator: PP, projects: PP });
+    serve(data);
+    await waitFor(() => expect(kpi(LEAD)?.querySelector("[data-kpi-value]")?.textContent).toBe(fmtUSD(9 + 3.5 + 3)));
+    expect(lines(LEAD)[1]).toBe(`covey operator ${fmtUSD(3.5)} *`);
+    expect(lines(LEAD)[2]).toBe(`other projects ${fmtUSD(2)} + ${fmtCount(1000)} tokens with no list price *`);
+    const row = await screen.findByRole("region", { name: t("costs.dent.title") });
+    expect(row.querySelector("[data-dent='operator']")!.textContent).toContain(`≈ ${fmtUSD(PP)}`);
+    expect(row.querySelector("[data-dent='projects']")!.textContent).toContain(`≈ ${fmtUSD(PP)}`);
+    expect(row.querySelector("[data-head-sentence]")!.textContent).toContain(`covey operator ${fmtUSD(3.5)} + other projects ${fmtUSD(2)}`);
+  });
+});
+
+describe("the dent's outside cards add up to the outside part (#166 review, F2)", () => {
+  beforeEach(async () => { await i18n.changeLanguage("en"); });
+
+  /** One project's real share is on the seat and in the dent's total but in no source part of the meter. */
+  function lostShare(): CostCells {
+    const data = cells();
+    data.external!.meter.source_parts = data.external!.meter.source_parts?.filter((p) => p.source === OP);
+    return data;
+  }
+
+  it("shows what the sources' shares do not carry as a card of its own, and the cards add up to the dent's outside part", async () => {
+    serve(lostShare());
+    const row = await screen.findByRole("region", { name: t("costs.dent.title") });
+    const d = subscriptionDent(lostShare().external)!;
+    const cards = ["operator", "projects", "rest"].map((k) => row.querySelector<HTMLElement>(`[data-dent='${k}']`));
+    expect(cards[0]).toBeTruthy();
+    expect(cards[1]).toBeNull();
+    expect(cards[2]!.getAttribute("aria-label")).toBe("Outside, not split");
+    expect(row.querySelector("[data-dent='outside']")).toBeNull();
+    expect(sum(cards.map((c) => (c ? usd(c.textContent) : 0)))).toBeCloseTo(d.outside.real, 2);
+    expect(usd(cards[2]!.textContent)).toBeCloseTo(PP, 2);
+  });
+
+  it("adds up with every source's share present too, and has no rest card then", async () => {
+    serve();
+    const row = await screen.findByRole("region", { name: t("costs.dent.title") });
+    const d = subscriptionDent(cells().external)!;
+    expect(row.querySelector("[data-dent='rest']")).toBeNull();
+    expect(sum(["operator", "projects"].map((k) => usd(row.querySelector<HTMLElement>(`[data-dent='${k}']`)!.textContent)))).toBeCloseTo(d.outside.real, 2);
+  });
+
+  it("gives a seat's line the one outside figure where its parts do not add up to it", () => {
+    const ext = lostShare().external!;
+    ext.meter.credentials[0].source_parts = ext.meter.credentials[0].source_parts?.filter((p) => p.source === OP);
+    expect(subscriptionDent(ext)!.seats[0].outsideParts).toBeNull();
+    // Every part present: the split stands.
+    expect(subscriptionDent(cells().external)!.seats[0].outsideParts).toEqual({ operator: PP, projects: PP });
   });
 });

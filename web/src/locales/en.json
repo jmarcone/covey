@@ -416,7 +416,8 @@
       },
       "operator": "covey operator",
       "projects": "Other projects",
-      "partSubSource": "{{pct}} of the dent"
+      "partSubSource": "{{pct}} of the dent",
+      "outsideRest": "Outside, not split"
     },
     "split": {
       "covey": "covey agents (internal)",
@@ -685,7 +686,11 @@
       "inRange": "in the range: {{line}}",
       "everythingShared": "The outside part is shared between the covey operator and the other projects by each one's figure at token prices over the range.",
       "meterListOperator": "List price, covey operator",
-      "meterListProjects": "List price, other projects"
+      "meterListProjects": "List price, other projects",
+      "linePerUse": "per use {{usd}}",
+      "lineOutsideUnsplit": "covey operator and other projects {{usd}} (split not known)",
+      "meterListUnsplit": "List price, covey operator and other projects",
+      "splitUnknown": "{{usd}} (split not known)"
     },
     "lead": {
       "label": "At token prices (as reported by Claude Code)",

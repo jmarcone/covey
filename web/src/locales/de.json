@@ -416,7 +416,8 @@
       },
       "operator": "covey-Operator",
       "projects": "Andere Projekte",
-      "partSubSource": "{{pct}} der Delle"
+      "partSubSource": "{{pct}} der Delle",
+      "outsideRest": "Außerhalb, nicht aufgeteilt"
     },
     "split": {
       "covey": "covey-Agenten (intern)",
@@ -685,7 +686,11 @@
       "inRange": "im Zeitraum: {{line}}",
       "everythingShared": "Der Außenanteil wird nach dem Preis jeder Quelle über den Zeitraum zwischen dem covey-Operator und den anderen Projekten aufgeteilt.",
       "meterListOperator": "Listenpreis, covey-Operator",
-      "meterListProjects": "Listenpreis, andere Projekte"
+      "meterListProjects": "Listenpreis, andere Projekte",
+      "linePerUse": "nach Nutzung {{usd}}",
+      "lineOutsideUnsplit": "covey-Operator und andere Projekte {{usd}} (Aufteilung unbekannt)",
+      "meterListUnsplit": "Listenpreis, covey-Operator und andere Projekte",
+      "splitUnknown": "{{usd}} (Aufteilung unbekannt)"
     },
     "lead": {
       "label": "Zu Tokenpreisen (wie von Claude Code gemeldet)",

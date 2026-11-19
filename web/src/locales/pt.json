@@ -416,7 +416,8 @@
       },
       "operator": "operador do covey",
       "projects": "Outros projetos",
-      "partSubSource": "{{pct}} do desgaste"
+      "partSubSource": "{{pct}} do desgaste",
+      "outsideRest": "Fora, sem divisão"
     },
     "split": {
       "covey": "Agentes do covey (internos)",
@@ -685,7 +686,11 @@
       "inRange": "no período: {{line}}",
       "everythingShared": "A parte externa é dividida entre o operador do covey e os outros projetos conforme o preço de cada um no período.",
       "meterListOperator": "Preço de tabela, operador do covey",
-      "meterListProjects": "Preço de tabela, outros projetos"
+      "meterListProjects": "Preço de tabela, outros projetos",
+      "linePerUse": "por uso {{usd}}",
+      "lineOutsideUnsplit": "operador do covey e outros projetos {{usd}} (divisão desconhecida)",
+      "meterListUnsplit": "Preço de tabela, operador do covey e outros projetos",
+      "splitUnknown": "{{usd}} (divisão desconhecida)"
     },
     "lead": {
       "label": "A preço de tokens (conforme informado pelo Claude Code)",

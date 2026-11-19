@@ -416,7 +416,8 @@
       },
       "operator": "opérateur covey",
       "projects": "Autres projets",
-      "partSubSource": "{{pct}} de l'entame"
+      "partSubSource": "{{pct}} de l'entame",
+      "outsideRest": "Extérieur, non réparti"
     },
     "split": {
       "covey": "Agents de covey (internes)",
@@ -685,7 +686,11 @@
       "inRange": "sur la période : {{line}}",
       "everythingShared": "La part externe est répartie entre l'opérateur covey et les autres projets selon le prix de chacun sur la période.",
       "meterListOperator": "Prix catalogue, opérateur covey",
-      "meterListProjects": "Prix catalogue, autres projets"
+      "meterListProjects": "Prix catalogue, autres projets",
+      "linePerUse": "à l’usage {{usd}}",
+      "lineOutsideUnsplit": "opérateur covey et autres projets {{usd}} (répartition inconnue)",
+      "meterListUnsplit": "Prix catalogue, opérateur covey et autres projets",
+      "splitUnknown": "{{usd}} (répartition inconnue)"
     },
     "lead": {
       "label": "Au prix des jetons (tel que déclaré par Claude Code)",
