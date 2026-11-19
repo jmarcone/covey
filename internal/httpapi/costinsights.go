@@ -2,9 +2,14 @@ package httpapi
 
 import (
 	"errors"
+	"math"
 	"net/http"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
+
+	"github.com/google/uuid"
 
 	"covey/internal/observability"
 	"covey/internal/orchestrator"
@@ -213,4 +218,110 @@ func (s *Server) handleBillingKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"days": billingKeysDays, "keys": keys, "mappings": maps})
+}
+
+// meterWindow is a provider window name as Claude Code prints it.
+var meterWindow = regexp.MustCompile(`^[a-z][a-z0-9_]{0,39}$`)
+
+// handleAddUsageReading files a meter reading a person read off the provider
+// (source manual): {runtime_id, ord, window_kind, percent, resets_at,
+// fetched_at?}. percent is the utilisation in percent (78 for 0.78);
+// resets_at is required — without it a lower reading would read as a new
+// month (or week), and it must lie after fetched_at, by at most 8 days for
+// the seven_day* windows, 6 hours for five_hour* and 32 days for the others
+// — where the provider's own readings named a monthly window's reset in the
+// 35 days before, within an hour of it (unless that reset has passed);
+// fetched_at, when the figure was read, defaults to now and may not lie
+// ahead. A second reading of the credential and window at the same
+// fetched_at is refused (409), not silently dropped.
+func (s *Server) handleAddUsageReading(w http.ResponseWriter, r *http.Request) {
+	p := principalFrom(r)
+	var in struct {
+		RuntimeID  uuid.UUID  `json:"runtime_id"`
+		Ord        *int       `json:"ord"`
+		WindowKind string     `json:"window_kind"`
+		Percent    *float64   `json:"percent"`
+		ResetsAt   *time.Time `json:"resets_at"`
+		FetchedAt  *time.Time `json:"fetched_at"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	switch {
+	case in.RuntimeID == uuid.Nil || in.Ord == nil || *in.Ord < 0:
+		writeErr(w, http.StatusBadRequest, "runtime_id and ord name the credential")
+		return
+	case !meterWindow.MatchString(in.WindowKind):
+		writeErr(w, http.StatusBadRequest, "window_kind must be a meter window such as overage or seven_day")
+		return
+	case in.Percent == nil || math.IsNaN(*in.Percent) || *in.Percent < 0 || *in.Percent > 1000:
+		writeErr(w, http.StatusBadRequest, "percent must be the utilisation in percent, 0 to 1000")
+		return
+	case in.ResetsAt == nil || in.ResetsAt.IsZero():
+		writeErr(w, http.StatusBadRequest, "resets_at is required: the reset the provider names (resetsAt)")
+		return
+	}
+	at := time.Now()
+	if in.FetchedAt != nil {
+		if in.FetchedAt.After(at.Add(5 * time.Minute)) {
+			writeErr(w, http.StatusBadRequest, "fetched_at may not lie ahead")
+			return
+		}
+		at = *in.FetchedAt
+	}
+	// The reset lies ahead of the reading, and within the window's length:
+	// a week (with a day's slack) for the weekly windows, five hours (with
+	// an hour's) for the five-hour ones, a month for the others. A reset in
+	// the past or far ahead is a typo, and filed it would split or swallow a
+	// month.
+	weekly, fiveHour := strings.HasPrefix(in.WindowKind, "seven_day"), strings.HasPrefix(in.WindowKind, "five_hour")
+	horizon, span := 32*24*time.Hour, "32 days"
+	switch {
+	case weekly:
+		horizon, span = 8*24*time.Hour, "8 days"
+	case fiveHour:
+		horizon, span = 6*time.Hour, "6 hours"
+	}
+	if !in.ResetsAt.After(at) {
+		writeErr(w, http.StatusBadRequest, "resets_at must lie after fetched_at")
+		return
+	}
+	if in.ResetsAt.Sub(at) > horizon {
+		writeErr(w, http.StatusBadRequest, "resets_at may lie at most "+span+" after fetched_at for window "+in.WindowKind)
+		return
+	}
+	// A monthly window's reset is what the provider said: where its own
+	// readings (in band, usage_cmd) named one in the 35 days before, a typed
+	// reset more than an hour off it is a typo — filed, it would make every
+	// later true reading look like an old month's. A reading fetched after
+	// that reset may name the next one.
+	if !weekly && !fiveHour {
+		known, err := s.Obs.KnownReset(r.Context(), p.OrgID, in.RuntimeID, *in.Ord, in.WindowKind, at)
+		if err != nil {
+			mapErr(w, err)
+			return
+		}
+		if known != nil && known.After(at) {
+			if d := in.ResetsAt.Sub(*known); d > time.Hour || d < -time.Hour {
+				writeErr(w, http.StatusBadRequest, "resets_at differs from the reset the provider last reported for this window: "+
+					known.UTC().Format(time.RFC3339))
+				return
+			}
+		}
+	}
+	err := s.Obs.AddManualReading(r.Context(), p.OrgID, in.RuntimeID, *in.Ord, in.WindowKind, *in.Percent, in.ResetsAt, at.UTC())
+	if errors.Is(err, observability.ErrNoCredential) {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if errors.Is(err, observability.ErrReadingExists) {
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	if err != nil {
+		mapErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
 }

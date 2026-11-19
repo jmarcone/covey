@@ -609,6 +609,7 @@ func (s *Server) handleAddUsageCharge(w http.ResponseWriter, r *http.Request) {
 		FXToUSD  *float64   `json:"fx_to_usd"`
 		FXDate   *string    `json:"fx_date"`
 		Note     string     `json:"note"`
+		Kind     string     `json:"kind"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
@@ -624,7 +625,7 @@ func (s *Server) handleAddUsageCharge(w http.ResponseWriter, r *http.Request) {
 	}
 	saved, err := s.Runtimes.AddUsageCharge(r.Context(), p.OrgID, id, ord, runtimes.UsageCharge{
 		Amount: *in.Amount, Currency: in.Currency, From: *in.From, To: *in.To,
-		FXToUSD: in.FXToUSD, FXDate: in.FXDate, Note: in.Note,
+		FXToUSD: in.FXToUSD, FXDate: in.FXDate, Note: in.Note, Kind: in.Kind,
 	})
 	var invalid runtimes.InvalidCost
 	switch {
@@ -639,6 +640,69 @@ func (s *Server) handleAddUsageCharge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, saved)
+}
+
+// handleGetUsageLimit returns the credential's monthly usage limits (0152),
+// newest first.
+func (s *Server) handleGetUsageLimit(w http.ResponseWriter, r *http.Request) {
+	p := principalFrom(r)
+	id, ord, ok := credentialPlace(w, r)
+	if !ok {
+		return
+	}
+	limits, err := s.Runtimes.UsageLimits(r.Context(), p.OrgID, id, ord)
+	if err != nil {
+		s.costErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, limits)
+}
+
+// handlePutUsageLimit appends a monthly usage limit (0152): the amount per
+// month in its currency that the credential's monthly meter window (overage
+// unless named) counts against, a rate to USD only with its date, valid from
+// valid_from (now when absent). Never overwritten: a change is a new row.
+func (s *Server) handlePutUsageLimit(w http.ResponseWriter, r *http.Request) {
+	p := principalFrom(r)
+	id, ord, ok := credentialPlace(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		Amount     *float64   `json:"amount"`
+		Currency   string     `json:"currency"`
+		WindowKind string     `json:"window_kind"`
+		FXToUSD    *float64   `json:"fx_to_usd"`
+		FXDate     *string    `json:"fx_date"`
+		ValidFrom  *time.Time `json:"valid_from"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if in.Amount == nil {
+		writeErr(w, http.StatusBadRequest, "amount is required")
+		return
+	}
+	l := runtimes.UsageLimit{Amount: *in.Amount, Currency: in.Currency, WindowKind: in.WindowKind,
+		FXToUSD: in.FXToUSD, FXDate: in.FXDate}
+	if in.ValidFrom != nil {
+		l.ValidFrom = *in.ValidFrom
+	}
+	saved, err := s.Runtimes.SetUsageLimit(r.Context(), p.OrgID, id, ord, l)
+	var invalid runtimes.InvalidCost
+	switch {
+	case errors.As(err, &invalid):
+		writeErr(w, http.StatusBadRequest, invalid.Error())
+		return
+	case errors.Is(err, runtimes.ErrLimitExists):
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	case err != nil:
+		s.costErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, saved)
 }
 
 // handleDeleteUsageCharge removes one of the credential's usage charges.

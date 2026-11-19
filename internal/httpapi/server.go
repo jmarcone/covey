@@ -702,6 +702,10 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/runtime-instances/{id}/credentials/{ord}/usage-charges", s.rbac(securityRoles, s.handleListUsageCharges))
 	mux.Handle("POST /api/v1/runtime-instances/{id}/credentials/{ord}/usage-charges", s.rbac(securityRoles, s.handleAddUsageCharge))
 	mux.Handle("DELETE /api/v1/runtime-instances/{id}/credentials/{ord}/usage-charges/{charge}", s.rbac(securityRoles, s.handleDeleteUsageCharge))
+	// The monthly money limit a pay-per-token seat's monthly meter counts
+	// against (0152): what makes its movement real spend in its currency.
+	mux.Handle("GET /api/v1/runtime-instances/{id}/credentials/{ord}/usage-limit", s.rbac(securityRoles, s.handleGetUsageLimit))
+	mux.Handle("PUT /api/v1/runtime-instances/{id}/credentials/{ord}/usage-limit", s.rbac(securityRoles, s.handlePutUsageLimit))
 	// Which Anthropic API key the credential's value is (0146): what joins
 	// the bill to the runs.
 	mux.Handle("PATCH /api/v1/runtime-instances/{id}/credentials/{ord}/billing-key", s.rbac(securityRoles, s.handleSetBillingKey))
@@ -733,6 +737,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/cost/models", s.rbac(anyRole, s.handleModelUsage))
 	mux.Handle("GET /api/v1/cost/subscription", s.rbac(anyRole, s.handleUsageReadings))
 	mux.Handle("GET /api/v1/cost/usage-readings", s.rbac(anyRole, s.handleUsageReadings))
+	// A reading a person read off the provider (source manual): the before and
+	// after of a seat whose meter covey's runs read only while they run.
+	mux.Handle("POST /api/v1/cost/usage-readings", s.rbac(securityRoles, s.handleAddUsageReading))
 	mux.Handle("GET /api/v1/cost/cells", s.rbac(anyRole, s.handleCostCells))
 	// Billed money (0146): what Anthropic charged, read with the organisation's
 	// anthropic_admin_key by the control plane. No endpoint returns the key.

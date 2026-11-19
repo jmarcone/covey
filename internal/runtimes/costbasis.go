@@ -180,7 +180,17 @@ type UsageCharge struct {
 	FXDate    *string   `json:"fx_date"`
 	Note      string    `json:"note"`
 	CreatedAt time.Time `json:"created_at"`
+	// Kind: charge (money, counted under a usage basis) | export (0152: what
+	// the provider's own usage page or export said, to check the figures
+	// against — never counted). Empty reads as charge.
+	Kind string `json:"kind"`
 }
+
+// Usage charge kinds (0152).
+const (
+	ChargeKindCharge = "charge"
+	ChargeKindExport = "export"
+)
 
 // The bounds of what the columns of 0151 hold: amount NUMERIC(14,4),
 // fx_to_usd NUMERIC(12,6) and > 0.
@@ -192,13 +202,21 @@ const (
 
 var minFXDate = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 
-// ErrChargeOverlaps: another usage charge of the credential already covers
-// part of the span. Two charges over the same time would be the same bill
-// counted twice, whatever their currencies.
+// ErrChargeOverlaps: another usage charge of the same kind of the credential
+// already covers part of the span. Two charges over the same time would be the
+// same bill counted twice, whatever their currencies; two exports, the same
+// check entered twice. An export beside a charge is what an export is for.
 var ErrChargeOverlaps = errors.New("another usage charge of this credential already covers part of that span: delete it or enter the span next to it")
 
 // Validate normalises a charge and refuses what cannot be counted.
 func (c *UsageCharge) Validate() error {
+	c.Kind = strings.TrimSpace(c.Kind)
+	if c.Kind == "" {
+		c.Kind = ChargeKindCharge
+	}
+	if c.Kind != ChargeKindCharge && c.Kind != ChargeKindExport {
+		return InvalidCost{`kind must be "charge" or "export"`}
+	}
 	c.Currency = strings.ToUpper(strings.TrimSpace(c.Currency))
 	if len(c.Currency) != 3 || strings.Trim(c.Currency, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") != "" {
 		return InvalidCost{"currency must be a three-letter code"}
@@ -256,13 +274,13 @@ func (c *UsageCharge) Validate() error {
 }
 
 const chargeColumns = `id, runtime_id, ord, secret_key, secret_slot, amount::float8, currency, period_from, period_to,
-	fx_to_usd::float8, to_char(fx_date, 'YYYY-MM-DD'), note, created_at`
+	fx_to_usd::float8, to_char(fx_date, 'YYYY-MM-DD'), note, created_at, kind`
 
 func scanCharge(row pgx.Row) (UsageCharge, error) {
 	var c UsageCharge
 	var o *int16
 	if err := row.Scan(&c.ID, &c.RuntimeID, &o, &c.SecretKey, &c.SecretSlot, &c.Amount, &c.Currency, &c.From, &c.To,
-		&c.FXToUSD, &c.FXDate, &c.Note, &c.CreatedAt); err != nil {
+		&c.FXToUSD, &c.FXDate, &c.Note, &c.CreatedAt, &c.Kind); err != nil {
 		return UsageCharge{}, err
 	}
 	if o != nil {
@@ -311,8 +329,9 @@ func (s *Store) AddUsageCharge(ctx context.Context, orgID, runtimeID uuid.UUID, 
 	if err != nil {
 		return UsageCharge{}, err
 	}
-	// One credential's charges never overlap: two over the same time are one
-	// bill entered twice (in any currency), and both would count. The lock
+	// One credential's charges of one kind never overlap: two over the same
+	// time are one bill entered twice (in any currency), and both would
+	// count. An export may lie beside a charge (0152). The lock
 	// keeps two concurrent adds from each finding the other absent.
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('charge/' || $1::uuid::text || '/' || $2::text || '#' || $3::int::text))`,
 		orgID, key, slot); err != nil {
@@ -320,18 +339,19 @@ func (s *Store) AddUsageCharge(ctx context.Context, orgID, runtimeID uuid.UUID, 
 	}
 	var overlaps bool
 	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM credential_usage_charges
-		WHERE org_id = $1 AND secret_key = $2 AND secret_slot = $3 AND period_from < $5 AND period_to > $4)`,
-		orgID, key, slot, c.From, c.To).Scan(&overlaps); err != nil {
+		WHERE org_id = $1 AND secret_key = $2 AND secret_slot = $3 AND period_from < $5 AND period_to > $4
+		  AND kind = $6)`,
+		orgID, key, slot, c.From, c.To, c.Kind).Scan(&overlaps); err != nil {
 		return UsageCharge{}, err
 	}
 	if overlaps {
 		return UsageCharge{}, ErrChargeOverlaps
 	}
 	saved, err := scanCharge(tx.QueryRow(ctx, `INSERT INTO credential_usage_charges (id, org_id, runtime_id, ord,
-		secret_key, secret_slot, amount, currency, period_from, period_to, fx_to_usd, fx_date, note)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::date,$13)
+		secret_key, secret_slot, amount, currency, period_from, period_to, fx_to_usd, fx_date, note, kind)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::date,$13,$14)
 		RETURNING `+chargeColumns,
-		uuid.New(), orgID, runtimeID, ord, key, slot, c.Amount, c.Currency, c.From, c.To, c.FXToUSD, c.FXDate, c.Note))
+		uuid.New(), orgID, runtimeID, ord, key, slot, c.Amount, c.Currency, c.From, c.To, c.FXToUSD, c.FXDate, c.Note, c.Kind))
 	if err != nil {
 		return UsageCharge{}, err
 	}
