@@ -381,7 +381,7 @@ const sum = (s: Seg[]) => s.reduce((a, x) => a + x.value, 0);
 /** Groups of bars over the periods. Every period is focusable: focus or hover
  *  opens its details, Enter/Space (or a tap) pins them, Escape closes them.
  *  "Show as table" renders the same numbers as a table. */
-export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis, height = 280, max, notes, showX = true, asTable, wide }: {
+export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis, height = 280, max, notes, notesLabel, showX = true, asTable, wide }: {
   title: string;
   periods: string[];
   groups: Bar[][];
@@ -394,12 +394,16 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
   max?: number;
   /** A line per period, e.g. the meter's crossings. */
   notes?: Map<number, string>;
+  /** The notes' column header in the table and their label in the details;
+   *  the meter's by default. */
+  notesLabel?: string;
   showX?: boolean;
   asTable?: boolean;
   /** Wider bars, for a value printed above each: the label spills over less. */
   wide?: boolean;
 }) {
   const { t } = useTranslation();
+  const notesHead = notesLabel ?? t("costs.fig.meterCol");
   const uid = useId().replace(/[^a-zA-Z0-9_-]/g, "");
   const [hover, setHover] = useState<number | null>(null);
   const [pinned, setPinned] = useState<number | null>(null);
@@ -426,7 +430,7 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
             <tr className="muted" style={{ textAlign: "right" }}>
               <th scope="col" style={{ textAlign: "left", padding: "2px 8px 4px 0", fontWeight: 500 }}>{t("costs.fig.period")}</th>
               {series.map((s) => <th key={s.key} scope="col" style={{ padding: "2px 8px 4px 0", fontWeight: 500 }}>{s.label}</th>)}
-              {notes && <th scope="col" style={{ padding: "2px 0 4px 0", fontWeight: 500, textAlign: "left" }}>{t("costs.fig.meterCol")}</th>}
+              {notes && <th scope="col" style={{ padding: "2px 0 4px 0", fontWeight: 500, textAlign: "left" }}>{notesHead}</th>}
             </tr>
           </thead>
           <tbody>
@@ -583,7 +587,7 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
               ))}
             </div>
           ))}
-          {notes?.get(open) && <div className="muted" style={{ fontSize: 11 }}>{t("costs.fig.meterCol")}: {notes.get(open)}</div>}
+          {notes?.get(open) && <div className="muted" style={{ fontSize: 11 }}>{notesHead}: {notes.get(open)}</div>}
           {groups.at(open)!.every((b) => sum(b.segs) <= 0) && !notes?.get(open) && <div className="muted">{t("costs.fig.nothing")}</div>}
         </div>
       )}

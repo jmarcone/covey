@@ -70,6 +70,7 @@ export function outsideLines(t: T, o: OutsideTotals): string[] {
   else if (o.share != null) lines.push(t("costs.outside.realShare", { usd: fmtUSD(o.real), pct: pct(o.share) }));
   else lines.push(t("costs.outside.noShare"));
   lines.push(...unsplitLines(t, o.unsplit));
+  if (o.unpricedSteps > 0) lines.push(t("costs.outside.unpricedReadings", counted(o.unpricedSteps)));
   if (o.unmeteredList > 0) lines.push(t("costs.outside.unmetered", { usd: fmtUSD(o.unmeteredList) }));
   if (o.reported != null && o.reportedCalls > 0) lines.push(t("costs.outside.reportedLine", { ...counted(o.reportedCalls), usd: fmtUSD(o.reported) }));
   if (o.unpricedTokens > 0) lines.push(t("costs.outside.unpriced", { n: fmtCount(o.unpricedTokens) }));
@@ -108,13 +109,15 @@ export function OutsideOverview({ data, selected, days, bucket, fmtPeriod }: {
     if (e && o == null) notes.set(i, combined ? t("costs.outside.chartNoPriceCombined") : t("costs.outside.noPrice"));
     if (!combined) return o == null ? [] : [{ key: "outside", label: seriesLabel, color: OUTSIDE_COLOR, segs: [{ key: "outside", label: seriesLabel, color: OUTSIDE_COLOR, value: o }] }];
     return [{ key: "combined", label: t("costs.outside.combinedTotal"), color: OUTSIDE_COLOR, segs: [
-      { key: "agents", label: t("costs.outside.agentsPart"), color: SOURCE_COLOR.recomputed, value: agents.get(k)?.usd ?? 0 },
+      { key: "agents", label: t(filtered ? "costs.outside.agentsPartSelected" : "costs.outside.agentsPart"), color: SOURCE_COLOR.recomputed, value: agents.get(k)?.usd ?? 0 },
       ...(o == null ? [] : [{ key: "outside", label: seriesLabel, color: OUTSIDE_COLOR, value: o }]),
     ] }];
   });
+  // Narrowed to agents, the agents' part is the selected agents', and says so.
+  const sel = filtered ? "Selected" : "";
   const combinedSub = totals.list != null
-    ? t("costs.outside.combinedSub", { outside: fmtUSD(totals.list), agents: fmtUSD(agentsList) })
-    : t(totals.calls === 0 ? "costs.outside.combinedSubNoCalls" : "costs.outside.combinedSubNoPrice", { agents: fmtUSD(agentsList) });
+    ? t(`costs.outside.combinedSub${sel}`, { outside: fmtUSD(totals.list), agents: fmtUSD(agentsList) })
+    : t(`costs.outside.${totals.calls === 0 ? "combinedSubNoCalls" : "combinedSubNoPrice"}${sel}`, { agents: fmtUSD(agentsList) });
   const detail = `/costs/outside?days=${days}&bucket=${bucket}`;
 
   return (
@@ -152,7 +155,8 @@ export function OutsideOverview({ data, selected, days, bucket, fmtPeriod }: {
           <div className="muted text-sm">{t("costs.empty")}</div>
         ) : (
           <BarChart title={combined ? t("costs.outside.chartCombined") : t("costs.outside.chartApart")} periods={periods} groups={groups}
-            fmtPeriod={fmtPeriod} fmtValue={fmtUSD} fmtAxis={fmtUSDAxis} asTable={asTable} height={200} notes={notes} />
+            fmtPeriod={fmtPeriod} fmtValue={fmtUSD} fmtAxis={fmtUSDAxis} asTable={asTable} height={200} notes={notes}
+            notesLabel={t("costs.outside.colNote")} />
         )}
         {totals.unpricedTokens > 0 && <p className="muted text-xs mt-1 mb-0" data-outside-unpriced-note>{t("costs.outside.chartUnpriced")}</p>}
         {combined && <p className="muted text-xs mt-1 mb-0" data-combined-note>{t("costs.outside.combinedNote")}</p>}
