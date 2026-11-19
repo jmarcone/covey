@@ -468,7 +468,7 @@ describe("Costs — the headline", () => {
       `≈ ${fmtUSD(21 * PP)} of the meter's movement is not explained by covey's agents or the reported sessions — ` +
       "another machine on the same account, for example; it is booked to nobody.");
     expect(row.querySelector("[data-dent-rate]")!.textContent).toBe(
-      `1 point ≈ ${fmtUSD(10)} of list price, the most list price per point seen in the range; assumes the meter charges in proportion to list price. ` +
+      `1 point ≈ ${fmtUSD(10)} of list price, the most list price per point seen since the start of the meter week the range begins in; assumes the meter charges in proportion to list price. ` +
       "Movement beyond that rate counts as unattributed, and that part is a lower bound. The parts of covey's agents " +
       "and the outside sessions are estimates and may still hold another machine's use.");
     expect(row.querySelector("[data-dent-incomplete]")).toBeNull();
@@ -503,7 +503,7 @@ describe("Costs — the headline", () => {
     const row = await screen.findByRole("region", { name: "The whole dent in the subscription" });
     expect(row.querySelector("[data-dent-rate]")!.textContent).toMatch(new RegExp("^" + escapeRe(
       `1 point ≈ ${fmtUSD(10)} of list price at the earlier plan price of ${fmtUSD(0.23)} a point, ` +
-      "the most list price per point seen in the range; the current plan price has no rate yet.")));
+      "the most list price per point seen since the start of the meter week the range begins in; the current plan price has no rate yet.")));
     expect(within(row).getByRole("group", { name: "Unattributed" }).textContent).toContain("beyond the rate: at least");
   });
 

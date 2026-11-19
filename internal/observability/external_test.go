@@ -1513,3 +1513,192 @@ func TestSplitSeatPerSource(t *testing.T) {
 		t.Error("the empty meter has no source_parts list")
 	}
 }
+
+// Review of d3498bee, F1: a chunk with covey bookings without a line is
+// covey's whole (share 0) and has no unattributed part, so movement with no
+// call never joins it — not by the lag fold, not in seatChunks while it has
+// no list. The reviewer's three orders, each with another machine's 20
+// points that must stay unattributed (d3498bee: covey 25 in all three).
+func TestSplitSeatUnlinedChunkTakesNoOtherMovement(t *testing.T) {
+	x := uuid.MustParse("00000000-0000-0000-0000-0000000000a1")
+	unl := func(p float64) shareStep {
+		return shareStep{Points: p, UnlinedBookings: 1, UnlinedAgents: map[uuid.UUID]float64{x: 1}, Reported: true}
+	}
+	noCall := func(p float64) shareStep { return shareStep{Points: p, Reported: true} }
+	var d []shareStep
+	d = append(d, shareStep{Points: 5, LOut: 50, Reported: true})
+	for i := 0; i < 6; i++ {
+		d = append(d, unl(1))
+	}
+	d = append(d, noCall(5), noCall(5), noCall(5), noCall(5))
+	for _, c := range []struct {
+		name                         string
+		in                           []shareStep
+		covey, outside, unattributed float64
+	}{
+		{"lineless 5, then 20 with no call", []shareStep{unl(5), noCall(5), noCall(5), noCall(5), noCall(5)}, 5, 0, 20},
+		{"20 with no call, then lineless 5", []shareStep{noCall(20), unl(5)}, 5, 0, 20},
+		{"outside 5, lineless 6 × +1, then 20 with no call", d, 6, 5, 20},
+	} {
+		tot, _ := splitSeat(meterSeat{"seat", 0}, []string{"src"}, steps10(append([]shareStep{}, c.in...)...))
+		if !near(tot.CoveyRealUSD, c.covey) || !near(tot.ExternalRealUSD, c.outside) || !near(tot.UnattributedRealUSD, c.unattributed) ||
+			!near(tot.UnattributedNoCallRealUSD, c.unattributed) || len(tot.Agents) != 1 || !near(tot.Agents[0].RealUSD, c.covey) {
+			t.Errorf("%s: covey %v outside %v unattributed %v (no call %v), agents %+v; want %v, %v, %v", c.name, tot.CoveyRealUSD,
+				tot.ExternalRealUSD, tot.UnattributedRealUSD, tot.UnattributedNoCallRealUSD, tot.Agents, c.covey, c.outside, c.unattributed)
+		}
+	}
+	// Covey's +1 without a line right after a chunk with list is no lag of
+	// it: a chunk of its own, covey's (d3498bee folded it, split ½ / ½).
+	tot, _ := splitSeat(meterSeat{"seat", 0}, []string{"src"}, steps10(shareStep{Points: 5, LOut: 2, LCov: 2, Reported: true}, unl(1)))
+	if !near(tot.CoveyRealUSD, 3.5) || !near(tot.ExternalRealUSD, 2.5) || tot.IncompleteChunks != 1 || tot.SplitRuns != 2 {
+		t.Errorf("covey %v outside %v, incomplete %d, chunks %d; want 3.5, 2.5, 1, 2", tot.CoveyRealUSD, tot.ExternalRealUSD,
+			tot.IncompleteChunks, tot.SplitRuns)
+	}
+}
+
+// Review of d3498bee, F2: a run whose use is back-loaded (a growing context:
+// cost ∝ t, so cumulative points total·(t/T)², read in whole percents) with
+// one $10-a-point line over the whole run (k* = 0.1). Spread evenly over
+// its spans the line put too much list early: 24 readings gave k 0.060 and
+// 6 of covey's own 40 points unattributed. Counted whole only in a stretch
+// that holds it (k) and whole in every chunk it ran in (U_c), k stays ≥ k*
+// and nothing is unattributed; the shares keep the proportional parts.
+func TestSpreadLineBoundsRateAndUnattributed(t *testing.T) {
+	a := uuid.MustParse("00000000-0000-0000-0000-0000000000a1")
+	for _, c := range []struct {
+		n     int
+		total float64
+		k     float64
+	}{{6, 20, 22.0 / 200}, {12, 30, 32.0 / 300}, {24, 40, 42.0 / 400}} {
+		ss := steps10(make([]shareStep, c.n)...)
+		for i := range ss {
+			ss[i].Reported = true
+		}
+		spreadLine(ss, c.n-1, ss[0].From, ss[c.n-1].At, a, c.total/0.1)
+		prev := 0.0
+		for i := range ss {
+			f := float64(i+1) / float64(c.n)
+			read := math.Floor(c.total*f*f + 1e-9)
+			ss[i].Points, prev = read-prev, read
+		}
+		if !near(ss[0].LCov, c.total/0.1/float64(c.n)) || len(ss[c.n-1].Spread) != 1 || ss[c.n-1].Spread[0].First != 0 {
+			t.Fatalf("%d readings: first step's list %v, spread %+v", c.n, ss[0].LCov, ss[c.n-1].Spread)
+		}
+		tot, _ := splitSeat(meterSeat{"seat", 0}, nil, ss)
+		if !nearP(tot.PointsPerListUSD, c.k) || tot.UnattributedRealUSD != 0 || !near(tot.CoveyRealUSD, c.total) {
+			t.Errorf("%d readings: k %v, unattributed %v, covey %v; want %v ≥ 0.1, 0, %v", c.n, tot.PointsPerListUSD,
+				tot.UnattributedRealUSD, tot.CoveyRealUSD, c.k, c.total)
+		}
+	}
+	// A line that began before the first span is in no stretch whole: no k
+	// from it, and U_c counts it whole.
+	ss := steps10(shareStep{Points: 10, Reported: true}, shareStep{Points: 10, Reported: true})
+	spreadLine(ss, 1, ss[0].From.Add(-10*time.Minute), ss[1].At, a, 300)
+	if tot, _ := splitSeat(meterSeat{"seat", 0}, nil, ss); tot.PointsPerListUSD != nil || ss[1].Spread[0].First != -1 {
+		t.Errorf("k %v, first %d; want none, −1", tot.PointsPerListUSD, ss[1].Spread[0].First)
+	}
+}
+
+// Review of d3498bee, F3: a chunk that begins before since. Covey's 4 points
+// ($40 at k* 0.1) then the outside sessions' 3 ($30) make one chunk; cut
+// between them the range holds the outside step only, at the chunk's share
+// 3/7: real 9/7. Its slack is 2 · 3/7 plus 3/7 of the 4 attributed points
+// before since: 18/7, so its multiple reads ≥ 30 / (27/7) = 7.78×, under
+// the true 10× (d3498bee: slack 6/7, "≥ 14×"). And the part beyond the rate
+// in the range: a chunk of 1 + 9 points over $2 + $8 at k 0.12 has U_c =
+// 6.8; cut after its first step, the range's part is 6.8 − 1 − 2 = 3.8 (all
+// 6.8 could lie before since but for that), not 9/10 of 6.8.
+func TestSplitSeatSinceCutSlack(t *testing.T) {
+	ss := steps10(shareStep{Points: 4, LCov: 40, Reported: true}, shareStep{Points: 3, LOut: 30, Reported: true})
+	tot, _ := splitSeatSince(meterSeat{"seat", 0}, []string{"src"}, ss, ss[1].At)
+	if !near(tot.ExternalRealUSD, 9.0/7) || !near(tot.SplitExternalSlackUSD, 18.0/7) || !near(tot.SplitExternalSlackPoints, 18.0/7) ||
+		!near(tot.SplitCoveySlackUSD, 24.0/7) || !near(tot.SplitSlackUSD, 6) || 30/(tot.ExternalRealUSD+tot.SplitExternalSlackUSD) > 10 {
+		t.Errorf("outside real %v slack $%v (%v points), covey slack %v, whole %v; want 9/7, 18/7, 18/7, 24/7, 6", tot.ExternalRealUSD,
+			tot.SplitExternalSlackUSD, tot.SplitExternalSlackPoints, tot.SplitCoveySlackUSD, tot.SplitSlackUSD)
+	}
+	if tot, _ := splitSeat(meterSeat{"seat", 0}, []string{"src"}, ss); !near(tot.SplitExternalSlackUSD, 6.0/7) {
+		t.Errorf("uncut: outside slack %v, want 6/7", tot.SplitExternalSlackUSD)
+	}
+
+	ss = steps10(shareStep{Points: 10, LCov: 100, Reported: true},
+		shareStep{Points: 1, LOut: 2, SrcOut: map[string]float64{"a": 2}, Reported: true},
+		shareStep{Points: 9, LOut: 8, SrcOut: map[string]float64{"a": 3, "b": 5}, Reported: true})
+	full, _ := splitSeat(meterSeat{"seat", 0}, []string{"a", "b"}, ss)
+	cut, steps := splitSeatSince(meterSeat{"seat", 0}, []string{"a", "b"}, ss, ss[2].At)
+	if !nearP(full.PointsPerListUSD, 0.12) || !near(full.UnattributedPoints, 6.8) || len(steps) != 1 ||
+		!near(cut.UnattributedPoints, 3.8) || !nearP(steps[0].ExternalRealUSD, 5.2) || !near(cut.SplitExternalSlackPoints, 2) {
+		t.Errorf("k %v, U %v over the whole; cut: %d steps, unattributed %v, outside %v, slack %v; want 0.12, 6.8, 1, 3.8, 5.2, 2",
+			full.PointsPerListUSD, full.UnattributedPoints, len(steps), cut.UnattributedPoints, steps[0].ExternalRealUSD,
+			cut.SplitExternalSlackPoints)
+	}
+	// The sources' parts (the chunk's Lo_s,c / Lo_c: a 5/10, b 5/10) add up
+	// to the range's outside part, on the step and the seat.
+	var onStep, onSeat float64
+	for _, p := range steps[0].SourceParts {
+		onStep += p.RealUSD
+	}
+	for _, p := range cut.SourceParts {
+		onSeat += p.RealUSD
+	}
+	if !near(onStep, 5.2) || !near(onSeat, cut.ExternalRealUSD) || len(cut.SourceParts) != 2 || !near(cut.SourceParts[0].RealUSD, 2.6) {
+		t.Errorf("source parts %+v on the step, %+v on the seat; want 2.6 / 2.6, adding up to 5.2", steps[0].SourceParts, cut.SourceParts)
+	}
+}
+
+// Review of d3498bee, F4: k is the min over the stretches of the steps from
+// the anchor on — the last reset before since — so it is the most list price
+// per point seen since the start of the meter week the range begins in, the
+// same for any since in that week; anchored a week earlier it would take that
+// week's stretches too (the page names the horizon so).
+func TestSplitSeatRateFromTheMetersWeek(t *testing.T) {
+	at := func(h int) time.Time { return tm("00:00").Add(time.Duration(h) * time.Hour) }
+	rs := []meterRow{{at: at(0)}, {at: at(1), points: 10}, {at: at(2), points: 5}, {at: at(3), points: 2, reset: true},
+		{at: at(4), points: 10}, {at: at(5), points: 20}}
+	lists := map[int]shareStep{1: {LCov: 125}, 2: {LCov: 10}, 3: {LCov: 20}, 4: {LCov: 100}, 5: {LCov: 50, LOut: 25}}
+	stepsFrom := func(anchor int) []shareStep {
+		var out []shareStep
+		for k := anchor + 1; k < len(rs); k++ {
+			st := lists[k]
+			st.From, st.At, st.Points, st.Reset, st.Rate, st.Reported = rs[k-1].at, rs[k].at, rs[k].points, rs[k].reset, rate(1), true
+			out = append(out, st)
+		}
+		return out
+	}
+	for _, since := range []time.Time{at(4), at(5)} {
+		anchor := stepAnchor(rs, since)
+		tot, steps := splitSeatSince(meterSeat{"seat", 0}, []string{"src"}, stepsFrom(anchor), since)
+		last := steps[len(steps)-1]
+		if anchor != 3 || !nearP(tot.PointsPerListUSD, 0.12) || !near(last.UnattributedPoints, 9) {
+			t.Errorf("since %s: anchor %d, k %v, last step's unattributed %v; want 3, 0.12, 9", since.Format("15:04"), anchor,
+				tot.PointsPerListUSD, last.UnattributedPoints)
+		}
+	}
+	tot, steps := splitSeatSince(meterSeat{"seat", 0}, []string{"src"}, stepsFrom(0), at(4))
+	if !nearP(tot.PointsPerListUSD, 0.096) || !near(steps[len(steps)-1].UnattributedPoints, 10.8) {
+		t.Errorf("anchored a week earlier: k %v, unattributed %v; want 0.096, 10.8", tot.PointsPerListUSD, steps[len(steps)-1].UnattributedPoints)
+	}
+}
+
+// Review of d3498bee, F5: a machine without a watermark is left out only
+// when neither its latest push nor its latest call is later than its
+// source's earliest watermark.
+func TestUnmarkedBefore(t *testing.T) {
+	e := tm("12:00")
+	call := func(s string) *time.Time { v := tm(s); return &v }
+	for _, c := range []struct {
+		pushed string
+		call   *time.Time
+		want   bool
+	}{
+		{"11:00", call("10:00"), true}, {"12:00", nil, true}, {"12:01", call("10:00"), false},
+		{"11:00", call("12:30"), false}, {"", call("11:59"), true}, {"", call("12:01"), false},
+	} {
+		var pushed time.Time
+		if c.pushed != "" {
+			pushed = tm(c.pushed)
+		}
+		if got := unmarkedBefore(pushed, c.call, e); got != c.want {
+			t.Errorf("pushed %q, call %v: %v, want %v", c.pushed, c.call, got, c.want)
+		}
+	}
+}

@@ -349,15 +349,17 @@ export default function OutsideCosts() {
                     // figure for either part, never $0. Each reason says so.
                     // F3c: outside and covey ≈ (at their chunks' shares); the
                     // unattributed part in its two halves, booked to nobody —
-                    // beyond the rate "≥" where a step was split, moved with
+                    // beyond the rate "≥" where a step was split on a seat
+                    // with a rate (without one there is no bound), moved with
                     // no call "≈" where the server booked a reading to nobody
                     // whole; not split ≈ where a reading was not split. They
                     // add up to the real cost.
                     const unsplitN = unsplitSteps(r.unsplit);
                     const noCallN = r.unattributed.noCall.steps;
                     const cell = (v: number) => (r.splitSteps > 0 ? `≈ ${fmtUSD(v)}` : "–");
-                    const unattributedCell = r.splitSteps + noCallN === 0 ? "–" : <>
-                      {r.splitSteps > 0 && (
+                    const beyond = r.splitSteps > 0 && r.rated;
+                    const unattributedCell = !beyond && noCallN === 0 ? "–" : <>
+                      {beyond && (
                         <div data-beyond title={t("costs.dent.unattributedBeyond", { usd: fmtUSD(r.unattributed.beyond) })}>
                           ≥ {fmtUSD(r.unattributed.beyond)}
                         </div>

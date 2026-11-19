@@ -1315,9 +1315,15 @@ func TestExternalUsageLineSpreadOverItsTurn(t *testing.T) {
 }
 
 // A host that never sent a watermark is not waited for once another machine
-// of its source sends them: the push names a desktop in a row and a
-// watermark for the laptop only. The reading at h1:40 is reported and split
-// (on 59512856 the desktop, active for a week by its push, held it unsplit).
+// of its source sends them, as long as it has neither pushed nor had a call
+// since: a push names a desktop and a laptop in rows, a later one gives the
+// laptop a watermark. The reading at h1:40 is reported and split (on
+// 59512856 the desktop, active for a week by its push, held it unsplit).
+// When the desktop pushes again without a watermark (an older uploader
+// still running beside the newer one), it is a machine that may not have
+// sent its calls: the reading is not reported (review of d3498bee, F5; on
+// d3498bee it stayed split). A source has at most 100 hosts active at once
+// (pushed in the last 7 days): a push past that is refused (F6).
 func TestExternalUsageHostWithoutAWatermark(t *testing.T) {
 	h1 := time.Now().UTC().Truncate(time.Hour).Add(-4 * time.Hour)
 	_, admin, f, cred, pp := meterSeatFixture(t, "ohne-stand", h1, []struct {
@@ -1332,7 +1338,11 @@ func TestExternalUsageHostWithoutAWatermark(t *testing.T) {
 	}
 	up := extUpload("operator: home", out("a", "laptop", h1.Add(5*time.Minute)), out("b", "desktop", h1.Add(6*time.Minute)))
 	up["meter_credential"] = map[string]any{"secret_key": "claude_code_oauth_token", "secret_slot": 0}
-	up["reported_through"] = map[string]any{"laptop": h1.Add(2 * time.Hour)}
+	admin.expect(http.MethodPost, externalPath, up, http.StatusOK)
+	// The laptop's watermark comes later (clamped to the push's arrival):
+	// the desktop's push and its calls are older than it.
+	up = extUpload("operator: home", out("a", "laptop", h1.Add(5*time.Minute)))
+	up["reported_through"] = map[string]any{"laptop": time.Now().UTC().Add(time.Hour)}
 	admin.expect(http.MethodPost, externalPath, up, http.StatusOK)
 
 	m := cellsExternal(t, admin, "days=2&bucket=hour").Meter
@@ -1341,12 +1351,40 @@ func TestExternalUsageHostWithoutAWatermark(t *testing.T) {
 		t.Errorf("steps %+v, unsplit %v, covey %v; want the reading reported and split 1 : 2", m.Steps, m.UnsplitRealUSD, m.CoveyRealUSD)
 	}
 
+	// The desktop pushes again, still without a watermark: counted.
+	admin.expect(http.MethodPost, externalPath, extUpload("operator: home", out("b", "desktop", h1.Add(6*time.Minute))), http.StatusOK)
+	m = cellsExternal(t, admin, "days=2&bucket=hour").Meter
+	if len(m.Steps) != 1 || m.Steps[0].Reported || m.Steps[0].Split || math.Abs(m.UnsplitRealUSD-2*pp) > 1e-6 {
+		t.Errorf("after the desktop's push: steps %+v, unsplit %v; want the reading not reported, %v unsplit", m.Steps,
+			m.UnsplitRealUSD, 2*pp)
+	}
+
 	// More than 100 hosts in one push are refused.
 	var rows []map[string]any
 	for i := 0; i <= 100; i++ {
 		rows = append(rows, out(fmt.Sprintf("x%d", i), fmt.Sprintf("host-%d", i), h1.Add(5*time.Minute)))
 	}
 	admin.expect(http.MethodPost, externalPath, extUpload("operator: home", rows...), http.StatusBadRequest)
+
+	// At most 100 hosts of a source active at once: laptop and desktop, 60
+	// more, then 39 more is 101 — refused, nothing stored; 38 is 100.
+	hosts := func(prefix string, n int) []map[string]any {
+		var rows []map[string]any
+		for i := 0; i < n; i++ {
+			rows = append(rows, out(fmt.Sprintf("%s%d", prefix, i), fmt.Sprintf("%s-%d", prefix, i), h1.Add(5*time.Minute)))
+		}
+		return rows
+	}
+	admin.expect(http.MethodPost, externalPath, extUpload("operator: home", hosts("p", 60)...), http.StatusOK)
+	body, _ := json.Marshal(extUpload("operator: home", hosts("q", 39)...))
+	if code, msg := postRaw(t, admin, body); code != http.StatusBadRequest || !strings.Contains(msg, "101 hosts") ||
+		!strings.Contains(msg, "at most 100") {
+		t.Errorf("39 more hosts: HTTP %d %s; want 400 naming 101 hosts, at most 100", code, msg)
+	}
+	res := admin.expect(http.MethodPost, externalPath, extUpload("operator: home", hosts("r", 38)...), http.StatusOK)
+	if hs, _ := res["hosts"].([]any); len(hs) != 100 {
+		t.Errorf("%d hosts stored, want 100 (none of the refused push)", len(hs))
+	}
 }
 
 // Two outside sources on one seat, one per project folder (#120, the

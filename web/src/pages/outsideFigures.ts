@@ -493,7 +493,9 @@ export function perPeriodBy(cells: readonly ExternalModelCell[], keyOf: (c: Exte
  *  parts of its split steps (estimates, at their chunk's share), a figure
  *  only while splitSteps > 0. unattributed: the split steps' part beyond the
  *  rate (a lower bound) and the steps the server books to nobody whole (an
- *  estimate), each a figure only while such a step is there. Then the steps not split, per reason, with their
+ *  estimate), each a figure only while such a step is there; rated: a split
+ *  step of it is on a seat with a rate (k), where the part beyond the rate
+ *  is measured (without one it is $0 and no bound). Then the steps not split, per reason, with their
  *  real cost; the steps at no plan price; the idle ones. noReading: the
  *  outside sessions worked in it on a seat that has no reading placed there
  *  (another seat's may be). outside + covey + unattributed + Σ unsplit =
@@ -502,6 +504,7 @@ export type MeterPeriod = {
   period: number;
   real: number | null;
   splitSteps: number;
+  rated: boolean;
   outside: number;
   covey: number;
   unattributed: Unattributed;
@@ -521,7 +524,7 @@ export function meterPerPeriod(ext: { meter: ExternalUsage["meter"]; sources: Ex
   const at = (p: number) => {
     let e = by.get(p);
     if (!e) {
-      e = { period: p, real: null, splitSteps: 0, outside: 0, covey: 0, unattributed: emptyUnattributed(), unsplit: emptyUnsplit(),
+      e = { period: p, real: null, splitSteps: 0, rated: false, outside: 0, covey: 0, unattributed: emptyUnattributed(), unsplit: emptyUnsplit(),
         unpricedSteps: 0, idleSteps: 0, noReading: false };
       by.set(p, e);
     }
@@ -531,6 +534,7 @@ export function meterPerPeriod(ext: { meter: ExternalUsage["meter"]; sources: Ex
   // its own seat's readings, so another seat's reading in the same period
   // does not stand in for it.
   const read = new Set<string>();
+  const rated = new Set(ext.meter.credentials.filter((c) => c.points_per_list_usd != null).map(seatOf));
   for (const s of ext.meter.steps) {
     if (!seats.has(seatOf(s))) continue;
     const p = bucketStart(Date.parse(s.at), bucket);
@@ -541,6 +545,7 @@ export function meterPerPeriod(ext: { meter: ExternalUsage["meter"]; sources: Ex
     addUnattributed(e.unattributed, s, k);
     if (k === "split") {
       e.splitSteps += 1;
+      e.rated ||= rated.has(seatOf(s));
       e.outside += s.external_real_usd ?? 0;
       e.covey += s.covey_real_usd ?? 0;
     } else if (k === "unpriced") {

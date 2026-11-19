@@ -517,10 +517,10 @@ describe("the detailed view of the operator sessions", () => {
     const kind = (h: number) => row(h).getAttribute("data-meter-row");
 
     // The columns: real, outside (≈), covey (≈), unattributed (beyond the
-    // rate ≥ where a reading was split, moved with no call ≈), not split (≈),
-    // note.
+    // rate ≥ where a reading was split on a seat with a rate — this one has
+    // none, so – —, moved with no call ≈), not split (≈), note.
     expect(kind(17)).toBe("split");
-    expect(cellsOf(17).slice(0, 5)).toEqual([fmtUSD(2), `≈ ${fmtUSD(1.4)}`, `≈ ${fmtUSD(0.6)}`, `≥ ${fmtUSD(0)}`, "–"]);
+    expect(cellsOf(17).slice(0, 5)).toEqual([fmtUSD(2), `≈ ${fmtUSD(1.4)}`, `≈ ${fmtUSD(0.6)}`, "–", "–"]);
 
     // Not reported, twice in one hour: their real cost not split, no part, the plural.
     expect(kind(18)).toBe("unsplit");
@@ -543,7 +543,7 @@ describe("the detailed view of the operator sessions", () => {
     expect(cellsOf(22).slice(1)).toEqual(["–", "–", "–", "–", t("costs.outside.idleHere")]);
     // Split and not split in one hour: the split part, and the rest named.
     expect(kind(23)).toBe("partial");
-    expect(cellsOf(23)).toEqual([fmtUSD(1.3), `≈ ${fmtUSD(0.25)}`, `≈ ${fmtUSD(0.75)}`, `≥ ${fmtUSD(0)}`, `≈ ${fmtUSD(0.3)}`,
+    expect(cellsOf(23)).toEqual([fmtUSD(1.3), `≈ ${fmtUSD(0.25)}`, `≈ ${fmtUSD(0.75)}`, "–", `≈ ${fmtUSD(0.3)}`,
       t("costs.outside.unsplit_outside_unpriced", { ...counted(1), usd: fmtUSD(0.3) })]);
     for (const h of [18, 19, 20, 21]) expect(cellsOf(h).slice(1, 3).join()).not.toContain(fmtUSD(0));
     for (const h of [18, 20, 21, 22]) expect(cellsOf(h)[3]).toBe("–");
@@ -586,6 +586,7 @@ describe("the detailed view of the operator sessions", () => {
     expect(rows[0].unattributed.noCall).toEqual({ steps: 1, usd: 0.8 });
     expect(rows[0].unattributed.beyond).toBeCloseTo(1.5, 12);
     expect(rows[1].unattributed.usd).toBe(0);
+    expect(rows.map((r) => r.rated)).toEqual([true, true]);
     for (const r of rows) {
       expect(r.outside + r.covey + r.unattributed.usd + unsplitUSD(r.unsplit)).toBeCloseTo(r.real!, 12);
     }
@@ -648,10 +649,13 @@ describe("the detailed view of the operator sessions", () => {
     await screen.findByRole("table", { name: t("costs.outside.byModel") });
     const rows = meterPerPeriod(v, v.cells, "hour", null);
     expect(rows[0].unattributed).toEqual({ usd: 0, beyond: 0, noCall: { steps: 0, usd: 0 } });
+    // The seat has no rate (k): the period's part beyond the rate is no
+    // bound, so "–", never "≥ $0.00" (the per-period column, as the seat line).
+    expect(rows[0].rated).toBe(false);
     const row = container.querySelector<HTMLTableRowElement>(`[data-meter-period='${Date.parse(H18)}']`)!;
     expect(row.getAttribute("data-meter-row")).toBe("split");
     expect([...row.querySelectorAll("td")].map((c) => c.textContent)).toEqual([fmtUSD(7), `≈ ${fmtUSD(4.9)}`, `≈ ${fmtUSD(2.1)}`,
-      `≥ ${fmtUSD(0)}`, "–", ""]);
+      "–", "–", ""]);
     const seatLine = container.querySelector(`[data-seat='${SEAT}#0']`)!.textContent!;
     expect(seatLine).not.toContain(t("costs.outside.noCall", { ...counted(1), usd: fmtUSD(1) }));
     // The seat has no rate (k): never "beyond the rate: at least $0.00",
