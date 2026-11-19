@@ -774,13 +774,13 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
     const by = splitPerPeriod(data.external, f.secretKey, f.slot!, bucket);
     return periods.map((p) => by.get(Date.parse(p)) ?? { covey: 0, outside: 0, unsplit: 0, unsplitSteps: 0, unpricedSteps: 0 });
   }, [f.split, f.secretKey, f.slot, data.external, bucket, periods]);
-  // The unsplit part's label, by why its readings were not split: count
-  // picks the plural, n and m are the numbers as shown.
+  // The unsplit part's label, by why its readings were not split: n and m
+  // are the numbers as shown.
   const unsplitLabel = (sp: SplitPeriod) => {
     const unpriced = sp.unpricedSteps, notReported = sp.unsplitSteps - sp.unpricedSteps;
-    if (unpriced === 0) return t("costs.split.unsplitReadings", { count: notReported, n: fmtNumber(notReported, 0) });
-    if (notReported === 0) return t("costs.split.unsplitUnpricedReadings", { count: unpriced, n: fmtNumber(unpriced, 0) });
-    return t("costs.split.unsplitBoth", { count: sp.unsplitSteps, n: fmtNumber(notReported, 0), m: fmtNumber(unpriced, 0) });
+    if (unpriced === 0) return t("costs.split.unsplitReadings", { n: fmtNumber(notReported, 0) });
+    if (notReported === 0) return t("costs.split.unsplitUnpricedReadings", { n: fmtNumber(unpriced, 0) });
+    return t("costs.split.unsplitBoth", { n: fmtNumber(notReported, 0), m: fmtNumber(unpriced, 0) });
   };
   const realSegs = (i: number): Seg[] => {
     const sp = splitPer?.[i];
@@ -936,9 +936,9 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
       )}
       {showReal && f.split && <p className="muted text-xs mt-1 mb-0" data-split-note>
         {t("costs.split.chartNote")}
-        {splitNotReported > 0 && <> {t("costs.split.unsplitNote", { count: splitNotReported, n: fmtNumber(splitNotReported, 0),
+        {splitNotReported > 0 && <> {t("costs.split.unsplitNote", { n: fmtNumber(splitNotReported, 0),
           usd: fmtUSD(f.split.unsplit_real_usd - f.split.outside_unpriced_real_usd) })}</>}
-        {f.split.outside_unpriced_steps > 0 && <> {t("costs.split.unsplitUnpricedNote", { count: f.split.outside_unpriced_steps,
+        {f.split.outside_unpriced_steps > 0 && <> {t("costs.split.unsplitUnpricedNote", {
           n: fmtNumber(f.split.outside_unpriced_steps, 0), usd: fmtUSD(f.split.outside_unpriced_real_usd) })}</>}
       </p>}
       {subscription && f.outsideUnreported && <p className="muted text-xs mt-1 mb-0" data-outside-unreported>

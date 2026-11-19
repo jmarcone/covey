@@ -448,8 +448,8 @@ export type CredentialFigures = {
    *  (#120), per reading by list-price share; null until a source names a
    *  meter, and for a seat with no split step. */
   split: ExternalMeterTotal | null;
-  /** Sources name a meter, but this seat has no split step (no source names
-   *  it, or its machines have not reported): its meter may carry use
+  /** Sources name a meter, but no source names this seat, or its machines
+   *  have not reported through any of its readings: its meter may carry use
    *  outside covey, so covey's figures on it are bounds. */
   outsideUnreported: boolean;
   billed: BilledFigure | null;
@@ -523,7 +523,10 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
     const kind = a.kind || (plan ? "subscription" : "");
 
     const seatSplit = a.key == null ? null : meterSplit(data.external, a.key, a.slot!);
-    const split = seatSplit && seatSplit.split_steps > 0 ? seatSplit : null;
+    // A seat no source names has nobody to share it with: the server books
+    // its movement to covey (L_out = 0), but the meter is account-wide and
+    // may still carry use outside covey, so covey's figures stay bounds.
+    const split = seatSplit && seatSplit.sources.length > 0 && seatSplit.split_steps > 0 ? seatSplit : null;
     const outsideUnreported = seatSplit != null && split == null;
     let cov: MeterCoverage | null = null, real: RealFigure | null = null, aligned: number | null = null;
     let mult: Multiple | null = null;

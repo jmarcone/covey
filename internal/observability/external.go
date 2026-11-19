@@ -704,7 +704,7 @@ type ExternalMeterTotal struct {
 	// without readings in the window.
 	MeterSource string `json:"meter_source"`
 	// Sources: the outside sources linked to this meter; none for a seat
-	// no source names, whose steps are all unsplit.
+	// no source names, whose steps are reported with L_out = 0.
 	Sources []string `json:"sources"`
 	// HoursWithReading: the UTC hours a step is placed in.
 	HoursWithReading int `json:"hours_with_reading"`
@@ -1446,7 +1446,9 @@ func splitSeat(seat meterSeat, sources []string, steps []shareStep) (ExternalMet
 		lists := in.LOut + in.LCov
 		// Outside calls in the span, none of them priced: L_out is unknown,
 		// not 0, so the step must not go to covey whole.
-		outsideUnpriced := in.LOut == 0 && in.UnpricedCalls > 0
+		// A step that did not move and has no list is idle even with such
+		// calls: there is nothing to split, and it must not end the run.
+		outsideUnpriced := in.LOut == 0 && in.UnpricedCalls > 0 && (in.Points != 0 || lists > 0)
 		switch {
 		case !in.Reported || outsideUnpriced || (lists == 0 && in.Points != 0):
 			switch {

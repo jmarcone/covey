@@ -570,3 +570,21 @@ func TestMeterSeats(t *testing.T) {
 		t.Errorf("linked = %v", linked)
 	}
 }
+
+// A reading that did not move and has no list on either side is idle even
+// with outside calls of no price: nothing to split, and the run of split
+// steps goes on through it (one run, not two).
+func TestSplitSeatUnmovedUnpricedIsIdle(t *testing.T) {
+	tot, steps := splitSeat(meterSeat{"seat", 0}, []string{"src"}, []shareStep{
+		{From: tm("10:00"), At: tm("11:00"), Points: 2, Rate: rate(4), LOut: 1, LCov: 1, Reported: true},
+		{From: tm("11:00"), At: tm("12:00"), Points: 0, Rate: rate(4), UnpricedCalls: 3, Reported: true},
+		{From: tm("12:00"), At: tm("13:00"), Points: 2, Rate: rate(4), LOut: 1, LCov: 1, Reported: true},
+	})
+	if s := steps[1]; s.Split || s.Reason != SplitIdle {
+		t.Errorf("unmoved step with unpriced calls = %+v, want %s", s, SplitIdle)
+	}
+	if tot.SplitRuns != 1 || tot.SplitSteps != 2 || tot.UnsplitSteps != 0 || tot.OutsideUnpricedSteps != 0 || tot.UnpricedCalls != 3 {
+		t.Errorf("runs %d, split %d, unsplit %d, outside unpriced %d, unpriced calls %d; want 1, 2, 0, 0, 3",
+			tot.SplitRuns, tot.SplitSteps, tot.UnsplitSteps, tot.OutsideUnpricedSteps, tot.UnpricedCalls)
+	}
+}

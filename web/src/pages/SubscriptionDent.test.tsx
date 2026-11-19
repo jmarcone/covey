@@ -268,8 +268,9 @@ describe("one rule for the headline, the chart and the agents", () => {
   });
 
   it("keeps covey-only bounds on a seat no source names, never ≈ $0.00 (finding 9)", () => {
-    // Seat A carries the link; this seat has readings only, all unsplit.
-    const b = STEPS.map((s) => step(s.at, s.from, s.points, false, 0, s.covey_list_usd));
+    // Seat A carries the link; no source names this seat, so the server
+    // returns its steps reported with L_out = 0: all covey's (#126 fix 1).
+    const b = STEPS.map((s) => step(s.at, s.from, s.points, true, 0, s.covey_list_usd));
     const ext = external([{ steps: b, total: seat(b, { sources: [] }) }]);
     const [s] = credentialFigures({ cells: cells(ext), bucketMs: 3600_000, windowEnd: new Date("2026-11-17T21:00:00Z") });
     expect(s.split).toBeNull();
@@ -406,7 +407,7 @@ describe("Costs — the headline", () => {
   });
 
   it("never claims outside sessions share a seat no source names (finding 9)", async () => {
-    const b = STEPS.map((s) => step(s.at, s.from, s.points, false, 0, s.covey_list_usd));
+    const b = STEPS.map((s) => step(s.at, s.from, s.points, true, 0, s.covey_list_usd));
     serve(cells(external([{ steps: b, total: seat(b, { sources: [] }) }])));
     await screen.findByRole("region", { name: "The whole dent in the subscription" });
     expect(document.body.textContent).not.toMatch(/share this meter/);

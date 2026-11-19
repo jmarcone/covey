@@ -64,15 +64,14 @@ export function SubscriptionDentRow({ d, filtered }: { d: SubscriptionDent; filt
   const seat = (s: SubscriptionDent["seats"][number]) => `${s.key} #${s.slot}`;
   const approxM = (m: RangedMultiple | null) => (m?.kind === "estimate" ? (Number.isFinite(m.high) ? `≈ ${times(m.value)}` : `≥ ${times(m.low)}`) : "–");
   // The unsplit readings by why: the outside sessions had not reported them,
-  // or their outside calls all had no price. count picks the plural, n is
-  // the number as shown.
+  // or their outside calls all had no price. n is the number as shown.
   const unpricedSteps = d.unsplit.unpricedSteps;
   const notReported = d.unsplit.steps - unpricedSteps;
   const unsplitSub = unpricedSteps === 0
-    ? t("costs.dent.unsplitSub", { pct: pctOf(d.unsplit.share), count: notReported, n: count(notReported) })
+    ? t("costs.dent.unsplitSub", { pct: pctOf(d.unsplit.share), n: count(notReported) })
     : notReported === 0
-      ? t("costs.dent.unsplitSubUnpriced", { pct: pctOf(d.unsplit.share), count: unpricedSteps, n: count(unpricedSteps) })
-      : t("costs.dent.unsplitSubBoth", { pct: pctOf(d.unsplit.share), count: d.unsplit.steps, n: count(notReported), m: count(unpricedSteps) });
+      ? t("costs.dent.unsplitSubUnpriced", { pct: pctOf(d.unsplit.share), n: count(unpricedSteps) })
+      : t("costs.dent.unsplitSubBoth", { pct: pctOf(d.unsplit.share), n: count(notReported), m: count(unpricedSteps) });
   return (
     <section className="card mb-4" aria-label={t("costs.dent.title")} data-dent-row>
       <div style={{ fontWeight: 600, marginBottom: 4 }}>
@@ -122,19 +121,19 @@ export function SubscriptionDentRow({ d, filtered }: { d: SubscriptionDent; filt
       )}
       {notReported > 0 && (
         <p className="muted text-xs mb-1" data-dent-unsplit>
-          {t("costs.dent.unsplitNote", { usd: fmtUSD(d.unsplit.real - d.unsplit.unpricedReal), count: notReported, n: count(notReported) })}
+          {t("costs.dent.unsplitNote", { usd: fmtUSD(d.unsplit.real - d.unsplit.unpricedReal), n: count(notReported) })}
         </p>
       )}
       {unpricedSteps > 0 && (
         <p className="muted text-xs mb-1" data-dent-unsplit-unpriced>
-          {t("costs.dent.unsplitUnpricedNote", { usd: fmtUSD(d.unsplit.unpricedReal), count: unpricedSteps, n: count(unpricedSteps) })}
+          {t("costs.dent.unsplitUnpricedNote", { usd: fmtUSD(d.unsplit.unpricedReal), n: count(unpricedSteps) })}
         </p>
       )}
       {d.unpricedPoints > 0 && (
         <p className="muted text-xs mb-1" data-dent-unpriced>{t("costs.dent.unpricedPoints", { n: pts(d.unpricedPoints) })}</p>
       )}
       {d.unpricedCalls > 0 && (
-        <p className="muted text-xs mb-1" data-dent-unpriced-calls>{t("costs.dent.unpricedCalls", { count: d.unpricedCalls, n: count(d.unpricedCalls) })}</p>
+        <p className="muted text-xs mb-1" data-dent-unpriced-calls>{t("costs.dent.unpricedCalls", { n: count(d.unpricedCalls) })}</p>
       )}
       {d.unmeteredList >= 0.005 && (
         <p className="muted text-xs mb-1" data-dent-unmetered>{t("costs.dent.unmetered", { usd: fmtUSD(d.unmeteredList) })}</p>
