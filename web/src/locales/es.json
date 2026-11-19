@@ -411,7 +411,7 @@
       "noRate": "Sin cifra en USD: no se indicó un tipo de cambio con su fecha.",
       "bothTile": "Coste real, puesto + uso",
       "bothSub": "puesto ≈ {{seat}} + uso {{usage}}",
-      "usageMultipleSub": "lista de covey sobre los cargos por uso contados en este periodo",
+      "usageMultipleSub": "lista de covey en los periodos de los importes por uso contados ({{list}}; periodos límite prorrateados por tiempo) por USD contado",
       "noMultipleRate": "Sin múltiplo: sin tipo de cambio y su fecha, los cargos por uso no tienen cifra en USD.",
       "noMultipleNoCharge": "Sin múltiplo: ningún cargo por uso cuenta en este periodo.",
       "noMultipleChanged": "Sin múltiplo: la base cambió dentro de este periodo.",
@@ -438,7 +438,18 @@
       "rate": "USD por {{currency}} (opcional)",
       "rateDate": "Fecha del tipo",
       "note": "Nota",
-      "chargeHint": "Se guarda en su moneda. Cifra en USD solo con tipo de cambio y su fecha."
+      "chargeHint": "Se guarda en su moneda. Cifra en USD solo con tipo de cambio y su fecha.",
+      "upcoming": "Desde {{date}}: {{basis}} (registrado, aún no vigente).",
+      "apiKeyBilled": "La factura de esta clave de API se sincroniza desde Anthropic y figura aparte, junto a estos importes por uso: un importe registrado aquí no debe ser esa misma factura, o contará dos veces.",
+      "allCharges": "Todos los importes por uso de esta credencial",
+      "allChargesList": "Todos los importes por uso de {{name}}",
+      "allChargesEmpty": "No hay ningún importe por uso registrado.",
+      "storedRate": "a {{rate}} USD por {{currency}} ({{date}})",
+      "errOverlap": "Otro importe por uso de esta credencial ya cubre parte de ese periodo: la misma factura no debe contar dos veces. Elimínelo o registre el periodo a continuación.",
+      "realSeatPart": "solo la parte del puesto: {{n}} puntos leídos bajo uso los pagan los importes por uso",
+      "noMultipleSpanList": "Sin múltiplo: covey no ejecutó nada a precio de lista en los periodos que cubren los importes por uso contados.",
+      "headlineUsage": "Importes por uso, no incluidos en ninguna de estas cifras: {{list}}.",
+      "noUsd": "sin importe en USD: no se indicó tipo de cambio"
     }
   },
   "lang": {

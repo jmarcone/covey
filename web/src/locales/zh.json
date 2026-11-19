@@ -411,7 +411,7 @@
       "noRate": "无美元金额：未给出带日期的汇率。",
       "bothTile": "真实成本，席位 + 用量",
       "bothSub": "席位 ≈ {{seat}} + 用量 {{usage}}",
-      "usageMultipleSub": "covey 标价与本时段计入的用量费用之比",
+      "usageMultipleSub": "已计入用量费用所覆盖时段内的 covey 标价（{{list}}；边界区段按时间折算）÷ 已计入 USD",
       "noMultipleRate": "无倍数：没有带日期的汇率，用量费用没有美元金额。",
       "noMultipleNoCharge": "无倍数：此时段内没有计入的用量费用。",
       "noMultipleChanged": "无倍数：此时段内计费方式有变化。",
@@ -438,7 +438,18 @@
       "rate": "每 {{currency}} 折合 USD（可选）",
       "rateDate": "汇率日期",
       "note": "备注",
-      "chargeHint": "保留原货币。只有给出汇率及其日期时才有美元金额。"
+      "chargeHint": "保留原货币。只有给出汇率及其日期时才有美元金额。",
+      "upcoming": "自 {{date}} 起：{{basis}}（已录入，尚未生效）。",
+      "apiKeyBilled": "此 API 密钥的账单从 Anthropic 同步，与这些用量费用分开并列显示：在此录入的费用不得是同一张账单，否则会被计算两次。",
+      "allCharges": "此凭据的所有用量费用",
+      "allChargesList": "{{name}} 的所有用量费用",
+      "allChargesEmpty": "尚未录入用量费用。",
+      "storedRate": "按 {{rate}} USD / {{currency}}（{{date}}）",
+      "errOverlap": "此凭据的另一笔用量费用已覆盖该时段的一部分：同一张账单不得计算两次。请删除它，或录入与之相邻的时段。",
+      "realSeatPart": "仅席位部分：按用量计费期间读取的 {{n}} 个点由用量费用支付",
+      "noMultipleSpanList": "无倍数：在已计入的用量费用所覆盖的时段内，covey 未按标价运行任何内容。",
+      "headlineUsage": "用量费用（不含在以上任何数字中）：{{list}}。",
+      "noUsd": "无 USD 金额：未给出汇率"
     }
   },
   "lang": {

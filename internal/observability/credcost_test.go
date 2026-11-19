@@ -127,3 +127,70 @@ func TestSeatPlansCutWhereUsageHolds(t *testing.T) {
 		t.Error("an open usage basis left the plan open")
 	}
 }
+
+// A seat that went from seat to usage inside the window keeps the dollars of
+// the steps the plan priced before the change; the points read under usage
+// are its usage points — not unpriced, and not in USD. Without a basis
+// nothing is a usage point.
+func TestMeterPartitionUsagePointsBesideSeatSteps(t *testing.T) {
+	since := t0.Add(-6 * time.Hour)
+	plans := []CredentialPlan{{SecretKey: "work", USDPerPoint: 0.5, ValidFrom: t0.Add(-100 * time.Hour)}}
+	row := func(at time.Time, pct, points float64) meterRow {
+		return meterRow{key: "work", kind: "subscription", source: "usage_cmd", window: WindowSevenDay,
+			at: at, period: at.Truncate(time.Hour), pct: pct, top: pct, points: points}
+	}
+	rs := []meterRow{
+		row(t0.Add(-7*time.Hour), 10, 0), // the baseline, before the window
+		row(t0.Add(-3*time.Hour), 13, 3), // seat
+		row(t0.Add(-1*time.Hour), 17, 4), // usage from t0-2h
+	}
+	bases := []CredentialBasis{
+		basis(BasisSeat, t0.Add(-50*time.Hour), tp(t0.Add(-2*time.Hour))),
+		basis(BasisUsage, t0.Add(-2*time.Hour), nil),
+	}
+	steps, cov, ok := meterPartition(rs, since, seatPlans(plans, bases), bases)
+	if !ok || len(steps) != 2 {
+		t.Fatalf("steps %+v", steps)
+	}
+	if st := steps[0]; st.USD == nil || !near(*st.USD, 1.5) || st.UnpricedPoints != 0 || st.UsagePoints != 0 {
+		t.Errorf("the seat step: %+v, want 3 points at $0.50", st)
+	}
+	if st := steps[1]; st.USD != nil || st.UnpricedPoints != 0 || st.UsagePoints != 4 {
+		t.Errorf("the usage step: %+v, want 4 usage points, none unpriced, no dollars", st)
+	}
+	if cov.USD == nil || !near(*cov.USD, 1.5) || cov.UnpricedPoints != 0 || cov.UsagePoints != 4 {
+		t.Errorf("coverage: usd %v unpriced %v usage %v", cov.USD, cov.UnpricedPoints, cov.UsagePoints)
+	}
+	// No basis: the plan prices both, nothing is a usage point.
+	steps, cov, _ = meterPartition(rs, since, plans, nil)
+	if cov.UsagePoints != 0 || cov.USD == nil || !near(*cov.USD, 3.5) || steps[1].UsagePoints != 0 {
+		t.Errorf("without a basis: %+v", cov)
+	}
+	// No plan and no basis: unpriced, as before.
+	_, cov, _ = meterPartition(rs, since, nil, nil)
+	if cov.UnpricedPoints != 7 || cov.UsagePoints != 0 || cov.USD != nil {
+		t.Errorf("no plan: %+v", cov)
+	}
+}
+
+// The basis in effect at a moment: one that starts later is not in effect
+// yet, and nothing before the first one is.
+func TestBasisAtTakesTheOneInEffect(t *testing.T) {
+	bases := []CredentialBasis{
+		basis(BasisSeat, t0, tp(t0.Add(24*time.Hour))),
+		basis(BasisUsage, t0.Add(24*time.Hour), nil),
+	}
+	for at, want := range map[time.Time]string{
+		t0.Add(-time.Hour):     "",
+		t0:                     BasisSeat,
+		t0.Add(23 * time.Hour): BasisSeat,
+		t0.Add(24 * time.Hour): BasisUsage,
+	} {
+		if got := basisAt(bases, "work", 0, at); got != want {
+			t.Errorf("at %v: %q, want %q", at, got, want)
+		}
+	}
+	if got := basisAt(bases, "work", 1, t0); got != "" {
+		t.Errorf("another slot: %q", got)
+	}
+}

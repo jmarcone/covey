@@ -2,9 +2,9 @@ import { useId, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { ApiError, api, del, post, put, type CostBasisKind, type RuntimeInstance, type WindowCharge } from "../api";
+import { ApiError, api, del, post, put, type CostBasisKind, type RuntimeInstance, type UsageCharge, type WindowCharge } from "../api";
 import { fmtBucket, fmtNumber, fmtUSD } from "../format";
-import { isSeat, type CredentialFigures } from "./costFigures";
+import { isSeat, type CredentialFigures, type UsageCurrency } from "./costFigures";
 import { planPlace, toLocalInput } from "./PlanPrice";
 
 /* How a credential's real money is formed (0151, #120), on the cost page.
@@ -25,7 +25,15 @@ export function fmtMoney(v: number, currency: string): string {
   return cur === "USD" ? fmtUSD(v) : `${fmtNumber(v, 2)} ${cur}`;
 }
 
-/** "Charged by: …" — the basis at the window's end, or what holds without one. */
+/** Counted usage charges per currency, each in its own: "180.00 EUR (no USD
+ *  figure) · $5.00" — a dollar figure beside another currency only at the
+ *  rates given, never a sum across currencies. */
+export function usageList(t: TFunction, list: readonly UsageCurrency[]): string {
+  return list.map((c) => c.currency === "USD" ? fmtMoney(c.counted, c.currency)
+    : `${fmtMoney(c.counted, c.currency)} (${c.usd != null ? t("costs.basis.usageAtRate", { usd: fmtUSD(c.usd) }) : t("costs.basis.noUsd")})`).join(" · ");
+}
+
+/** "Charged by: …" — the basis in effect at the window's end, or what holds without one. */
 export function basisLine(t: TFunction, f: Pick<CredentialFigures, "basis" | "kind">): string {
   if (f.basis === "usage") return t("costs.basis.lineUsage");
   if (f.basis === "seat_and_usage") return t("costs.basis.lineBoth");
@@ -41,17 +49,35 @@ export function chargeLine(t: TFunction, c: WindowCharge): string {
     : t("costs.basis.chargeNotCounted");
   parts.push(counted);
   if (c.currency.toUpperCase() !== "USD") {
+    // Nothing counted has no dollar figure: "–", never $0.00.
     parts.push(c.fx_to_usd != null && c.fx_date
       ? t("costs.basis.chargeRate", { rate: fmtNumber(c.fx_to_usd, 4), currency: c.currency.toUpperCase(), date: c.fx_date,
-        usd: c.counted_usd != null ? fmtUSD(c.counted_usd) : "–" })
+        usd: c.counted_amount > 0 && c.counted_usd != null ? fmtUSD(c.counted_usd) : "–" })
       : t("costs.basis.chargeNoRate"));
   }
   return parts.join(" · ");
 }
 
-function saveError(t: TFunction, err: Error): string {
+/** A stored charge as entered: amount, span, its rate or none. */
+function storedLine(t: TFunction, c: UsageCharge): string {
+  const parts = [`${fmtMoney(c.amount, c.currency)} · ${fmtBucket(c.from, "hour")} – ${fmtBucket(c.to, "hour")}`];
+  if (c.currency.toUpperCase() !== "USD") {
+    parts.push(c.fx_to_usd != null && c.fx_date
+      ? t("costs.basis.storedRate", { rate: fmtNumber(c.fx_to_usd, 4), currency: c.currency.toUpperCase(), date: c.fx_date })
+      : t("costs.basis.chargeNoRate"));
+  }
+  return parts.join(" · ");
+}
+
+/** An API key whose bill covey reads (0146): a synced bill stands beside it. */
+function hasSyncedBill(f: Pick<CredentialFigures, "kind" | "billed">): boolean {
+  return f.kind === "api_key" && f.billed != null && !["unavailable", "unconfigured", "unmapped"].includes(f.billed.state);
+}
+
+function saveError(t: TFunction, err: Error, charge = false): string {
   if (err instanceof ApiError) {
-    if (err.status === 409) return t("costs.basis.errConflict");
+    // Two 409s: a basis at the same moment, or a charge over another's span.
+    if (err.status === 409) return charge ? t("costs.basis.errOverlap") : t("costs.basis.errConflict");
     if (err.status === 400) return t("costs.basis.errInvalid", { msg: err.message });
     if (err.status === 403) return t("costs.basis.errForbidden", { msg: err.message });
   }
@@ -86,6 +112,7 @@ export function CostBasisPanel({ f, name, editable }: { f: CredentialFigures; na
   const base = place ? `/runtime-instances/${place.runtimeId}/credentials/${place.ord}` : null;
   const done = async () => {
     await qc.invalidateQueries({ queryKey: ["cost"] });
+    await qc.invalidateQueries({ queryKey: ["usage-charges"] });
     setForm("none");
   };
   const saveBasis = useMutation({
@@ -98,7 +125,18 @@ export function CostBasisPanel({ f, name, editable }: { f: CredentialFigures; na
   });
   const remove = useMutation({
     mutationFn: (id: string) => del(`${base}/usage-charges/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["cost"] }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["cost"] });
+      await qc.invalidateQueries({ queryKey: ["usage-charges", base] });
+    },
+  });
+  // Every charge of the credential, also those outside the window, with its
+  // note: from the credential's own list (security roles), read when opened.
+  const [allOpen, setAllOpen] = useState(false);
+  const all = useQuery({
+    queryKey: ["usage-charges", base],
+    queryFn: () => api<UsageCharge[]>(`${base}/usage-charges`),
+    enabled: editable && allOpen && base != null,
   });
 
   const u = f.usage;
@@ -134,8 +172,17 @@ export function CostBasisPanel({ f, name, editable }: { f: CredentialFigures; na
     && Number.isFinite(fromMs) && Number.isFinite(toMs) && fromMs < toMs
     && (cur === "USD" || (rateNum == null) === (rateDate === "")) && (rateNum == null || rateNum > 0);
   const basisMs = new Date(basisFrom).getTime();
-  const error = saveBasis.error ? saveError(t, saveBasis.error) : saveCharge.error ? saveError(t, saveCharge.error)
+  const error = saveBasis.error ? saveError(t, saveBasis.error) : saveCharge.error ? saveError(t, saveCharge.error, true)
     : remove.error ? saveError(t, remove.error) : null;
+  const deleteButton = (id: string) => editable && base && (
+    <button type="button" className="btn sm ghost" style={{ marginLeft: 6 }} disabled={remove.isPending}
+      onClick={() => { if (window.confirm(t("costs.basis.confirmDelete"))) remove.mutate(id); }}>
+      {t("costs.basis.delete")}
+    </button>
+  );
+  // An API key whose bill covey reads: the charges stand beside that bill,
+  // never instead of it — entering the same bill here would count it twice.
+  const besideBill = hasSyncedBill(f) && u != null && (u.charges.length > 0 || u.regimes.some((r) => r !== "seat"));
 
   return (
     <div className="mb-2" data-cost-basis={f.id}>
@@ -144,7 +191,17 @@ export function CostBasisPanel({ f, name, editable }: { f: CredentialFigures; na
         {seat && f.basis === "usage" && <> {t("costs.basis.seatOnUsage")}</>}
         {seat && f.basis === "seat_and_usage" && <> {t("costs.basis.seatOnBoth")}</>}
         {u?.changed && <> {t("costs.basis.changed")}</>}
+        {u?.upcoming.map((b) => (
+          // With its year: a basis can be entered far ahead.
+          <span key={b.valid_from} data-basis-upcoming> {t("costs.basis.upcoming", {
+            date: `${new Date(b.valid_from).toISOString().slice(0, 16).replace("T", " ")} UTC`, basis: t(`costs.basis.kind_${b.basis}`) })}</span>
+        ))}
       </p>
+      {besideBill && (
+        <p className="text-xs mt-0 mb-1" role="note" style={{ color: "var(--text-warning)" }} data-beside-bill>
+          {t("costs.basis.apiKeyBilled")}
+        </p>
+      )}
       {u && u.uncounted.length > 0 && (
         <p className="text-xs mt-0 mb-1" role="note" style={{ color: "var(--text-warning)" }} data-uncounted>
           {t("costs.basis.uncounted", { n: fmtNumber(u.uncounted.length, 0) })}
@@ -155,16 +212,29 @@ export function CostBasisPanel({ f, name, editable }: { f: CredentialFigures; na
           {u.charges.map((c) => (
             <li key={c.id} data-charge={c.id}>
               {chargeLine(t, c)}
-              {c.note && <span className="muted" data-charge-note> · {c.note}</span>}
-              {editable && base && (
-                <button type="button" className="btn sm ghost" style={{ marginLeft: 6 }} disabled={remove.isPending}
-                  onClick={() => { if (window.confirm(t("costs.basis.confirmDelete"))) remove.mutate(c.id); }}>
-                  {t("costs.basis.delete")}
-                </button>
-              )}
+              {deleteButton(c.id)}
             </li>
           ))}
         </ul>
+      )}
+      {editable && base && (
+        <div className="text-xs mt-0 mb-1" data-all-charges>
+          <button type="button" className="btn sm ghost" aria-expanded={allOpen} onClick={() => setAllOpen((o) => !o)}>
+            {allOpen ? "▾" : "▸"} {t("costs.basis.allCharges")}
+          </button>
+          {allOpen && all.data && all.data.length === 0 && <p className="muted mt-1 mb-0">{t("costs.basis.allChargesEmpty")}</p>}
+          {allOpen && all.data && all.data.length > 0 && (
+            <ul className="mt-1 mb-0" style={{ paddingLeft: 16 }} aria-label={t("costs.basis.allChargesList", { name })}>
+              {all.data.map((c) => (
+                <li key={c.id} data-stored-charge={c.id}>
+                  {storedLine(t, c)}
+                  {c.note && <span className="muted" data-charge-note> · {c.note}</span>}
+                  {deleteButton(c.id)}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
       {editable && base && form === "none" && (
         <div className="flex flex-wrap gap-2">

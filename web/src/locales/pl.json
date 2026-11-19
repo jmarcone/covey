@@ -411,7 +411,7 @@
       "noRate": "Brak kwoty w USD: nie podano kursu z datą.",
       "bothTile": "Rzeczywisty koszt, miejsce + użycie",
       "bothSub": "miejsce ≈ {{seat}} + użycie {{usage}}",
-      "usageMultipleSub": "cennik covey względem opłat za użycie policzonych w tym okresie",
+      "usageMultipleSub": "cena katalogowa covey w okresach liczonych opłat za użycie ({{list}}; okresy graniczne proporcjonalnie do czasu) na liczony USD",
       "noMultipleRate": "Brak krotności: bez kursu z datą opłaty za użycie nie mają kwoty w USD.",
       "noMultipleNoCharge": "Brak krotności: w tym okresie nie liczy się żadna opłata za użycie.",
       "noMultipleChanged": "Brak krotności: podstawa zmieniła się w tym okresie.",
@@ -438,7 +438,18 @@
       "rate": "USD za {{currency}} (opcjonalnie)",
       "rateDate": "Data kursu",
       "note": "Notatka",
-      "chargeHint": "Pozostaje w swojej walucie. Kwota w USD tylko z kursem i jego datą."
+      "chargeHint": "Pozostaje w swojej walucie. Kwota w USD tylko z kursem i jego datą.",
+      "upcoming": "Od {{date}}: {{basis}} (wprowadzone, jeszcze nie obowiązuje).",
+      "apiKeyBilled": "Rachunek tego klucza API jest synchronizowany z Anthropic i widnieje osobno obok tych opłat za użycie: wprowadzona tu opłata nie może być tym samym rachunkiem, inaczej zostanie policzona dwa razy.",
+      "allCharges": "Wszystkie opłaty za użycie tego dostępu",
+      "allChargesList": "Wszystkie opłaty za użycie {{name}}",
+      "allChargesEmpty": "Nie wprowadzono żadnej opłaty za użycie.",
+      "storedRate": "po {{rate}} USD za {{currency}} ({{date}})",
+      "errOverlap": "Inna opłata za użycie tego dostępu obejmuje już część tego okresu: ten sam rachunek nie może liczyć się dwa razy. Usuń ją lub wprowadź okres obok.",
+      "realSeatPart": "tylko część stanowiska: {{n}} punktów odczytanych przy rozliczeniu według użycia opłacają opłaty za użycie",
+      "noMultipleSpanList": "Brak wielokrotności: covey nie uruchomił niczego po cenie katalogowej w okresach liczonych opłat za użycie.",
+      "headlineUsage": "Opłaty za użycie, nieujęte w żadnej z tych liczb: {{list}}.",
+      "noUsd": "brak kwoty w USD: nie podano kursu"
     }
   },
   "lang": {
