@@ -82,14 +82,20 @@ type WindowCharge struct {
 	// set, never counted); "meter" for the money a monthly usage limit makes
 	// of its meter's movement (limitcharges.go), which has no ID.
 	Kind string `json:"kind,omitempty"`
-	// SupersededAmount is the part of a hand-entered charge over times a
-	// monthly usage limit held (0152), under a usage basis: that time's money
-	// is the meter's charge, so this part is listed and not counted.
+	// SupersededAmount is the part of a hand-entered charge over the spans
+	// the money of a monthly usage limit's meter covers (0152: the [From, To)
+	// of the credential's meter charges), under a usage basis: that time's
+	// money is the meter's charge, so this part is listed and not counted.
+	// Where the meter read nothing, the charge counts in full. Never set on
+	// an export.
 	SupersededAmount float64 `json:"superseded_amount,omitempty"`
 	// Of a meter charge: the window it was read from, the limit per month,
 	// the points it moved in the range (all, and those a usage basis
 	// counted), and the counted amount's range — the meter shows whole
-	// percents, so each month segment is known to ±1 point.
+	// percents, so each month segment is known to ±1 point. Points and
+	// CountedPoints are meter points (percent of the limit in force at each
+	// reading), not money: across a limit change a point is worth another
+	// amount, so the money is Amount/CountedAmount, never points × limit.
 	WindowKind    string   `json:"window_kind,omitempty"`
 	LimitAmount   float64  `json:"limit_amount,omitempty"`
 	Points        *float64 `json:"points,omitempty"`
@@ -123,8 +129,9 @@ func (s *Store) costBasesFor(ctx context.Context, orgID uuid.UUID, since time.Ti
 }
 
 // usageChargesFor returns the charges that reach into [since, now), each
-// with its window and counted parts.
-func (s *Store) usageChargesFor(ctx context.Context, orgID uuid.UUID, since, now time.Time, bases []CredentialBasis, limits []UsageLimit) ([]WindowCharge, error) {
+// with its window and counted parts. meter are the credentials' meter charges
+// (meterLimitCharges): a hand-entered charge is superseded over their spans.
+func (s *Store) usageChargesFor(ctx context.Context, orgID uuid.UUID, since, now time.Time, bases []CredentialBasis, meter []WindowCharge) ([]WindowCharge, error) {
 	rows, err := s.pool.Query(ctx, `SELECT id, secret_key, secret_slot, amount::float8, currency, period_from, period_to,
 		fx_to_usd::float8, to_char(fx_date, 'YYYY-MM-DD'), kind
 		FROM credential_usage_charges
@@ -142,11 +149,14 @@ func (s *Store) usageChargesFor(ctx context.Context, orgID uuid.UUID, since, now
 			&c.FXToUSD, &c.FXDate, &kind); err != nil {
 			return nil, err
 		}
-		c = chargeInWindow(c, since, now, bases, limits)
 		if kind == ChargeKindExport {
 			// A check, never money: what it says stands beside the counted
-			// figures, the window's part of it included.
-			c.Kind, c.CountedAmount, c.CountedUSD = ChargeKindExport, 0, nil
+			// figures, the window's part of it included. It supersedes
+			// nothing and nothing supersedes it.
+			c = chargeInWindow(c, since, now, bases, nil)
+			c.Kind, c.CountedAmount, c.CountedUSD, c.SupersededAmount = ChargeKindExport, 0, nil, 0
+		} else {
+			c = chargeInWindow(c, since, now, bases, meterSpans(meter, c.SecretKey, c.SecretSlot))
 		}
 		out = append(out, c)
 	}
@@ -208,10 +218,34 @@ func overlap(a, b, c, d time.Time) time.Duration {
 	return b.Sub(a)
 }
 
+// meterSpans are the spans the money of a credential's meter charges covers,
+// [From, To) of each, in order and merged where they touch.
+func meterSpans(meter []WindowCharge, key string, slot int) []span {
+	var out []span
+	for _, m := range meter {
+		if m.Kind == ChargeKindMeter && m.SecretKey == key && m.SecretSlot == slot && m.To.After(m.From) {
+			out = append(out, span{m.From, m.To})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].from.Before(out[j].from) })
+	merged := out[:0]
+	for _, sp := range out {
+		if n := len(merged); n > 0 && !sp.from.After(merged[n-1].to) {
+			if sp.to.After(merged[n-1].to) {
+				merged[n-1].to = sp.to
+			}
+			continue
+		}
+		merged = append(merged, sp)
+	}
+	return merged
+}
+
 // chargeInWindow fills in the window and counted parts of a charge: pro rata
 // by time over the part of its span inside [since, now), and of that the part
-// a usage basis held.
-func chargeInWindow(c WindowCharge, since, now time.Time, bases []CredentialBasis, limits []UsageLimit) WindowCharge {
+// a usage basis held. covered are the spans the credential's meter money
+// covers (meterSpans): the counted part over them is superseded instead.
+func chargeInWindow(c WindowCharge, since, now time.Time, bases []CredentialBasis, covered []span) WindowCharge {
 	whole := c.To.Sub(c.From)
 	c.WindowAmount, c.CountedAmount, c.CountedUSD = 0, 0, nil
 	if whole <= 0 {
@@ -235,21 +269,20 @@ func chargeInWindow(c WindowCharge, since, now time.Time, bases []CredentialBasi
 			to = now
 		}
 		counted += overlap(c.From, c.To, from, to)
-		// Where a monthly usage limit held (0152), the meter is the money:
-		// the charge's part over that time is superseded, not counted twice.
-		for _, l := range limits {
-			if l.SecretKey != c.SecretKey || l.SecretSlot != c.SecretSlot {
-				continue
+		// Where a monthly usage limit's meter priced the time (0152), the
+		// meter is the money: the charge's part over the spans its charges
+		// cover is superseded, not counted twice. A limit without readings
+		// covers nothing, so the charge stays the money there.
+		for _, m := range covered {
+			mf, mt := m.from, m.to
+			if mf.Before(from) {
+				mf = from
 			}
-			lf, lt := l.ValidFrom, endOf(l.ValidTo)
-			if lf.Before(from) {
-				lf = from
+			if mt.After(to) {
+				mt = to
 			}
-			if lt.After(to) {
-				lt = to
-			}
-			if lt.After(lf) {
-				superseded += overlap(c.From, c.To, lf, lt)
+			if mt.After(mf) {
+				superseded += overlap(c.From, c.To, mf, mt)
 			}
 		}
 	}

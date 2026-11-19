@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"net/http"
 	"testing"
 	"time"
 
@@ -152,6 +153,10 @@ func TestUsageLimitPricesMonthlyMeter(t *testing.T) {
 	if err := s.obs.AddManualReading(ctx, s.orgID, rt.ID, ord, "overage", 81, &month, since.Add(90*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
+	// The same moment a second time is not stored, and says so.
+	if err := s.obs.AddManualReading(ctx, s.orgID, rt.ID, ord, "overage", 82, &month, since.Add(90*time.Minute)); !errors.Is(err, observability.ErrReadingExists) {
+		t.Errorf("a second manual reading at the same moment: %v, want ErrReadingExists", err)
+	}
 	var manual int
 	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM usage_readings WHERE org_id = $1 AND source = 'manual'
 		AND window_kind = 'overage' AND week_percent = 81 AND secret_key = 'claude_code_oauth_token' AND credential_kind = 'subscription'`,
@@ -218,12 +223,104 @@ func TestUsageLimitPricesMonthlyMeter(t *testing.T) {
 	if !meter.From.Equal(since) || !meter.To.Equal(since.Add(2*time.Hour)) {
 		t.Errorf("meter span %v..%v, want the range's start to the last reading", meter.From, meter.To)
 	}
-	if export.CountedAmount != 0 || export.CountedUSD != nil || !near(export.WindowAmount, 21) {
+	if export.CountedAmount != 0 || export.CountedUSD != nil || !near(export.WindowAmount, 21) || export.SupersededAmount != 0 {
 		t.Errorf("export counted: %+v", *export)
 	}
-	// The hand-entered charge lies where the limit holds: the meter is that
-	// time's money, so the charge is listed and superseded, not counted twice.
-	if charge.CountedAmount != 0 || !near(charge.SupersededAmount, 10) {
-		t.Errorf("charge under the limit: counted %v, superseded %v; want 0 and 10", charge.CountedAmount, charge.SupersededAmount)
+	// The hand-entered charge (three hours) lies where the limit holds, but
+	// the meter's money covers only the first two (since → the last
+	// reading): that part is superseded, the third hour stays counted.
+	if !near(charge.CountedAmount, 10.0/3) || !near(charge.SupersededAmount, 20.0/3) {
+		t.Errorf("charge under the limit: counted %v, superseded %v; want 10/3 and 20/3", charge.CountedAmount, charge.SupersededAmount)
+	}
+}
+
+// Manual readings before and after a run that wrote its own in-band readings
+// are one meter with them (outside review of af6ebb13, major 4): 30 → 50 at
+// 400 EUR is 80 EUR, not the in-band source's 40 → 42 alone. A hand-entered
+// charge is superseded only over the span the meter priced (major 1), and a
+// limit without any readings supersedes nothing. POST /cost/usage-readings
+// answers 409 for a second reading at the same moment (minor 5) and refuses
+// a reset time that is not after the reading or too far ahead (minor 6).
+func TestUsageLimitMergesManualAroundRun(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	admin := login(t, s, "admin@test.local", "admin-passwort")
+	rt, err := s.runtimes.Create(ctx, s.orgID, "claude-code", "Arbeitssitz", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ord := s.seat(t, rt.ID, daemon.CredSubscription, "claude_code_oauth_token", "work-seat", "Work")
+	ord2 := s.seat(t, rt.ID, daemon.CredSubscription, "claude_code_oauth_token", "other-seat", "Other")
+	seat := observability.CredentialRef{RuntimeID: rt.ID, Ord: ord, SecretKey: "claude_code_oauth_token", Kind: "subscription"}
+	since := time.Now().Add(-6 * time.Hour).Truncate(time.Hour)
+	long := since.Add(-60 * 24 * time.Hour)
+	ref := since.Add(6 * time.Hour)
+	month := time.Date(ref.Year(), ref.Month()+1, 1, 0, 0, 0, 0, time.UTC)
+	for _, o := range []int{ord, ord2} {
+		if _, err := s.runtimes.SetUsageLimit(ctx, s.orgID, rt.ID, o, runtimes.UsageLimit{
+			Amount: 400, Currency: "EUR", ValidFrom: long}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.runtimes.SetCostBasis(ctx, s.orgID, rt.ID, o, runtimes.BasisUsage, long); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	post := func(o int, window string, pct float64, resets, at time.Time, want int) {
+		t.Helper()
+		admin.expect(http.MethodPost, "/api/v1/cost/usage-readings", map[string]any{
+			"runtime_id": rt.ID, "ord": o, "window_kind": window, "percent": pct,
+			"resets_at": resets.Format(time.RFC3339), "fetched_at": at.Format(time.RFC3339)}, want)
+	}
+	post(ord, "overage", 30, month, since.Add(time.Hour), http.StatusCreated)
+	for i, pct := range []float64{40, 41, 42} {
+		if err := s.obs.AddUsageReading(ctx, s.orgID, observability.MeterReading{Credential: seat,
+			Source: observability.SourceInband, WindowKind: "overage", Supported: true, WindowPercent: -1, WeekPercent: pct,
+			ResetsAt: month, FetchedAt: since.Add(time.Duration(i+2) * time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	post(ord, "overage", 50, month, since.Add(5*time.Hour), http.StatusCreated)
+	post(ord, "overage", 51, month, since.Add(5*time.Hour), http.StatusConflict)
+	post(ord, "overage", 50, since, since.Add(5*time.Hour+time.Minute), http.StatusBadRequest)
+	post(ord, "overage", 50, since.Add(40*24*time.Hour), since.Add(5*time.Hour+time.Minute), http.StatusBadRequest)
+	post(ord, "seven_day", 50, since.Add(9*24*time.Hour), since.Add(5*time.Hour+time.Minute), http.StatusBadRequest)
+	post(ord, "seven_day", 50, since.Add(7*24*time.Hour), since.Add(5*time.Hour+time.Minute), http.StatusCreated)
+
+	// Hand-entered charges: over [since, since+5h) on the read seat, where
+	// the meter priced since+1h → since+5h; and on the seat never read.
+	for _, o := range []int{ord, ord2} {
+		if _, err := s.runtimes.AddUsageCharge(ctx, s.orgID, rt.ID, o, runtimes.UsageCharge{
+			Amount: 50, Currency: "EUR", From: since, To: since.Add(5 * time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cells, err := s.obs.CostCellsFor(ctx, s.orgID, "hour", since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	near := func(a, b float64) bool { return math.Abs(a-b) < 1e-6 }
+	var meters int
+	for _, c := range cells.UsageCharges {
+		switch {
+		case c.Kind == observability.ChargeKindMeter:
+			meters++
+			if c.SecretSlot != 0 || !near(c.CountedAmount, 80) || c.Points == nil || !near(*c.Points, 20) ||
+				!c.From.Equal(since.Add(time.Hour)) || !c.To.Equal(since.Add(5*time.Hour)) {
+				t.Errorf("meter charge: %+v, want 80 EUR (30 → 50) over since+1h..since+5h", c)
+			}
+		case c.SecretSlot == 0:
+			if !near(c.SupersededAmount, 40) || !near(c.CountedAmount, 10) {
+				t.Errorf("charge on the read seat: counted %v, superseded %v; want 10 and 40", c.CountedAmount, c.SupersededAmount)
+			}
+		default:
+			if !near(c.CountedAmount, 50) || c.SupersededAmount != 0 {
+				t.Errorf("charge on the unread seat: counted %v, superseded %v; want 50 and 0", c.CountedAmount, c.SupersededAmount)
+			}
+		}
+	}
+	if meters != 1 {
+		t.Errorf("meter charges = %d, want 1 (the unread seat has none): %+v", meters, cells.UsageCharges)
 	}
 }

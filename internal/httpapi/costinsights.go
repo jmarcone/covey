@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -215,8 +216,11 @@ var meterWindow = regexp.MustCompile(`^[a-z][a-z0-9_]{0,39}$`)
 // (source manual): {runtime_id, ord, window_kind, percent, resets_at,
 // fetched_at?}. percent is the utilisation in percent (78 for 0.78);
 // resets_at is required — without it a lower reading would read as a new
-// month (or week); fetched_at, when the figure was read, defaults to now and
-// may not lie ahead.
+// month (or week), and it must lie after fetched_at, by at most 8 days for
+// the seven_day* and five_hour* windows and 32 days for the others;
+// fetched_at, when the figure was read, defaults to now and may not lie
+// ahead. A second reading of the credential and window at the same
+// fetched_at is refused (409), not silently dropped.
 func (s *Server) handleAddUsageReading(w http.ResponseWriter, r *http.Request) {
 	p := principalFrom(r)
 	var in struct {
@@ -253,9 +257,29 @@ func (s *Server) handleAddUsageReading(w http.ResponseWriter, r *http.Request) {
 		}
 		at = *in.FetchedAt
 	}
+	// The reset lies ahead of the reading, and within the window's length:
+	// a week (with a day's slack) for the weekly and five-hour windows, a
+	// month for the others. A reset in the past or a year ahead is a typo,
+	// and filed it would split or swallow a month.
+	horizon, span := 32*24*time.Hour, "32 days"
+	if strings.HasPrefix(in.WindowKind, "seven_day") || strings.HasPrefix(in.WindowKind, "five_hour") {
+		horizon, span = 8*24*time.Hour, "8 days"
+	}
+	if !in.ResetsAt.After(at) {
+		writeErr(w, http.StatusBadRequest, "resets_at must lie after fetched_at")
+		return
+	}
+	if in.ResetsAt.Sub(at) > horizon {
+		writeErr(w, http.StatusBadRequest, "resets_at may lie at most "+span+" after fetched_at for window "+in.WindowKind)
+		return
+	}
 	err := s.Obs.AddManualReading(r.Context(), p.OrgID, in.RuntimeID, *in.Ord, in.WindowKind, *in.Percent, in.ResetsAt, at.UTC())
 	if errors.Is(err, observability.ErrNoCredential) {
 		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if errors.Is(err, observability.ErrReadingExists) {
+		writeErr(w, http.StatusConflict, err.Error())
 		return
 	}
 	if err != nil {

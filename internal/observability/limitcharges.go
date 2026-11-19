@@ -13,17 +13,20 @@ import (
 // against a monthly money limit reports its meter in band as a window of its
 // own ("overage", reset on the first of the month). With the limit stored, a
 // point of that window is Amount/100 in the limit's currency, so the seat's
-// real spend over a range is the meter's movement × limit / 100 — the same
-// readings, step rule and reset rule as the weekly meter (meterQuery), but
-// money in its own currency, never the weekly plan's dollars.
+// real spend over a range is the rise of utilisation × limit within each
+// month — money in its own currency, never the weekly plan's dollars. Unlike
+// the weekly meter, whose sources stay apart, every source of one meter
+// (inband, manual, usage_cmd) is one series here: a person's readings before
+// and after a run belong to the same month as the run's own.
 //
 // A credential has one limit at a time (it names the window it reads). The
 // money is a usage charge of kind "meter" in the cells, one per credential ×
 // limit row, beside the charges entered by hand: counted where a usage basis
 // (usage, seat_and_usage) held when the reading was taken, like every usage
-// charge, and listed but counted nowhere otherwise. Where a limit holds, the
-// meter IS the money: a charge entered by hand over that time is listed, its
-// part superseded, and not counted again (usageChargesFor).
+// charge, and listed but counted nowhere otherwise. Over the spans the meter
+// priced, the meter IS the money: a charge entered by hand over them is
+// listed, that part superseded, and not counted again (usageChargesFor).
+// Where the meter read nothing, the hand-entered charge stays the money.
 
 // UsageLimit is a credential's monthly usage limit, valid over
 // [ValidFrom, ValidTo).
@@ -75,68 +78,135 @@ func limitAt(limits []UsageLimit, key string, slot int, window string, t time.Ti
 	return UsageLimit{}, false
 }
 
-// meterLimitCharges prices the readings (meterRows: partition and time
-// order, each with its step) of every window that has a limit. A step counts
-// at the limit valid when it was read; its span is (the reading before, the
-// reading]. The first reading of a credential is its baseline and moved
-// nothing; the readings of one partition from more than one source are kept
-// apart like the weekly meter's (two sources read one meter: the one with the
-// most readings is taken, usage_cmd before manual before inband on a tie).
-func meterLimitCharges(rows []meterRow, since time.Time, limits []UsageLimit, bases []CredentialBasis) []WindowCharge {
-	type part struct {
-		start, end int
+// monthReading is one reading of a monthly meter, all its sources merged.
+type monthReading struct {
+	at  time.Time
+	pct float64
+	// points is the rise of the month's running maximum of utilisation (the
+	// whole reading on a new month's first): meter points, not money.
+	points   float64
+	month    int
+	newMonth bool
+	// boundary is where a new month began — the reset the month before named
+	// — when it lies between the reading before and this one; zero otherwise.
+	boundary time.Time
+}
+
+// sourceRank orders readings taken at the same moment: usage_cmd, manual,
+// inband.
+func sourceRank(s string) int {
+	switch s {
+	case SourceUsageCmd:
+		return 0
+	case SourceManual:
+		return 1
+	case SourceInband:
+		return 2
 	}
-	// The partitions, and per credential × window the source read.
+	return 3
+}
+
+// monthlySeries merges the readings of one credential × window from every
+// source into one series in time order and finds its months:
+//
+//   - a reading whose reset time lies more than an hour before the latest one
+//     seen so far belongs to a month already over and is dropped;
+//   - a month begins where the reset time advances by more than an hour; a
+//     reading without one begins a month when the month's reset has passed,
+//     and where no reset time is known at all, when it dropped by more than
+//     one point (the meter shows whole percents: a drop of one is a lag).
+//
+// meterQuery already dropped stale and unsupported readings, and those a
+// source's own later readings mark as from an old month.
+func monthlySeries(rs []meterRow) []monthReading {
+	sorted := append([]meterRow(nil), rs...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if !sorted[i].at.Equal(sorted[j].at) {
+			return sorted[i].at.Before(sorted[j].at)
+		}
+		return sourceRank(sorted[i].source) < sourceRank(sorted[j].source)
+	})
+	var out []monthReading
+	var seen, mark *time.Time // latest reset seen at all; latest of this month
+	var top, prevPct float64
+	var prevAt time.Time
+	month := 0
+	for _, r := range sorted {
+		if r.resets != nil && seen != nil && r.resets.Before(seen.Add(-time.Hour)) {
+			continue
+		}
+		if r.resets != nil && (seen == nil || r.resets.After(*seen)) {
+			seen = r.resets
+		}
+		m := monthReading{at: r.at, pct: r.pct}
+		if len(out) == 0 {
+			top, mark = r.pct, r.resets
+		} else {
+			var newMonth bool
+			switch {
+			case r.resets != nil && mark != nil:
+				newMonth = r.resets.After(mark.Add(time.Hour))
+			case r.resets == nil && mark != nil:
+				newMonth = !mark.After(r.at)
+			default:
+				newMonth = r.pct < prevPct-1
+			}
+			if newMonth {
+				month++
+				m.newMonth, m.points = true, r.pct
+				if mark != nil && mark.After(prevAt) && mark.Before(r.at) {
+					m.boundary = *mark
+				}
+				top, mark = r.pct, r.resets
+			} else {
+				m.points = max(0, r.pct-top)
+				top = max(top, r.pct)
+				if r.resets != nil && (mark == nil || r.resets.After(*mark)) {
+					mark = r.resets
+				}
+			}
+		}
+		m.month = month
+		prevPct, prevAt = r.pct, r.at
+		out = append(out, m)
+	}
+	return out
+}
+
+// meterLimitCharges prices the readings (meterRows) of every window that has
+// a limit, all sources of a credential × window merged (monthlySeries). A
+// step counts at the limit valid when it was read; its span is (the reading
+// before, the reading], starting no earlier than the limit row's valid_from
+// (a step across a limit change, or from a reading without a limit, is the
+// new row's) nor than the month's start (a new month's money lies after the
+// reset). Where the span began before the range, the range holds its part,
+// pro rata by time, like a charge. The first reading is the baseline and
+// moved nothing.
+func meterLimitCharges(rows []meterRow, since time.Time, limits []UsageLimit, bases []CredentialBasis) []WindowCharge {
 	type cw struct {
 		key    string
 		slot   int
 		window string
 	}
-	best := map[cw]part{}
-	rank := func(s string) int {
-		switch s {
-		case SourceUsageCmd:
-			return 0
-		case SourceManual:
-			return 1
-		case SourceInband:
-			return 2
-		}
-		return 3
-	}
-	inRange := func(p part) int {
-		n := 0
-		for _, r := range rows[p.start:p.end] {
-			if !r.at.Before(since) {
-				n++
-			}
-		}
-		return n
-	}
-	for start := 0; start < len(rows); {
-		end := start + 1
-		for end < len(rows) && rows[end].key == rows[start].key && rows[end].slot == rows[start].slot &&
-			rows[end].source == rows[start].source && rows[end].window == rows[start].window {
-			end++
-		}
-		r := rows[start]
+	series := map[cw][]meterRow{}
+	var keys []cw
+	for _, r := range rows {
 		k := cw{r.key, r.slot, r.window}
-		if hasLimit(limits, k.key, k.slot, k.window) {
-			p := part{start, end}
-			if cur, ok := best[k]; !ok || inRange(p) > inRange(cur) ||
-				(inRange(p) == inRange(cur) && rank(r.source) < rank(rows[cur.start].source)) {
-				best[k] = p
-			}
+		if !hasLimit(limits, k.key, k.slot, k.window) {
+			continue
 		}
-		start = end
+		if _, ok := series[k]; !ok {
+			keys = append(keys, k)
+		}
+		series[k] = append(series[k], r)
 	}
 
 	var out []WindowCharge
-	for k, p := range best {
-		rs := rows[p.start:p.end]
+	for _, k := range keys {
+		rs := monthlySeries(series[k])
 		type acc struct {
 			c        WindowCharge
-			segments map[int64]bool
+			segments map[int]bool
 		}
 		byLimit := map[time.Time]*acc{}
 		var order []time.Time
@@ -153,8 +223,7 @@ func meterLimitCharges(rows []meterRow, since time.Time, limits []UsageLimit, ba
 		prevPriced := false
 		for i, r := range rs {
 			l, ok := limitAt(limits, k.key, k.slot, k.window, r.at)
-			newMonth := i > 0 && r.week != rs[i-1].week
-			if i == 0 || newMonth {
+			if i == 0 || r.newMonth {
 				prevSpent, prevTop, prevPriced = 0, 0, true
 			}
 			spent := 0.0
@@ -177,10 +246,21 @@ func meterLimitCharges(rows []meterRow, since time.Time, limits []UsageLimit, ba
 			if !ok || i == 0 || !r.at.After(since) {
 				continue
 			}
-			from, share := rs[i-1].at, 1.0
+			// The step's span: from the reading before, but not before the
+			// month began (all of a new month's money lies after the reset)
+			// nor before this limit row (a step from an unlimited reading or
+			// across a limit change is this row's, from its start).
+			from := rs[i-1].at
+			if r.newMonth && !r.boundary.IsZero() {
+				from = r.boundary
+			}
+			if l.ValidFrom.After(from) {
+				from = l.ValidFrom
+			}
+			share := 1.0
 			if from.Before(since) {
-				// The step's span (from, at] began before the range: the
-				// range holds its part, pro rata by time, like a charge.
+				// The span began before the range: the range holds its part,
+				// pro rata by time, like a charge.
 				share = float64(r.at.Sub(since)) / float64(r.at.Sub(from))
 				from = since
 			}
@@ -190,7 +270,7 @@ func meterLimitCharges(rows []meterRow, since time.Time, limits []UsageLimit, ba
 				a = &acc{c: WindowCharge{Kind: ChargeKindMeter, SecretKey: k.key, SecretSlot: k.slot,
 					Currency: l.Currency, From: from, To: r.at, FXToUSD: l.FXToUSD, FXDate: l.FXDate,
 					WindowKind: k.window, LimitAmount: l.Amount, Points: &zero, CountedPoints: &zeroC},
-					segments: map[int64]bool{}}
+					segments: map[int]bool{}}
 				byLimit[l.ValidFrom] = a
 				order = append(order, l.ValidFrom)
 			}
@@ -202,7 +282,7 @@ func meterLimitCharges(rows []meterRow, since time.Time, limits []UsageLimit, ba
 			if b := basisAt(bases, k.key, k.slot, r.at); b == BasisUsage || b == BasisSeatAndUsage {
 				*a.c.CountedPoints += points
 				a.c.CountedAmount += amount
-				a.segments[r.week] = true
+				a.segments[r.month] = true
 			}
 		}
 		for _, from := range order {
@@ -258,13 +338,17 @@ func sortCharges(cs []WindowCharge) {
 // ErrNoCredential: no credential of the organisation at that place.
 var ErrNoCredential = errors.New("no credential of this organisation at that runtime and position")
 
+// ErrReadingExists: a reading of that credential and window at that moment is
+// filed already (from the same source); the new one was not stored.
+var ErrReadingExists = errors.New("a manual reading of this credential and window at that fetched_at exists already")
+
 // AddManualReading files a meter reading a person read off the provider —
 // Claude Code's /usage screen, or the rate_limit_event a one-line
 // `claude -p … --output-format stream-json --verbose` prints — for the
 // credential at a place: source manual, the window it names, the
 // utilisation in percent, read at fetchedAt. A seat whose meter covey's own
 // runs read only while they run gets its before and after readings this way.
-// The same reading filed twice is kept once.
+// A second reading at the same moment is not stored: ErrReadingExists.
 func (s *Store) AddManualReading(ctx context.Context, orgID, runtimeID uuid.UUID, ord int, window string, pct float64,
 	resetsAt *time.Time, fetchedAt time.Time) error {
 	var ok bool
@@ -275,7 +359,7 @@ func (s *Store) AddManualReading(ctx context.Context, orgID, runtimeID uuid.UUID
 	if !ok {
 		return ErrNoCredential
 	}
-	_, err := s.pool.Exec(ctx, `INSERT INTO usage_readings (org_id, runtime_id, credential_ord, secret_key, secret_slot,
+	tag, err := s.pool.Exec(ctx, `INSERT INTO usage_readings (org_id, runtime_id, credential_ord, secret_key, secret_slot,
 		credential_kind, source, window_kind, supported, window_percent, week_percent, resets_at, status, stale,
 		fetched_at, received_at)
 		SELECT r.org_id, rc.runtime_id, rc.ord, rc.secret_key, rc.secret_slot, rc.kind, 'manual', $4::text, true,
@@ -285,5 +369,11 @@ func (s *Store) AddManualReading(ctx context.Context, orgID, runtimeID uuid.UUID
 		FROM runtime_credentials rc JOIN runtimes r ON r.id = rc.runtime_id
 		WHERE r.org_id = $1 AND rc.runtime_id = $2 AND rc.ord = $3
 		ON CONFLICT DO NOTHING`, orgID, runtimeID, ord, window, pct, resetsAt, fetchedAt)
-	return err
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrReadingExists
+	}
+	return nil
 }

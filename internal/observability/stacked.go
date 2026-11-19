@@ -415,22 +415,26 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 		return out, err
 	}
 	// A monthly usage limit (0152) turns its meter's movement into money,
-	// and where one holds a charge entered by hand is not counted again.
+	// and over the spans that money covers a charge entered by hand is not
+	// counted again: the meter charges come first, and their spans go into
+	// the hand-entered ones.
 	limits, err := s.usageLimitsFor(ctx, orgID, since)
 	if err != nil {
 		return out, err
 	}
-	if out.UsageCharges, err = s.usageChargesFor(ctx, orgID, since, time.Now(), bases, limits); err != nil {
-		return out, err
-	}
+	var meter []WindowCharge
 	if len(limits) > 0 {
 		out.UsageLimits = limits
 		rows, err := s.meterRows(ctx, orgID, since)
 		if err != nil {
 			return out, err
 		}
-		out.UsageCharges = append(out.UsageCharges, meterLimitCharges(rows, since, limits, bases)...)
+		meter = meterLimitCharges(rows, since, limits, bases)
 	}
+	if out.UsageCharges, err = s.usageChargesFor(ctx, orgID, since, time.Now(), bases, meter); err != nil {
+		return out, err
+	}
+	out.UsageCharges = append(out.UsageCharges, meter...)
 	return out, nil
 }
 
@@ -678,7 +682,8 @@ SELECT secret_key, secret_slot, MAX(credential_kind) OVER (PARTITION BY secret_k
 	CASE WHEN prev_pct IS NULL THEN 0
 	     WHEN reset = 1 THEN top
 	     ELSE top - LAG(top) OVER (PARTITION BY secret_key, secret_slot, source, window_kind ORDER BY fetched_at, id) END,
-	COALESCE(EXTRACT(EPOCH FROM fetched_at - prev_at)::float8, 0)
+	COALESCE(EXTRACT(EPOCH FROM fetched_at - prev_at)::float8, 0),
+	resets_at
 FROM m
 ORDER BY secret_key, secret_slot, source, window_kind, fetched_at, id`
 
@@ -698,6 +703,10 @@ type meterRow struct {
 	week           int64
 	reset          bool
 	points, gap    float64
+	// resets is the reading's own reset time (nil where it named none): a
+	// monthly limit merges the sources of one meter and finds its months
+	// from it (limitcharges.go). The weekly figures do not read it.
+	resets *time.Time
 }
 
 // meterRowsAt are the readings with their steps (meterQuery), in partition
@@ -712,7 +721,7 @@ func (s *Store) meterRowsAt(ctx context.Context, orgID uuid.UUID, bucket string,
 	for rows.Next() {
 		var m meterRow
 		if err := rows.Scan(&m.key, &m.slot, &m.kind, &m.source, &m.window, &m.at, &m.period,
-			&m.pct, &m.top, &m.week, &m.reset, &m.points, &m.gap); err != nil {
+			&m.pct, &m.top, &m.week, &m.reset, &m.points, &m.gap, &m.resets); err != nil {
 			return nil, err
 		}
 		m.period = m.period.UTC()
