@@ -28,7 +28,7 @@ import {
   EMPTY_SPLIT_PERIOD,
 } from "./costFigures";
 import { PlanPrice } from "./PlanPrice";
-import { CostBasisPanel, fmtMoney } from "./CostBasis";
+import { CostBasisPanel, MonthlyMeters, fmtMoney, usageSub } from "./CostBasis";
 import {
   OTHER_SOURCES,
   beforeRange,
@@ -1061,8 +1061,7 @@ function CredentialTiles({ f, filtered, narrowed, out, full }: {
     } else {
       for (const c of u.currencies) {
         tiles.push(<Tile key={`usage-${c.currency}`} label={t("costs.basis.usageTile")} value={fmtMoney(c.counted, c.currency)}
-          sub={c.currency === "USD" ? t("costs.basis.usageCount", { n: fmtNumber(c.charges, 0) })
-            : c.usd != null ? t("costs.basis.usageAtRate", { usd: fmtUSD(c.usd) }) : t("costs.basis.noRate")}
+          sub={usageSub(t, c)}
           color={SOURCE_COLOR.real} />);
       }
       // Seat and usage together: one figure only where both are in dollars.
@@ -1364,6 +1363,7 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
       </div>
       {subscription && <PlanPrice f={f} name={name} readings={readings} editable={canSetPlan} />}
       {f.secretKey != null && <CostBasisPanel f={f} name={name} editable={canSetPlan} />}
+      <MonthlyMeters f={f} readings={readings} />
       <CredentialTiles f={f} filtered={filtered || layout === "agents"} narrowed={filtered} out={mineKpis} full={full} />
       <NoMultiple f={f} />
       {/* Outside every reading's span: before the meter's first reading
