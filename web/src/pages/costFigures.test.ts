@@ -5,6 +5,7 @@ import {
   billedFigure,
   billedPerPeriod,
   billedStatus,
+  billedWholeDays,
   bucketStart,
   credentialFigures,
   isSeat,
@@ -452,6 +453,38 @@ describe("per credential", () => {
     expect(tens.size).toBeGreaterThan(1);
     expect([...tens.values()].reduce((a, b) => a + b, 0)).toBe(15);
     for (const k of tens.keys()) expect(k % 36_000_000).toBe(0);
+  });
+
+  // #98 merged with #126: every reader takes the bill's rows by one rule, so
+  // a day can be read whole (its 1d row) beside hours. The server sets such
+  // a day apart (whole_days); no hour or 10-hour bar may take it, a day bar
+  // does, and bars plus the part kept apart are the tile.
+  it("keeps a day read whole out of the hour and 10-hour bars, and in the day bars, summing to the tile", () => {
+    const pt = (at: string, usd: string) => ({ bucket: at, api_key_id: "apikey_01", workspace_id: "", model: "claude-opus-5-5",
+      secret_key: KEY, secret_slot: 1, billed_usd: usd, billed_list_usd: usd, complete: true });
+    const rep = report({ bucket: "hour",
+      points: [pt("2026-11-16T03:00:00Z", "1"), pt("2026-11-17T09:00:00Z", "2"), pt("2026-11-17T15:00:00Z", "4")],
+      whole_days: [pt("2026-11-15T00:00:00Z", "16"), pt("2026-11-16T00:00:00Z", "32")],
+      window: { start: "2026-11-16T00:00:00Z", end: "2026-11-18T00:00:00Z", compared_until: "2026-11-18T00:00:00Z", width: "1d",
+        totals: [{ secret_key: KEY, secret_slot: 1, has_billed: true, billed_usd: "39", billed_list_usd: "39", reported_usd: 0, list_usd: 0 }] } });
+    const tile = keyOf(rep).billed!.usd;
+    expect(tile).toBe(39);
+    const sum = (m: Map<number, number>) => [...m.values()].reduce((a, b) => a + b, 0);
+    for (const bucket of ["hour", "10hour", "10min"]) {
+      const bars = billedPerPeriod(rep, KEY, 1, bucket);
+      // the day before the window is in neither; the one inside is apart
+      expect(sum(bars)).toBe(7);
+      expect(billedWholeDays(rep, KEY, 1, bucket)).toBe(32);
+      expect(sum(bars) + billedWholeDays(rep, KEY, 1, bucket)).toBe(tile);
+      expect([...bars.values()].every((v) => v <= 4)).toBe(true);
+    }
+    for (const bucket of ["day", "week", "month"]) {
+      const bars = billedPerPeriod(rep, KEY, 1, bucket);
+      expect(billedWholeDays(rep, KEY, 1, bucket)).toBe(0);
+      expect(sum(bars)).toBe(tile);
+    }
+    expect([...billedPerPeriod(rep, KEY, 1, "day").entries()]).toEqual([
+      [Date.parse("2026-11-16T00:00:00Z"), 33], [Date.parse("2026-11-17T00:00:00Z"), 6]]);
   });
 
   it("gives no dollar figure where no bill could be read, and says why", () => {

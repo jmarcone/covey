@@ -1200,6 +1200,10 @@ export type BilledReport = {
   reason?: string;
   /** At hour and 10hour: where the hourly bill rows begin; a 10-hour bucket before it is not complete. */
   hourly_from?: string;
+  /** At hour and 10hour: the days the bill is read for as a whole (one
+   *  point per day, key and model at the day's midnight), never put into an
+   *  hour. With points, the rows the window's totals sum. */
+  whole_days?: BilledPoint[] | null;
 };
 
 export type TokenDiff = { type: string; reported: number; billed: number; diff: number };

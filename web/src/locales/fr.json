@@ -298,7 +298,8 @@
       "shareOfRealSpan": "la part réelle porte sur le coût réel depuis {{from}} (relevé de référence du compteur) jusqu'à {{to}}, pas sur la seule période",
       "vsNote": "× est le prix catalogue d’une période ÷ son coût réel. Le compteur avance par points entiers, le coût réel d’une période est donc à ±1 point : une période n’affiche un × qu’à partir de 3 points de mouvement, comme la tuile, et sa fourchette figure dans les détails de la période.",
       "billedBeforeHourly": "facture incomplète : avant les lignes horaires",
-      "billedHourlyFrom": "La facture est conservée par heure à partir de {{at}} : les barres antérieures manquent ou sont incomplètes."
+      "billedHourlyFrom": "La facture est conservée par heure à partir de {{at}} : les barres antérieures manquent ou sont incomplètes.",
+      "billedWholeDays": "{{usd}} de la facture ne sont connus que par jour UTC entier : aucune barre horaire ne les contient."
     },
     "kpiAllCredentials": "tous les identifiants, d'après les lignes",
     "tok": {

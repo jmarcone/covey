@@ -45,7 +45,9 @@ func readBilledViews(t *testing.T, admin *apiClient, label string) billedViews {
 		recOut: map[string]int64{}, weekly: map[string]float64{}, keysList: map[string]float64{}}
 	points := func(q, format string, into map[string]float64) {
 		got := admin.expect(http.MethodGet, "/api/v1/cost/billed?"+q, nil, http.StatusOK)
-		for _, x := range got["points"].([]any) {
+		// A day read whole is keyed at its midnight: in the hourly chart
+		// it shows as a midnight hour no bill row has.
+		for _, x := range billedPoints(got) {
 			p := x.(map[string]any)
 			at, err := time.Parse(time.RFC3339Nano, p["bucket"].(string))
 			if err != nil {
@@ -141,13 +143,14 @@ func billedWindow(t *testing.T, admin *apiClient, q string) (time.Time, string) 
 // outside the reach as the daily re-read revised it.
 //
 // The syncs run on the fixture's clock (the client's Now). The endpoints
-// read the wall clock; the test starts clear of a whole hour, so neither a
+// read the wall clock; the test starts clear of a whole hour (it runs in
+// about a second; it waits out the last 20 s before one), so neither a
 // window's first hour nor its first day (midnight is a whole hour) moves
 // against the fixture while it runs.
 func TestBilledViewsAfterEverySync(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
-	if next := now.Truncate(time.Hour).Add(time.Hour); next.Sub(now) < 2*time.Minute {
+	if next := now.Truncate(time.Hour).Add(time.Hour); next.Sub(now) < 20*time.Second {
 		time.Sleep(next.Sub(now) + time.Second)
 		now = time.Now().UTC()
 	}
@@ -339,6 +342,24 @@ func TestBilledViewsAfterEverySync(t *testing.T) {
 	check("(g) hourly sync after it", true)
 }
 
+// billedTotals is GET /cost/billed's window totals per credential
+// ("secret#slot"), and the window's start.
+func billedTotals(t *testing.T, admin *apiClient, q string) (time.Time, map[string]float64) {
+	t.Helper()
+	got := admin.expect(http.MethodGet, "/api/v1/cost/billed?"+q, nil, http.StatusOK)
+	w := got["window"].(map[string]any)
+	start, err := time.Parse(time.RFC3339Nano, w["start"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]float64{}
+	for _, x := range w["totals"].([]any) {
+		b := x.(map[string]any)
+		out[fmt.Sprintf("%s#%v", b["secret_key"], b["secret_slot"])] += usd(t, b["billed_usd"])
+	}
+	return start.UTC(), out
+}
+
 // usageRow stores one billed_usage row of the given width on an API key.
 func (f billingFixture) usageRow(t *testing.T, width string, start time.Time, apiKey, workspace string, output int, fetched time.Time) {
 	t.Helper()
@@ -358,7 +379,10 @@ func (f billingFixture) usageRow(t *testing.T, width string, start time.Time, ap
 // credential, a key's first mapping, a change of workspace only — and a
 // pinned day never took the daily re-read's revision, in any view. A
 // hand-over exactly at midnight is no hand-over of either day. A real one
-// still splits the day by its hours.
+// still splits the day by its hours — also between two slots of one secret
+// (key_sl: 10 + 14, where the day read whole would give 20). A zero-length
+// mapping of another credential inside a held day holds nothing, so it is no
+// hand-over either: the day takes the revision (key_zh).
 func TestBilledHoursOnlyWhereTheHolderChanges(t *testing.T) {
 	f := newBillingFixture(t, "rechnung-halterwechsel")
 	admin := login(t, f.s, "admin@test.local", "admin-passwort")
@@ -370,13 +394,16 @@ func TestBilledHoursOnlyWhereTheHolderChanges(t *testing.T) {
 			($1, 'key_f', 0, 'apikey_f', '', $3, NULL),
 			($1, 'key_w', 0, 'apikey_w', '', $2, $3), ($1, 'key_w', 0, 'apikey_w', 'wrkspc_a', $3, NULL),
 			($1, 'key_m1', 0, 'apikey_m', '', $2, $4), ($1, 'key_m2', 0, 'apikey_m', '', $4, NULL),
-			($1, 'key_hb', 0, 'apikey_h', '', $2, $3), ($1, 'key_hc', 0, 'apikey_h', '', $3, NULL)`,
-		f.s.orgID, long, at10, day)
+			($1, 'key_hb', 0, 'apikey_h', '', $2, $3), ($1, 'key_hc', 0, 'apikey_h', '', $3, NULL),
+			($1, 'key_sl', 0, 'apikey_l', '', $2, $3), ($1, 'key_sl', 1, 'apikey_l', '', $3, NULL),
+			($1, 'key_zh', 0, 'apikey_z', '', $2, NULL), ($1, 'key_zz', 0, 'apikey_z', '', $5, $5)`,
+		f.s.orgID, long, at10, day, day.Add(12*time.Hour))
 	// The hours as read after the day ended, inside the hourly reach ($1 and
 	// 100 000 output tokens an hour); the day re-read since, revised to $20
 	// and 2 000 000 tokens.
 	read := day.Add(30 * time.Hour)
-	for _, k := range [][2]string{{"apikey_r", ""}, {"apikey_f", ""}, {"apikey_w", "wrkspc_a"}, {"apikey_m", ""}, {"apikey_h", ""}} {
+	for _, k := range [][2]string{{"apikey_r", ""}, {"apikey_f", ""}, {"apikey_w", "wrkspc_a"}, {"apikey_m", ""}, {"apikey_h", ""},
+		{"apikey_l", ""}, {"apikey_z", ""}} {
 		for h := 0; h < 24; h++ {
 			f.billedRow(t, "1h", day.Add(time.Duration(h)*time.Hour), k[0], k[1], 100, read)
 			f.usageRow(t, "1h", day.Add(time.Duration(h)*time.Hour), k[0], k[1], 100000, read)
@@ -385,7 +412,9 @@ func TestBilledHoursOnlyWhereTheHolderChanges(t *testing.T) {
 		f.usageRow(t, "1d", day, k[0], k[1], 2000000, now)
 	}
 
-	want := map[string]float64{"key_r": 20, "key_f": 20, "key_w": 20, "key_m2": 20, "key_hb": 10, "key_hc": 14}
+	// Keyed by secret: key_sl's two slots add up.
+	want := map[string]float64{"key_r": 20, "key_f": 20, "key_w": 20, "key_m2": 20, "key_hb": 10, "key_hc": 14,
+		"key_sl": 24, "key_zh": 20}
 	for _, q := range []string{"days=7&bucket=hour", "days=7&bucket=day", "days=90&bucket=week"} {
 		_, tile, chart := billedShown(t, admin, q)
 		sameAmounts(t, q+", tile", tile, want)
@@ -416,5 +445,10 @@ func TestBilledHoursOnlyWhereTheHolderChanges(t *testing.T) {
 		k := x.(map[string]any)
 		listed[k["api_key_id"].(string)] += usd(t, k["billed_usd"])
 	}
-	sameAmounts(t, "key list", listed, map[string]float64{"apikey_r": 20, "apikey_f": 20, "apikey_w": 20, "apikey_m": 20, "apikey_h": 24})
+	sameAmounts(t, "key list", listed, map[string]float64{"apikey_r": 20, "apikey_f": 20, "apikey_w": 20, "apikey_m": 20, "apikey_h": 24,
+		"apikey_l": 24, "apikey_z": 20})
+	// The slot hand-over by slot: each slot its hours.
+	_, perSlot := billedTotals(t, admin, "days=7&bucket=day")
+	sameAmounts(t, "tile per slot", map[string]float64{"key_sl#0": perSlot["key_sl#0"], "key_sl#1": perSlot["key_sl#1"]},
+		map[string]float64{"key_sl#0": 10, "key_sl#1": 14})
 }

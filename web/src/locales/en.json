@@ -298,7 +298,8 @@
       "shareOfRealSpan": "the real share is of the real cost since {{from}} (meter baseline) to {{to}}, not of the window alone",
       "vsNote": "× is a period's list price ÷ its real cost. The meter moves in whole points, so a period's real cost is ±1 point: a period gets a × only from 3 points of movement, as the tile does, and its range is in the period's details.",
       "billedBeforeHourly": "bill incomplete: before the hourly rows",
-      "billedHourlyFrom": "The bill is kept per hour from {{at}} on: bars before it are missing or incomplete."
+      "billedHourlyFrom": "The bill is kept per hour from {{at}} on: bars before it are missing or incomplete.",
+      "billedWholeDays": "{{usd}} of the billed figure is known per whole UTC day only: no hourly bar holds it."
     },
     "kpiAllCredentials": "all credentials, from the lines",
     "tok": {
