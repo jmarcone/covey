@@ -6,9 +6,11 @@ import { api, type ExternalModelUsage } from "../api";
 import { exact, fmtBucket, fmtCount, fmtNumber, fmtUSD, fmtUSDAxis } from "../format";
 import { Seg } from "./Costs";
 import { BarChart, Chip, Swatch, type Bar } from "./StackedCostChart";
-import { FigureTile, OUTSIDE_COLOR } from "./OutsideSessions";
+import { FigureTile, OUTSIDE_COLOR, counted, listLine, listValue, unsplitLines } from "./OutsideSessions";
 import {
   ORIGINS,
+  unsplitOf,
+  unsplitSteps,
   RANGES,
   TEN_HOUR_MAX_DAYS,
   TEN_MIN_MAX_DAYS,
@@ -93,8 +95,11 @@ function SplitTable({ title, rows, total, label, color, test }: {
           {fmtCount(r.tokens[k] ?? 0)}<div className="muted text-xs">{money(r, k)}</div>
         </td>
       ))}
-      <td style={td} data-list>{r.list != null ? fmtUSD(r.list) : <span className="muted">{t("costs.outside.noPrice")}</span>}</td>
-      <td style={td}>{r.reported != null ? fmtUSD(r.reported) : "–"}</td>
+      <td style={td} data-list>{r.list != null ? fmtUSD(r.list) : r.calls === 0 ? "–" : <span className="muted">{t("costs.outside.noPrice")}</span>}</td>
+      <td style={td} data-reported>
+        {r.reported != null ? fmtUSD(r.reported) : "–"}
+        {r.reportedCalls > 0 && <div className="muted text-xs">{t("costs.outside.callsShort", counted(r.reportedCalls))}</div>}
+      </td>
       <td style={td}>{r.unpricedTokens > 0 ? fmtCount(r.unpricedTokens) : "–"}</td>
     </tr>
   );
@@ -138,10 +143,13 @@ export default function OutsideCosts() {
 
   const series = useMemo(() => perPeriodBy(cells, stack === "model" ? (c) => c.model : (c) => originOf(c)), [cells, stack]);
   const keys = stack === "model" ? models.rows.map((r) => r.key).reverse() : ORIGINS.filter((o) => origins.rows.some((r) => r.key === o));
-  const groups: Bar[][] = series.map((p) => [{
+  // A period none of whose calls had a list price has no bar (never one of
+  // $0) and says so.
+  const groups: Bar[][] = series.map((p) => (!p.priced ? [] : [{
     key: "list", label: t("costs.outside.colList"), color: OUTSIDE_COLOR,
     segs: keys.map((k) => ({ key: k, label: stack === "model" ? k : originLabel(k), color: stack === "model" ? modelColor(k) : ORIGIN_COLOR[k], value: p.v.get(k) ?? 0 })),
-  }]);
+  }]));
+  const chartNotes = new Map(series.flatMap((p, i) => (p.priced ? [] : [[i, t("costs.outside.noPrice")] as [number, string]])));
 
   // The meter: the seats the chosen sources run on. A share is always of
   // the whole meter, every source on it included.
@@ -154,6 +162,12 @@ export default function OutsideCosts() {
   const splitReal = seats.reduce((a, c) => a + c.external_real_usd + c.covey_real_usd, 0);
   const meterRows = useMemo(() => (data ? meterPerPeriod(data, cells, bucket, source) : []), [data, cells, bucket, source]);
   const sourceRow = data?.sources.find((s) => s.source === source);
+  // With one source chosen, the share is still the whole meter's (the steps
+  // carry no list price per source, so it cannot be narrowed honestly): the
+  // tile names the other sources on the same seats.
+  const otherSources = source == null ? [] : [...new Set(seats.flatMap((c) => c.sources))].filter((s) => s !== source).sort();
+  const seatSteps = (c: { secret_key: string; secret_slot: number }) =>
+    unsplitOf(data?.meter.steps ?? [], new Set([`${c.secret_key}#${c.secret_slot}`]));
   const unpricedModels = (data?.models ?? []).filter((m) => !m.priced).map((m) => m.model);
   const fmtPeriod = (p: string) => fmtBucket(p, bucket);
 
@@ -186,16 +200,18 @@ export default function OutsideCosts() {
       ) : <>
         <div className="flex flex-wrap gap-3 mb-4" data-outside-tiles>
           <FigureTile test="list" label={t("costs.outside.colList")} color={OUTSIDE_COLOR}
-            value={models.total.list != null ? fmtUSD(models.total.list) : "–"}
-            lines={[t("costs.outside.tileSub", { calls: fmtCount(models.total.calls) })]} />
+            value={listValue(models.total.list)}
+            lines={[listLine(t, models.total.list, models.total.calls)]} />
           {models.total.reported != null && (
-            <FigureTile test="reported" label={t("costs.fig.reported")} value={fmtUSD(models.total.reported)} />
+            <FigureTile test="reported" label={t("costs.fig.reported")} value={fmtUSD(models.total.reported)}
+              lines={[models.total.reportedCalls > 0 && t("costs.outside.reportedCalls", counted(models.total.reportedCalls))]} />
           )}
           <FigureTile test="real" label={t("costs.outside.meterShare")} color={OUTSIDE_COLOR} hatched
             value={seats.length > 0 && splitReal > 0 ? `≈ ${fmtUSD(real)}` : "–"}
             lines={[
-              seats.length === 0 ? t("costs.outside.noMeterLinked")
+              seats.length === 0 ? t(sourceRow && !sourceRow.meter_credential ? "costs.outside.noMeterSource" : "costs.outside.noMeterLinked")
                 : splitReal > 0 ? t("costs.outside.ofMeter", { pct: pct(real / splitReal) }) : t("costs.outside.noShare"),
+              seats.length > 0 && otherSources.length > 0 && t("costs.outside.tileOtherSources", { sources: otherSources.join(", ") }),
             ]} />
           {models.total.unpricedTokens > 0 && (
             <FigureTile test="unpriced" label={t("costs.outside.colUnpriced")} value={fmtCount(models.total.unpricedTokens)}
@@ -221,7 +237,7 @@ export default function OutsideCosts() {
             ))}
           </div>
           <BarChart title={t("costs.outside.chartTitle")} periods={series.map((p) => p.period)} groups={groups}
-            fmtPeriod={fmtPeriod} fmtValue={fmtUSD} fmtAxis={fmtUSDAxis} asTable={asTable} />
+            fmtPeriod={fmtPeriod} fmtValue={fmtUSD} fmtAxis={fmtUSDAxis} asTable={asTable} notes={chartNotes} />
           {unpricedModels.length > 0 && <p className="muted text-xs mt-1 mb-0">{t("costs.outside.chartUnpriced")}</p>}
         </div>
 
@@ -244,7 +260,12 @@ export default function OutsideCosts() {
                 {c.share != null
                   ? t("costs.outside.seatLine", { real: fmtUSD(c.real_usd), outside: fmtUSD(c.external_real_usd), pct: pct(c.share), covey: fmtUSD(c.covey_real_usd) })
                   : t("costs.outside.seatNoShare", { real: fmtUSD(c.real_usd) })}
-                {c.unsplit_steps > 0 && <> · {t("costs.outside.seatUnsplit", { count: c.unsplit_steps, usd: fmtUSD(c.unsplit_real_usd) })}</>}
+                {(() => {
+                  const s = seatSteps(c);
+                  return [...unsplitLines(t, s.unsplit),
+                    ...(s.unpricedSteps > 0 ? [t("costs.outside.unpricedReadings", counted(s.unpricedSteps))] : [])]
+                    .map((l, i) => <span key={i} data-seat-unsplit> · {l}</span>);
+                })()}
                 {c.unmetered_list_usd > 0 && <> · {t("costs.outside.unmetered", { usd: fmtUSD(c.unmetered_list_usd) })}</>}
                 <span className="muted"> · {t("costs.outside.seatSources", { sources: c.sources.join(", ") })}</span>
               </p>
@@ -264,17 +285,22 @@ export default function OutsideCosts() {
                 </thead>
                 <tbody>
                   {meterRows.map((r) => {
-                    // No reading, or a reading the outside sessions did not
-                    // report: no figure for their share, never 0.
-                    const noFigure = r.noReading || r.real == null;
-                    const unsplitOnly = !noFigure && r.notReported > 0 && r.outside === 0 && r.covey === 0;
-                    const cell = (v: number) => (noFigure || unsplitOnly ? "–" : fmtUSD(v));
-                    const note = r.noReading ? t("costs.outside.noReading")
-                      : r.real == null ? t("costs.outside.noPlanPrice")
-                      : r.notReported > 0 ? t("costs.outside.notReportedHere", { usd: fmtUSD(r.unsplit) })
-                      : "";
+                    // The parts are a figure only where a step was split: a
+                    // reading not split, idle or at no plan price has no
+                    // figure for either part, never $0. Each reason says so.
+                    const unsplitN = unsplitSteps(r.unsplit);
+                    const cell = (v: number) => (r.splitSteps > 0 ? fmtUSD(v) : "–");
+                    const notes = r.noReading ? [t("costs.outside.noReading")] : [
+                      ...unsplitLines(t, r.unsplit),
+                      ...(r.unpricedSteps > 0 ? [t("costs.outside.unpricedReadings", counted(r.unpricedSteps))] : []),
+                      ...(r.splitSteps === 0 && unsplitN === 0 && r.unpricedSteps === 0 && r.idleSteps > 0 ? [t("costs.outside.idleHere")] : []),
+                    ];
+                    const note = notes.join(" · ");
+                    const kind = r.noReading ? "no-reading"
+                      : r.splitSteps > 0 ? (unsplitN > 0 ? "partial" : "split")
+                      : unsplitN > 0 ? "unsplit" : r.unpricedSteps > 0 ? "unpriced" : "idle";
                     return (
-                      <tr key={r.period} style={{ borderTop: "1px solid var(--border)" }} data-meter-row={r.noReading ? "no-reading" : r.notReported > 0 ? "not-reported" : "split"}>
+                      <tr key={r.period} style={{ borderTop: "1px solid var(--border)" }} data-meter-row={kind} data-meter-period={r.period}>
                         <th scope="row" style={{ textAlign: "left", padding: "2px 8px 2px 0", fontWeight: 400 }}>{fmtPeriod(new Date(r.period).toISOString())}</th>
                         <td style={{ textAlign: "right", padding: "2px 8px 2px 0" }}>{r.real != null ? fmtUSD(r.real) : "–"}</td>
                         <td style={{ textAlign: "right", padding: "2px 8px 2px 0" }}>{cell(r.outside)}</td>
