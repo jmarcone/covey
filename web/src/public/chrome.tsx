@@ -107,8 +107,9 @@ export function useBoids(ref: React.RefObject<HTMLCanvasElement | null>) {
     let raf = 0;
     let last = 0;
     // Paints the swarm where it stands. Assigning canvas.width or .height
-    // clears the bitmap (HTML spec), so a resize has to call this when no
-    // frame is scheduled, or the paused swarm would vanish.
+    // clears the bitmap (HTML spec), so every resize has to call this: a
+    // paused loop runs no step, and a running one may skip the next tick at
+    // the 30 fps cap, leaving an empty canvas to be painted.
     const draw = () => {
       ctx.clearRect(0, 0, w, h);
       ctx.strokeStyle = "rgba(178, 95, 65, 0.30)";
@@ -189,10 +190,12 @@ export function useBoids(ref: React.RefObject<HTMLCanvasElement | null>) {
         raf = 0;
       }
     };
-    // While paused no step runs, so the cleared bitmap needs this redraw.
+    // Every resize clears the bitmap, paused or running, and resize events
+    // fire before the frame callbacks: a running step may not be due, so the
+    // redraw cannot be left to it.
     const onResize = () => {
       resize();
-      if (!raf) draw();
+      draw();
     };
     window.addEventListener("resize", onResize);
     document.addEventListener("visibilitychange", sync);

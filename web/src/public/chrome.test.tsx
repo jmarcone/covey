@@ -115,11 +115,20 @@ describe("useBoids", () => {
     expect(ctx.stroke.mock.calls.length).toBeGreaterThan(strokes);
   });
 
-  it("leaves the redraw to the next step on resize while the loop runs", () => {
+  it("every painted frame after a resize shows the swarm while the loop runs", () => {
     render(<PublicBackground />);
-    const clears = ctx.clearRect.mock.calls.length;
-    window.dispatchEvent(new Event("resize"));
-    expect(ctx.clearRect.mock.calls.length).toBe(clears);
+    steps[steps.length - 1](1000);
+    const before = ctx.stroke.mock.calls.length;
+    window.dispatchEvent(new Event("resize")); // fires before the frame callbacks
+    steps[steps.length - 1](1016.7); // a tick the 30 fps cap skips
+    expect(ctx.stroke.mock.calls.length).toBeGreaterThan(before);
+  });
+
+  it("paints the swarm once before the loop may run (no frame scheduled)", () => {
+    focused = false;
+    render(<PublicBackground />);
+    expect(raf).not.toHaveBeenCalled();
+    expect(ctx.stroke).toHaveBeenCalled();
   });
 
   it("draws at most every other 60 Hz tick (30 fps cap in the loop)", () => {
@@ -174,7 +183,7 @@ describe("sign-in stylesheet (#134)", () => {
   };
 
   it("never blurs the aurora or its moving circles", () => {
-    const rules = [...css.matchAll(/(?:^|\n)(\.aurora[^{,]*)\{([^}]*)\}/g)];
+    const rules = [...css.matchAll(/(?:^|\n)\s*([^{}]*\.aurora[^{}]*)\{([^}]*)\}/g)];
     expect(rules.length).toBeGreaterThan(1);
     for (const [, selector, body] of rules) {
       expect(body, selector).not.toMatch(/filter\s*:/);
