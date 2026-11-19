@@ -55,6 +55,7 @@ const zero: ExternalMeterSums = {
   split_external_slack_usd: 0, split_covey_slack_points: 0, split_covey_slack_usd: 0, point_rate: 0, point_rate_mixed: false,
   step_count: 0, split_steps: 0, unsplit_steps: 0, outside_unpriced_steps: 0, outside_unpriced_real_usd: 0,
   unpriced_steps: 0, unpriced_points: 0, unpriced_calls: 0, unpriced_tokens: 0, unmetered_list_usd: 0,
+  usage_steps: 0, usage_points: 0,
 };
 
 /** A reported step whose outside calls all had no price: unsplit
@@ -276,6 +277,17 @@ describe("subscriptionDent", () => {
     expect(both.real).toBeCloseTo(9 * PP, 9);
     expect(both.unpricedPoints).toBe(30);
     expect(both.seats.find((s) => s.key === "seat_c")!.real).toBeNull();
+  });
+
+  it("keeps the points read under the usage basis out of the dent, and does not call them unpriced (0151)", () => {
+    const onUsage = seat([], { secret_key: "seat_u", sources: [], step_count: 3, usage_steps: 3, usage_points: 7, point_rate: 0 });
+    const d = subscriptionDent(external([{ steps: [], total: onUsage }]))!;
+    expect(d.real).toBeNull();
+    expect(d.usagePoints).toBe(7);
+    expect(d.unpricedPoints).toBe(0);
+    const both = subscriptionDent(external([{ steps: STEPS, total: SEAT_A() }, { steps: [], total: onUsage }]))!;
+    expect(both.real).toBeCloseTo(9 * PP, 9);
+    expect(both.seats.find((s) => s.key === "seat_u")!).toMatchObject({ real: null, usagePoints: 7, unpricedPoints: 0 });
   });
 
   it("tells readings whose outside calls had no price from unreported ones; neither is covey's (#126 fix 2)", () => {
@@ -521,6 +533,17 @@ describe("Costs — the headline", () => {
     const row = await screen.findByRole("region", { name: "The whole dent in the subscription" });
     expect(row.querySelector("[data-dent-unpriced]")!.textContent).toBe("30 points without a plan price are not in the dent.");
     expect(row.querySelector('[data-dent-seat="seat_c #0"]')!.textContent).toMatch(/^seat_c #0: – \(30 points without a plan price\) · no outside source/);
+  });
+
+  it("says how many points were billed by usage, and shows a seat on usage as – with why, not as unpriced (0151)", async () => {
+    const onUsage = seat([], { secret_key: "seat_u", sources: [], step_count: 2, usage_steps: 2, usage_points: 7, point_rate: 0 });
+    serve(cells(external([{ steps: STEPS, total: SEAT_A() }, { steps: [], total: onUsage }])));
+    const row = await screen.findByRole("region", { name: "The whole dent in the subscription" });
+    expect(row.querySelector("[data-dent-usage]")!.textContent)
+      .toBe("7.0 points read while the seat was billed by usage are not in the dent: their money is the usage charges.");
+    expect(row.querySelector("[data-dent-unpriced]")).toBeNull();
+    expect(row.querySelector('[data-dent-seat="seat_u #0"]')!.textContent)
+      .toMatch(/^seat_u #0: – \(billed by usage: 7.0 points, their money is the usage charges\)/);
   });
 
   it("words a reading whose outside calls had no price apart, in the headline and the chart, with counts as numbers (#126 fix 2)", async () => {

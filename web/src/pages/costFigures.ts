@@ -1186,6 +1186,8 @@ export type DentSeat = {
   key: string; slot: number; sources: string[];
   real: number | null; points: number; covey: number; outside: number; unattributed: number; unsplit: number;
   unpricedPoints: number; split: boolean; pointsPerList: number | null; olderPlan: number | null;
+  /** Points read while the seat was billed by usage (0151): not in the dent, not unpriced. */
+  usagePoints: number;
   /** The seat's readings with a span in the range. */
   steps: number;
 };
@@ -1224,6 +1226,9 @@ export type SubscriptionDent = {
    *  price, covey bookings without a line): no rate, no unattributed part. */
   incompleteChunks: number;
   unpricedPoints: number;
+  /** Points read while a seat was billed by usage (0151): their money is the
+   *  usage charges, so they are not in the dent, and not unpriced either. */
+  usagePoints: number;
   /** Outside calls with no price at all: left out of the split. */
   unpricedCalls: number;
   /** The outside calls' list price after the last reading: no real share yet. */
@@ -1319,7 +1324,7 @@ export function headline(cells: CostCells | null | undefined): Headline | null {
     reportedCalls: ext!.cells.filter((c) => pu.some((s) => s.source === c.source)).reduce((a, c) => a + c.reported_calls, 0),
     unpricedTokens: pu.reduce((a, s) => a + s.unpriced_tokens, 0),
   };
-  const priced = m.credentials.some((c) => c.step_count > c.unpriced_steps);
+  const priced = m.credentials.some(meterPriced);
   const real = priced ? m.real_usd : null;
   const slack = meterSlack(m.credentials, m.steps, slackRate(cells.plans ?? [], m.point_rate), seatHasList(cells));
   const floorList = m.floor_list_usd ?? metered;
@@ -1338,10 +1343,17 @@ export function headline(cells: CostCells | null | undefined): Headline | null {
   };
 }
 
+/** A seat of the meter split has a reading in the dent: one neither at no
+ *  plan price nor under the usage basis (0151), whose points are the usage
+ *  charges'. */
+export function meterPriced(c: Pick<ExternalMeterTotal, "step_count" | "unpriced_steps" | "usage_steps">): boolean {
+  return c.step_count > c.unpriced_steps + (c.usage_steps ?? 0);
+}
+
 export function subscriptionDent(ext: ExternalUsage | null | undefined): SubscriptionDent | null {
   const m = ext?.meter;
   if (!m || m.credentials.length === 0) return null;
-  const priced = m.credentials.some((c) => c.step_count > c.unpriced_steps);
+  const priced = m.credentials.some(meterPriced);
   const real = m.real_usd;
   const splitReal = m.covey_real_usd + m.external_real_usd;
   const share = (v: number) => (real > 0 ? v / real : null);
@@ -1364,7 +1376,6 @@ export function subscriptionDent(ext: ExternalUsage | null | undefined): Subscri
   const realParts = sourceRealParts(ext);
   const active = new Set((ext?.sources ?? []).filter((s) => listedSource(s, realParts)).map((s) => s.source));
   const sources = [...new Set(m.credentials.flatMap((c) => c.sources))].filter((s) => active.has(s)).sort();
-  const pricedSeat = (c: ExternalMeterTotal) => c.step_count > c.unpriced_steps;
   return {
     real: priced ? real : null,
     points: m.point_rate_mixed ? null : m.points,
@@ -1378,15 +1389,16 @@ export function subscriptionDent(ext: ExternalUsage | null | undefined): Subscri
       beyond: (m.unattributed_real_usd ?? 0) - (m.unattributed_no_call_real_usd ?? 0), noCall: m.unattributed_no_call_real_usd ?? 0 },
     incompleteChunks: m.incomplete_chunks ?? 0,
     unpricedPoints: m.unpriced_points,
+    usagePoints: m.usage_points ?? 0,
     unpricedCalls: m.unpriced_calls,
     unmeteredList: m.unmetered_list_usd,
     noMultiple,
     sources,
     seats: m.credentials.map((c) => ({
       key: c.secret_key, slot: c.secret_slot, sources: c.sources,
-      real: pricedSeat(c) ? c.real_usd : null, points: c.points,
+      real: meterPriced(c) ? c.real_usd : null, points: c.points,
       covey: c.covey_real_usd, outside: c.external_real_usd, unattributed: c.unattributed_real_usd ?? 0, unsplit: c.unsplit_real_usd,
-      unpricedPoints: c.unpriced_points, split: c.split_steps > 0, pointsPerList: c.points_per_list_usd ?? null,
+      unpricedPoints: c.unpriced_points, usagePoints: c.usage_points ?? 0, split: c.split_steps > 0, pointsPerList: c.points_per_list_usd ?? null,
       olderPlan: c.points_per_list_older_plan_usd ?? null, steps: c.step_count,
     })),
   };

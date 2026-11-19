@@ -104,7 +104,7 @@ func (s *Store) ExternalUsageByModel(ctx context.Context, orgID uuid.UUID, bucke
 	if err != nil {
 		return out, err
 	}
-	ext, err := s.externalFor(ctx, orgID, bucket, since, coverage, priced)
+	ext, err := s.externalFor(ctx, orgID, bucket, since, coverage, priced, bases)
 	if err != nil {
 		return out, err
 	}

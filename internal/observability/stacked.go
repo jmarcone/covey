@@ -407,7 +407,7 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 	}
 	out.Subscription, out.Meter = steps, coverage
 
-	if out.External, err = s.externalFor(ctx, orgID, bucket, since, coverage, priced); err != nil {
+	if out.External, err = s.externalFor(ctx, orgID, bucket, since, coverage, priced, bases); err != nil {
 		return out, err
 	}
 	if out.UsageCharges, err = s.usageChargesFor(ctx, orgID, since, time.Now(), bases); err != nil {

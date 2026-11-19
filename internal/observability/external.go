@@ -60,7 +60,9 @@ import (
 //     moved_without_reported_call step joins the current chunk, which
 //     closes once its points P_c reach 5 (at that reading). A not_reported,
 //     outside_unpriced or unpriced step closes it before itself and stays
-//     out of every chunk, as do a reset and a change of plan price (the
+//     out of every chunk, and so does every step read while the seat's
+//     cost basis was usage (0151: its points are the usage charges', not
+//     in the dent), as do a reset and a change of plan price (the
 //     points are percent of the plan's weekly limit). The last chunk may
 //     hold fewer than 5 points. A run of steps with no list (moved with no
 //     call, or idle) right after a chunk that closed at its size, with
@@ -674,6 +676,11 @@ const (
 	// step; it joins its chunk (F3c), whose ranges see it at the chunk's
 	// share and its own price; without a plan its $ coefficient is 0.
 	SplitIdle = "idle"
+	// SplitUsage: a reading taken while the credential's basis was usage
+	// (0151): its points are usage_points, whose money is the usage
+	// charges, so the step is out of the dent and of every chunk whole —
+	// moved or not, as a step no plan prices — and it is not unpriced.
+	SplitUsage = "usage"
 )
 
 // ExternalMeter is F3 over the window: per reading step of every seat, the
@@ -800,6 +807,12 @@ type ExternalMeterSums struct {
 	// the seat. They stay out of the dent whole, never as $0.
 	UnpricedSteps  int     `json:"unpriced_steps"`
 	UnpricedPoints float64 `json:"unpriced_points"`
+	// UsageSteps / UsagePoints: steps read while the seat's basis was usage
+	// (SplitUsage), idle ones included, and their points: out of the dent
+	// and of the split, neither priced nor unpriced (their money is the
+	// usage charges). Absent without such a basis.
+	UsageSteps  int     `json:"usage_steps,omitempty"`
+	UsagePoints float64 `json:"usage_points,omitempty"`
 	// UnpricedCalls / UnpricedTokens: linked outside calls in the steps'
 	// spans with neither a list price nor a reported_usd: not in L_out.
 	UnpricedCalls  int64 `json:"unpriced_calls"`
@@ -853,7 +866,8 @@ type ExternalMeterStep struct {
 	Points     float64   `json:"points"`
 	// Reset: the reading began a new week.
 	Reset bool `json:"reset"`
-	// RealUSD: R, the priced movement; nil when no plan prices its points.
+	// RealUSD: R, the priced movement; nil when no plan prices its points,
+	// and for a reading under the usage basis (Reason SplitUsage).
 	RealUSD *float64 `json:"real_usd"`
 	// ExternalListUSD: L_out; CoveyListUSD: L_cov over (From, At].
 	ExternalListUSD float64 `json:"external_list_usd"`
@@ -904,6 +918,9 @@ type ExternalMeterHour struct {
 	SplitSteps          int      `json:"split_steps"`
 	UnattributedSteps   int      `json:"unattributed_steps"`
 	UnpricedPoints      float64  `json:"unpriced_points"`
+	// UsagePoints: the points of its steps under the usage basis (0151),
+	// not in RealUSD and not unpriced. Absent without such a basis.
+	UsagePoints float64 `json:"usage_points,omitempty"`
 	// SourceParts: the steps' outside parts per source, summed.
 	SourceParts []ExternalMeterSourcePart `json:"source_parts"`
 }
@@ -989,7 +1006,7 @@ func ExternalListUSD(model string, t ModelTokens) *float64 {
 // coverage and plans are the cost cells' own: the share reads the meter the
 // page reads, priced as the page prices it.
 func (s *Store) externalFor(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time,
-	coverage []MeterCoverage, plans []CredentialPlan) (ExternalUsage, error) {
+	coverage []MeterCoverage, plans []CredentialPlan, bases []CredentialBasis) (ExternalUsage, error) {
 	out := ExternalUsage{Sources: []ExternalSource{}, Cells: []ExternalCell{}, Meter: emptyMeter()}
 
 	links := map[string]MeterCredential{}
@@ -1165,7 +1182,7 @@ func (s *Store) externalFor(ctx context.Context, orgID uuid.UUID, bucket string,
 	var totals []ExternalMeterTotal
 	var steps []ExternalMeterStep
 	for _, seat := range seats {
-		in, cov, err := s.seatSteps(ctx, orgID, since, seat, linked[seat], readings, coverage, plans, hosts)
+		in, cov, err := s.seatSteps(ctx, orgID, since, seat, linked[seat], readings, coverage, plans, bases, hosts)
 		if err != nil {
 			return out, err
 		}
@@ -1302,6 +1319,9 @@ type shareStep struct {
 	// (spread ones are in Spread). The floor lists leave both out
 	// (floorCovExcluded).
 	BeforeSinceOut, BeforeSinceCov float64
+	// Usage: read while the seat's basis was usage (0151); its points are
+	// the usage charges', not the plan's.
+	Usage bool
 }
 
 // seatSteps builds a seat's steps from its meter's readings (the source the
@@ -1313,7 +1333,7 @@ type shareStep struct {
 // first of them. Only the steps at or after since are reported (splitSeat's
 // since); those before it shape the chunks and k.
 func (s *Store) seatSteps(ctx context.Context, orgID uuid.UUID, since time.Time, seat meterSeat, sources []string,
-	readings []meterRow, coverage []MeterCoverage, plans []CredentialPlan,
+	readings []meterRow, coverage []MeterCoverage, plans []CredentialPlan, bases []CredentialBasis,
 	hosts map[string][]ExternalHost) ([]shareStep, MeterCoverage, error) {
 	cov, ok := pickCoverage(coverage, seat.key, seat.slot)
 	if !ok {
@@ -1335,6 +1355,10 @@ func (s *Store) seatSteps(ctx context.Context, orgID uuid.UUID, since time.Time,
 		if p, ok := planAt(plans, r.key, r.slot, r.at); ok {
 			rate := p.USDPerPoint
 			st.Rate = &rate
+		} else if len(bases) > 0 && basisAt(bases, r.key, r.slot, r.at) == BasisUsage {
+			// As meterPartition reads it: the plans are cut where usage
+			// holds (seatPlans), and these points are the charges'.
+			st.Usage = true
 		}
 		steps = append(steps, st)
 	}
@@ -1951,7 +1975,9 @@ func unmarkedBefore(pushedAt time.Time, lastCall *time.Time, earliest time.Time)
 // call (split by its chunk's share all the same when the chunk has list
 // price, F3c), else the reason it is unsplit.
 //
-// A step that moved at no plan price is out of the dent whole (unpriced). A
+// A step read under the usage basis (0151) is out of the dent and of every
+// chunk whole, moved or not (usage): its money is the usage charges. A step
+// that moved at no plan price is out of the dent whole (unpriced). A
 // priced step is split when it was reported and L_out + L_cov > 0. A
 // reported step with no list on either side that moved the meter moved
 // "without a reported call": mostly the meter's lag after use, so it joins
@@ -1966,6 +1992,8 @@ func unmarkedBefore(pushedAt time.Time, lastCall *time.Time, earliest time.Time)
 func stepReason(in shareStep) string {
 	lists := in.LOut + in.LCov
 	switch {
+	case in.Usage:
+		return SplitUsage
 	case in.Points != 0 && in.Rate == nil:
 		return SplitUnpriced
 	case !in.Reported:
@@ -2139,7 +2167,7 @@ func (c *meterChunk) add(i int, in shareStep, counts bool) {
 // seatChunks walks a seat's steps in time order into chunks (F3c): a split,
 // idle or moved_without_reported_call step joins the current chunk, opening
 // one when none is open, and the chunk closes at the reading its points
-// reach chunkMinPoints. A not_reported, outside_unpriced or unpriced step
+// reach chunkMinPoints. A not_reported, outside_unpriced, unpriced or usage step
 // closes it before itself and stays in none; a reset closes it before
 // itself, and so does a step that moved or has list at another plan price
 // than the chunk's — or, while the chunk has none yet (idle steps only), the
@@ -2622,6 +2650,14 @@ func splitSeatSince(seat meterSeat, sources []string, steps []shareStep, since t
 			}
 		}
 		st.Reason = reasons[i]
+		if st.Reason == SplitUsage {
+			// Billed by usage then: no dent, no split, not unpriced.
+			tot.UsageSteps++
+			tot.UsagePoints += in.Points
+			unsplitList()
+			out = append(out, st)
+			continue
+		}
 		if st.Reason == SplitUnpriced {
 			tot.UnpricedSteps++
 			tot.UnpricedPoints += in.Points
@@ -2845,6 +2881,8 @@ func meterSums(totals []ExternalMeterTotal, steps []ExternalMeterStep) ExternalM
 		a.OutsideUnpricedRealUSD += b.OutsideUnpricedRealUSD
 		a.UnpricedSteps += b.UnpricedSteps
 		a.UnpricedPoints += b.UnpricedPoints
+		a.UsageSteps += b.UsageSteps
+		a.UsagePoints += b.UsagePoints
 		a.UnpricedCalls += b.UnpricedCalls
 		a.UnpricedTokens += b.UnpricedTokens
 		a.UnmeteredListUSD += b.UnmeteredListUSD
@@ -2885,7 +2923,11 @@ func meterSums(totals []ExternalMeterTotal, steps []ExternalMeterStep) ExternalM
 		h.ExternalListUSD += st.ExternalListUSD
 		h.CoveyListUSD += st.CoveyListUSD
 		if st.RealUSD == nil {
-			h.UnpricedPoints += st.Points
+			if st.Reason == SplitUsage {
+				h.UsagePoints += st.Points
+			} else {
+				h.UnpricedPoints += st.Points
+			}
 			continue
 		}
 		h.RealUSD = addUSD(h.RealUSD, *st.RealUSD)

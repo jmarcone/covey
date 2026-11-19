@@ -1007,6 +1007,45 @@ func TestMeterSumsUnpricedMovement(t *testing.T) {
 	}
 }
 
+// A seat billed by usage for part of the range (0151): its readings then are
+// usage points, out of the dent and of every chunk, moved or idle, and not
+// unpriced. At $1 a point: 3 points over 1 / 1, an idle reading and 4 points
+// under usage (with list on both sides), then 2 points over 1 / 3. The usage
+// readings close the first chunk, so the two seat chunks keep their own
+// shares (½ and ¼), and the usage readings' list is in no split figure.
+func TestSplitSeatUsageBasisOutOfTheSplit(t *testing.T) {
+	tot, steps := splitSeat(meterSeat{"seat", 0}, []string{"src"}, []shareStep{
+		{From: tm("10:00"), At: tm("10:10"), Points: 3, Rate: rate(1), LOut: 1, LCov: 1, Reported: true},
+		{From: tm("10:10"), At: tm("10:20"), Usage: true, LOut: 1, LCov: 1, Reported: true},
+		{From: tm("10:20"), At: tm("10:30"), Points: 4, Usage: true, LOut: 2, LCov: 2, Reported: true},
+		{From: tm("10:30"), At: tm("10:40"), Points: 2, Rate: rate(1), LOut: 1, LCov: 3, Reported: true},
+	})
+	for _, i := range []int{1, 2} {
+		if s := steps[i]; s.Reason != SplitUsage || s.RealUSD != nil || s.Split || s.UnattributedRealUSD != 0 || s.UnsplitRealUSD != 0 {
+			t.Errorf("step %d under usage = %+v, want reason %q, no R, no part", i, s, SplitUsage)
+		}
+	}
+	if !nearP(steps[0].ExternalRealUSD, 1.5) || !nearP(steps[3].ExternalRealUSD, 0.5) || !nearP(steps[3].CoveyRealUSD, 1.5) {
+		t.Errorf("seat steps: outside %v and %v, covey %v; want 1.5, 0.5, 1.5", steps[0].ExternalRealUSD, steps[3].ExternalRealUSD, steps[3].CoveyRealUSD)
+	}
+	if tot.UsageSteps != 2 || tot.UsagePoints != 4 || tot.UnpricedSteps != 0 || tot.UnpricedPoints != 0 ||
+		tot.RealUSD != 5 || tot.Points != 5 || tot.SplitSteps != 2 || tot.SplitRuns != 2 ||
+		tot.SplitExternalListUSD != 2 || tot.SplitCoveyListUSD != 4 || tot.StepCount != 4 {
+		t.Errorf("seat = %+v; want 2 usage steps of 4 points, none unpriced, $5 over 5 points in 2 split steps and 2 chunks", tot)
+	}
+	m := meterSums([]ExternalMeterTotal{tot}, steps)
+	if m.UsageSteps != 2 || m.UsagePoints != 4 || m.UnpricedPoints != 0 || len(m.Hours) != 1 ||
+		m.Hours[0].UsagePoints != 4 || m.Hours[0].UnpricedPoints != 0 || m.Hours[0].Points != 5 {
+		t.Errorf("sums: usage %d steps %v points, unpriced %v, hours %+v", m.UsageSteps, m.UsagePoints, m.UnpricedPoints, m.Hours)
+	}
+	// Without the basis the same moved readings are unpriced, as before.
+	_, plain := splitSeat(meterSeat{"seat", 0}, nil, []shareStep{
+		{From: tm("10:20"), At: tm("10:30"), Points: 4, LOut: 2, LCov: 2, Reported: true}})
+	if plain[0].Reason != SplitUnpriced {
+		t.Errorf("without a basis: reason %q, want %q", plain[0].Reason, SplitUnpriced)
+	}
+}
+
 // One list of seats for every part of the share (#126 nit 18): the linked
 // ones and every subscription seat with weekly readings, never an API key.
 func TestMeterSeats(t *testing.T) {

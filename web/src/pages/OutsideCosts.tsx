@@ -32,6 +32,7 @@ import {
   hostsBehind,
   type SplitRow,
 } from "./outsideFigures";
+import { meterPriced } from "./costFigures";
 
 /* The detailed view of the Claude Code sessions outside covey (#120, the
  * human's second comment): like an agent's cost view — list price over time
@@ -296,7 +297,7 @@ export default function OutsideCosts() {
                   // Every reading at no plan price: no real cost, not $0. F3c:
                   // the outside and covey parts ≈, the unattributed part in
                   // its two halves; the share is of the seat's whole real cost.
-                  const priced = c.step_count - c.unpriced_steps > 0;
+                  const priced = meterPriced(c);
                   const realText = priced ? fmtUSD(c.real_usd) : "–";
                   const sh = meterShare([c]);
                   // "beyond the rate" at $0 only where the seat has a rate to measure it by.
@@ -313,7 +314,8 @@ export default function OutsideCosts() {
                 {(() => {
                   const s = seatSteps(c);
                   return [...incompleteLines(t, c.incomplete_chunks ?? 0), ...noCallLines(t, s.unattributed.noCall), ...unsplitLines(t, s.unsplit),
-                    ...(s.unpricedSteps > 0 ? [t("costs.outside.unpricedReadings", counted(s.unpricedSteps))] : [])]
+                    ...(s.unpricedSteps > 0 ? [t("costs.outside.unpricedReadings", counted(s.unpricedSteps))] : []),
+                    ...(s.usageSteps > 0 ? [t("costs.outside.usageReadings", counted(s.usageSteps))] : [])]
                     .map((l, i) => <span key={i} data-seat-unsplit> · {l}</span>);
                 })()}
                 {c.unmetered_list_usd > 0 && <> · {t("costs.outside.unmetered", { usd: fmtUSD(c.unmetered_list_usd) })}</>}
@@ -323,7 +325,7 @@ export default function OutsideCosts() {
                 })()}
                 <span className="muted"> · {t("costs.outside.seatSources", { sources: c.sources.filter((x) => listed.has(x)).join(", ") })}</span>
                 {/* The seat's rate (F3c's k at its latest plan price): what the part beyond the rate is measured by. */}
-                {c.step_count > c.unpriced_steps && c.split_steps > 0 && (
+                {meterPriced(c) && c.split_steps > 0 && (
                   <span className="muted text-xs" style={{ display: "block" }} data-seat-rate>
                     {rateLine(t, `${c.secret_key} #${c.secret_slot}`, c.points_per_list_usd, c.points_per_list_older_plan_usd ?? null)}
                   </span>
@@ -376,19 +378,20 @@ export default function OutsideCosts() {
                     const unsplitCell = unsplitN > 0 ? `≈ ${fmtUSD(unsplitUSD(r.unsplit))}` : "–";
                     // No reading on one seat while another seat has one in
                     // the period: both are said.
-                    const anyStep = r.splitSteps + noCallN + unsplitN + r.unpricedSteps + r.idleSteps > 0;
+                    const anyStep = r.splitSteps + noCallN + unsplitN + r.unpricedSteps + r.usageSteps + r.idleSteps > 0;
                     const notes = [
                       ...(r.noReading ? [t("costs.outside.noReading")] : []),
                       ...noCallLines(t, r.unattributed.noCall),
                       ...unsplitLines(t, r.unsplit),
                       ...(r.unpricedSteps > 0 ? [t("costs.outside.unpricedReadings", counted(r.unpricedSteps))] : []),
-                      ...(r.splitSteps + noCallN + unsplitN + r.unpricedSteps === 0 && r.idleSteps > 0 ? [t("costs.outside.idleHere")] : []),
+                      ...(r.usageSteps > 0 ? [t("costs.outside.usageReadings", counted(r.usageSteps))] : []),
+                      ...(r.splitSteps + noCallN + unsplitN + r.unpricedSteps + r.usageSteps === 0 && r.idleSteps > 0 ? [t("costs.outside.idleHere")] : []),
                     ];
                     const note = notes.join(" · ");
                     const kind = !anyStep ? "no-reading"
                       : r.splitSteps > 0 ? (unsplitN + noCallN > 0 ? "partial" : "split")
                       : unsplitN > 0 ? (noCallN > 0 ? "partial" : "unsplit")
-                      : noCallN > 0 ? "unattributed" : r.unpricedSteps > 0 ? "unpriced" : "idle";
+                      : noCallN > 0 ? "unattributed" : r.unpricedSteps > 0 ? "unpriced" : r.usageSteps > 0 ? "usage" : "idle";
                     const td = { textAlign: "right", padding: "2px 8px 2px 0", whiteSpace: "nowrap" } as const;
                     return (
                       <tr key={r.period} style={{ borderTop: "1px solid var(--border)" }} data-meter-row={kind} data-meter-period={r.period}>

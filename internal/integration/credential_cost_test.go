@@ -280,6 +280,27 @@ func TestCredentialCostBasisAndUsageCharges(t *testing.T) {
 	if list := admin.expectList(http.MethodGet, place+"/usage-charges", nil, http.StatusOK); len(list) != 1 || list[0]["id"] != ch["id"] {
 		t.Errorf("after the delete: %v", list)
 	}
+
+	// The meter split agrees once a source names the seat: under
+	// seat_and_usage the seat part is the meter's dent as before (its step
+	// at the plan, no usage points) and the charges stand beside it, in
+	// none of the split's figures.
+	up := extUpload("operator: home")
+	up["meter_credential"] = map[string]any{"secret_key": "claude_code_oauth_token", "secret_slot": 0}
+	admin.expect(http.MethodPost, externalPath, up, http.StatusOK)
+	cells = costCells(t, admin, "days=2&bucket=hour")
+	m := cells.External.Meter
+	if len(m.Steps) != 1 || m.Steps[0].RealUSD == nil || math.Abs(*m.Steps[0].RealUSD-4*perPoint) > 1e-9 ||
+		m.Steps[0].Reason == observability.SplitUsage {
+		t.Errorf("under seat_and_usage: meter steps %+v, want the one step at the plan", m.Steps)
+	}
+	if math.Abs(m.RealUSD-4*perPoint) > 1e-9 || m.UsageSteps != 0 || m.UsagePoints != 0 || m.UnpricedSteps != 0 {
+		t.Errorf("under seat_and_usage: dent %v, usage %d/%v, unpriced %d; want the seat's 4 points, nothing else",
+			m.RealUSD, m.UsageSteps, m.UsagePoints, m.UnpricedSteps)
+	}
+	if uc := cells.UsageCharges; len(uc) != 1 || uc[0].CountedAmount != uc[0].Amount {
+		t.Errorf("under seat_and_usage: the charge beside the split = %+v, want it counted in full", uc)
+	}
 }
 
 // A seat that went from seat to usage inside the window: the step before the
@@ -352,5 +373,45 @@ func TestCredentialBasisChangeInsideWindow(t *testing.T) {
 	if cb := cells.CostBases; len(cb) != 2 || cb[0].Basis != "usage" || cb[0].ValidTo == nil || !cb[0].ValidTo.Equal(later) ||
 		cb[1].Basis != "seat_and_usage" || !cb[1].ValidFrom.After(time.Now()) {
 		t.Errorf("cost_bases = %+v, want usage until the later seat_and_usage", cb)
+	}
+
+	// The meter split (F3c) agrees: once a source names the seat, the step
+	// under usage is out of the dent and of the split as usage points, not
+	// unpriced, in /cost/cells and in the detailed view of the sessions
+	// outside covey alike.
+	up := extUpload("operator: home")
+	up["meter_credential"] = map[string]any{"secret_key": "claude_code_oauth_token", "secret_slot": 0}
+	admin.expect(http.MethodPost, externalPath, up, http.StatusOK)
+	cells = costCells(t, admin, "days=2&bucket=hour")
+	view := viewGet(t, admin, "days=2&bucket=hour")
+	for name, m := range map[string]observability.ExternalMeter{"cells": cells.External.Meter, "view": view.Meter} {
+		if len(m.Steps) != 2 || len(m.Credentials) != 1 {
+			t.Fatalf("%s: steps %+v, seats %d; want the two readings after the first, one seat", name, m.Steps, len(m.Credentials))
+		}
+		if st := m.Steps[1]; !st.At.Equal(h.Add(3*time.Hour+30*time.Minute)) || st.Reason != observability.SplitUsage ||
+			st.RealUSD != nil || st.Split {
+			t.Errorf("%s: the step under usage = %+v, want reason usage and no R", name, st)
+		}
+		if st := m.Steps[0]; st.RealUSD == nil || math.Abs(*st.RealUSD-3*perPoint) > 1e-9 || st.Reason == observability.SplitUsage {
+			t.Errorf("%s: the step under the seat = %+v, want 3 points at the plan", name, st)
+		}
+		c := m.Credentials[0]
+		if c.UsageSteps != 1 || c.UsagePoints != 4 || c.UnpricedSteps != 0 || c.UnpricedPoints != 0 ||
+			math.Abs(c.RealUSD-3*perPoint) > 1e-9 || c.Points != 3 {
+			t.Errorf("%s: seat = usage %d/%v unpriced %d/%v real %v points %v; want the seat's 3 points as its dent, 4 usage points",
+				name, c.UsageSteps, c.UsagePoints, c.UnpricedSteps, c.UnpricedPoints, c.RealUSD, c.Points)
+		}
+		if m.UsagePoints != 4 || m.UnpricedPoints != 0 || math.Abs(m.RealUSD-3*perPoint) > 1e-9 {
+			t.Errorf("%s: meter usage %v unpriced %v real %v", name, m.UsagePoints, m.UnpricedPoints, m.RealUSD)
+		}
+		var hour *observability.ExternalMeterHour
+		for i := range m.Hours {
+			if m.Hours[i].Hour.Equal(h.Add(3 * time.Hour)) {
+				hour = &m.Hours[i]
+			}
+		}
+		if hour == nil || hour.UsagePoints != 4 || hour.UnpricedPoints != 0 || hour.RealUSD != nil {
+			t.Errorf("%s: the hour under usage = %+v, want 4 usage points, no R", name, hour)
+		}
 	}
 }
