@@ -76,6 +76,17 @@ function laufen(l: Leben, id: string, dt = 0.05) {
 }
 const nah = (a: Punkt, b: Punkt) => Math.hypot(a.x - b.x, a.y - b.y) < 1e-6;
 
+/** A small seeded generator (mulberry32): the same numbers on every run. */
+function gesaet(seed: number): () => number {
+  let a = seed;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 afterEach(() => vi.restoreAllMocks());
 
 describe("leben", () => {
@@ -250,6 +261,11 @@ describe("leben", () => {
   });
 
   it("moves everybody on both floors, and wanders only onto free floor where there is a grid", () => {
+    /* Every decision of a figure is random, and on a floor without a grid a
+       figure has few ways to move: with real randomness about one run in a
+       hundred leaves one of the two upstairs where it sat (seed 88 does).
+       The claim is about the walking, not about the dice, so they are fixed. */
+    vi.spyOn(Math, "random").mockImplementation(gesaet(1));
     const l = erschaffeLeben(zweiStock, [felder, null], vierLeute(["frei", "frei", "frei", "frei"]), false);
     const start = new Map(l.figuren.map((f) => [f.id, { ...f.pos }]));
     const bewegt = new Set<string>();
