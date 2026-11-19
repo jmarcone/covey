@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"slices"
@@ -11,6 +12,7 @@ import (
 	"testing/fstest"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -69,11 +71,13 @@ func tableExists(t *testing.T, pool *pgxpool.Pool, table string) bool {
 // The deployed database applied 0142 under one name; a branch that was numbered
 // against an older main ships 0142 under another. MigrateUp used to see
 // "142 applied" and skip the file, silently and for good. It must refuse, name
-// both, and apply nothing — not even the migrations behind the colliding one.
+// both, and apply nothing — not even the migrations below the colliding one,
+// which a check inside the apply loop would let through.
 func TestMigrateUpRefusesAVersionAppliedUnderAnotherName(t *testing.T) {
 	pool := testPool(t)
 	recordApplied(t, pool, 142, "0142_other")
 	fsys := fstest.MapFS{
+		"0141_before.up.sql":     {Data: []byte("CREATE TABLE before_probe (id INT)")},
 		"0142_stage_keys.up.sql": {Data: []byte("CREATE TABLE stage_keys_probe (id INT)")},
 		"0143_after.up.sql":      {Data: []byte("CREATE TABLE after_probe (id INT)")},
 	}
@@ -83,22 +87,134 @@ func TestMigrateUpRefusesAVersionAppliedUnderAnotherName(t *testing.T) {
 		t.Fatal("version 142 applied as 0142_other was skipped without an error")
 	}
 	var mm *NameMismatchError
-	if !errors.As(err, &mm) {
-		t.Fatalf("error is %T, expected *NameMismatchError: %v", err, err)
+	if !errors.As(err, &mm) || len(mm.Mismatches) != 1 {
+		t.Fatalf("error is %T, expected one *NameMismatchError: %v", err, err)
 	}
 	for _, want := range []string{"0142_stage_keys", "0142_other", "renumber"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the error does not name %q: %v", want, err)
 		}
 	}
-	if mm.AppliedAt.IsZero() {
+	// The remedy names a rule, not the file on disk: that file may be main's,
+	// and other databases have already run it.
+	if strings.Contains(err.Error(), "renumber 0142_stage_keys") {
+		t.Errorf("the remedy tells to renumber the file on disk: %v", err)
+	}
+	if mm.Mismatches[0].AppliedAt.IsZero() {
 		t.Error("the error carries no applied_at")
 	}
 	if n != 0 {
 		t.Errorf("applied = %d, expected 0", n)
 	}
-	if tableExists(t, pool, "after_probe") || tableExists(t, pool, "stage_keys_probe") {
-		t.Error("a migration ran although the run was refused")
+	for _, table := range []string{"before_probe", "stage_keys_probe", "after_probe"} {
+		if tableExists(t, pool, table) {
+			t.Errorf("%s exists: a migration ran although the run was refused", table)
+		}
+	}
+}
+
+// Renumbering on merge is the usual way two branches resolve a collision
+// (0085 → 0087). A database that ran the branch build has the old number, so by
+// version the renumbered file is new and would run a second time. Both inputs
+// are refused before anything runs, and the refusal after the first one is
+// "fixed" still stands — the advice must not lead to a double run.
+func TestMigrateUpRefusesAMigrationRenumberedAfterItRan(t *testing.T) {
+	const applied = "0085_registration_token_expiry"
+	const renumbered = "0087_registration_token_expiry"
+	probe := []byte("CREATE TABLE rte_probe (id INT)")
+
+	cases := []struct {
+		name  string
+		fsys  fstest.MapFS
+		wants []string // fragments the error must contain
+		count int      // mismatches expected
+	}{
+		{"another file took the old number",
+			fstest.MapFS{
+				"0085_other.up.sql":    {Data: []byte("CREATE TABLE other_probe (id INT)")},
+				renumbered + ".up.sql": {Data: probe},
+			}, []string{"0085_other", applied, renumbered, "second time"}, 2},
+		{"after that file moved away",
+			fstest.MapFS{
+				renumbered + ".up.sql": {Data: probe},
+				"0152_other.up.sql":    {Data: []byte("CREATE TABLE other_probe (id INT)")},
+			}, []string{applied, renumbered, "second time"}, 1},
+		{"no other file at all",
+			fstest.MapFS{renumbered + ".up.sql": {Data: probe}},
+			[]string{applied, renumbered, "second time"}, 1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			pool := testPool(t)
+			recordApplied(t, pool, 85, applied)
+			n, err := MigrateUp(context.Background(), pool, c.fsys)
+			var mm *NameMismatchError
+			if !errors.As(err, &mm) {
+				t.Fatalf("MigrateUp returned %v, expected a *NameMismatchError", err)
+			}
+			if len(mm.Mismatches) != c.count {
+				t.Errorf("%d mismatches, expected %d: %v", len(mm.Mismatches), c.count, err)
+			}
+			for _, want := range c.wants {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the error does not name %q: %v", want, err)
+				}
+			}
+			if n != 0 || tableExists(t, pool, "rte_probe") || tableExists(t, pool, "other_probe") {
+				t.Errorf("a migration ran although the run was refused (applied = %d)", n)
+			}
+			// Pending says the same before a restart does.
+			if _, err := Pending(context.Background(), pool, c.fsys); !errors.As(err, &mm) {
+				t.Errorf("Pending returned %v, expected a *NameMismatchError", err)
+			}
+		})
+	}
+}
+
+// Two mismatches are both reported at once, in file order, so that fixing the
+// first does not reveal the second only at the next start.
+func TestNameMismatchErrorListsEveryMismatch(t *testing.T) {
+	applied := map[int]appliedMigration{
+		1: {name: "0001_x"},
+		2: {name: "0002_y"},
+	}
+	ms := []migration{{version: 1, name: "0001_a"}, {version: 2, name: "0002_b"}}
+	_, err := unapplied(ms, applied)
+	var mm *NameMismatchError
+	if !errors.As(err, &mm) || len(mm.Mismatches) != 2 {
+		t.Fatalf("expected two mismatches, got %v", err)
+	}
+	if mm.Mismatches[0].File != "0001_a" || mm.Mismatches[1].File != "0002_b" {
+		t.Errorf("mismatches = %+v", mm.Mismatches)
+	}
+}
+
+// A new migration that merely reuses the name of one that is still in the tree
+// is a new migration, not a renumbered one.
+func TestMigrateUpRunsANewMigrationWithARepeatedName(t *testing.T) {
+	pool := testPool(t)
+	recordApplied(t, pool, 1, "0001_add_index")
+	fsys := fstest.MapFS{
+		"0001_add_index.up.sql": {Data: []byte("CREATE TABLE first_probe (id INT)")},
+		"0002_add_index.up.sql": {Data: []byte("CREATE TABLE second_probe (id INT)")},
+	}
+	n, err := MigrateUp(context.Background(), pool, fsys)
+	if err != nil || n != 1 || !tableExists(t, pool, "second_probe") || tableExists(t, pool, "first_probe") {
+		t.Fatalf("applied = %d, err = %v", n, err)
+	}
+}
+
+// Only "no such table" means a database that was never migrated.
+func TestIsUndefinedTable(t *testing.T) {
+	if !isUndefinedTable(fmt.Errorf("read: %w", &pgconn.PgError{Code: "42P01", Message: `relation "schema_migrations" does not exist`})) {
+		t.Error("42P01 is not recognised")
+	}
+	denied := &pgconn.PgError{Code: "42501", Message: "permission denied for table schema_migrations"}
+	if isUndefinedTable(denied) {
+		t.Error("a permission error reads as a database that was never migrated")
+	}
+	if isUndefinedTable(errors.New(`relation "schema_migrations" does not exist`)) {
+		t.Error("a plain error with the table in its text counts as undefined_table")
 	}
 }
 
@@ -169,8 +285,11 @@ func TestPendingReportsANameMismatch(t *testing.T) {
 	if !errors.As(err, &mm) {
 		t.Fatalf("Pending returned %v, expected a *NameMismatchError", err)
 	}
-	if mm.File != "0142_stage_keys" || mm.Applied != "0142_other" || mm.Version != 142 {
-		t.Errorf("mismatch = %+v", mm)
+	if len(mm.Mismatches) != 1 {
+		t.Fatalf("mismatches = %+v", mm.Mismatches)
+	}
+	if m := mm.Mismatches[0]; m.File != "0142_stage_keys" || m.Applied != "0142_other" || m.Version != 142 || m.Renumbered() {
+		t.Errorf("mismatch = %+v", m)
 	}
 }
 

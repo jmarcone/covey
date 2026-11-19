@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"sort"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -91,21 +93,60 @@ func loadMigrations(fsys fs.FS) ([]migration, error) {
 	return out, nil
 }
 
-// NameMismatchError says that a migration file's number is already applied
-// under another name. loadMigrations refuses two files with one number in one
-// tree; this is the same rule against the database. Without it the file is
-// skipped silently and forever — its SQL never runs, and the damage shows up
-// only as a missing column in live operation.
-type NameMismatchError struct {
-	Version   int
-	File      string    // the name on disk
-	Applied   string    // the name recorded in schema_migrations
-	AppliedAt time.Time // when that row was written
+// NameMismatch is one disagreement between a migration file and the
+// schema_migrations rows of a database. There are two shapes, and both end in a
+// migration that is skipped or run twice:
+//
+//   - the same number under another name (Applied != File, AppliedVersion ==
+//     Version): the file is skipped silently and forever, because
+//     MigrateUp sees "version applied";
+//   - the same migration under another number (Renumbered): a branch build ran
+//     it as 0085, main renumbered it to 0087 on merge. By version the file is
+//     new, and it would run a second time.
+type NameMismatch struct {
+	Version        int       // the number of the file on disk
+	File           string    // the name on disk
+	AppliedVersion int       // the number the database recorded
+	Applied        string    // the name the database recorded
+	AppliedAt      time.Time // when that row was written
 }
 
+// Renumbered reports the second shape: the database ran this migration, under
+// another number.
+func (m NameMismatch) Renumbered() bool { return m.Version != m.AppliedVersion }
+
+// String names both sides. It does not say which side is the right one: the
+// guard cannot tell a database that ran a branch build from a binary that is
+// the branch.
+func (m NameMismatch) String() string {
+	at := m.AppliedAt.UTC().Format(time.RFC3339)
+	if m.Renumbered() {
+		return fmt.Sprintf("this database applied %s as version %d (at %s), from another build; this binary carries it as %s under version %d, where it would run a second time",
+			m.Applied, m.AppliedVersion, at, m.File, m.Version)
+	}
+	return fmt.Sprintf("this database applied version %d as %s (at %s), from another build; this binary carries %s under the same number",
+		m.Version, m.Applied, at, m.File)
+}
+
+// NameMismatchError says that migration files and the database disagree on a
+// number or a name. loadMigrations refuses two files with one number in one
+// tree; this is the same rule against the database. Every mismatch is listed,
+// so that fixing the first does not reveal the second only at the next start.
+type NameMismatchError struct {
+	Mismatches []NameMismatch
+}
+
+// NameMismatchRemedy is what to do about it, worded for the person who reads a failed
+// start. Which side is wrong depends on which build ran against the database,
+// so it names the rule, not a file.
+const NameMismatchRemedy = "renumber whichever of the two is not on main yet (CLAUDE.md), never one that other databases have already run; `covey serve` refuses until the numbering in the source agrees"
+
 func (e *NameMismatchError) Error() string {
-	return fmt.Sprintf("migration %s has version %d, but this database applied version %d as %s (at %s) — renumber %s",
-		e.File, e.Version, e.Version, e.Applied, e.AppliedAt.UTC().Format(time.RFC3339), e.File)
+	lines := make([]string, len(e.Mismatches))
+	for i, m := range e.Mismatches {
+		lines[i] = m.String()
+	}
+	return strings.Join(lines, "\n") + "\n" + NameMismatchRemedy
 }
 
 type appliedMigration struct {
@@ -135,19 +176,75 @@ func appliedMigrations(ctx context.Context, q interface {
 	return out, rows.Err()
 }
 
-// unapplied returns the migrations whose version the database has not seen, and
-// refuses when a version it has seen carries another name than the file. A
-// database row without a file (a database ahead of the binary) is left alone.
+// slug is a migration name without its number: "0087_stage_keys" → "stage_keys".
+// A migration renumbered on merge keeps it.
+func slug(name string) string {
+	_, rest, ok := strings.Cut(name, "_")
+	if !ok {
+		return name
+	}
+	return rest
+}
+
+// isUndefinedTable is Postgres's "no such table" (42P01), matched by code: the
+// text of other errors mentions the table too ("permission denied for table
+// schema_migrations").
+func isUndefinedTable(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "42P01"
+}
+
+// unapplied returns the migrations this database has not seen, and refuses —
+// listing every case at once — when files and rows disagree about a name:
+//
+//   - a version the database has seen carries another name than the file;
+//   - a file the database has not seen by version has the name of a row whose own
+//     file is gone (same name after the number, another number). That is a
+//     migration renumbered after the database ran it; without this it runs a
+//     second time. A new file that merely repeats the name of a migration still
+//     in the tree is not that, and is left alone.
+//
+// A database row without any file (a database ahead of the binary) is left alone.
 func unapplied(ms []migration, applied map[int]appliedMigration) ([]migration, error) {
+	onDisk := make(map[string]bool, len(ms))
+	for _, m := range ms {
+		onDisk[m.name] = true
+	}
+	// Rows whose name no file carries, by slug — the lowest version wins, so the
+	// message does not depend on map order.
+	versions := make([]int, 0, len(applied))
+	for v := range applied {
+		versions = append(versions, v)
+	}
+	sort.Ints(versions)
+	orphans := map[string]int{}
+	for _, v := range versions {
+		if onDisk[applied[v].name] {
+			continue
+		}
+		if _, dup := orphans[slug(applied[v].name)]; !dup {
+			orphans[slug(applied[v].name)] = v
+		}
+	}
+
 	var out []migration
+	var bad []NameMismatch
 	for _, m := range ms {
 		a, ok := applied[m.version]
 		switch {
-		case !ok:
+		case ok && a.name != m.name:
+			bad = append(bad, NameMismatch{Version: m.version, File: m.name, AppliedVersion: m.version, Applied: a.name, AppliedAt: a.appliedAt})
+		case ok:
+		default:
+			if v, moved := orphans[slug(m.name)]; moved {
+				bad = append(bad, NameMismatch{Version: m.version, File: m.name, AppliedVersion: v, Applied: applied[v].name, AppliedAt: applied[v].appliedAt})
+				continue
+			}
 			out = append(out, m)
-		case a.name != m.name:
-			return nil, &NameMismatchError{Version: m.version, File: m.name, Applied: a.name, AppliedAt: a.appliedAt}
 		}
+	}
+	if len(bad) > 0 {
+		return nil, &NameMismatchError{Mismatches: bad}
 	}
 	return out, nil
 }
@@ -166,7 +263,9 @@ func Pending(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) ([]string, err
 	// everything is pending, which is the right answer and not an error.
 	applied, err := appliedMigrations(ctx, pool)
 	if err != nil {
-		if !strings.Contains(err.Error(), "schema_migrations") {
+		// Only "no such table" means never migrated. Any other error — a
+		// permission denied on the table, say — is not an empty database.
+		if !isUndefinedTable(err) {
 			return nil, err
 		}
 		applied = nil
@@ -210,9 +309,10 @@ func MigrateUp(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) (applied int
 	// second merges with the smaller one. Skipped silently and forever, because
 	// on the next start the mark is unchanged and still as high.
 	//
-	// The name counts too: a version applied under another name is the same
-	// collision one step later (the branch merged after the other one ran), and
-	// is refused before anything is applied, like two files with one number.
+	// The name counts too: a version applied under another name, or a name applied
+	// under another version, is the same collision one step later (the branch
+	// merged after the other one ran). It is refused before anything is applied,
+	// like two files with one number.
 	seen, err := appliedMigrations(ctx, conn)
 	if err != nil {
 		return 0, err

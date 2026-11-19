@@ -68,8 +68,15 @@ func TestDoctorReportsAMigrationAppliedUnderAnotherName(t *testing.T) {
 				t.Errorf("the finding does not name %q: %q", want, f.Detail)
 			}
 		}
-		if !strings.Contains(f.Remedy, "renumber") {
-			t.Errorf("the remedy does not say to renumber: %q", f.Remedy)
+		// The reader is an operator: no "renumber <file>", which they cannot do.
+		if strings.Contains(f.Remedy, "renumber") || !strings.Contains(f.Remedy, "keep running") {
+			t.Errorf("the remedy is not worded for an operator: %q", f.Remedy)
+		}
+	}
+	// "start covey serve once" would be wrong advice: serve refuses.
+	for _, f := range rep.Findings {
+		if f.What == "the rest" && (strings.Contains(f.Detail, "start `covey serve`") || !strings.Contains(f.Detail, "numbering")) {
+			t.Errorf("the rest contradicts the refusal: %q", f.Detail)
 		}
 	}
 	if !found {

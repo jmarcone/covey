@@ -107,8 +107,14 @@ func (d *doctor) check(ctx context.Context, pool *pgxpool.Pool) {
 	// below read do not exist yet. Saying "not answerable until the migrations
 	// have run" is the honest answer — leaking a Postgres error about a missing
 	// column would send the reader after the wrong thing entirely.
-	migrated := d.checkMigrations(ctx, pool)
-	if !migrated {
+	switch d.checkMigrations(ctx, pool) {
+	case migrationsRefused:
+		// `covey serve` would not start either, so "start it once" is no advice.
+		d.add(Finding{What: "the rest",
+			Detail: "answerable once the migration numbering is fixed in the source and the migrations have run"})
+		d.checkEgress(ctx)
+		return
+	case migrationsPending:
 		d.add(Finding{What: "the rest",
 			Detail: "answerable once the migrations have run — start `covey serve` once, then ask again"})
 		d.checkEgress(ctx)
@@ -124,25 +130,42 @@ func (d *doctor) check(ctx context.Context, pool *pgxpool.Pool) {
 	d.checkSiteAddress(ctx, pool)
 }
 
+// migrationState is what checkMigrations found, and so what the checks that
+// read the newest columns may assume.
+type migrationState int
+
+const (
+	migrationsReady   migrationState = iota // nothing pending
+	migrationsPending                       // a restart will apply them
+	migrationsRefused                       // a restart will refuse: numbering disagrees with the database
+)
+
 // checkMigrations says what a restart is about to do to the database — the one
 // moment somebody would want a backup.
-func (d *doctor) checkMigrations(ctx context.Context, pool *pgxpool.Pool) bool {
+func (d *doctor) checkMigrations(ctx context.Context, pool *pgxpool.Pool) migrationState {
 	pending, err := db.Pending(ctx, pool, migrations.FS)
 	// A number applied under another name is not "pending": `covey serve` refuses
 	// to start on it, so it blocks, and the remedy is not a backup.
 	var mismatch *db.NameMismatchError
 	if errors.As(err, &mismatch) {
-		d.problem("migrations", mismatch.Error(),
-			"renumber "+mismatch.File+" to the next free number — `covey serve` refuses to start until then", true)
-		return false
+		lines := make([]string, len(mismatch.Mismatches))
+		for i, m := range mismatch.Mismatches {
+			lines[i] = m.String()
+		}
+		// The reader is an operator, who cannot renumber what is embedded in the
+		// binary — the numbering is a developer's to fix, in the source. Until then
+		// the build this database was migrated with is the one to keep running.
+		d.problem("migrations", strings.Join(lines, "; "),
+			"`covey serve` refuses to start until the numbering is fixed in the source — keep running the build this database was migrated with", true)
+		return migrationsRefused
 	}
 	if err != nil {
 		d.problem("migrations", "not readable: "+err.Error(), "", false)
-		return false
+		return migrationsPending
 	}
 	if len(pending) == 0 {
 		d.ok("migrations", "up to date")
-		return true
+		return migrationsReady
 	}
 	// Named individually while they still fit on a screen — that is the upgrade
 	// case, and there the names are what somebody looks up. A fresh database
@@ -154,7 +177,7 @@ func (d *doctor) checkMigrations(ctx context.Context, pool *pgxpool.Pool) bool {
 		remedy = "a database this far behind is usually an empty one — `covey bootstrap` sets it up"
 	}
 	d.problem("migrations", detail, remedy, false)
-	return false
+	return migrationsPending
 }
 
 // checkWorkplaceNames finds the one collision an upgrade can produce silently.

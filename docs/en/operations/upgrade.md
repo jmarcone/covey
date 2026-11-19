@@ -8,6 +8,13 @@ Migrations run by themselves: `covey serve` applies what is missing at startup,
 under an advisory lock, so several instances against one database do not race.
 An upgrade is therefore usually "pull the new binary, restart".
 
+The one start that is refused: a migration number the database applied under
+another name, or a migration name it applied under another number — what a
+branch build leaves behind when the numbering was changed on merge. `covey serve`
+then applies nothing and names both sides, and `covey doctor` shows the same
+finding as blocking. The numbering is fixed in the source, not by the operator;
+until then, keep running the build the database was migrated with.
+
 This page lists the upgrades where that is **not** enough — where something has
 to be built, backed up or decided beforehand. Newest first.
 
