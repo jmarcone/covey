@@ -226,6 +226,7 @@ holds the reading order. The operating runbooks below are English only.
 | [`docs/en/operations/runner.md`](docs/en/operations/runner.md) | Runners: sandboxes on more than one host, the home store, hard egress isolation |
 | [`docs/en/operations/workplaces.md`](docs/en/operations/workplaces.md) | Workplaces: which image an agent works in, the role images, a workplace of your own |
 | [`docs/en/operations/telemetry.md`](docs/en/operations/telemetry.md) | Telemetry: what an installation sends to the project once a day, what it never sends, how to switch it off |
+| [`docs/en/concepts/costs.md`](docs/en/concepts/costs.md) | The cost page: the work at token prices, the one real cost and the one multiple, the Claude Code sessions outside covey, how the real cost of a subscription is estimated, reconciling an API key with its bill |
 | [`docs/en/integrations/zammad.md`](docs/en/integrations/zammad.md) | Zammad: API token, webhook + trigger, customer-visible replies |
 | [`docs/en/integrations/zendesk.md`](docs/en/integrations/zendesk.md) | Zendesk Support: the four credential forms, a signed webhook, the thread rebuilt from the audit trail |
 | [`docs/en/integrations/github.md`](docs/en/integrations/github.md) | GitHub: issues, pull requests, Actions, checkout inside the sandbox |

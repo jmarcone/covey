@@ -521,14 +521,20 @@ func (s *Server) handleUpdateStage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	// default_name gives a default column its own name back, so it shows the
+	// reader's language again; the name sent beside it does not count.
 	var in struct {
-		Name     string `json:"name"`
-		Color    string `json:"color"`
-		Position int    `json:"position"`
+		Name        string `json:"name"`
+		Color       string `json:"color"`
+		Position    int    `json:"position"`
+		DefaultName bool   `json:"default_name"`
 	}
-	if err := readJSON(r, &in); err != nil || in.Name == "" {
+	if err := readJSON(r, &in); err != nil || (in.Name == "" && !in.DefaultName) {
 		writeErr(w, http.StatusBadRequest, "name is required")
 		return
+	}
+	if in.DefaultName {
+		in.Name = ""
 	}
 	st, err := s.Backlog.UpdateStage(r.Context(), id, in.Name, in.Color, in.Position)
 	if err != nil {
@@ -1361,6 +1367,12 @@ func (s *Server) handleCost(w http.ResponseWriter, r *http.Request) {
 // of them. Defaults: daily buckets over the last 30 days; days is capped at
 // 365, and at maxTenMinuteDays for 10-minute buckets.
 func costWindow(r *http.Request) (string, time.Time) {
+	return costWindowAt(r, time.Now())
+}
+
+// costWindowAt is costWindow for a given now — for a handler that cuts
+// another window at the same instant.
+func costWindowAt(r *http.Request, now time.Time) (string, time.Time) {
 	bucket := r.URL.Query().Get("bucket")
 	days := 30
 	if d, err := strconv.Atoi(r.URL.Query().Get("days")); err == nil && d > 0 {
@@ -1374,7 +1386,7 @@ func costWindow(r *http.Request) (string, time.Time) {
 	if bucket == "10min" && days > maxTenMinuteDays {
 		days = maxTenMinuteDays
 	}
-	return bucket, time.Now().AddDate(0, 0, -days)
+	return bucket, now.AddDate(0, 0, -days)
 }
 
 // maxTenMinuteDays is how far back costWindow reaches at ?bucket=10min.

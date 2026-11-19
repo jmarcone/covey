@@ -4,6 +4,7 @@ import { fmtNumber, fmtUSD } from "../format";
 import { SPLIT_COLOR, SPLIT_HATCH } from "./costSources";
 import type { DentPart, FloorMultiple, Headline, PayPerTokenHeadline, SubscriptionDent } from "./costFigures";
 import { OrgWide, Swatch, outsideMoney, priceTableLine } from "./StackedCostChart";
+import { isOperatorSource } from "./outsideFigures";
 import { usageList } from "./CostBasis";
 
 /* The headline of the Costs page once Claude Code sessions outside covey
@@ -50,11 +51,12 @@ const count = (v: number) => fmtNumber(v, 0);
 /** A lower bound: "≥ 1.1×". */
 const atLeast = (m: FloorMultiple | null) => (m ? `≥ ${times(m.low)}` : "–");
 
-function Part({ label, value, sub, color, dashed, hatch, test }: {
-  label: string; value: string; sub: string; color?: string; dashed?: string; hatch?: number; test: string;
+function Part({ label, value, sub, color, dashed, hatch, test, title }: {
+  label: string; value: string; sub: string; color?: string; dashed?: string; hatch?: number; test: string; title?: string;
 }) {
   return (
-    <div role="group" aria-label={label} data-dent={test}
+    // The hover is also the card's accessible description, which the keyboard and touch screens reach where a title is not.
+    <div role="group" aria-label={label} data-dent={test} title={title} aria-description={title?.split("\n").join("; ")}
       style={{ padding: "10px 14px", borderRadius: 8, border: "1px solid var(--border)", minWidth: 170, flex: "1 1 170px" }}>
       <div className="muted text-xs" style={{ display: "flex", alignItems: "center", gap: 6 }}>
         {color && <Swatch color={color} hatched dashed={dashed} hatch={hatch} />}
@@ -71,13 +73,24 @@ function Part({ label, value, sub, color, dashed, hatch, test }: {
  *  the estimate and its floor. */
 function HeadlineSentence({ h }: { h: Headline }) {
   const { t } = useTranslation();
-  // The outside part at its lead price (#120): reported where a call carried
-  // it, else the list price, marked; or "no list price" with the tokens that
-  // have none — never $0 where there is no figure (M3).
-  const outside = outsideMoney(t, { calls: h.outsideCalls, list: h.outsideList, reported: h.outsideReported,
-    reportedCalls: h.outsideReportedCalls, unpricedTokens: h.outsideUnpricedTokens,
-    lead: h.outsideList, leadRecomputed: h.outsideRecomputed, leadUnpricedTokens: h.outsideUnpricedTokens }, "lead");
-  const parts = { list: fmtUSD(h.list), covey: fmtUSD(h.coveyList), outside };
+  // The outside part at its lead price (#120), in the covey operator and the
+  // other projects (#163): reported where a call carried it, else the list
+  // price, marked once after the parts; or "no list price" with the tokens
+  // that have none — never $0 where there is no figure (M3).
+  const group = (of: (s: Headline["sources"][number]) => boolean) => {
+    const ss = h.sources.filter(of);
+    const priced = ss.filter((s) => s.list != null);
+    return { calls: ss.reduce((a, s) => a + s.calls, 0), list: null, reported: null, reportedCalls: 0,
+      unpricedTokens: ss.reduce((a, s) => a + s.unpricedTokens, 0),
+      lead: priced.length > 0 ? priced.reduce((a, s) => a + s.list!, 0) : null,
+      leadRecomputed: ss.reduce((a, s) => a + s.recomputed, 0), leadUnpricedTokens: ss.reduce((a, s) => a + s.unpricedTokens, 0) };
+  };
+  const op = group((s) => isOperatorSource(s.source)), pr = group((s) => !isOperatorSource(s.source));
+  const lines = [t("costs.incl.lineCovey", { usd: fmtUSD(h.coveyList) })];
+  if (op.calls > 0) lines.push(t("costs.incl.lineOperator", { usd: outsideMoney(t, op, "lead", false) }));
+  if (pr.calls > 0) lines.push(t("costs.incl.lineProjects", { usd: outsideMoney(t, pr, "lead", false) }));
+  const marked = op.leadRecomputed + pr.leadRecomputed > 0;
+  const parts = { list: fmtUSD(h.list), split: lines.join(" + ") + (marked ? ` (${t("costs.lead.recomputedMark")})` : "") };
   const sentence = h.real == null ? t(h.why === "usage" ? "costs.dent.head.noRealUsage" : "costs.dent.head.noReal", parts)
     : h.multiple == null ? t("costs.dent.head.sentenceNoMultiple", { ...parts, real: fmtUSD(h.real) })
     : t(h.points != null ? "costs.dent.head.sentence" : "costs.dent.head.sentenceNoPoints", {
@@ -167,6 +180,25 @@ export function SubscriptionDentRow({ d, filtered, h = null, sourceParts = [] }:
     : t("costs.dent.unattributedNoRate")];
   if (un.noCall >= 0.005) unParts.push(t("costs.dent.unattributedNoCall", { usd: fmtUSD(un.noCall) }));
   const sources = d.sources.join(", ");
+  // The outside part per source (the server's source_parts), in the covey
+  // operator and the other projects: each with its real share and its share of
+  // the dent. No list price on the cards: the server's per source is the list
+  // price, the cards beside them state the lead price (#163 review, M2); the
+  // per-source list is in the lines below.
+  const shown = sourceParts.filter((p) => p.list_usd > 0 || p.real_usd > 0);
+  const outsideParts: { key: "operator" | "projects" | "rest"; real: number; title?: string }[] = (["operator", "projects"] as const).flatMap((key) => {
+    const ps = shown.filter((p) => isOperatorSource(p.source) === (key === "operator"));
+    if (ps.length === 0) return [];
+    return [{ key, real: ps.reduce((a, p) => a + p.real_usd, 0),
+      title: key === "projects" ? ps.map((p) => `${p.source}: ≈ ${fmtUSD(p.real_usd)}`).join("\n") : undefined }];
+  });
+  // The cards must add up to the outside part: what the per-source shares do
+  // not carry (a seat with outside real cost and no source parts, a source
+  // with no calls in the range) is its own card, never lost (#166 review,
+  // F2); where they carry more than the outside part, the one card stands.
+  const sourced = outsideParts.reduce((a, o) => a + o.real, 0), gap = d.outside.real - sourced;
+  if (outsideParts.length > 0 && gap >= 0.005) outsideParts.push({ key: "rest", real: gap });
+  const splitCards = outsideParts.length > 0 && gap > -0.005;
   const seat = (s: SubscriptionDent["seats"][number]) => `${s.key} #${s.slot}`;
   // The unsplit readings by why: the outside sessions had not reported them,
   // or their outside calls all had no price. n is the number as shown.
@@ -212,7 +244,15 @@ export function SubscriptionDentRow({ d, filtered, h = null, sourceParts = [] }:
           <Part test="unattributed" label={t("costs.dent.unattributed")} value="–" sub={t("costs.dent.noPart")} color={SPLIT_COLOR.unattributed} hatch={SPLIT_HATCH.unattributed} />
         </> : <>
           <Part test="covey" label={t("costs.dent.covey")} value={`≈ ${fmtUSD(d.covey.real)}`} sub={part(d.covey)} color={SPLIT_COLOR.covey} />
-          <Part test="outside" label={t("costs.dent.outside")} value={`≈ ${fmtUSD(d.outside.real)}`} sub={part(d.outside)} color={SPLIT_COLOR.outside} hatch={SPLIT_HATCH.outside} />
+          {/* The outside part in two (#163), from the server's real share per source: the covey operator and the other
+              projects, the latter with each project as its hover. Without per-source parts, the one outside part. */}
+          {splitCards ? outsideParts.map((o) => (
+            <Part key={o.key} test={o.key} label={t(o.key === "operator" ? "costs.dent.operator" : o.key === "projects" ? "costs.dent.projects" : "costs.dent.outsideRest")} value={`≈ ${fmtUSD(o.real)}`}
+              sub={t("costs.dent.partSubSource", { pct: pctOf(d.real! > 0 ? o.real / d.real! : null) })}
+              title={o.title} color={SPLIT_COLOR.outside} hatch={SPLIT_HATCH.outside} />
+          )) : (
+            <Part test="outside" label={t("costs.dent.outside")} value={`≈ ${fmtUSD(d.outside.real)}`} sub={part(d.outside)} color={SPLIT_COLOR.outside} hatch={SPLIT_HATCH.outside} />
+          )}
           <Part test="unattributed" label={t("costs.dent.unattributed")} value={`≈ ${fmtUSD(un.real)}`}
             sub={d.points != null
               ? t("costs.dent.unattributedSubPoints", { pct: pctOf(un.share), pts: pts(un.points), parts: unParts.join(" · ") })
@@ -298,8 +338,10 @@ export function SubscriptionDentRow({ d, filtered, h = null, sourceParts = [] }:
                   : s.usageSteps > 0 && s.unpricedPoints === 0 ? t("costs.dent.seatUsage", { seat: seat(s), n: pts(s.usagePoints) })
                   : s.usageSteps > 0 ? t("costs.dent.seatNoPriceAndUsage", { seat: seat(s), n: pts(s.unpricedPoints), m: pts(s.usagePoints) })
                   : t("costs.dent.seatNoPrice", { seat: seat(s), n: pts(s.unpricedPoints) }))
-                : t("costs.dent.seatLine", { seat: seat(s), real: fmtUSD(s.real), pts: pts(s.points),
-                  covey: fmtUSD(s.covey), outside: fmtUSD(s.outside), unattributed: fmtUSD(s.unattributed), unsplit: fmtUSD(s.unsplit) })}
+                : t(s.outsideParts?.operator != null && s.outsideParts.projects != null ? "costs.dent.seatLineSplit" : "costs.dent.seatLine", {
+                  seat: seat(s), real: fmtUSD(s.real), pts: pts(s.points), covey: fmtUSD(s.covey), outside: fmtUSD(s.outside),
+                  operator: fmtUSD(s.outsideParts?.operator ?? 0), projects: fmtUSD(s.outsideParts?.projects ?? 0),
+                  unattributed: fmtUSD(s.unattributed), unsplit: fmtUSD(s.unsplit) })}
               {s.sources.length === 0 && t("costs.dent.seatNoSource")}
             </li>
           ))}

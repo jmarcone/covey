@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { Fragment, useEffect, useId, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -11,6 +11,7 @@ export { SOURCE_COLOR };
 import {
   billedFetchBucket,
   billedPerPeriod,
+  billedWholeDays,
   credentialFigures,
   credId,
   isSeat,
@@ -35,6 +36,8 @@ import {
   listedSources,
   outsideKpis,
   outsideKpisBySource,
+  outsideSplit,
+  type OutsideSplit,
   seatSources,
   sourceStyles,
   hostsBehind,
@@ -407,8 +410,8 @@ function Tile({ label, value, sub, span, note, check, color, hatched, parts, org
   label: string; value: string; sub?: string; span?: string; note?: string; color?: string; hatched?: boolean;
   /** covey's price table where it differs from the figure (priceTableLine). */
   check?: string;
-  /** With the outside sessions included: the figure's two parts, named. */
-  parts?: string;
+  /** With the outside sessions included: the figure's parts, named. */
+  parts?: React.ReactNode;
   /** The figure does not follow the agent filter, and says so. */
   orgWide?: boolean;
 }) {
@@ -769,20 +772,69 @@ export function outsideOnChart(ext: ExternalUsage, off: ReadonlySet<string>): Ou
   };
 }
 
-/** "covey agents $X · outside sessions $Y", or with an agent filter
- *  "selected agents $X · plus outside sessions $Y": every figure that
- *  includes the outside sessions names its two parts. `range` labels them
- *  as the range's, where a figure within the meter's readings stands
- *  beside them (#120 review, L5). */
-export function inclLine(t: TFunction, filtered: boolean, covey: string, outside: string, range = false): string {
-  return t(range ? (filtered ? "costs.incl.splitRangeSelected" : "costs.incl.splitRange")
-    : filtered ? "costs.incl.splitSelected" : "costs.incl.split", { covey, outside });
+/** "covey agents (internal) $X · outside sessions $Y", or with an agent
+ *  filter "selected agents $X · plus outside sessions $Y": the figure of the
+ *  outside sessions' own page, where they are one part. */
+export function inclLine(t: TFunction, filtered: boolean, covey: string, outside: string): string {
+  return t(filtered ? "costs.incl.splitSelected" : "costs.incl.split", { covey, outside });
 }
 
-/** The same with the outside part split by where it counts (#120 review,
- *  M6): "covey agents $X · outside sessions on the meter $Y1 · per use $Y2". */
-export function inclLineMeter(t: TFunction, filtered: boolean, covey: string, meter: string, perUse: string): string {
-  return t(filtered ? "costs.incl.splitMeterSelected" : "costs.incl.splitMeter", { covey, meter, perUse });
+/** One part of a figure that includes the outside sessions (#163). */
+export type SplitLine = { key: "covey" | "operator" | "projects" | "perUse"; text: string; title?: string; recomputed: boolean };
+
+/** A figure that includes the outside sessions, in its parts, named:
+ *  covey's own agents (internal), the covey operator (the Claude Code session
+ *  driving covey from outside), the other projects on the same machine and
+ *  plan, and what is billed per use, on no subscription meter (#166 review, F1). money writes one outside part's figure; recomputed: it holds
+ *  calls priced at the list for want of a reported cost (marked, and said
+ *  once below the lines). The operator, the projects and the per-use
+ *  sources are lines only where they have calls; the projects' and the
+ *  per-use line carry each source's figure as their hover. range labels the lines as the range's, where a figure within the
+ *  meter's readings stands beside them (#120 review, L5). */
+export function splitLines(t: TFunction, o: {
+  filtered: boolean; covey: string; split: OutsideSplit; money: (k: OutsideKpis) => string;
+  recomputed?: (k: OutsideKpis) => boolean; range?: boolean;
+}): SplitLine[] {
+  const mark = (k: OutsideKpis) => o.recomputed?.(k) ?? false;
+  const first = t(o.filtered ? "costs.incl.lineCoveySelected" : "costs.incl.lineCovey", { usd: o.covey });
+  const lines: SplitLine[] = [{ key: "covey", text: o.range ? t("costs.incl.inRange", { line: first }) : first, recomputed: false }];
+  const { operator, projects, perUse, projectList, perUseList } = o.split;
+  const hover = (list: OutsideSplit["projectList"]) => list.filter((p) => p.kpis.calls > 0).map((p) => `${p.source}: ${o.money(p.kpis)}`).join("\n");
+  if (operator && operator.calls > 0) {
+    lines.push({ key: "operator", text: t("costs.incl.lineOperator", { usd: o.money(operator) }), recomputed: mark(operator) });
+  }
+  if (projects && projects.calls > 0) {
+    lines.push({ key: "projects", text: t("costs.incl.lineProjects", { usd: o.money(projects) }), recomputed: mark(projects),
+      title: hover(projectList) });
+  }
+  if (perUse && perUse.calls > 0) {
+    lines.push({ key: "perUse", text: t("costs.incl.linePerUse", { usd: o.money(perUse) }), recomputed: mark(perUse), title: hover(perUseList) });
+  }
+  return lines;
+}
+
+/** The lines of a figure's parts: one under the other where `stacked` (the
+ *  lead figure, one line each), else in a row. */
+export function SplitParts({ lines, stacked = false }: { lines: SplitLine[]; stacked?: boolean }) {
+  const { t } = useTranslation();
+  const mark = (l: SplitLine) => (l.recomputed ? `${l.text} *` : l.text);
+  const note = lines.some((l) => l.recomputed);
+  // A line's hover is also its accessible description, which the keyboard and
+  // touch screens reach where a title is not (#163 review, N6).
+  const about = (l: SplitLine) => l.title?.split("\n").join("; ");
+  if (!stacked) {
+    return <>{lines.map((l, i) => <Fragment key={l.key}>{i > 0 && " · "}<span data-part={l.key} title={l.title} aria-description={about(l)}>{mark(l)}</span></Fragment>)}</>;
+  }
+  return <>
+    {lines.map((l) => <div key={l.key} data-part={l.key} title={l.title} aria-description={about(l)}>{mark(l)}</div>)}
+    {note && <div data-part-footnote>* {t("costs.lead.recomputedMark")}</div>}
+  </>;
+}
+
+/** The lead figure's parts (#120, #163): each outside part at its lead price, unmarked, the mark said once. */
+export function leadLines(t: TFunction, filtered: boolean, covey: string, split: OutsideSplit, range = false): SplitLine[] {
+  return splitLines(t, { filtered, covey, split, range, money: (k) => outsideMoney(t, k, "lead", false),
+    recomputed: (k) => kpiLead(k).recomputed > 0 });
 }
 
 /** A sum of parts some of which have no figure: the sum, marked (#120 review, L1). */
@@ -806,8 +858,10 @@ type MoneyPart = Pick<OutsideKpis, "calls" | "list" | "reported" | "reportedCall
   & Partial<Pick<OutsideKpis, "lead" | "leadRecomputed" | "leadUnpricedCalls" | "leadUnpricedTokens">>;
 
 /** The outside sessions' money in a line: their figure, or why there is
- *  none — never $0 where the server has no figure. */
-export function outsideMoney(t: TFunction, o: MoneyPart, kind: "reported" | "list" | "lead"): string {
+ *  none — never $0 where the server has no figure. marked: the lead figure
+ *  says "recomputed for sources without a reported cost" itself; false where
+ *  the caller says it once for several parts (SplitParts). */
+export function outsideMoney(t: TFunction, o: MoneyPart, kind: "reported" | "list" | "lead", marked = true): string {
   if (o.calls === 0) return t("costs.incl.noCalls");
   if (kind === "lead") {
     // At token prices (#120): reported where a call carried it, else the
@@ -815,7 +869,7 @@ export function outsideMoney(t: TFunction, o: MoneyPart, kind: "reported" | "lis
     const l = kpiLead(o);
     if (l.lead == null) return l.unpricedTokens > 0 ? t("costs.incl.noListTokens", { n: fmtCount(l.unpricedTokens) }) : t("costs.incl.noList");
     const usd = l.unpricedTokens > 0 ? t("costs.incl.listUnpriced", { usd: fmtUSD(l.lead), n: fmtCount(l.unpricedTokens) }) : fmtUSD(l.lead);
-    return l.recomputed > 0 ? t("costs.lead.part", { usd }) : usd;
+    return marked && l.recomputed > 0 ? t("costs.lead.part", { usd }) : usd;
   }
   if (kind === "reported") {
     if (o.reported == null) return t("costs.incl.noReported");
@@ -829,11 +883,34 @@ export function outsideMoney(t: TFunction, o: MoneyPart, kind: "reported" | "lis
 
 /** An outside list within the meter's readings: its figure, or "no list
  *  price" where none of the seat's outside calls had one — never $0 (#120
- *  review, M3). */
-export function withinMoney(t: TFunction, usd: number, o: { priced: boolean; calls: number; unpricedTokens: number; recomputed?: number }): string {
+ *  review, M3). approx: the figure is an estimate (the shared part, F4), so "≈". */
+export function withinMoney(t: TFunction, usd: number, o: { priced: boolean; calls: number; unpricedTokens: number; recomputed?: number }, marked = true, approx = false): string {
   const s = outsideMoney(t, { calls: o.calls, list: o.priced ? usd : null, reported: null, reportedCalls: 0, unpricedTokens: o.unpricedTokens }, "list");
+  const shown = approx && o.priced && o.calls > 0 ? `≈ ${s}` : s;
   // At the lead price, a part priced at the list for want of a reported cost says so (#120).
-  return o.priced && o.calls > 0 && (o.recomputed ?? 0) > 0 ? t("costs.lead.part", { usd: s }) : s;
+  return marked && o.priced && o.calls > 0 && (o.recomputed ?? 0) > 0 ? t("costs.lead.part", { usd: shown }) : shown;
+}
+
+/** The outside part within the meter's readings, split between the covey
+ *  operator and the other projects (#163). The server's within-readings
+ *  figure is the seat's, not per source, so with both parts present it is
+ *  an estimate: shared by each one's lead price over the range (the
+ *  operator's rounded to the cent, the projects' the rest: the two always
+ *  add up to the whole); with one part, that part has all of it. known:
+ *  false where both parts are present but only one has a lead price — the
+ *  split is then not known, and the other is not given all of it (#166
+ *  review, F4). */
+export function withinSplit(total: number, split: OutsideSplit): { operator: number; projects: number; shared: boolean; known: boolean } {
+  const lead = (k: OutsideKpis | null) => (k ? kpiLead(k).lead : null);
+  const op = split.operator && split.operator.calls > 0, pr = split.projects && split.projects.calls > 0;
+  if (!op) return { operator: 0, projects: total, shared: false, known: true };
+  if (!pr) return { operator: total, projects: 0, shared: false, known: true };
+  const [a, b] = [lead(split.operator), lead(split.projects)];
+  // Neither has a price: nothing to share, each part says "no list price". Only one: the split is not known.
+  if (a == null && b == null) return { operator: 0, projects: total, shared: false, known: true };
+  if (a == null || b == null) return { operator: 0, projects: 0, shared: true, known: false };
+  const operator = a + b > 0 ? Math.round(total * (a / (a + b)) * 100) / 100 : 0;
+  return { operator, projects: total - operator, shared: true, known: true };
 }
 
 /** "not reported yet by: laptop (operator: home) through …; desktop never". */
@@ -922,8 +999,12 @@ function realSpan(t: TFunction, f: CredentialFigures, key = "costs.fig.realSince
 }
 
 /** The tiles of one credential. */
-function CredentialTiles({ f, filtered, narrowed, out, full }: {
+function CredentialTiles({ f, filtered, narrowed, out, split, seatSplit, full }: {
   f: CredentialFigures; filtered: boolean; out: OutsideKpis | null;
+  /** The same sources in two parts: the covey operator and the other projects (#163). */
+  split: OutsideSplit | null;
+  /** Every source on the seat in the same two parts, the chips ignored: the everything tile is the whole seat's. */
+  seatSplit: OutsideSplit | null;
   /** The page is narrowed to agents: an org-wide figure says so. */
   narrowed: boolean;
   /** Claude Code's figure and covey's price table as two tiles (the toggle); else the one lead tile. */
@@ -940,13 +1021,13 @@ function CredentialTiles({ f, filtered, narrowed, out, full }: {
   const lead = f.reported + (out ? kpiLead(out).lead ?? 0 : 0);
   const tiles: React.ReactNode[] = full ? [
     <Tile key="rep" label={t("costs.fig.reported")} value={fmtUSD(f.reported + (out?.reported ?? 0))} sub={t("costs.fig.reportedSub")} color={SOURCE_COLOR.reported}
-      parts={out ? inclLine(t, filtered, fmtUSD(f.reported), outsideMoney(t, out, "reported"), range) : undefined} />,
+      parts={split ? <SplitParts lines={splitLines(t, { filtered, covey: fmtUSD(f.reported), split, range, money: (k) => outsideMoney(t, k, "reported") })} /> : undefined} />,
     <Tile key="rec" label={t("costs.fig.recomputed")} value={fmtUSD(f.recomputed + (out?.list ?? 0))}
       sub={f.check != null ? t("costs.fig.priceTableCheck", { pct: pct(f.check) }) : undefined} color={SOURCE_COLOR.recomputed}
-      parts={out ? inclLine(t, filtered, fmtUSD(f.recomputed), outsideMoney(t, out, "list"), range) : undefined} />,
+      parts={split ? <SplitParts lines={splitLines(t, { filtered, covey: fmtUSD(f.recomputed), split, range, money: (k) => outsideMoney(t, k, "list") })} /> : undefined} />,
   ] : [
     <Tile key="lead" label={t("costs.lead.label")} value={fmtUSD(lead)} sub={t("costs.lead.sub")} color={SOURCE_COLOR.reported}
-      parts={out ? inclLine(t, filtered, fmtUSD(f.reported), outsideMoney(t, out, "lead"), range) : undefined}
+      parts={split ? <SplitParts stacked lines={leadLines(t, filtered, fmtUSD(f.reported), split, range)} /> : undefined}
       check={priceTableLine(t, lead, f.recomputed + (out?.list ?? 0))} />,
   ];
   // A seat billed by usage all through the window (0151): its meter is not
@@ -995,13 +1076,24 @@ function CredentialTiles({ f, filtered, narrowed, out, full }: {
       // the unattributed movement, a lower bound (#120).
       const e = f.everything;
       if (e.multiple && e.estimate != null) {
+        // The outside part in its two parts (#163), each marked where it
+        // holds recomputed calls; said once, in brackets, after the parts.
+        const within = seatSplit ? withinSplit(e.outsideList, seatSplit) : null;
+        const kinds = seatSplit ? ([["operator", seatSplit.operator, within!.operator], ["projects", seatSplit.projects, within!.projects]] as const)
+          .filter(([, k]) => k && k.calls > 0) : [];
+        const money = (usd: number, k: OutsideKpis) => withinMoney(t, usd, { priced: e.outsidePriced && kpiLead(k).lead != null, calls: k.calls,
+          unpricedTokens: kpiLead(k).unpricedTokens, recomputed: kpiLead(k).recomputed }, false, within!.shared);
+        // Both parts but no split to give (one has no price): one line for the two, said as not known.
+        const outsideLines = within && !within.known
+          ? [t("costs.incl.lineOutsideUnsplit", { usd: fmtUSD(e.outsideList) })]
+          : kinds.map(([key, k, usd]) => t(key === "operator" ? "costs.incl.lineOperator" : "costs.incl.lineProjects", { usd: money(usd, k!) }));
+        const recomputed = kinds.some(([, k]) => kpiLead(k!).recomputed > 0);
+        const parts = [t(filtered ? "costs.incl.lineCoveySelected" : "costs.incl.lineCovey", { usd: fmtUSD(e.coveyList) }), ...outsideLines].join(" · ")
+          + (recomputed ? ` (${t("costs.lead.recomputedMark")})` : "");
         tiles.push(<Tile key="mult" label={t("costs.incl.everything")} value={`≈ ${times(e.estimate)}`} orgWide={narrowed}
           parts={t("costs.incl.everythingFloor", { floor: times(e.multiple.low) })}
-          sub={t("costs.incl.everythingSub", { list: fmtUSD(e.coveyList + e.outsideList), covey: fmtUSD(e.coveyList),
-            outside: withinMoney(t, e.outsideList, { priced: e.outsidePriced, calls: e.outsideCalls, unpricedTokens: e.outsideUnpricedTokens,
-              recomputed: e.outsideRecomputed }),
-            real: fmtUSD(e.real) })}
-          span={span} note={t("costs.incl.everythingNote", { slack: fmtUSD(e.slack) })} />);
+          sub={t("costs.incl.everythingSub", { list: fmtUSD(e.coveyList + e.outsideList), parts, real: fmtUSD(e.real) })}
+          span={span} note={t("costs.incl.everythingNote", { slack: fmtUSD(e.slack) }) + (within?.shared && within.known ? ` ${t("costs.incl.everythingShared")}` : "")} />);
       }
     } else if (f.multiple?.kind === "estimate") {
       tiles.push(<Tile key="mult" label={t("costs.fig.multiple")} value={`≈ ${times(f.multiple.value)}`}
@@ -1132,11 +1224,20 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
   const mine = useMemo(() => (outside && f.secretKey != null
     ? seatSources(outside.ext, f.secretKey, f.slot!).filter((s) => outside.on.has(s.source)) : []), [outside, f.secretKey, f.slot]);
   const mineKpis = useMemo(() => (outside && mine.length > 0 ? outsideKpis(outside.ext, new Set(mine.map((s) => s.source))) : null), [outside, mine]);
+  const mineSplit = useMemo(() => (outside && mine.length > 0 ? outsideSplit(outside.ext, new Set(mine.map((s) => s.source))) : null), [outside, mine]);
+  // The everything tile is the whole seat's, whatever the chips say (as the
+  // meter card's is): its parts are over every source on the seat, so they add
+  // up to its figure with chips off (#163 review, M1).
+  const seatSplit = useMemo(() => (outside && f.secretKey != null
+    ? outsideSplit(outside.ext, new Set(seatSources(outside.ext, f.secretKey, f.slot!).map((s) => s.source))) : null), [outside, f.secretKey, f.slot]);
   const steps = useMemo(() => (f.meter ? (data.subscription ?? []).filter((s) => s.secret_key === f.meter!.secret_key
     && s.secret_slot === f.meter!.secret_slot && s.source === f.meter!.source && s.window_kind === f.meter!.window_kind) : []), [data.subscription, f.meter]);
   // The bill inside the tile's window, in the chart's buckets.
   const bill = useMemo(() => (f.kind === "api_key" && f.secretKey != null
     ? billedPerPeriod(billed, f.secretKey, f.slot!, bucket) : new Map<number, number>()), [billed, f.kind, f.secretKey, f.slot, bucket]);
+  // The days of that window the bill is read for as a whole: no hour or
+  // 10-hour bar holds them, so the bars fall short of the tile by this much.
+  const billWhole = f.kind === "api_key" && f.secretKey != null ? billedWholeDays(billed, f.secretKey, f.slot!, bucket) : 0;
 
   // The periods: the cells', the meter's, the bill's — matched by instant.
   const periods = useMemo(() => {
@@ -1364,7 +1465,7 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
       {subscription && <PlanPrice f={f} name={name} readings={readings} editable={canSetPlan} />}
       {f.secretKey != null && <CostBasisPanel f={f} name={name} editable={canSetPlan} />}
       <MonthlyMeters f={f} readings={readings} />
-      <CredentialTiles f={f} filtered={filtered || layout === "agents"} narrowed={filtered} out={mineKpis} full={full} />
+      <CredentialTiles f={f} filtered={filtered || layout === "agents"} narrowed={filtered} out={mineKpis} split={mineSplit} seatSplit={seatSplit} full={full} />
       <NoMultiple f={f} />
       {/* Outside every reading's span: before the meter's first reading
           (no meter data, never a real share) and after its last (pending). */}
@@ -1423,6 +1524,8 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
         {rate.mixed ? t("costs.fig.hourRealNoteMixed") : t("costs.fig.hourRealNote", { usd: fmtUSD(pointPrice ?? 0) })}
       </p>}
       {/* The comparison was asked for but is not drawn here: say why. An agent filter has its own note below. */}
+      {billWhole >= 0.005 && <p className="muted text-xs mt-1 mb-0" data-billed-whole-days>
+        {t("costs.fig.billedWholeDays", { usd: fmtUSD(billWhole) })}</p>}
       {billedShort && <p className="muted text-xs mt-1 mb-0" data-billed-hourly-from>
         {t("costs.fig.billedHourlyFrom", { at: fmtBucket(billed!.hourly_from!, "hour") })}</p>}
       {view === "vs" && layout === "combined" && !vs && !(filtered && (subscription || f.kind === "api_key")) && (

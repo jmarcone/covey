@@ -178,7 +178,15 @@ export type Stage = {
   // as soon as they are empty. 'human' columns stay.
   created_by: string;
   created_at: string;
+  // The three default columns carry a key; auto-follow finds them by it. As
+  // long as renamed is false the board shows the label of the chosen language
+  // (stageLabel) — name then holds the column's old German name ("Backlog",
+  // "In Arbeit", "Erledigt"), which the server keeps for older instances.
+  key?: StageKey | null;
+  renamed?: boolean;
 };
+
+export type StageKey = "open" | "in_progress" | "done";
 
 // TaskNote is a proactive note by the agent on a task
 // (state of play, findings) — GET /tasks/{id}/notes.
@@ -1243,6 +1251,10 @@ export type BilledReport = {
   reason?: string;
   /** At hour and 10hour: where the hourly bill rows begin; a 10-hour bucket before it is not complete. */
   hourly_from?: string;
+  /** At hour and 10hour: the days the bill is read for as a whole (one
+   *  point per day, key and model at the day's midnight), never put into an
+   *  hour. With points, the rows the window's totals sum. */
+  whole_days?: BilledPoint[] | null;
 };
 
 export type TokenDiff = { type: string; reported: number; billed: number; diff: number };

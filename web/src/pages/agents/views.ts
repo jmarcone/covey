@@ -58,6 +58,48 @@ export function viewUrl(view: AgentsView): string {
   return BASE[view];
 }
 
+const choiceKey = (principal: string) => `covey.agents.view.${principal}`;
+
+/* A pick the browser refused to store, per principal, for the length of this
+ * tab. Office lives at "/" and "/" shows it only on a stored pick, so a
+ * storage that throws or is full would take the office away; the pick is
+ * kept here and wins until a write goes through again. */
+const unsaved = new Map<string, AgentsView>();
+
+/* Drops what no write has kept. For tests: a tab is a fresh module. */
+export function forgetUnsavedViews() {
+  unsaved.clear();
+}
+
+/* The view a person opens the agents area on, chosen in the switch. Kept in
+ * the browser, per principal: two people on one browser keep their own, and
+ * the server learns nothing of it. With nothing stored, or nothing readable,
+ * it is the list: the one view every installation has and the lighter one.
+ * The rail's Agents entry and the root read it by this one rule. */
+export function chosenView(principal: string, teamSurface: boolean): AgentsView {
+  let v: string | null | undefined = unsaved.get(principal);
+  if (v === undefined) {
+    try {
+      v = localStorage.getItem(choiceKey(principal));
+    } catch {
+      v = null;
+    }
+  }
+  // Only a view this installation still offers: the value may predate a
+  // change of the team surface.
+  return viewsFor(teamSurface).find((o) => o === v) ?? "list";
+}
+
+export function rememberView(principal: string, view: AgentsView) {
+  try {
+    localStorage.setItem(choiceKey(principal), view);
+    unsaved.delete(principal);
+  } catch {
+    // Not stored: the pick holds for this tab, and the next visit opens the list.
+    unsaved.set(principal, view);
+  }
+}
+
 /* The router state a link to an agent's page carries. */
 export function fromView(view: AgentsView) {
   return { from: view };

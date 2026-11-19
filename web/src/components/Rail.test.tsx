@@ -1,13 +1,14 @@
-import { useEffect } from "react";
-import { useLocation, useNavigate } from "react-router";
+import { useNavigate } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import Rail, { agentsEntryTarget, railPlace, rememberAgentsView } from "./Rail";
+import Rail, { agentsEntryTarget, railPlace } from "./Rail";
+import { forgetUnsavedViews, rememberView } from "../pages/agents/views";
 import { mockFetch, renderWithProviders, testPrincipal, useGerman } from "../test/render";
 
 beforeEach(() => {
   useGerman();
   localStorage.clear();
+  forgetUnsavedViews();
 });
 
 const AGENT = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
@@ -42,19 +43,27 @@ describe("railPlace", () => {
 });
 
 describe("the Agents entry's target", () => {
-  it("opens the office with the team surface, the list without", () => {
-    expect(agentsEntryTarget(true)).toBe("/");
-    expect(agentsEntryTarget(false)).toBe("/agents");
+  const ADA = "aaaaaaaa-0000-0000-0000-000000000001";
+  const BOB = "bbbbbbbb-0000-0000-0000-000000000002";
+
+  it("opens the list while nothing is chosen, with or without the team surface", () => {
+    expect(agentsEntryTarget(ADA, true)).toBe("/agents");
+    expect(agentsEntryTarget(ADA, false)).toBe("/agents");
   });
 
-  it("opens the view used last, but never an office the installation does not have", () => {
-    rememberAgentsView("/agents");
-    expect(agentsEntryTarget(true)).toBe("/agents");
-    rememberAgentsView(`/agents/${AGENT}`); // a detail is no view: nothing changes
-    expect(agentsEntryTarget(true)).toBe("/agents");
-    rememberAgentsView("/");
-    expect(agentsEntryTarget(true)).toBe("/");
-    expect(agentsEntryTarget(false)).toBe("/agents");
+  it("follows the choice made in the switch, but never an office the installation does not have", () => {
+    rememberView(ADA, "office");
+    expect(agentsEntryTarget(ADA, true)).toBe("/");
+    expect(agentsEntryTarget(ADA, false)).toBe("/agents");
+    rememberView(ADA, "list");
+    expect(agentsEntryTarget(ADA, true)).toBe("/agents");
+  });
+
+  it("is the choice of the principal on screen, not of the one who used the browser before", () => {
+    rememberView(ADA, "list");
+    rememberView(BOB, "office");
+    expect(agentsEntryTarget(BOB, true)).toBe("/");
+    expect(agentsEntryTarget(ADA, true)).toBe("/agents");
   });
 });
 
@@ -84,7 +93,7 @@ describe("Rail", () => {
     expect(orte()).toEqual(["agents", "team", "workflows", "notes", "admin"]);
     const agenten = screen.getByRole("link", { name: /^Agenten/ });
     expect(agenten).toHaveAttribute("aria-current", "page");
-    expect(agenten.getAttribute("href")).toBe("/");
+    expect(agenten.getAttribute("href")).toBe("/agents");
     // The office's number moved with it: open decisions.
     await waitFor(() => expect(agenten.querySelector(".tm-rail-zahl")).toHaveTextContent("3"));
     expect(agenten).toHaveAccessibleName("Agenten · 3 Punkte warten auf eine Entscheidung.");
@@ -114,19 +123,15 @@ describe("Rail", () => {
     expect(screen.getByRole("link", { name: "Verwaltung" })).toHaveAttribute("aria-current", "page");
   });
 
-  /* The shell writes the view down in an effect, after the rail has
-     rendered: the link must follow the address, not lag one view behind. */
-  it("leads the Agents entry to the view on screen while moving between office and list", () => {
+  /* The entry follows the choice, whatever the address: the same view the
+     root opens, so the two cannot disagree. */
+  it("leads the Agents entry to the chosen view wherever the person is", () => {
     function Shell() {
-      const path = useLocation().pathname;
       const go = useNavigate();
-      // As AppShell does: remember the view after rendering.
-      useEffect(() => rememberAgentsView(path), [path]);
       return (
         <>
           <Rail me={{ ...testPrincipal(), TeamSurface: true }} onLogout={() => {}} onHelp={() => {}} onSearch={() => {}} />
           <button onClick={() => go("/agents")}>zur Liste</button>
-          <button onClick={() => go("/")}>zum Büro</button>
           <button onClick={() => go("/workflows")}>zu den Workflows</button>
         </>
       );
@@ -138,17 +143,15 @@ describe("Rail", () => {
     });
     vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
     localStorage.setItem("covey.tour.team", "1");
-    renderWithProviders(<Shell />, { route: "/" });
+    rememberView(testPrincipal().ID, "office");
+    renderWithProviders(<Shell />, { route: "/workflows" });
     const ziel = () => screen.getByRole("link", { name: /^Agenten/ }).getAttribute("href");
 
     expect(ziel()).toBe("/");
+    // Reaching the list by another way (Setup, an unknown address) is no choice.
     fireEvent.click(screen.getByRole("button", { name: "zur Liste" }));
-    expect(ziel()).toBe("/agents");
-    fireEvent.click(screen.getByRole("button", { name: "zum Büro" }));
     expect(ziel()).toBe("/");
-    // Elsewhere the entry opens the view used last.
-    fireEvent.click(screen.getByRole("button", { name: "zur Liste" }));
     fireEvent.click(screen.getByRole("button", { name: "zu den Workflows" }));
-    expect(ziel()).toBe("/agents");
+    expect(ziel()).toBe("/");
   });
 });

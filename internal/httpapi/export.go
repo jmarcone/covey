@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"covey/internal/agents"
+	"covey/internal/backlog"
 	"covey/internal/egress"
 	"covey/internal/guardrails"
 	"covey/internal/identity"
@@ -68,8 +69,15 @@ type bundleAgent struct {
 	Services []sandbox.Service `json:"services,omitempty"`
 }
 
+// bundleStage is one board column. Key marks a default column (open,
+// in_progress, done) so the imported board keeps auto-follow; Name is the
+// column's name as stored. A default column nobody renamed carries its old
+// German name ("Backlog", "In Arbeit", "Erledigt"): a covey from before the key
+// recognises its default columns by exactly these names, so the board keeps
+// auto-follow on that side too, and this side reads it as not renamed.
 type bundleStage struct {
 	Name  string `json:"name"`
+	Key   string `json:"key,omitempty"`
 	Color string `json:"color,omitempty"`
 }
 
@@ -241,7 +249,11 @@ func (s *Server) buildBundle(ctx context.Context, orgID, agentID uuid.UUID, incl
 		return agentBundle{}, err
 	}
 	for _, st := range stages {
-		b.Stages = append(b.Stages, bundleStage{Name: st.Name, Color: st.Color})
+		bs := bundleStage{Name: st.Name, Color: st.Color}
+		if st.Key != nil {
+			bs.Key = *st.Key
+		}
+		b.Stages = append(b.Stages, bs)
 	}
 
 	rules, err := s.Rails.List(ctx, orgID)
@@ -717,6 +729,9 @@ func (s *Server) handleImportAgent(w http.ResponseWriter, r *http.Request) {
 		warnings = append(warnings, "egress is not available on this instance — templates skipped")
 	}
 
+	board, boardWarnings := planImportBoard(b.Stages)
+	warnings = append(warnings, boardWarnings...)
+
 	// --- Creating. From here on the agent exists; subsequent errors would be a
 	// half import, which is why everything parse-/RBAC-critical was checked
 	// above. ---
@@ -806,10 +821,16 @@ func (s *Server) handleImportAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Board: columns from the bundle in order, otherwise the defaults.
-	if len(b.Stages) > 0 {
-		for _, st := range b.Stages {
-			if _, err := s.Backlog.CreateStage(ctx, a.ID, st.Name, st.Color); err != nil {
+	// Board: the columns planned above, otherwise the defaults.
+	if len(board) > 0 {
+		for _, st := range board {
+			var err error
+			if st.Key != "" {
+				_, err = s.Backlog.CreateKeyedStage(ctx, a.ID, st.Key, st.Name, st.Color)
+			} else {
+				_, err = s.Backlog.CreateStage(ctx, a.ID, st.Name, st.Color)
+			}
+			if err != nil {
 				mapErr(w, err)
 				return
 			}
@@ -904,4 +925,105 @@ func (s *Server) handleImportAgent(w http.ResponseWriter, r *http.Request) {
 		warnings = []string{}
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"agent": a, "warnings": warnings})
+}
+
+// planImportBoard lays out the imported board before the agent exists, so that
+// a bundle the board cannot hold is settled here rather than by a constraint
+// halfway through creating the agent, which would leave a half-imported draft.
+//
+// The default columns come back keyed. A bundle that carries keys is taken by
+// them alone: a column's German name does not make it a default column there,
+// or an "Erledigt" before the keyed done column would take its key. A bundle
+// without any key is from before the key; its default columns are the ones
+// carrying their old German names exactly, as the board found them then. One
+// column per key; a second one of the same key is an ordinary column.
+//
+// A keyed column keeps its key, but under a name that means another default
+// column ("Done" keyed open) it is created under its own old German name, as
+// UpdateStage refuses such a rename.
+//
+// A column whose name means a default column the board has keyed is not
+// created: it is a look-alike an agent made via set_stage ("Done" beside
+// "Erledigt"), as migration 0148 merged them, and since a bundle carries no
+// tasks there is nothing to move. A column whose name means a default column
+// the board has not keyed becomes that column, as on CreateStage, so a second
+// one of that meaning is such a look-alike too. A name the board already has
+// is not created twice either. Each skipped column is named in a warning.
+func planImportBoard(stages []bundleStage) ([]bundleStage, []string) {
+	explicit := false
+	for _, st := range stages {
+		if st.Key != "" {
+			explicit = true
+			break
+		}
+	}
+	keyOf := func(st bundleStage) string {
+		if !explicit {
+			return backlog.LegacyStageKey(st.Name)
+		}
+		if backlog.IsStageKey(st.Key) {
+			return st.Key
+		}
+		return ""
+	}
+	keyed := map[string]bool{}
+	for _, st := range stages {
+		if k := keyOf(st); k != "" {
+			keyed[k] = true
+		}
+	}
+	var plan []bundleStage
+	var warnings []string
+	claimed := map[string]bool{}
+	names := map[string]bool{}
+	for _, st := range stages {
+		k := keyOf(st)
+		if claimed[k] {
+			k = ""
+		}
+		name := st.Name
+		if k != "" && name == "" {
+			name = backlog.LegacyStageName(k)
+		}
+		// A keyed column keeps its key, but not a name that means another
+		// default column ("Done" keyed open): set_stage "Done" would land in
+		// it by its exact name, set_stage "done" in the done column, and the
+		// board would show two columns of one meaning. UpdateStage refuses
+		// that rename; here the column takes its old German name instead.
+		if k != "" {
+			if lk, ok := backlog.StageKeyFor(name); ok && lk != k {
+				warnings = append(warnings, "board column "+name+" means another default column than its key — created as "+backlog.LegacyStageName(k))
+				name = backlog.LegacyStageName(k)
+			}
+		}
+		if k == "" {
+			lk, ok := backlog.StageKeyFor(name)
+			if ok && keyed[lk] {
+				warnings = append(warnings, "board column "+name+" means a default column the board has already — not created")
+				continue
+			}
+			// A name of a default column the board has no column for makes
+			// that column, as CreateStage would. Keyed here, a second one of
+			// the same meaning ("Done", then "done") is skipped above rather
+			// than refused by CreateStage after the agent is written.
+			if ok {
+				k = lk
+				keyed[lk] = true
+			}
+		}
+		if name == "" {
+			warnings = append(warnings, "a board column without a name — not created")
+			continue
+		}
+		if names[name] {
+			warnings = append(warnings, "board column "+name+" appears twice — created once")
+			continue
+		}
+		names[name] = true
+		if k != "" {
+			claimed[k] = true
+		}
+		plan = append(plan, bundleStage{Name: name, Key: k, Color: st.Color})
+	}
+	return plan, warnings
 }
