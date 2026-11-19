@@ -26,9 +26,11 @@ import { bucketOptions, meterPerPeriod, outsideTotals, splitBy, stepKind, origin
 // the detailed view's splits add up to its total. Where the server has no
 // figure (null), the page never shows $0: a reading not split names its
 // reason, a period without a list price says so. F3b: per period and per
-// seat an unattributed part (≈, booked to nobody) stands beside the outside
-// and covey parts (≤) and the part not split, and they add up to the real
-// cost; a reading that moved with no reported call is unattributed whole;
+// seat an unattributed part (booked to nobody: beyond the rate "≥", moved
+// with no call "≈") stands beside the outside and covey parts (≈, F3c) and
+// the part not split, and they add up to the real cost; a reading that moved
+// with no reported call is unattributed whole only where the server says so,
+// and split with its chunk otherwise (F3c);
 // the share is the outside part over the dent, at most.
 
 const SEAT = "claude_code_oauth_token";
@@ -43,6 +45,7 @@ function sums(over: Partial<ExternalMeterSums> = {}): ExternalMeterSums {
   return {
     real_usd: 6, external_real_usd: 4.2, covey_real_usd: 1.8, unsplit_real_usd: 0, share: 0.7,
     unattributed_real_usd: 0, unattributed_points: 0, unattributed_steps: 0,
+    unattributed_no_call_real_usd: 0, unattributed_no_call_points: 0, incomplete_chunks: 0,
     split_external_list_usd: 12.5, split_covey_list_usd: 5.4, points: 13, split_points: 13, split_external_points: 9.1,
     split_covey_points: 3.9, split_runs: 1, split_slack_points: 1, split_slack_usd: 0.46, split_external_slack_points: 0.7,
     split_external_slack_usd: 0.32, split_covey_slack_points: 0.3, split_covey_slack_usd: 0.14, point_rate: 0.46,
@@ -54,19 +57,21 @@ function sums(over: Partial<ExternalMeterSums> = {}): ExternalMeterSums {
 type Kind = "split" | NonNullable<ExternalMeterStep["reason"]>;
 
 /** One meter reading of a seat, as the server sends it: split (real into
- *  outside, covey and its run's unattributed part), unattributed whole
- *  (it moved with no reported call, F3b), or not split, for a reason. */
+ *  outside, covey and its chunk's unattributed part beyond the rate),
+ *  unattributed whole (it moved with no reported call in a chunk with no
+ *  list), or not split, for a reason. folded: a reading that moved with no
+ *  call and joined a chunk (F3c): split, its reason kept. */
 function step(at: string, kind: Kind, real: number | null,
-  opt: { key?: string; outside?: number; unattributed?: number; points?: number } = {}): ExternalMeterStep {
-  const split = kind === "split";
-  const noCall = kind === "moved_without_reported_call";
+  opt: { key?: string; outside?: number; unattributed?: number; points?: number; folded?: boolean } = {}): ExternalMeterStep {
+  const split = kind === "split" || !!opt.folded;
+  const noCall = kind === "moved_without_reported_call" && !split;
   const out = opt.outside ?? 0;
   const un = split ? opt.unattributed ?? 0 : noCall ? real ?? 0 : 0;
   return {
     at, from: new Date(Date.parse(at) - 3_600_000).toISOString(), secret_key: opt.key ?? SEAT, secret_slot: 0,
     points: opt.points ?? (kind === "idle" ? 0 : 2), reset: false, real_usd: real,
     external_list_usd: split ? 1 : 0, covey_list_usd: split ? 1 : 0,
-    reported: kind !== "not_reported", split, reason: split ? undefined : kind,
+    reported: kind !== "not_reported", split, reason: kind === "split" ? undefined : kind,
     external_real_usd: split ? out : null, covey_real_usd: split ? (real ?? 0) - out - un : null,
     unattributed_real_usd: un, unattributed_points: un > 0 ? 1 : 0,
     unsplit_real_usd: split || noCall || kind === "unpriced" || kind === "idle" ? 0 : real ?? 0,
@@ -77,7 +82,7 @@ function step(at: string, kind: Kind, real: number | null,
  *  (F3b), null when no run moved 5 points. */
 function seat(key: string, sources: string[], over: Partial<ExternalMeterSums> = {}, k: number | null = null): ExternalMeterTotal {
   return { ...sums(over), secret_key: key, secret_slot: 0, meter_source: "usage_cmd", sources, hours_with_reading: 2,
-    points_per_list_usd: k, agents: [] };
+    points_per_list_usd: k, plan_rates: [{ usd_per_point: 0.46, points_per_list_usd: k }], agents: [] };
 }
 
 /** The outside usage of /cost/cells. unpriced: every outside call has no
@@ -99,11 +104,13 @@ function external({ unpriced = false } = {}): ExternalUsage {
     cells: [cell(H18, "operator: home", "main", 8), cell(H19, "operator: home", "subagent", 4.5), cell(H19, "operator: work", null, 3.25)],
     // The linked seat: one split reading and one the outside sessions had
     // not reported. A seat no source names is all covey's; a reading that
-    // moved there with no call (unattributed, F3b) says nothing about the
+    // moved there with no call and no chunk beside it (unattributed whole)
+    // says nothing about the
     // outside sessions.
     meter: {
       ...sums({ real_usd: 13.7, covey_real_usd: 6.8, unsplit_real_usd: 1.5, share: 4.2 / 11, unsplit_steps: 1,
-        unattributed_real_usd: 1.2, unattributed_points: 1, unattributed_steps: 1 }),
+        unattributed_real_usd: 1.2, unattributed_points: 1, unattributed_steps: 1,
+        unattributed_no_call_real_usd: 1.2, unattributed_no_call_points: 1 }),
       steps: [
         step("2026-11-17T18:30:00Z", "split", 6, { outside: 4.2 }),
         step("2026-11-17T19:30:00Z", "not_reported", 1.5),
@@ -115,7 +122,8 @@ function external({ unpriced = false } = {}): ExternalUsage {
       credentials: [
         seat(SEAT, ["operator: home"], { real_usd: 7.5, unsplit_steps: 1, unsplit_real_usd: 1.5 }),
         seat(OTHER_SEAT, [], { real_usd: 6.2, external_real_usd: 0, covey_real_usd: 5, share: 0,
-          unattributed_real_usd: 1.2, unattributed_points: 1, unattributed_steps: 1 }),
+          unattributed_real_usd: 1.2, unattributed_points: 1, unattributed_steps: 1,
+          unattributed_no_call_real_usd: 1.2, unattributed_no_call_points: 1 }),
       ],
     },
   };
@@ -178,11 +186,11 @@ describe("the operator sessions on the cost page (#120)", () => {
     expect(within(tile).getByText(t("costs.outside.tileSub", counted(60)))).toBeTruthy();
     // The share is of the dent of the seat a source names (4.2 of 7.5, its
     // reading not reported included: F3b), not of every seat (4.2 of 13.7):
-    // the unlinked seat is all covey's. It is an upper bound (≤).
+    // the unlinked seat is all covey's. It is an estimate (≈, F3c).
     expect(o.meter.share).toBeCloseTo(4.2 / 7.5, 12);
     expect(o.meter.dent).toBeCloseTo(7.5, 12);
     expect(within(tile).getByText(t("costs.outside.realShare", { usd: fmtUSD(4.2), pct: pct(4.2 / 7.5) }))).toBeTruthy();
-    expect(t("costs.outside.realShare", { usd: "$1", pct: "1 %" })).toContain("≤ $1");
+    expect(t("costs.outside.realShare", { usd: "$1", pct: "1 %" })).toContain("≈ $1");
     // Beside the share, what unattributed use is — none measured on this seat.
     expect(within(tile).getByText(t("costs.outside.unattributedNone"))).toBeTruthy();
     expect(within(tile).getByText(t("costs.outside.unpriced", { n: fmtCount(2060) }))).toBeTruthy();
@@ -190,11 +198,12 @@ describe("the operator sessions on the cost page (#120)", () => {
 
   it("puts the unattributed part beside the share on the tile, with the readings that moved with no call", async () => {
     const ext = external();
-    // A reading of the linked seat moved with no reported call: unattributed
-    // whole (F3b), no longer split to nobody. 4.2 + 1.8 + 0.5 + 1.5 = 8.
+    // A reading of the linked seat moved with no reported call and no chunk
+    // beside it: the server books it to nobody whole (not split). 4.2 + 1.8 + 0.5 + 1.5 = 8.
     ext.meter.steps.push(step("2026-11-17T19:10:00Z", "moved_without_reported_call", 0.5));
     ext.meter.credentials[0] = seat(SEAT, ["operator: home"], { real_usd: 8, unsplit_steps: 1, unsplit_real_usd: 1.5,
-      unattributed_real_usd: 0.5, unattributed_points: 1, unattributed_steps: 1 });
+      unattributed_real_usd: 0.5, unattributed_points: 1, unattributed_steps: 1,
+      unattributed_no_call_real_usd: 0.5, unattributed_no_call_points: 1 });
     serveCosts(cells(ext));
     const tile = await screen.findByRole("group", { name: t("costs.outside.tile") });
     const o = outsideTotals(ext)!;
@@ -208,6 +217,11 @@ describe("the operator sessions on the cost page (#120)", () => {
     expect(within(tile).getByText(sentence)).toBeTruthy();
     expect(within(tile).getByText(t("costs.outside.noCall", { ...counted(1), usd: fmtUSD(0.5) }))).toBeTruthy();
     expect(tile.textContent).not.toContain(t("costs.outside.unattributedNone"));
+    // Its half: moved with no call (≈); nothing beyond the rate here.
+    expect(o.meter.noCall).toBeCloseTo(0.5, 12);
+    expect(o.meter.beyond).toBe(0);
+    expect(within(tile).getByText(t("costs.dent.unattributedNoCall", { usd: fmtUSD(0.5) }))).toBeTruthy();
+    expect(tile.textContent).not.toContain(t("costs.dent.unattributedBeyond", { usd: fmtUSD(0) }));
   });
 
   it("counts only the readings of seats a source names, one line per reason, in the singular for one", async () => {
@@ -419,7 +433,7 @@ describe("the detailed view of the operator sessions", () => {
     expect(screen.getByRole("group", { name: t("costs.outside.colUnpriced") }).textContent).toContain(fmtCount(2060));
     const real = screen.getByRole("group", { name: t("costs.outside.meterShare") });
     // F3b: at most, and of the whole dent (4.2 of 6).
-    expect(real.querySelector("[data-value]")!.textContent).toBe(`≤ ${fmtUSD(4.2)}`);
+    expect(real.querySelector("[data-value]")!.textContent).toBe(`≈ ${fmtUSD(4.2)}`);
     expect(real.textContent).toContain(t("costs.outside.ofMeter", { pct: pct(0.7), dent: fmtUSD(6) }));
     expect(real.textContent).toContain(t("costs.outside.unattributedNone"));
     // The $ per type of a row with unpriced tokens cover its priced calls
@@ -447,7 +461,7 @@ describe("the detailed view of the operator sessions", () => {
     const row = container.querySelector<HTMLTableRowElement>(`[data-meter-period='${Date.parse(H19)}']`)!;
     expect(row.getAttribute("data-meter-row")).toBe("split");
     expect(row.textContent).toContain(t("costs.outside.noReading"));
-    expect(row.querySelectorAll("td")[1].textContent).toBe(`≤ ${fmtUSD(1)}`);
+    expect(row.querySelectorAll("td")[1].textContent).toBe(`≈ ${fmtUSD(1)}`);
     // Where every working source's seat has a reading: no such note.
     const h18 = container.querySelector<HTMLTableRowElement>(`[data-meter-period='${Date.parse(H18)}']`)!;
     expect(h18.textContent).not.toContain(t("costs.outside.noReading"));
@@ -490,7 +504,7 @@ describe("the detailed view of the operator sessions", () => {
       step(at(23, 20), "split", 1, { outside: 0.25 }),
       step(at(23, 40), "outside_unpriced", 0.3),
     ];
-    expect(steps.map(stepKind)).toEqual(["split", "not_reported", "not_reported", "moved_without_reported_call",
+    expect(steps.map(stepKind)).toEqual(["split", "not_reported", "not_reported", "unattributed",
       "outside_unpriced", "unpriced", "idle", "split", "outside_unpriced"]);
     const { container } = serveView(view({ steps }));
     await screen.findByRole("table", { name: t("costs.outside.byModel") });
@@ -501,16 +515,18 @@ describe("the detailed view of the operator sessions", () => {
     const cellsOf = (h: number) => [...row(h).querySelectorAll("td")].map((c) => c.textContent);
     const kind = (h: number) => row(h).getAttribute("data-meter-row");
 
-    // The columns: real, outside (≤), covey (≤), unattributed (≈), not split
-    // (≈), note.
+    // The columns: real, outside (≈), covey (≈), unattributed (beyond the
+    // rate ≥ where a reading was split, moved with no call ≈), not split (≈),
+    // note.
     expect(kind(17)).toBe("split");
-    expect(cellsOf(17).slice(0, 5)).toEqual([fmtUSD(2), `≤ ${fmtUSD(1.4)}`, `≤ ${fmtUSD(0.6)}`, `≈ ${fmtUSD(0)}`, "–"]);
+    expect(cellsOf(17).slice(0, 5)).toEqual([fmtUSD(2), `≈ ${fmtUSD(1.4)}`, `≈ ${fmtUSD(0.6)}`, `≥ ${fmtUSD(0)}`, "–"]);
 
     // Not reported, twice in one hour: their real cost not split, no part, the plural.
     expect(kind(18)).toBe("unsplit");
     expect(cellsOf(18)).toEqual([fmtUSD(2), "–", "–", "–", `≈ ${fmtUSD(2)}`,
       t("costs.outside.unsplit_not_reported", { ...counted(2), usd: fmtUSD(2) })]);
-    // Moved with no reported call: unattributed whole (F3b), not split to
+    // Moved with no reported call, no chunk beside it: unattributed whole as
+    // the server has it, not split to
     // nobody; never Outside $0.00 / covey $0.00.
     expect(kind(19)).toBe("unattributed");
     expect(cellsOf(19)).toEqual([fmtUSD(0.9), "–", "–", `≈ ${fmtUSD(0.9)}`, "–",
@@ -526,7 +542,7 @@ describe("the detailed view of the operator sessions", () => {
     expect(cellsOf(22).slice(1)).toEqual(["–", "–", "–", "–", t("costs.outside.idleHere")]);
     // Split and not split in one hour: the split part, and the rest named.
     expect(kind(23)).toBe("partial");
-    expect(cellsOf(23)).toEqual([fmtUSD(1.3), `≤ ${fmtUSD(0.25)}`, `≤ ${fmtUSD(0.75)}`, `≈ ${fmtUSD(0)}`, `≈ ${fmtUSD(0.3)}`,
+    expect(cellsOf(23)).toEqual([fmtUSD(1.3), `≈ ${fmtUSD(0.25)}`, `≈ ${fmtUSD(0.75)}`, `≥ ${fmtUSD(0)}`, `≈ ${fmtUSD(0.3)}`,
       t("costs.outside.unsplit_outside_unpriced", { ...counted(1), usd: fmtUSD(0.3) })]);
     for (const h of [18, 19, 20, 21]) expect(cellsOf(h).slice(1, 3).join()).not.toContain(fmtUSD(0));
     for (const h of [18, 20, 21, 22]) expect(cellsOf(h)[3]).toBe("–");
@@ -544,8 +560,9 @@ describe("the detailed view of the operator sessions", () => {
 
   it("shows an unattributed part per period and per seat, and the parts add up to the real cost", async () => {
     const at = (h: number, m: number) => `2026-11-17T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00Z`;
-    // 18:00 — a split reading with 1.5 of its 6 unattributed (its run's
-    // share) and one that moved with no call (0.8, unattributed whole);
+    // 18:00 — a split reading with 1.5 of its 6 unattributed (its chunk's
+    // points beyond the rate) and one that moved with no call and no chunk
+    // beside it (0.8, unattributed whole);
     // 19:00 — one not reported (1) and a split one with none unattributed.
     const steps = [
       step(at(18, 30), "split", 6, { outside: 3, unattributed: 1.5 }),
@@ -554,7 +571,8 @@ describe("the detailed view of the operator sessions", () => {
       step(at(19, 40), "split", 2, { outside: 1 }),
     ];
     const seatSums = { real_usd: 9.8, external_real_usd: 4, covey_real_usd: 2.5, unattributed_real_usd: 2.3, unattributed_points: 2,
-      unattributed_steps: 2, unsplit_real_usd: 1, unsplit_steps: 1, step_count: 4, split_steps: 2, share: 4 / 6.5 };
+      unattributed_steps: 2, unattributed_no_call_real_usd: 0.8, unattributed_no_call_points: 1,
+      unsplit_real_usd: 1, unsplit_steps: 1, step_count: 4, split_steps: 2, share: 4 / 6.5 };
     const v = view({ steps, seatSums });
     v.meter.credentials[0] = seat(SEAT, ["operator: home"], seatSums, 2);
     const { container } = serveView(v);
@@ -565,6 +583,7 @@ describe("the detailed view of the operator sessions", () => {
     expect(rows.length).toBe(2);
     expect(rows[0].unattributed.usd).toBeCloseTo(2.3, 12);
     expect(rows[0].unattributed.noCall).toEqual({ steps: 1, usd: 0.8 });
+    expect(rows[0].unattributed.beyond).toBeCloseTo(1.5, 12);
     expect(rows[1].unattributed.usd).toBe(0);
     for (const r of rows) {
       expect(r.outside + r.covey + r.unattributed.usd + unsplitUSD(r.unsplit)).toBeCloseTo(r.real!, 12);
@@ -572,34 +591,35 @@ describe("the detailed view of the operator sessions", () => {
     const row = (iso: string) => container.querySelector<HTMLTableRowElement>(`[data-meter-period='${Date.parse(iso)}']`)!;
     const cellsOf = (iso: string) => [...row(iso).querySelectorAll("td")].map((c) => c.textContent);
     expect(row(H18).getAttribute("data-meter-row")).toBe("partial");
-    expect(cellsOf(H18)).toEqual([fmtUSD(6.8), `≤ ${fmtUSD(3)}`, `≤ ${fmtUSD(1.5)}`, `≈ ${fmtUSD(2.3)}`, "–",
+    expect(cellsOf(H18)).toEqual([fmtUSD(6.8), `≈ ${fmtUSD(3)}`, `≈ ${fmtUSD(1.5)}`, `≥ ${fmtUSD(1.5)}≈ ${fmtUSD(0.8)}`, "–",
       t("costs.outside.noCall", { ...counted(1), usd: fmtUSD(0.8) })]);
-    expect(cellsOf(H19).slice(0, 5)).toEqual([fmtUSD(3), `≤ ${fmtUSD(1)}`, `≤ ${fmtUSD(1)}`, `≈ ${fmtUSD(0)}`, `≈ ${fmtUSD(1)}`]);
+    expect(cellsOf(H19).slice(0, 5)).toEqual([fmtUSD(3), `≈ ${fmtUSD(1)}`, `≈ ${fmtUSD(1)}`, `≥ ${fmtUSD(0)}`, `≈ ${fmtUSD(1)}`]);
 
     // Per seat: the four parts, the share of its whole real cost (at most),
     // the readings that moved with no call, and its rate (1 / k).
     const seatLine = container.querySelector(`[data-seat='${SEAT}#0']`)!.textContent!;
     expect(seatLine).toContain(t("costs.outside.seatLine", { real: fmtUSD(9.8), outside: fmtUSD(4), pct: pct(4 / 9.8),
-      covey: fmtUSD(2.5), unattributed: fmtUSD(2.3) }));
+      covey: fmtUSD(2.5), unattributed: `${t("costs.dent.unattributedBeyond", { usd: fmtUSD(1.5) })}, ${t("costs.dent.unattributedNoCall", { usd: fmtUSD(0.8) })}` }));
     expect(seatLine).toContain(t("costs.outside.noCall", { ...counted(1), usd: fmtUSD(0.8) }));
     expect(seatLine).toContain(t("costs.outside.unsplit_not_reported", { ...counted(1), usd: fmtUSD(1) }));
     expect(seatLine).toContain(t("costs.dent.rateSeat", { seat: `${SEAT} #0`, usd: fmtUSD(0.5) }));
 
-    // The tile: at most, of the dent, with the unattributed sentence beside it.
+    // The tile: ≈, of the dent, with the unattributed sentence and its halves beside it.
     const tile = screen.getByRole("group", { name: t("costs.outside.meterShare") });
-    expect(tile.querySelector("[data-value]")!.textContent).toBe(`≤ ${fmtUSD(4)}`);
+    expect(tile.querySelector("[data-value]")!.textContent).toBe(`≈ ${fmtUSD(4)}`);
     expect(within(tile).getByText(t("costs.outside.ofMeter", { pct: pct(4 / 9.8), dent: fmtUSD(9.8) }))).toBeTruthy();
     expect(within(tile).getByText(t("costs.dent.unattributedSentence", { usd: fmtUSD(2.3) }))).toBeTruthy();
+    expect(within(tile).getByText(`${t("costs.dent.unattributedBeyond", { usd: fmtUSD(1.5) })} · ${t("costs.dent.unattributedNoCall", { usd: fmtUSD(0.8) })}`)).toBeTruthy();
   });
 
   it("names a seat whose only movement is unattributed, with no $0 for the parts", async () => {
     const steps = [step("2026-11-17T18:30:00Z", "moved_without_reported_call", 0.7)];
     const seatSums = { real_usd: 0.7, external_real_usd: 0, covey_real_usd: 0, unattributed_real_usd: 0.7, unattributed_points: 1,
-      unattributed_steps: 1, step_count: 1, split_steps: 0, share: null };
+      unattributed_steps: 1, unattributed_no_call_real_usd: 0.7, unattributed_no_call_points: 1, step_count: 1, split_steps: 0, share: null };
     const { container } = serveView(view({ steps, seatSums }));
     await screen.findByRole("table", { name: t("costs.outside.byModel") });
     const line = container.querySelector(`[data-seat='${SEAT}#0']`)!.textContent!;
-    expect(line).toContain(t("costs.outside.seatNoShareUnattributed", { real: fmtUSD(0.7), unattributed: fmtUSD(0.7) }));
+    expect(line).toContain(t("costs.outside.seatNoShareUnattributed", { real: fmtUSD(0.7), unattributed: t("costs.dent.unattributedNoCall", { usd: fmtUSD(0.7) }) }));
     expect(line).toContain(t("costs.outside.noCall", { ...counted(1), usd: fmtUSD(0.7) }));
     expect(line).not.toContain(fmtUSD(0));
     expect(container.querySelector(`[data-seat='${SEAT}#0'] [data-seat-rate]`)).toBeNull();
@@ -610,6 +630,35 @@ describe("the detailed view of the operator sessions", () => {
     const row = container.querySelector<HTMLTableRowElement>(`[data-meter-period='${Date.parse(H18)}']`)!;
     expect(row.getAttribute("data-meter-row")).toBe("unattributed");
     expect([...row.querySelectorAll("td")].map((c) => c.textContent).slice(0, 5)).toEqual([fmtUSD(0.7), "–", "–", `≈ ${fmtUSD(0.7)}`, "–"]);
+  });
+
+  it("splits a reading that moved with no call with its chunk where the server does, and notes incomplete chunks", async () => {
+    // F3c: the meter's lag after a chunk (+1 with no call) joins it and takes
+    // its share: split, its reason kept, nothing unattributed — the page
+    // reads the server's figures, never the reason.
+    const lag = step("2026-11-17T18:50:00Z", "moved_without_reported_call", 1, { folded: true, outside: 0.7 });
+    expect(lag.split).toBe(true);
+    expect(lag.reason).toBe("moved_without_reported_call");
+    expect(stepKind(lag)).toBe("split");
+    const steps = [step("2026-11-17T18:30:00Z", "split", 6, { outside: 4.2 }), lag];
+    const seatSums = { real_usd: 7, external_real_usd: 4.9, covey_real_usd: 2.1, step_count: 2, split_steps: 2, incomplete_chunks: 1, share: 0.7 };
+    const v = view({ steps, seatSums });
+    const { container } = serveView(v);
+    await screen.findByRole("table", { name: t("costs.outside.byModel") });
+    const rows = meterPerPeriod(v, v.cells, "hour", null);
+    expect(rows[0].unattributed).toEqual({ usd: 0, beyond: 0, noCall: { steps: 0, usd: 0 } });
+    const row = container.querySelector<HTMLTableRowElement>(`[data-meter-period='${Date.parse(H18)}']`)!;
+    expect(row.getAttribute("data-meter-row")).toBe("split");
+    expect([...row.querySelectorAll("td")].map((c) => c.textContent)).toEqual([fmtUSD(7), `≈ ${fmtUSD(4.9)}`, `≈ ${fmtUSD(2.1)}`,
+      `≥ ${fmtUSD(0)}`, "–", ""]);
+    const seatLine = container.querySelector(`[data-seat='${SEAT}#0']`)!.textContent!;
+    expect(seatLine).not.toContain(t("costs.outside.noCall", { ...counted(1), usd: fmtUSD(1) }));
+    expect(seatLine).toContain(t("costs.outside.seatLine", { real: fmtUSD(7), outside: fmtUSD(4.9), pct: pct(0.7), covey: fmtUSD(2.1),
+      unattributed: t("costs.dent.unattributedBeyond", { usd: fmtUSD(0) }) }));
+    // A chunk with use not in its list price: its parts are approximate.
+    const note = t("costs.dent.incompleteNote", { n: "1" });
+    expect(seatLine).toContain(note);
+    expect(within(screen.getByRole("group", { name: t("costs.outside.meterShare") })).getByText(note)).toBeTruthy();
   });
 
   it("gives a period whose calls had no list price no bar and says so", async () => {

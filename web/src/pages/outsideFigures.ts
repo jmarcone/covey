@@ -5,9 +5,10 @@ import { bucketStart, recomputedOf } from "./costFigures";
 /* The figures of the Claude Code sessions outside covey (#120, part 3/3):
  * the overview's series and tile, and the detailed view's splits. Pure
  * functions over the server's answers — every dollar is the server's F1/F2,
- * every real share its F3 and F3b (external.meter: covey's agents, the
- * outside sessions, the unattributed part booked to nobody, the readings not
- * split); nothing here prices a token or splits a meter again. */
+ * every real share its F3c (external.meter, split per chunk of readings:
+ * covey's agents, the outside sessions, the unattributed part booked to
+ * nobody, the readings not split); nothing here prices a token or splits a
+ * meter again. */
 
 // --- Ranges and buckets -------------------------------------------------------
 
@@ -60,7 +61,8 @@ export const belowMeter = (bucket: string) => bucket === "10min";
 /** The reasons that leave a reading's real cost split to nobody (not split).
  *  An idle reading (nothing moved, nothing to split), one at no plan price
  *  (out of the dent, counted apart) and one that moved with no reported call
- *  on either side (unattributed whole, F3b) are not among them. */
+ *  on either side are not among them: since F3c such a reading is split with
+ *  its chunk, or unattributed whole in a chunk with no list at all. */
 export const UNSPLIT_REASONS = ["not_reported", "outside_unpriced"] as const;
 export type UnsplitReason = (typeof UNSPLIT_REASONS)[number];
 /** Per reason, the readings not split and their real cost. */
@@ -72,37 +74,46 @@ export const emptyUnsplit = (): Unsplit => ({
 export const unsplitSteps = (u: Unsplit) => UNSPLIT_REASONS.reduce((a, r) => a + u[r].steps, 0);
 export const unsplitUSD = (u: Unsplit) => UNSPLIT_REASONS.reduce((a, r) => a + u[r].usd, 0);
 
-/** The unattributed part (F3b): movement neither covey's agents nor the
- *  reported sessions explain, booked to nobody — a lower bound. usd: the
- *  split readings' run share and the whole of each reading that moved with
- *  no reported call; noCall: those readings apart. */
-export type Unattributed = { usd: number; noCall: { steps: number; usd: number } };
-export const emptyUnattributed = (): Unattributed => ({ usd: 0, noCall: { steps: 0, usd: 0 } });
+/** The unattributed part (F3c): movement neither covey's agents nor the
+ *  reported sessions explain, booked to nobody, always as the server has
+ *  it (each step's unattributed_real_usd — never inferred from a reason).
+ *  beyond: the split readings' part, their chunk's points beyond the rate
+ *  (a lower bound); noCall: the readings unattributed whole, in a chunk with
+ *  no list at all (they moved with no call: the meter's lag or another
+ *  machine; an estimate). usd = beyond + noCall.usd. */
+export type Unattributed = { usd: number; beyond: number; noCall: { steps: number; usd: number } };
+export const emptyUnattributed = (): Unattributed => ({ usd: 0, beyond: 0, noCall: { steps: 0, usd: 0 } });
 
-/** How a step counts on the page: split (both parts set, and its run's
- *  unattributed part); moved_without_reported_call (unattributed whole,
- *  F3b: never $0 for either part); not split for one of UNSPLIT_REASONS (its
- *  real cost, never $0 for either part); unpriced (no plan price: out of the
- *  dent); idle (it did not move: nothing to split — an unsplit step of 0
- *  points, too, as the server's unsplit_steps does not count it either). */
-export type StepKind = "split" | "moved_without_reported_call" | UnsplitReason | "unpriced" | "idle";
+/** How a step counts on the page: split (the parts set at its chunk's
+ *  share, and the chunk's unattributed part beyond the rate — a reading
+ *  that moved with no call and joined a chunk is split too, it keeps its
+ *  reason); unattributed (not split, and the server books its movement to
+ *  nobody: a chunk with no list; never $0 for either part); not split for
+ *  one of UNSPLIT_REASONS (its real cost, never $0 for either part);
+ *  unpriced (no plan price: out of the dent); idle (it did not move: nothing
+ *  to split — an unsplit step of 0 points, too, as the server's
+ *  unsplit_steps does not count it either). */
+export type StepKind = "split" | "unattributed" | UnsplitReason | "unpriced" | "idle";
 export function stepKind(s: ExternalMeterStep): StepKind {
   if (s.split) return "split";
   if (s.reason === "unpriced") return "unpriced";
-  if (s.reason === "moved_without_reported_call") return s.reason;
-  if (s.reason === "idle" || s.points === 0) return "idle";
+  if ((s.unattributed_real_usd ?? 0) > 0) return "unattributed";
+  if (s.reason === "idle" || s.reason === "moved_without_reported_call" || s.points === 0) return "idle";
   if (s.reason === "outside_unpriced") return s.reason;
   // not_reported, or a reason this page does not know yet: not split.
   return "not_reported";
 }
 
-/** Adds a step's unattributed part to a tally. */
+/** Adds a step's unattributed part to a tally: a split step's to the part
+ *  beyond the rate, an unattributed step's whole to noCall. */
 function addUnattributed(u: Unattributed, s: ExternalMeterStep, k: StepKind) {
   const v = s.unattributed_real_usd ?? 0;
   u.usd += v;
-  if (k === "moved_without_reported_call") {
+  if (k === "unattributed") {
     u.noCall.steps += 1;
     u.noCall.usd += v;
+  } else {
+    u.beyond += v;
   }
 }
 
@@ -146,13 +157,13 @@ export type OutsideTotals = {
   unpricedTokens: number;
   /** Some source names the subscription meter it runs on. */
   linked: boolean;
-  /** F3b over the seats a source is linked to: the outside sessions' real
-   *  share (at most), its part of those seats' dent (null: none split), and
-   *  the unattributed part (at least). */
+  /** F3c over the seats a source is linked to: the outside sessions' real
+   *  share (an estimate), its part of those seats' dent (null: none split),
+   *  and the unattributed part in its two halves. */
   meter: MeterShare;
   /** The readings of those seats not split, per reason: split to nobody. */
   unsplit: Unsplit;
-  /** Their readings that moved with no reported call: unattributed whole. */
+  /** Their readings the server books to nobody whole (a chunk with no list). */
   noCall: Unattributed["noCall"];
   /** The readings of those seats at no plan price: out of the real cost. */
   unpricedSteps: number;
@@ -160,19 +171,29 @@ export type OutsideTotals = {
   unmeteredList: number;
 };
 
-/** The outside sessions' part of the given seats' meters (F3b). real: their
- *  real cost, an upper bound (the unattributed part is a lower one); dent:
- *  the seats' real cost over their priced readings; share: real ÷ dent, an
- *  upper bound too, null while no reading was split (never 0 %); unattributed:
- *  the server's sum, booked to nobody. */
-export type MeterShare = { real: number; dent: number; share: number | null; unattributed: number; splitSteps: number };
+/** The outside sessions' part of the given seats' meters (F3c). real: their
+ *  real cost, an estimate (≈); dent: the seats' real cost over their priced
+ *  readings; share: real ÷ dent, null while no reading was split (never
+ *  0 %); unattributed: the server's sum, booked to nobody, and its halves —
+ *  noCall, the chunks with no list (an estimate), and beyond, the rest:
+ *  chunks' points beyond the rate (a lower bound); incomplete: chunks with
+ *  use not in their list price, whose parts are approximate. */
+export type MeterShare = {
+  real: number; dent: number; share: number | null; splitSteps: number;
+  unattributed: number; beyond: number; noCall: number; incomplete: number;
+};
 
 export function meterShare(creds: readonly ExternalMeterTotal[]): MeterShare {
-  const real = creds.reduce((a, c) => a + c.external_real_usd, 0);
-  const dent = creds.reduce((a, c) => a + (c.step_count > c.unpriced_steps ? c.real_usd : 0), 0);
-  const splitSteps = creds.reduce((a, c) => a + c.split_steps, 0);
-  const unattributed = creds.reduce((a, c) => a + (c.unattributed_real_usd ?? 0), 0);
-  return { real, dent, share: splitSteps > 0 && dent > 0 ? real / dent : null, unattributed, splitSteps };
+  const sum = (f: (c: ExternalMeterTotal) => number) => creds.reduce((a, c) => a + f(c), 0);
+  const real = sum((c) => c.external_real_usd);
+  const dent = sum((c) => (c.step_count > c.unpriced_steps ? c.real_usd : 0));
+  const splitSteps = sum((c) => c.split_steps);
+  const unattributed = sum((c) => c.unattributed_real_usd ?? 0);
+  const noCall = sum((c) => c.unattributed_no_call_real_usd ?? 0);
+  return {
+    real, dent, share: splitSteps > 0 && dent > 0 ? real / dent : null, splitSteps,
+    unattributed, noCall, beyond: Math.max(0, unattributed - noCall), incomplete: sum((c) => c.incomplete_chunks ?? 0),
+  };
 }
 
 export function outsideTotals(ext: ExternalUsage | null | undefined): OutsideTotals | null {
@@ -302,10 +323,10 @@ export function perPeriodBy(cells: readonly ExternalModelCell[], keyOf: (c: Exte
 
 /** One period of the meter for the chosen sources. real: the real cost of
  *  its priced steps (null: none had a plan price). outside and covey: the
- *  parts of its split steps (upper bounds), a figure only while
- *  splitSteps > 0. unattributed: the split steps' run share and the whole of
- *  each step that moved with no reported call (a lower bound), a figure only
- *  while either is there. Then the steps not split, per reason, with their
+ *  parts of its split steps (estimates, at their chunk's share), a figure
+ *  only while splitSteps > 0. unattributed: the split steps' part beyond the
+ *  rate (a lower bound) and the steps the server books to nobody whole (an
+ *  estimate), each a figure only while such a step is there. Then the steps not split, per reason, with their
  *  real cost; the steps at no plan price; the idle ones. noReading: the
  *  outside sessions worked in it on a seat that has no reading placed there
  *  (another seat's may be). outside + covey + unattributed + Σ unsplit =
@@ -359,7 +380,7 @@ export function meterPerPeriod(ext: { meter: ExternalUsage["meter"]; sources: Ex
       e.unpricedSteps += 1;
     } else if (k === "idle") {
       e.idleSteps += 1;
-    } else if (k !== "moved_without_reported_call") {
+    } else if (k !== "unattributed") {
       e.unsplit[k].steps += 1;
       e.unsplit[k].usd += s.unsplit_real_usd;
     }

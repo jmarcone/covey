@@ -57,8 +57,9 @@ export function unsplitLines(t: T, u: Unsplit): string[] {
     .map((r) => t(`costs.outside.unsplit_${r}`, { ...counted(u[r].steps), usd: fmtUSD(u[r].usd) }));
 }
 
-/** The readings that moved with no reported call on either side: their real
- *  cost is unattributed whole (F3b), booked to nobody. */
+/** The readings the server books to nobody whole (F3c: a chunk with no list,
+ *  so they moved with no reported call on either side) — counted as the
+ *  server marks them, never from their reason. */
 export function noCallLines(t: T, n: Unattributed["noCall"]): string[] {
   return n.steps > 0 ? [t("costs.outside.noCall", { ...counted(n.steps), usd: fmtUSD(n.usd) })] : [];
 }
@@ -69,22 +70,40 @@ export function noCallLines(t: T, n: Unattributed["noCall"]): string[] {
 export const unattributedLine = (t: T, usd: number) =>
   usd > 0 ? t("costs.dent.unattributedSentence", { usd: fmtUSD(usd) }) : t("costs.outside.unattributedNone");
 
+/** The unattributed part's two halves in #126's words: beyond the rate (at
+ *  least) and moved with no call (≈). withBeyond: name the part beyond the
+ *  rate even at $0 (a split seat or period, where it is a figure). */
+export function unattributedHalves(t: T, h: { beyond: number; noCall: number }, withBeyond: boolean): string[] {
+  return [
+    ...(withBeyond || h.beyond > 0 ? [t("costs.dent.unattributedBeyond", { usd: fmtUSD(h.beyond) })] : []),
+    ...(h.noCall > 0 ? [t("costs.dent.unattributedNoCall", { usd: fmtUSD(h.noCall) })] : []),
+  ];
+}
+
+/** The chunks with use not in their list price: their parts are approximate. */
+export const incompleteLines = (t: T, n: number) => (n > 0 ? [t("costs.dent.incompleteNote", { n: fmtNumber(n, 0) })] : []);
+
 /** The list price over a range: the figure, or why there is none — no call
  *  at all, or calls none of which had a list price (never $0). */
 export const listValue = (list: number | null) => (list != null ? fmtUSD(list) : "–");
 export const listLine = (t: T, list: number | null, calls: number) =>
   calls === 0 ? t("costs.outside.noCalls") : list == null ? t("costs.outside.noPrice") : t("costs.outside.tileSub", counted(calls));
 
-/** The lines under the outside figures: their real share of the meter (F3b:
- *  at most, of the dent) and the unattributed part beside it, readings that
- *  moved with no call, readings not split, work after the last reading,
- *  reported costs, unpriced tokens. */
+/** The lines under the outside figures: their real share of the meter (F3c:
+ *  ≈, of the dent) and the unattributed part beside it with its halves, the
+ *  incomplete chunks, readings booked to nobody whole, readings not split,
+ *  work after the last reading, reported costs, unpriced tokens. */
 export function outsideLines(t: T, o: OutsideTotals): string[] {
   const lines: string[] = [];
   const m = o.meter;
   if (!o.linked) lines.push(t("costs.outside.noMeterLinked"));
-  else if (m.share != null) lines.push(t("costs.outside.realShare", { usd: fmtUSD(m.real), pct: pct(m.share) }), unattributedLine(t, m.unattributed));
-  else lines.push(t("costs.outside.noShare"), ...(m.unattributed > 0 ? [unattributedLine(t, m.unattributed)] : []));
+  else {
+    if (m.share != null) lines.push(t("costs.outside.realShare", { usd: fmtUSD(m.real), pct: pct(m.share) }));
+    else lines.push(t("costs.outside.noShare"));
+    if (m.share != null || m.unattributed > 0) lines.push(unattributedLine(t, m.unattributed));
+    if (m.unattributed > 0) lines.push(unattributedHalves(t, m, false).join(" · "));
+    lines.push(...incompleteLines(t, m.incomplete));
+  }
   lines.push(...noCallLines(t, o.noCall), ...unsplitLines(t, o.unsplit));
   if (o.unpricedSteps > 0) lines.push(t("costs.outside.unpricedReadings", counted(o.unpricedSteps)));
   if (o.unmeteredList > 0) lines.push(t("costs.outside.unmetered", { usd: fmtUSD(o.unmeteredList) }));

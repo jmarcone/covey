@@ -516,11 +516,14 @@ func TestExternalUsageByModelLeavesTheAgentsFiguresAlone(t *testing.T) {
 	}
 }
 
-// F3b in the detailed view: /cost/external-usage carries /cost/cells' meter
-// with its unattributed part, so a reading that moved with no reported call
-// is unattributed whole (no longer unsplit), a split reading keeps its run's
-// unattributed share, and every step and the sums still add up:
-// covey + outside + unattributed + unsplit = real.
+
+// F3c in the detailed view: /cost/external-usage carries /cost/cells' meter
+// as is. A reading that moved with no reported call right after a chunk is
+// the meter's lag: it is split with that chunk at the chunk's share and
+// keeps its reason; one with no chunk next to it (after a reading whose
+// outside calls had no price) is unattributed whole and counted as such on
+// the seat (unattributed_no_call). Every step and the seat keep covey +
+// outside + unattributed + unsplit = real.
 func TestExternalUsageByModelUnattributedPart(t *testing.T) {
 	s := newStack(t)
 	ctx := context.Background()
@@ -531,18 +534,21 @@ func TestExternalUsageByModelUnattributedPart(t *testing.T) {
 		t.Fatal(err)
 	}
 	ord := s.seat(t, rt.ID, daemon.CredSubscription, "claude_code_oauth_token", "sitz", "A")
-	h1 := time.Now().UTC().Truncate(time.Hour).Add(-5 * time.Hour)
-	h2, h3 := h1.Add(time.Hour), h1.Add(2*time.Hour)
+	h1 := time.Now().UTC().Truncate(time.Hour).Add(-6 * time.Hour)
+	h2, h3, h4 := h1.Add(time.Hour), h1.Add(2*time.Hour), h1.Add(3*time.Hour)
 	admin.expect(http.MethodPut, fmt.Sprintf("/api/v1/runtime-instances/%s/credentials/%d/plan", rt.ID, ord),
 		map[string]any{"plan_name": "Max", "amount": 200, "currency": "USD", "period": "month", "tax_basis": "net",
 			"valid_from": h1.Add(-48 * time.Hour)}, http.StatusOK)
 	pp := 200.0 * 12 / 52 / 100
 	cred := observability.CredentialRef{RuntimeID: rt.ID, Ord: ord, SecretKey: "claude_code_oauth_token", Kind: "subscription"}
+	// +6 with calls on both sides (a chunk), +1 with no call (its lag), +1
+	// whose outside call has no price (closes nothing to split it by), +1
+	// with no call and no chunk beside it.
 	for _, r := range []struct {
 		at  time.Time
 		pct float64
 	}{{h1.Add(-30 * time.Hour), 10}, {h1.Add(40 * time.Minute), 16}, {h2.Add(40 * time.Minute), 17},
-		{h3.Add(40 * time.Minute), 29}} {
+		{h3.Add(40 * time.Minute), 18}, {h4.Add(40 * time.Minute), 19}} {
 		if err := s.obs.AddUsageReading(ctx, s.orgID, observability.MeterReading{Credential: cred,
 			Supported: true, WindowPercent: -1, WeekPercent: r.pct, FetchedAt: r.at}); err != nil {
 			t.Fatal(err)
@@ -550,37 +556,46 @@ func TestExternalUsageByModelUnattributedPart(t *testing.T) {
 	}
 	f := billingFixture{s: s, ctx: ctx, agent: agent.ID, org: s.orgID}
 	f.line(t, cred, h1.Add(10*time.Minute), 50_000)
-	f.line(t, cred, h3.Add(10*time.Minute), 50_000)
-	row := func(id string, at time.Time) map[string]any {
-		return viewRow(id, at, "claude-opus-5-5", "main", 0, 100_000, 0, 0, 0, nil)
-	}
-	up := extUpload("operator: home", row("a", h1.Add(5*time.Minute)), row("b", h3.Add(5*time.Minute)))
+	up := extUpload("operator: home",
+		viewRow("a", h1.Add(5*time.Minute), "claude-opus-5-5", "main", 0, 100_000, 0, 0, 0, nil),
+		viewRow("u", h3.Add(5*time.Minute), "claude-sonnet-5-7", "main", 0, 100_000, 0, 0, 0, nil))
 	up["meter_credential"] = map[string]any{"secret_key": "claude_code_oauth_token", "secret_slot": 0}
-	up["reported_through"] = map[string]any{"laptop": h3.Add(50 * time.Minute)}
+	up["reported_through"] = map[string]any{"laptop": h4.Add(50 * time.Minute)}
 	admin.expect(http.MethodPost, externalPath, up, http.StatusOK)
 
 	near := func(v, want float64) bool { return math.Abs(v-want) < 1e-9 }
+	val := func(p *float64) float64 {
+		if p == nil {
+			return math.NaN()
+		}
+		return *p
+	}
 	for _, b := range []string{"10min", "hour", "10hour", "day"} {
 		v := viewGet(t, admin, "days=2&bucket="+b)
 		if a, c := mustJSON(t, v.Meter), mustJSON(t, cellsExternal(t, admin, "days=2&bucket="+b).Meter); a != c {
 			t.Errorf("%s: the meter differs from /cost/cells':\nview  %s\ncells %s", b, a, c)
 		}
 		m := v.Meter
-		if len(m.Steps) != 3 || len(m.Credentials) != 1 {
-			t.Fatalf("%s: steps %+v, credentials %+v; want three steps on one seat", b, m.Steps, m.Credentials)
+		if len(m.Steps) != 4 || len(m.Credentials) != 1 {
+			t.Fatalf("%s: steps %+v, credentials %+v; want four steps on one seat", b, m.Steps, m.Credentials)
 		}
-		noCall := m.Steps[1]
-		if noCall.Split || noCall.Reason != observability.SplitNoReportedCall || !near(noCall.UnattributedRealUSD, pp) ||
-			noCall.UnsplitRealUSD != 0 || noCall.ExternalRealUSD != nil || noCall.CoveyRealUSD != nil {
-			t.Errorf("%s: the no-call step = %+v, want its point unattributed whole, nothing unsplit", b, noCall)
+		s1, lag, unpriced, lone := m.Steps[0], m.Steps[1], m.Steps[2], m.Steps[3]
+		if !s1.Split || s1.CoveyRealUSD == nil || s1.ExternalRealUSD == nil || *s1.ExternalRealUSD <= 0 {
+			t.Fatalf("%s: the first step = %+v, want it split", b, s1)
 		}
-		if s3 := m.Steps[2]; !s3.Split || !near(s3.UnattributedRealUSD, 4*pp) {
-			t.Errorf("%s: the last step = %+v, want 4 points of it unattributed", b, s3)
+		// The lag takes its chunk's share: split, its reason kept, nothing unattributed.
+		if !lag.Split || lag.Reason != observability.SplitNoReportedCall || lag.UnattributedRealUSD != 0 ||
+			!near(val(lag.ExternalRealUSD)/pp, *s1.ExternalRealUSD/val(s1.RealUSD)) || !near(val(lag.CoveyRealUSD)+val(lag.ExternalRealUSD), pp) {
+			t.Errorf("%s: the lag step = %+v, want it split at the chunk's share %v", b, lag, *s1.ExternalRealUSD/val(s1.RealUSD))
+		}
+		if unpriced.Split || unpriced.Reason != observability.SplitOutsideUnpriced || !near(unpriced.UnsplitRealUSD, pp) {
+			t.Errorf("%s: the unpriced step = %+v, want its point not split", b, unpriced)
+		}
+		if lone.Split || lone.Reason != observability.SplitNoReportedCall || !near(lone.UnattributedRealUSD, pp) ||
+			lone.UnsplitRealUSD != 0 || lone.ExternalRealUSD != nil || lone.CoveyRealUSD != nil {
+			t.Errorf("%s: the lone no-call step = %+v, want its point unattributed whole", b, lone)
 		}
 		for _, st := range m.Steps {
-			if st.RealUSD == nil {
-				continue
-			}
 			parts := st.UnattributedRealUSD + st.UnsplitRealUSD
 			if st.ExternalRealUSD != nil {
 				parts += *st.ExternalRealUSD
@@ -588,17 +603,15 @@ func TestExternalUsageByModelUnattributedPart(t *testing.T) {
 			if st.CoveyRealUSD != nil {
 				parts += *st.CoveyRealUSD
 			}
-			if !near(parts, *st.RealUSD) {
-				t.Errorf("%s: step %s parts %v, real %v", b, st.At, parts, *st.RealUSD)
+			if !near(parts, val(st.RealUSD)) {
+				t.Errorf("%s: step %s parts %v, real %v", b, st.At, parts, val(st.RealUSD))
 			}
 		}
 		c := m.Credentials[0]
-		if !near(c.ExternalRealUSD+c.CoveyRealUSD+c.UnattributedRealUSD+c.UnsplitRealUSD, c.RealUSD) ||
-			!near(c.UnattributedRealUSD, 5*pp) || c.UnattributedSteps != 2 || c.UnsplitSteps != 0 {
-			t.Errorf("%s: seat = %+v, want 5 points unattributed over 2 steps, the parts adding up", b, c)
-		}
-		if c.PointsPerListUSD == nil || !near(*c.PointsPerListUSD, 7.0/3) {
-			t.Errorf("%s: k = %v, want 7/3", b, c.PointsPerListUSD)
+		if !near(c.ExternalRealUSD+c.CoveyRealUSD+c.UnattributedRealUSD+c.UnsplitRealUSD, c.RealUSD) || !near(c.RealUSD, 9*pp) ||
+			!near(c.UnattributedRealUSD, pp) || !near(c.UnattributedNoCallRealUSD, pp) || !near(c.UnsplitRealUSD, pp) ||
+			c.SplitSteps != 2 || c.IncompleteChunks != 0 {
+			t.Errorf("%s: seat = %+v, want 9 points: 7 split over 2 steps, 1 unattributed (no call), 1 not split", b, c)
 		}
 	}
 }
