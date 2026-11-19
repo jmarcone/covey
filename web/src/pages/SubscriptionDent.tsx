@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { fmtNumber, fmtUSD } from "../format";
 import { SPLIT_COLOR } from "./costSources";
 import type { DentPart, FloorMultiple, SubscriptionDent } from "./costFigures";
@@ -11,12 +12,14 @@ import { OrgWide, Swatch } from "./StackedCostChart";
  * outside sessions and both together.
  *
  * Every figure is the server's split (costFigures.subscriptionDent over
- * external.meter): per chunk of at least 5 points of readings, by the
- * chunk's list-price shares (F3c) — a single reading's whole percents say
- * little about its own movement. The meter is account-wide: a machine that
+ * external.meter): per chunk of readings, by the chunk's list-price shares
+ * (F3c) — a single reading's whole percents say little about its own
+ * movement. A chunk holds at least 5 points but for the last one and one
+ * closed early (a reading not split, a new week, a change of plan price). The meter is account-wide: a machine that
  * does not report (another one on the same subscription) moves it too. Per
  * plan price the server takes the lowest rate of points per list $ seen over
- * a chunk of 10 points (k); movement beyond it is unattributed and a lower
+ * a stretch of adjacent chunks of 10 points (k); movement beyond it is
+ * unattributed and a lower
  * bound, and a chunk that moved with no call at all (the meter's lag, or
  * another machine) is unattributed whole, an estimate — both booked to
  * nobody, never to covey or a source. covey's and the outside sessions'
@@ -27,6 +30,19 @@ import { OrgWide, Swatch } from "./StackedCostChart";
  * dent ignores the agent filter and says so. */
 
 const times = (v: number) => `${fmtNumber(v, 1)}×`;
+
+/** A seat's rate (F3c's k) in words: 1 point ≈ $X of list price, at the
+ *  earlier plan price it was measured at when that is not the latest one,
+ *  or that there is no rate yet. seat: its name, null when it is the only
+ *  one. */
+export function rateLine(t: TFunction, seat: string | null, k: number | null, olderPlan: number | null): string {
+  if (k == null || !(k > 0)) return t(seat != null ? "costs.dent.rateUnknownSeat" : "costs.dent.rateUnknown", { seat });
+  const usd = fmtUSD(1 / k);
+  if (olderPlan != null) {
+    return t(seat != null ? "costs.dent.rateSeatOlderPlan" : "costs.dent.rateOlderPlan", { seat, usd, plan: fmtUSD(olderPlan) });
+  }
+  return t(seat != null ? "costs.dent.rateSeat" : "costs.dent.rate", { seat, usd });
+}
 const pctOf = (v: number | null) => (v != null ? `${fmtNumber(v * 100, 0)} %` : "–");
 const pts = (v: number) => fmtNumber(v, v < 10 ? 1 : 0);
 const count = (v: number) => fmtNumber(v, 0);
@@ -58,9 +74,12 @@ export function SubscriptionDentRow({ d, filtered }: { d: SubscriptionDent; filt
     : t("costs.dent.partSub", { pct: pctOf(p.share), list: fmtUSD(p.list), x: atLeast(p.multiple) });
   const tg = d.together;
   const un = d.unattributed;
-  // The unattributed part's two halves: beyond the rate (at least), and the
-  // chunks that moved with no call (≈).
-  const unParts = [t("costs.dent.unattributedBeyond", { usd: fmtUSD(un.beyond) })];
+  // The unattributed part's two halves: beyond the rate (at least) — only
+  // where some seat has a rate to measure it by, else that there is none
+  // yet — and the chunks that moved with no call (≈).
+  const unParts = [d.seats.some((s) => s.pointsPerList != null)
+    ? t("costs.dent.unattributedBeyond", { usd: fmtUSD(un.beyond) })
+    : t("costs.dent.unattributedNoRate")];
   if (un.noCall >= 0.005) unParts.push(t("costs.dent.unattributedNoCall", { usd: fmtUSD(un.noCall) }));
   const sources = d.sources.join(", ");
   const seat = (s: SubscriptionDent["seats"][number]) => `${s.key} #${s.slot}`;
@@ -77,9 +96,7 @@ export function SubscriptionDentRow({ d, filtered }: { d: SubscriptionDent; filt
   // (1 / k), or "no rate yet". The seat is named only when there are two.
   const rated = d.seats.filter((s) => s.real != null && s.steps > 0 && (s.split || s.pointsPerList != null));
   const named = rated.length > 1;
-  const rates = rated.map((s) => s.pointsPerList != null && s.pointsPerList > 0
-    ? t(named ? "costs.dent.rateSeat" : "costs.dent.rate", { seat: seat(s), usd: fmtUSD(1 / s.pointsPerList) })
-    : t(named ? "costs.dent.rateUnknownSeat" : "costs.dent.rateUnknown", { seat: seat(s) }));
+  const rates = rated.map((s) => rateLine(t, named ? seat(s) : null, s.pointsPerList, s.olderPlan));
   return (
     <section className="card mb-4" aria-label={t("costs.dent.title")} data-dent-row>
       <div style={{ fontWeight: 600, marginBottom: 4 }}>

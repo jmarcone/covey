@@ -950,9 +950,9 @@ export type ExternalMeterSums = {
   split_points: number;
   split_external_points: number;
   split_covey_points: number;
-  /** Since F3c the chunks with list price; each leaves ±1 point of the whole. */
+  /** Since F3c the split chunks; each leaves ±2 points of the whole (the whole percents at both ends, a point of lag). */
   split_runs: number;
-  /** The ranges the whole percents leave: the whole's, and each part's (½·TV of its share per chunk). */
+  /** The ranges the whole percents and the lag leave: the whole's, and each part's (2 points × ½·TV of its share per chunk). */
   split_slack_points: number;
   split_slack_usd: number;
   split_external_slack_points: number;
@@ -993,9 +993,11 @@ export type ExternalMeterTotal = ExternalMeterSums & {
   /** The outside sources linked to this meter; none: every step is unsplit. */
   sources: string[];
   hours_with_reading: number;
-  /** k of F3c at the seat's latest plan price that has one: the lowest points per list $ of a chunk of 10 points or more
-   *  with every call priced, at its upper end; null without one. */
+  /** k of F3c at the seat's latest plan price that has one: the lowest points per list $ of a stretch of adjacent chunks
+   *  of 10 points or more with every call priced, at its upper end; null without one. */
   points_per_list_usd: number | null;
+  /** The plan price per point points_per_list_usd is at, when that is not the seat's latest plan price; null otherwise. */
+  points_per_list_older_plan_usd?: number | null;
   /** k per plan price per point, in the order the prices first appear. */
   plan_rates: { usd_per_point: number; points_per_list_usd: number | null }[];
   agents: ExternalMeterAgent[];

@@ -751,18 +751,20 @@ export type DentPart = { real: number; share: number | null; points: number; lis
 
 /** One seat in the dent. real is null when none of its movement has a plan
  *  price; split: it has a split step. pointsPerList: the seat's k (F3c),
- *  null when no complete chunk of split readings moved 10 points. */
+ *  null when no stretch of adjacent complete chunks of split readings moved
+ *  10 points; olderPlan: the plan price per point k is at when that is not
+ *  the seat's latest one, else null. */
 export type DentSeat = {
   key: string; slot: number; sources: string[];
   real: number | null; points: number; covey: number; outside: number; unattributed: number; unsplit: number;
-  unpricedPoints: number; split: boolean; pointsPerList: number | null;
+  unpricedPoints: number; split: boolean; pointsPerList: number | null; olderPlan: number | null;
   /** The seat's readings with a span in the range. */
   steps: number;
 };
 
 /** The whole dent in the subscription meters over the window, and its split
- *  (#120, F3c: per chunk of at least 5 points of readings, by the chunk's
- *  list-price shares). The parts add up to `real`: covey's agents and the
+ *  (#120, F3c: per chunk of readings — at least 5 points, but for the last
+ *  one and one closed early — by the chunk's list-price shares). The parts add up to `real`: covey's agents and the
  *  outside sessions over the readings the outside sessions reported
  *  (estimates, ≈), `unattributed` for the movement neither explains (each
  *  chunk's points beyond the rate k — a lower bound — and chunks that moved
@@ -770,8 +772,9 @@ export type DentSeat = {
  *  readings they did not report — never booked to covey whole. The three
  *  multiples (list price over real cost, from 3 points of attributed
  *  movement) are lower bounds: list / (real + slack), the low end of the
- *  range the whole percents leave (the server's: ±½·TV of each part's share
- *  per chunk, at each reading's own point price). Points without a plan
+ *  range the whole percents and the meter's lag leave (the server's: 2
+ *  points × ½·TV of each part's share per chunk, at each reading's own point
+ *  price). Points without a plan
  *  price are not in it, and counted. */
 export type SubscriptionDent = {
   /** null: no seat has a priced reading. */
@@ -847,7 +850,8 @@ export function subscriptionDent(ext: ExternalUsage | null | undefined): Subscri
       key: c.secret_key, slot: c.secret_slot, sources: c.sources,
       real: pricedSeat(c) ? c.real_usd : null, points: c.points,
       covey: c.covey_real_usd, outside: c.external_real_usd, unattributed: c.unattributed_real_usd ?? 0, unsplit: c.unsplit_real_usd,
-      unpricedPoints: c.unpriced_points, split: c.split_steps > 0, pointsPerList: c.points_per_list_usd ?? null, steps: c.step_count,
+      unpricedPoints: c.unpriced_points, split: c.split_steps > 0, pointsPerList: c.points_per_list_usd ?? null,
+      olderPlan: c.points_per_list_older_plan_usd ?? null, steps: c.step_count,
     })),
   };
 }

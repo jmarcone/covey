@@ -5,6 +5,7 @@ import { Link, useSearchParams } from "react-router";
 import { api, type ExternalModelUsage } from "../api";
 import { exact, fmtBucket, fmtCount, fmtNumber, fmtUSD, fmtUSDAxis } from "../format";
 import { Seg } from "./Costs";
+import { rateLine } from "./SubscriptionDent";
 import { BarChart, Chip, Swatch, type Bar } from "./StackedCostChart";
 import {
   FigureTile, OUTSIDE_COLOR, counted, incompleteLines, listLine, listValue, noCallLines, unattributedHalves, unattributedLine, unsplitLines,
@@ -302,9 +303,7 @@ export default function OutsideCosts() {
                 {/* The seat's rate (F3c's k at its latest plan price): what the part beyond the rate is measured by. */}
                 {c.step_count > c.unpriced_steps && c.split_steps > 0 && (
                   <span className="muted text-xs" style={{ display: "block" }} data-seat-rate>
-                    {c.points_per_list_usd != null && c.points_per_list_usd > 0
-                      ? t("costs.dent.rateSeat", { seat: `${c.secret_key} #${c.secret_slot}`, usd: fmtUSD(1 / c.points_per_list_usd) })
-                      : t("costs.dent.rateUnknownSeat", { seat: `${c.secret_key} #${c.secret_slot}` })}
+                    {rateLine(t, `${c.secret_key} #${c.secret_slot}`, c.points_per_list_usd, c.points_per_list_older_plan_usd ?? null)}
                   </span>
                 )}
               </p>

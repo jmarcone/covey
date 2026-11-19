@@ -55,7 +55,10 @@ func (s *Server) handlePostExternalUsage(w http.ResponseWriter, r *http.Request)
 	var in externalUpload
 	if err := dec.Decode(&in); err != nil {
 		// The decoder's message names the field ("json: unknown field
-		// \"prompt\"") and carries none of the body's values.
+		// \"prompt\"") or the type it wanted, but not every one is free of
+		// the body's values: a syntax error quotes the character it stopped
+		// at, and a time that does not parse is quoted whole
+		// (time.ParseError). They go back only to the sender of that body.
 		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}

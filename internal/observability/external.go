@@ -107,7 +107,9 @@ const (
 	// the cost page reads inside int64: a window would need nine billion
 	// calls at the bound to overflow, where two rows of 9e18 did at once.
 	externalMaxTokens = 1_000_000_000
-	// externalMaxHosts bounds the hosts one push reports through.
+	// externalMaxHosts bounds the hosts one push names, in its rows and in
+	// reported_through together: each is a machine the meter share waits
+	// for (stepReported), so a push must not invent thousands of them.
 	externalMaxHosts = 100
 )
 
@@ -221,6 +223,23 @@ func ValidateExternalReported(reported map[string]time.Time) error {
 	return nil
 }
 
+// ValidateExternalHosts checks that a push names at most externalMaxHosts
+// distinct hosts, in its rows and its watermarks together.
+func ValidateExternalHosts(rows []ExternalRow, reported map[string]time.Time) error {
+	hosts := make(map[string]bool, len(reported))
+	for h := range reported {
+		hosts[h] = true
+	}
+	for _, r := range rows {
+		hosts[r.Host] = true
+	}
+	if len(hosts) > externalMaxHosts {
+		return ErrInvalidExternal{Reason: fmt.Sprintf("the push names %d hosts (rows and reported_through together), at most %d; "+
+			"send each machine's rows under its own host, at most %d per request", len(hosts), externalMaxHosts, externalMaxHosts)}
+	}
+	return nil
+}
+
 // ValidateExternalRows checks an upload's rows against #120's rules: every
 // required field present, counts between 0 and externalMaxTokens, ts not
 // after now + 5 min, at most ExternalMaxRows, each message_id once.
@@ -294,6 +313,9 @@ func (s *Store) UpsertExternalUsage(ctx context.Context, orgID uuid.UUID, source
 		return res, err
 	}
 	if err := ValidateExternalReported(reported); err != nil {
+		return res, err
+	}
+	if err := ValidateExternalHosts(rows, reported); err != nil {
 		return res, err
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -645,11 +667,12 @@ type ExternalMeterSums struct {
 	// estimate; the rest, beyond the rate k, is a lower bound.
 	UnattributedNoCallRealUSD float64 `json:"unattributed_no_call_real_usd"`
 	UnattributedNoCallPoints  float64 `json:"unattributed_no_call_points"`
-	// IncompleteChunks: chunks with list price whose use is not all in it —
+	// IncompleteChunks: split chunks whose use is not all in their list —
 	// outside calls without a price, or covey bookings without a line. They
 	// set no rate and have no unattributed part, so their parts may hold
 	// use of another machine, and the use of those calls is shared at the
-	// priced calls' shares.
+	// priced calls' shares. A chunk with no list but covey bookings without
+	// a line is one: covey's whole, never unattributed.
 	IncompleteChunks int `json:"incomplete_chunks"`
 	// Share: ExternalRealUSD over the split steps' real cost; nil without
 	// one.
@@ -669,14 +692,17 @@ type ExternalMeterSums struct {
 	SplitPoints         float64 `json:"split_points"`
 	SplitExternalPoints float64 `json:"split_external_points"`
 	SplitCoveyPoints    float64 `json:"split_covey_points"`
-	// SplitRuns: since F3c the number of chunks with list price (the field
-	// keeps its name). The meter shows whole percents, so each chunk's
-	// movement is known to ±1 point from its two end readings:
+	// SplitRuns: since F3c the number of split chunks (the field keeps its
+	// name). The meter shows whole percents and trails use, so each chunk's
+	// movement is known to S_c = 2 points (a point for the whole percents at
+	// its two ends, one of lag at its end), the S_c of k and U_c:
 	// SplitSlackPoints / SplitSlackUSD, the attributed whole's range. A
-	// part's range is ±½·TV over each chunk's steps of its coefficient,
-	// TV = f_1 + Σ|f_{k+1} − f_k| + f_n with f_k = s_c·rate_k (s_c the
-	// chunk's outside share Lo_c / L_c, 1 − s_c for covey, 1 for the whole;
-	// rate_k each reading's own plan price per point, 0 without a plan):
+	// part's range is S_c times ½·TV over each chunk's steps of its
+	// coefficient, TV = f_1 + Σ|f_{k+1} − f_k| + f_n with f_k = s_c·rate_k
+	// (s_c the chunk's outside share Lo_c / L_c, 1 − s_c for covey, 1 for
+	// the whole; rate_k each reading's own plan price per point, 0 without a
+	// plan, so an idle reading at another price widens it — #126 finding
+	// 26): 2·s_c, 2·(1 − s_c) and 2 points per chunk,
 	// Split{External,Covey}Slack{Points,USD}. Within a chunk s_c and the
 	// attributed fraction a_c = 1 − U_c / P_c are one number each, so a
 	// part's true coefficient a_c·s_c·rate_k has a TV at most the one given.
@@ -796,14 +822,18 @@ type ExternalMeterTotal struct {
 	// HoursWithReading: the UTC hours a step is placed in.
 	HoursWithReading int `json:"hours_with_reading"`
 	// PointsPerListUSD: k of F3c at the seat's latest plan price that has
-	// one: the lowest rate (points per list $) of a chunk with every call
-	// priced that moved 10 points or more, at the chunk's upper end; nil
-	// without such a chunk, when only chunks with no list are
-	// unattributed. PlanRates: k per plan price, in the order the prices
+	// one: the lowest rate (points per list $) of a stretch of adjacent
+	// chunks with every call priced that moved 10 points or more, at the
+	// stretch's upper end; nil without such a stretch, when only chunks with
+	// no call are unattributed. PlanRates: k per plan price, in the order the prices
 	// first appear (points are percent of one plan's limit, so each plan
 	// has its own).
 	PointsPerListUSD *float64                `json:"points_per_list_usd"`
 	PlanRates        []ExternalMeterPlanRate `json:"plan_rates"`
+	// PointsPerListOlderPlanUSD: the plan price per point PointsPerListUSD
+	// is at, when that is not the seat's latest plan price (no stretch at
+	// the latest one set a k yet); nil otherwise.
+	PointsPerListOlderPlanUSD *float64 `json:"points_per_list_older_plan_usd"`
 	ExternalMeterSums
 	// Agents: covey's real share per agent (finding 22 on #126).
 	Agents []ExternalMeterAgent `json:"agents"`
@@ -1039,9 +1069,10 @@ func (s *Store) externalFor(ctx context.Context, orgID uuid.UUID, bucket string,
 		if err != nil {
 			return out, err
 		}
-		tot, st := splitSeat(seat, linked[seat], in)
+		tot, st := splitSeatSince(seat, linked[seat], in, since)
 		tot.MeterSource = cov.Source
-		if tot.UnmeteredListUSD, err = s.unmeteredList(ctx, orgID, since, linked[seat], in); err != nil {
+		n := sort.Search(len(in), func(i int) bool { return !in[i].At.Before(since) })
+		if tot.UnmeteredListUSD, err = s.unmeteredList(ctx, orgID, since, linked[seat], in[n:]); err != nil {
 			return out, err
 		}
 		totals, steps = append(totals, tot), append(steps, st...)
@@ -1147,14 +1178,20 @@ type shareStep struct {
 	UnpricedCalls, UnpricedTokens int64
 	// UnlinedBookings: covey bookings on the seat in the span that no line
 	// was linked to (an older daemon, a run cut off): use that moved the
-	// meter but is not in LCov.
+	// meter but is not in LCov. UnlinedAgents: their usd per agent.
 	UnlinedBookings int64
+	UnlinedAgents   map[uuid.UUID]float64
 	Reported        bool
 }
 
-// seatSteps builds a seat's steps from its meter's readings in the window
-// (the source the page reads), each with the lists of its span and whether
-// it was reported. A meter read only before the window, or never, has none.
+// seatSteps builds a seat's steps from its meter's readings (the source the
+// page reads), each with the lists of its span and whether it was reported.
+// A meter read only before the window, or never, has none. The steps begin
+// at an anchor before since, so that the chunks (F3c) do not depend on where
+// the range starts: the last reset before since (the week's first reading)
+// among the readings meterQuery returns (from 8 days before since), else the
+// first of them. Only the steps at or after since are reported (splitSeat's
+// since); those before it shape the chunks and k.
 func (s *Store) seatSteps(ctx context.Context, orgID uuid.UUID, since time.Time, seat meterSeat, sources []string,
 	readings []meterRow, coverage []MeterCoverage, plans []CredentialPlan,
 	hosts map[string][]ExternalHost) ([]shareStep, MeterCoverage, error) {
@@ -1168,12 +1205,12 @@ func (s *Store) seatSteps(ctx context.Context, orgID uuid.UUID, since time.Time,
 			rs = append(rs, r)
 		}
 	}
+	if len(rs) < 2 || rs[len(rs)-1].at.Before(since) {
+		return nil, cov, nil
+	}
 	var steps []shareStep
-	for k := 1; k < len(rs); k++ {
+	for k := stepAnchor(rs, since) + 1; k < len(rs); k++ {
 		r := rs[k]
-		if r.at.Before(since) {
-			continue
-		}
 		st := shareStep{At: r.at.UTC(), From: rs[k-1].at.UTC(), Points: r.points, Reset: r.reset}
 		if p, ok := planAt(plans, r.key, r.slot, r.at); ok {
 			rate := p.USDPerPoint
@@ -1207,6 +1244,18 @@ func (s *Store) seatSteps(ctx context.Context, orgID uuid.UUID, since time.Time,
 	return steps, cov, nil
 }
 
+// stepAnchor is the reading a seat's steps begin after (seatSteps): the
+// last reset before since, else the first reading.
+func stepAnchor(rs []meterRow, since time.Time) int {
+	anchor := 0
+	for k := 1; k < len(rs) && rs[k].at.Before(since); k++ {
+		if rs[k].reset {
+			anchor = k
+		}
+	}
+	return anchor
+}
+
 // spanArrays are the steps' spans as two arrays for unnest.
 func spanArrays(steps []shareStep) ([]time.Time, []time.Time) {
 	from, to := make([]time.Time, len(steps)), make([]time.Time, len(steps))
@@ -1233,7 +1282,11 @@ func externalStepUSD(model string, t ModelTokens, hasReported bool, reported flo
 // stepLists fills each step's L_out (the linked sources' calls with ts in
 // its span) and L_cov with the agents' parts (the seat's lines with
 // created_at in its span). The spans are disjoint, so a call or line counts
-// in one step at most.
+// in one step at most. created_at is a line's result time: a line with a
+// started_at in an earlier span (a long turn, started_at = created_at −
+// duration_ms) is spread over the spans it ran in, in proportion to its time
+// in each (spreadLine), so its list does not land after the meter moved for
+// it. An outside call has one time only and stays in its span.
 func (s *Store) stepLists(ctx context.Context, orgID uuid.UUID, seat meterSeat, sources []string, steps []shareStep) error {
 	from, to := spanArrays(steps)
 	if len(sources) > 0 {
@@ -1274,39 +1327,45 @@ func (s *Store) stepLists(ctx context.Context, orgID uuid.UUID, seat meterSeat, 
 		}
 	}
 
+	// The lines that ran wholly in their step's span are summed per agent and
+	// model; one that began before it (started_at < the span's start) is its
+	// own group, spread over the spans it ran in.
 	rows, err := s.pool.Query(ctx, `SELECT s.i, m.agent_id, m.model,
+		CASE WHEN m.started_at < s.f THEN m.id END, MIN(m.started_at), MAX(m.created_at),
 		SUM(m.input_tokens), SUM(m.output_tokens), SUM(m.cache_read_tokens), SUM(m.cache_write_5m_tokens),
 		SUM(m.cache_write_1h_tokens), SUM(m.web_search_requests), SUM(m.engine_usd)::float8
 		FROM unnest($2::timestamptz[], $3::timestamptz[]) WITH ORDINALITY AS s(f, t, i)
 		JOIN model_usage m ON m.org_id = $1 AND m.secret_key = $4 AND m.secret_slot = $5
 			AND m.created_at > s.f AND m.created_at <= s.t
-		GROUP BY 1, 2, 3`, orgID, from, to, seat.key, seat.slot)
+		GROUP BY 1, 2, 3, 4`, orgID, from, to, seat.key, seat.slot)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var (
-			i      int64
-			agent  uuid.UUID
-			model  string
-			t      ModelTokens
-			engine float64
+			i         int64
+			agent     uuid.UUID
+			model     string
+			spread    *int64
+			started   *time.Time
+			createdAt time.Time
+			t         ModelTokens
+			engine    float64
 		)
-		if err := rows.Scan(&i, &agent, &model, &t.Input, &t.Output, &t.CacheRead, &t.CacheWrite5m,
-			&t.CacheWrite1h, &t.WebSearches, &engine); err != nil {
+		if err := rows.Scan(&i, &agent, &model, &spread, &started, &createdAt, &t.Input, &t.Output, &t.CacheRead,
+			&t.CacheWrite5m, &t.CacheWrite1h, &t.WebSearches, &engine); err != nil {
 			return err
 		}
 		usd := engine
 		if pr, ok := ListPrice(model); ok {
 			usd = pr.Cost(t)
 		}
-		st := &steps[i-1]
-		st.LCov += usd
-		if st.Agents == nil {
-			st.Agents = map[uuid.UUID]float64{}
+		if spread != nil && started != nil {
+			spreadLine(steps, int(i-1), *started, createdAt, agent, usd)
+			continue
 		}
-		st.Agents[agent] += usd
+		addCovList(&steps[i-1], agent, usd)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -1316,25 +1375,71 @@ func (s *Store) stepLists(ctx context.Context, orgID uuid.UUID, seat meterSeat, 
 	// Bookings on the seat no line was linked to (as the cost cells'
 	// measured "unattributed" type reads them): their use is not in L_cov,
 	// so the step's chunk sets no rate and has no unattributed part (F3c).
-	rows, err = s.pool.Query(ctx, `SELECT s.i, count(*)
+	// The whole stretch bounds created_at, so the scan stays on
+	// idx_cost_secret_slot and the anti join on idx_model_usage_cost_entry.
+	rows, err = s.pool.Query(ctx, `SELECT s.i, ce.agent_id, count(*), SUM(ce.usd)::float8
 		FROM unnest($2::timestamptz[], $3::timestamptz[]) WITH ORDINALITY AS s(f, t, i)
 		JOIN cost_entries ce ON ce.secret_key = $4 AND ce.secret_slot = $5
+			AND ce.created_at > $6 AND ce.created_at <= $7
 			AND ce.created_at > s.f AND ce.created_at <= s.t AND ce.usd > 0.0005
 		JOIN agents a ON a.id = ce.agent_id AND a.org_id = $1
 		WHERE NOT EXISTS (SELECT 1 FROM model_usage m WHERE m.cost_entry_id = ce.id)
-		GROUP BY 1`, orgID, from, to, seat.key, seat.slot)
+		GROUP BY 1, 2`, orgID, from, to, seat.key, seat.slot, from[0], to[len(to)-1])
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var i, n int64
-		if err := rows.Scan(&i, &n); err != nil {
+		var (
+			i, n  int64
+			agent uuid.UUID
+			usd   float64
+		)
+		if err := rows.Scan(&i, &agent, &n, &usd); err != nil {
 			return err
 		}
-		steps[i-1].UnlinedBookings += n
+		st := &steps[i-1]
+		st.UnlinedBookings += n
+		if st.UnlinedAgents == nil {
+			st.UnlinedAgents = map[uuid.UUID]float64{}
+		}
+		st.UnlinedAgents[agent] += usd
 	}
 	return rows.Err()
+}
+
+// addCovList books usd of an agent's lines to a step's L_cov.
+func addCovList(st *shareStep, agent uuid.UUID, usd float64) {
+	st.LCov += usd
+	if st.Agents == nil {
+		st.Agents = map[uuid.UUID]float64{}
+	}
+	st.Agents[agent] += usd
+}
+
+// spreadLine books a line that ran from started to ended (its created_at, in
+// step i's span) over the spans it ran in, in proportion to its time in each
+// (F3c): the meter moves while a turn runs, and its result time lies after
+// that. The part before the first step's span is in none.
+// The steps' spans are contiguous, each starting at the one before's end.
+func spreadLine(steps []shareStep, i int, started, ended time.Time, agent uuid.UUID, usd float64) {
+	dur := ended.Sub(started)
+	if dur <= 0 {
+		addCovList(&steps[i], agent, usd)
+		return
+	}
+	for j := i; j >= 0 && steps[j].At.After(started); j-- {
+		lo, hi := steps[j].From, steps[j].At
+		if started.After(lo) {
+			lo = started
+		}
+		if ended.Before(hi) {
+			hi = ended
+		}
+		if hi.After(lo) {
+			addCovList(&steps[j], agent, usd*float64(hi.Sub(lo))/float64(dur))
+		}
+	}
 }
 
 // unmeteredList is L_out of the linked calls in the window that lie in no
@@ -1420,7 +1525,13 @@ func stepReported(at time.Time, hosts []hostMark) bool {
 // hostMarks returns, per step, the marks of the linked sources' machines. A
 // machine's calls are read only from a week before the first step on, where
 // they can make it active; its latest one before a reading is found by
-// binary search.
+// binary search. A machine that never sent a watermark is left out once
+// another machine of its source has sent one: the source's uploader claims
+// watermarks, so a host without one is a name from before it did (rows
+// uploaded before the hosts table, an older uploader), not a machine that
+// will ever report — counted, it would hold every reading of the seat
+// unsplit for a week after its last call. A source none of whose machines
+// ever sent one still holds its readings: nothing says its calls were sent.
 func (s *Store) hostMarks(ctx context.Context, orgID uuid.UUID, sources []string, hosts map[string][]ExternalHost,
 	steps []shareStep) (func(i int) []hostMark, error) {
 	type hostKey struct{ source, host string }
@@ -1433,6 +1544,22 @@ func (s *Store) hostMarks(ctx context.Context, orgID uuid.UUID, sources []string
 			known[k] = h
 		}
 	}
+	// claims: the sources with a machine that sent a watermark.
+	claims := map[string]bool{}
+	for _, k := range keys {
+		if known[k].ReportedThrough != nil {
+			claims[k.source] = true
+		}
+	}
+	kept := keys[:0]
+	for _, k := range keys {
+		if known[k].ReportedThrough != nil || !claims[k.source] {
+			kept = append(kept, k)
+		} else {
+			delete(known, k)
+		}
+	}
+	keys = kept
 	calls := map[hostKey][]time.Time{}
 	rows, err := s.pool.Query(ctx, `SELECT source, host, ts FROM external_usage
 		WHERE org_id = $1 AND source = ANY($2) AND ts > $3 AND ts <= $4
@@ -1450,6 +1577,10 @@ func (s *Store) hostMarks(ctx context.Context, orgID uuid.UUID, sources []string
 			return nil, err
 		}
 		if _, ok := known[k]; !ok {
+			if claims[k.source] {
+				// No watermark in a source that claims them: left out.
+				continue
+			}
 			// Rows of a host the hosts table does not know (uploaded before
 			// it existed): active by its calls, and with no watermark.
 			known[k] = ExternalHost{Host: k.host}
@@ -1517,16 +1648,22 @@ func stepReason(in shareStep) string {
 const (
 	// chunkMinPoints: a chunk closes at the reading its points reach this
 	// (F3c): enough movement that the whole percents at its two ends are a
-	// small part of it.
+	// small part of it. The last chunk, and one closed early (by a step that
+	// is not split, a reset or a change of plan price), may hold fewer.
 	chunkMinPoints = 5
-	// rateMinPoints: a chunk sets the rate k only from this much movement
-	// on (its points without a reset step's): below it the slack S_c is too
-	// large a part of it.
+	// rateMinPoints: a stretch of chunks sets the rate k only from this much
+	// movement on (its points without a reset step's): below it the slack
+	// S_c is too large a part of it.
 	rateMinPoints = 10
 	// chunkSlackPoints is S_c: one point for the whole percents at the
 	// chunk's two ends and one of lag at its end (a reading may trail the
-	// use before it by a point, as meterQuery reads a drop of one).
+	// use before it by a point, as meterQuery reads a drop of one). The same
+	// for a stretch of adjacent chunks, for k, and for the parts' ranges.
 	chunkSlackPoints = 2.0
+	// lagFoldPoints: at most this much movement with no call right after a
+	// chunk closed at its size is that chunk's lag and joins it (foldLag);
+	// the meter trails use by a point at most.
+	lagFoldPoints = 1.0
 )
 
 // meterChunk is one chunk of a seat's steps (F3c).
@@ -1542,20 +1679,43 @@ type meterChunk struct {
 	// rate: the plan price per point of its steps that moved or have list
 	// (one per chunk: a change of price closes it); nil when none has one.
 	rate *float64
-	// incomplete: a step of it had outside calls without a price or covey
-	// bookings without a line: use that is not in its list.
-	incomplete bool
+	// unpriced: a step of it had outside calls without a price. unlined:
+	// covey bookings without a line in it, unlinedUSD their usd, by agent
+	// in unlinedAgents. Either is use that is not in its list (incomplete).
+	unpriced      bool
+	unlined       int64
+	unlinedUSD    float64
+	unlinedAgents map[uuid.UUID]float64
 	// unattributed: U_c; frac: U_c / P_c, the fraction of each step's
-	// movement that is unattributed (1 for a chunk with no list).
+	// movement that is unattributed (1 for a chunk with no call).
 	unattributed, frac float64
 	// follows: the chunk this one was opened right after, when that one
 	// closed at its size at the step before (nothing closed it before this
-	// step); −1 otherwise. A chunk with no list that follows one is the
-	// meter's lag after it and is folded into it (foldLag).
+	// step); −1 otherwise. Chunks linked so are adjacent: a stretch of them
+	// sets k (chunkRates), and a chunk with no list that follows one is the
+	// meter's lag after it, up to lagFoldPoints (foldLag).
 	follows int
+	// folded: the points of lag folded into it.
+	folded float64
 }
 
 func (c *meterChunk) list() float64 { return c.lOut + c.lCov }
+
+// incomplete: some use of the chunk is not in its list.
+func (c *meterChunk) incomplete() bool { return c.unpriced || c.unlined > 0 }
+
+// split: its steps are split by its share — it has list, or none but covey
+// bookings without a line and no outside call without a price: covey's
+// (share 0), an incomplete chunk with no unattributed part.
+func (c *meterChunk) split() bool { return c.list() > 0 || (c.unlinedUSD > 0 && !c.unpriced) }
+
+// unknown: no list, covey bookings without a line and outside calls without
+// a price — whose use moved it is unknown: not split.
+func (c *meterChunk) unknown() bool { return c.list() <= 0 && c.unlined > 0 && c.unpriced }
+
+// noCall: the meter moved and nobody reported a call in the whole chunk —
+// unattributed whole.
+func (c *meterChunk) noCall() bool { return !c.split() && !c.unknown() }
 
 // share is the chunk's outside share Lo_c / L_c; 0 without list.
 func (c *meterChunk) share() float64 {
@@ -1565,17 +1725,49 @@ func (c *meterChunk) share() float64 {
 	return 0
 }
 
+// add puts step i in the chunk; counts: it moved or has list (not idle), so
+// its plan price is the chunk's.
+func (c *meterChunk) add(i int, in shareStep, counts bool) {
+	c.steps = append(c.steps, i)
+	c.points += in.Points
+	c.lOut += in.LOut
+	c.lCov += in.LCov
+	if !in.Reset {
+		c.kPoints += in.Points
+		c.kList += in.LOut + in.LCov
+	}
+	if counts && in.Rate != nil && c.rate == nil {
+		c.rate = in.Rate
+	}
+	c.unpriced = c.unpriced || in.UnpricedCalls > 0
+	c.unlined += in.UnlinedBookings
+	for id, l := range in.Agents {
+		if c.agents == nil {
+			c.agents = map[uuid.UUID]float64{}
+		}
+		c.agents[id] += l
+	}
+	for id, u := range in.UnlinedAgents {
+		if c.unlinedAgents == nil {
+			c.unlinedAgents = map[uuid.UUID]float64{}
+		}
+		c.unlinedAgents[id] += u
+		c.unlinedUSD += u
+	}
+}
+
 // seatChunks walks a seat's steps in time order into chunks (F3c): a split,
 // idle or moved_without_reported_call step joins the current chunk, opening
 // one when none is open, and the chunk closes at the reading its points
 // reach chunkMinPoints. A not_reported, outside_unpriced or unpriced step
 // closes it before itself and stays in none; a reset closes it before
 // itself, and so does a step that moved or has list at another plan price
-// than the chunk's (an idle step, with neither, rides along at its own
-// price). chunkOf[i] is step i's chunk, −1 for none. A chunk opened right
-// after one that closed at its size, with nothing closing it in between
-// (no unsplit or unpriced step, no reset, no change of plan price), records
-// it in follows.
+// than the chunk's — or, while the chunk has none yet (idle steps only), the
+// one it follows (an idle step, with neither, rides along at its own price).
+// chunkOf[i] is step i's chunk, −1 for none. A chunk opened right after one
+// that closed at its size, with nothing closing it in between (no unsplit
+// or unpriced step, no reset, no change of plan price), records it in
+// follows.
 func seatChunks(steps []shareStep, reasons []string) ([]int, []meterChunk) {
 	chunkOf := make([]int, len(steps))
 	var chunks []meterChunk
@@ -1594,7 +1786,11 @@ func seatChunks(steps []shareStep, reasons []string) ([]int, []meterChunk) {
 		counts := reasons[i] != SplitIdle
 		if counts && in.Rate != nil {
 			if cur >= 0 {
-				if r := chunks[cur].rate; r != nil && *r != *in.Rate {
+				r := chunks[cur].rate
+				if f := chunks[cur].follows; r == nil && f >= 0 {
+					r = chunks[f].rate
+				}
+				if r != nil && *r != *in.Rate {
 					cur = -1
 				}
 			} else if sized >= 0 {
@@ -1610,26 +1806,7 @@ func seatChunks(steps []shareStep, reasons []string) ([]int, []meterChunk) {
 		sized = -1
 		c := &chunks[cur]
 		chunkOf[i] = cur
-		c.steps = append(c.steps, i)
-		c.points += in.Points
-		c.lOut += in.LOut
-		c.lCov += in.LCov
-		if !in.Reset {
-			c.kPoints += in.Points
-			c.kList += in.LOut + in.LCov
-		}
-		if counts && in.Rate != nil && c.rate == nil {
-			c.rate = in.Rate
-		}
-		if in.UnpricedCalls > 0 || in.UnlinedBookings > 0 {
-			c.incomplete = true
-		}
-		for id, l := range in.Agents {
-			if c.agents == nil {
-				c.agents = map[uuid.UUID]float64{}
-			}
-			c.agents[id] += l
-		}
+		c.add(i, in, counts)
 		if c.points >= chunkMinPoints {
 			cur, sized = -1, cur
 		}
@@ -1637,42 +1814,75 @@ func seatChunks(steps []shareStep, reasons []string) ([]int, []meterChunk) {
 	return chunkOf, chunks
 }
 
-// foldLag folds each chunk with no list that follows a chunk closed at its
-// size into that chunk (F3c): a run of readings that moved with no call, or
-// did not move, right after use is the meter's lag and carry, not another
-// machine. Only movement with no adjacent chunk — at the start of the range,
-// or after an unsplit or unpriced step, a reset or a change of plan price —
-// stays a chunk of its own, unattributed whole. A chain of such chunks folds
-// into the first one. It returns the chunks left and the steps' new chunk
-// indexes; k is taken before it (chunkRates), on the chunks as they closed.
-func foldLag(chunks []meterChunk, chunkOf []int) ([]meterChunk, []int) {
+// foldLag folds the meter's lag after a chunk into it (F3c): a chunk with no
+// list that follows a chunk with list closed at its size is a run of
+// readings that moved with no call, or did not move, right after use. Its
+// steps join that chunk, in order, while the points they add stay within
+// lagFoldPoints — the meter trails use by a point at most; from the first
+// step that would pass it on, the run stays a chunk with no list of its own
+// (unattributed whole: another machine, an estimate). Movement with no call
+// and no adjacent chunk — at the start of the range, or after an unsplit or
+// unpriced step, a reset or a change of plan price — stays a chunk of its
+// own, and a chunk with no list that follows one with none joins it whole.
+// It returns the chunks left and the steps' new chunk indexes; k is taken
+// before it (chunkRates), on the chunks as they closed.
+func foldLag(chunks []meterChunk, steps []shareStep, reasons []string) ([]meterChunk, []int) {
 	root := make([]int, len(chunks))
 	var out []meterChunk
 	for i, c := range chunks {
-		if c.list() <= 0 && c.follows >= 0 {
-			r := root[c.follows]
-			t := &out[r]
-			t.steps = append(t.steps, c.steps...)
-			t.points += c.points
-			t.incomplete = t.incomplete || c.incomplete
+		if c.list() > 0 || c.follows < 0 {
+			root[i] = len(out)
+			out = append(out, c)
+			continue
+		}
+		r := root[c.follows]
+		if out[r].list() <= 0 {
+			for _, k := range c.steps {
+				out[r].add(k, steps[k], reasons[k] != SplitIdle)
+			}
 			root[i] = r
 			continue
 		}
-		root[i] = len(out)
-		out = append(out, c)
+		n := 0
+		for ; n < len(c.steps); n++ {
+			k := c.steps[n]
+			if out[r].folded+steps[k].Points > lagFoldPoints {
+				break
+			}
+			out[r].add(k, steps[k], reasons[k] != SplitIdle)
+			out[r].folded += steps[k].Points
+		}
+		root[i] = r
+		if n < len(c.steps) {
+			rest := meterChunk{follows: -1}
+			for _, k := range c.steps[n:] {
+				rest.add(k, steps[k], reasons[k] != SplitIdle)
+			}
+			root[i] = len(out)
+			out = append(out, rest)
+		}
 	}
-	for i, c := range chunkOf {
-		if c >= 0 {
-			chunkOf[i] = root[c]
+	chunkOf := make([]int, len(steps))
+	for i := range chunkOf {
+		chunkOf[i] = -1
+	}
+	for j, c := range out {
+		for _, k := range c.steps {
+			chunkOf[k] = j
 		}
 	}
 	return out, chunkOf
 }
 
-// chunkRates is F3c's k per plan price: min over the complete chunks at
-// that price with kPoints ≥ rateMinPoints and kList > 0 of (kPoints + S_c) /
-// kList. It returns the prices in the order they first appear, with k (nil
-// when none).
+// chunkRates is F3c's k per plan price: the min over every stretch of
+// adjacent chunks (each opened right after the one before it closed at its
+// size, so at one plan price) with no incomplete chunk, kPoints ≥
+// rateMinPoints and kList > 0 of (kPoints + S_c) / kList. Any such stretch's
+// true points lie within its read points ± S_c as one chunk's do, and the
+// min over every stretch, not only the longest, finds a clean one: readings
+// of a point or less make chunks of 5 that alone never reach 10. A chunk
+// with no call in a stretch only adds points. It returns the prices in the
+// order they first appear, with k (nil when none).
 func chunkRates(chunks []meterChunk) []ExternalMeterPlanRate {
 	var rates []ExternalMeterPlanRate
 	at := map[float64]int{}
@@ -1680,25 +1890,40 @@ func chunkRates(chunks []meterChunk) []ExternalMeterPlanRate {
 		if c.rate == nil {
 			continue
 		}
-		i, ok := at[*c.rate]
-		if !ok {
-			i = len(rates)
-			at[*c.rate] = i
+		if _, ok := at[*c.rate]; !ok {
+			at[*c.rate] = len(rates)
 			rates = append(rates, ExternalMeterPlanRate{USDPerPoint: *c.rate})
 		}
-		if c.incomplete || c.kPoints < rateMinPoints || c.kList <= 0 {
-			continue
-		}
-		if v := (c.kPoints + chunkSlackPoints) / c.kList; rates[i].PointsPerListUSD == nil || v < *rates[i].PointsPerListUSD {
-			rates[i].PointsPerListUSD = &v
+	}
+	for a := range chunks {
+		var points, list float64
+		var price *float64
+		for b := a; b < len(chunks); b++ {
+			c := &chunks[b]
+			if (b > a && c.follows != b-1) || c.incomplete() {
+				break
+			}
+			points += c.kPoints
+			list += c.kList
+			if price == nil {
+				price = c.rate
+			}
+			if price == nil || points < rateMinPoints || list <= 0 {
+				continue
+			}
+			r := &rates[at[*price]]
+			if v := (points + chunkSlackPoints) / list; r.PointsPerListUSD == nil || v < *r.PointsPerListUSD {
+				r.PointsPerListUSD = &v
+			}
 		}
 	}
 	return rates
 }
 
 // chunkUnattributed sets each chunk's U_c: max(0, P_c − S_c − k·L_c) at its
-// plan price's k, P_c whole for a chunk with no list, 0 without k and for
-// an incomplete chunk.
+// plan price's k, P_c whole for a chunk with no call, 0 without k, for an
+// incomplete chunk (one with no list but covey bookings without a line
+// among them) and for one whose use is unknown.
 func chunkUnattributed(chunks []meterChunk, rates []ExternalMeterPlanRate) {
 	at := map[float64]int{}
 	for i, r := range rates {
@@ -1707,10 +1932,10 @@ func chunkUnattributed(chunks []meterChunk, rates []ExternalMeterPlanRate) {
 	for i := range chunks {
 		c := &chunks[i]
 		switch {
-		case c.list() <= 0:
+		case c.noCall():
 			// The meter moved and nobody reported a call in the whole chunk.
 			c.unattributed, c.frac = c.points, 1
-		case c.incomplete || c.rate == nil:
+		case c.list() <= 0 || c.incomplete() || c.rate == nil:
 		default:
 			k := rates[at[*c.rate]].PointsPerListUSD
 			if k == nil {
@@ -1752,6 +1977,15 @@ func rateTV(steps []shareStep, idx []int) float64 {
 // rate · Lc_c / L_c, the outside sessions' likewise, placed over its steps
 // by their movement.
 func splitSeat(seat meterSeat, sources []string, steps []shareStep) (ExternalMeterTotal, []ExternalMeterStep) {
+	return splitSeatSince(seat, sources, steps, time.Time{})
+}
+
+// splitSeatSince is splitSeat over steps that begin before the range: they
+// are chunked from their first (seatSteps' anchor) and k may come from their
+// chunks, but only the steps at or after since are reported — in the steps,
+// the sums, the agents — and only the chunks with such a step in the ranges
+// and counts.
+func splitSeatSince(seat meterSeat, sources []string, steps []shareStep, since time.Time) (ExternalMeterTotal, []ExternalMeterStep) {
 	tot := ExternalMeterTotal{SecretKey: seat.key, SecretSlot: seat.slot, Sources: append([]string{}, sources...),
 		Agents: []ExternalMeterAgent{}, PlanRates: []ExternalMeterPlanRate{}}
 	out := make([]ExternalMeterStep, 0, len(steps))
@@ -1768,19 +2002,28 @@ func splitSeat(seat meterSeat, sources []string, steps []shareStep) (ExternalMet
 	for i, in := range steps {
 		reasons[i] = stepReason(in)
 	}
-	chunkOf, chunks := seatChunks(steps, reasons)
-	// k on the chunks as they closed at 5 points; then the lag after a chunk
-	// joins it, and U_c is taken on the chunks it left.
+	_, chunks := seatChunks(steps, reasons)
+	// k on the chunks as they closed; then the lag after a chunk joins it,
+	// and U_c is taken on the chunks it left.
 	tot.PlanRates = append(tot.PlanRates, chunkRates(chunks)...)
-	chunks, chunkOf = foldLag(chunks, chunkOf)
+	chunks, chunkOf := foldLag(chunks, steps, reasons)
 	chunkUnattributed(chunks, tot.PlanRates)
-	// The seat's k: the one of the latest chunk whose plan price has one.
+	// The seat's k: the one of the latest chunk whose plan price has one;
+	// when that is not the latest plan price, the price it is at.
+	var latest *float64
 	for i := len(chunks) - 1; i >= 0 && tot.PointsPerListUSD == nil; i-- {
 		if r := chunks[i].rate; r != nil {
+			if latest == nil {
+				latest = r
+			}
 			for _, pr := range tot.PlanRates {
 				if pr.USDPerPoint == *r && pr.PointsPerListUSD != nil {
 					v := *pr.PointsPerListUSD
 					tot.PointsPerListUSD = &v
+					if *r != *latest {
+						at := *r
+						tot.PointsPerListOlderPlanUSD = &at
+					}
 				}
 			}
 		}
@@ -1789,6 +2032,9 @@ func splitSeat(seat meterSeat, sources []string, steps []shareStep) (ExternalMet
 	hours := map[time.Time]bool{}
 	rates := map[float64]bool{}
 	for i, in := range steps {
+		if in.At.Before(since) {
+			continue
+		}
 		st := ExternalMeterStep{At: in.At, From: in.From, SecretKey: seat.key, SecretSlot: seat.slot,
 			Points: in.Points, Reset: in.Reset, ExternalListUSD: in.LOut, CoveyListUSD: in.LCov, Reported: in.Reported}
 		tot.StepCount++
@@ -1824,20 +2070,23 @@ func splitSeat(seat meterSeat, sources []string, steps []shareStep) (ExternalMet
 			c = &chunks[chunkOf[i]]
 		}
 		switch {
-		case st.Reason == SplitNotReported || st.Reason == SplitOutsideUnpriced || c == nil:
+		case st.Reason == SplitNotReported || st.Reason == SplitOutsideUnpriced || c == nil || c.unknown():
+			// c.unknown(): a chunk with no list, covey bookings without a
+			// line and outside calls without a price: not split, counted with
+			// the readings whose outside calls had no price (never covey's).
 			st.UnsplitRealUSD = r
 			tot.UnsplitRealUSD += r
 			if in.Points != 0 {
 				tot.UnsplitSteps++
 			}
-			if st.Reason == SplitOutsideUnpriced {
+			if st.Reason == SplitOutsideUnpriced || (c != nil && c.unknown()) {
 				tot.OutsideUnpricedRealUSD += r
 				if in.Points != 0 {
 					tot.OutsideUnpricedSteps++
 				}
 			}
 			unsplitList()
-		case c.list() <= 0:
+		case c.noCall():
 			// A chunk with no list at all: the meter moved and nobody
 			// reported a call (lag, or another machine). Unattributed whole,
 			// never covey's, never "not split". No covey line, so no agent
@@ -1870,10 +2119,15 @@ func splitSeat(seat meterSeat, sources []string, steps []shareStep) (ExternalMet
 				agent(id).SplitListUSD += l
 			}
 			// covey's part goes to the agents by their share of the chunk's
-			// L_cov, not the step's.
+			// L_cov, not the step's; in a chunk with no list (covey's whole),
+			// by their share of its bookings without a line.
 			if c.lCov > 0 {
 				for id, l := range c.agents {
 					agent(id).RealUSD += rCov * l / c.lCov
+				}
+			} else if c.list() <= 0 {
+				for id, u := range c.unlinedAgents {
+					agent(id).RealUSD += rCov * u / c.unlinedUSD
 				}
 			}
 		}
@@ -1884,21 +2138,23 @@ func splitSeat(seat meterSeat, sources []string, steps []shareStep) (ExternalMet
 		}
 		out = append(out, st)
 	}
-	// The ranges, one term per chunk with list price (see SplitRuns).
+	// The ranges, one term per split chunk with a step in the range (see
+	// SplitRuns): S_c = 2 points times the part's share, at 2·½·TV of the
+	// chunk's steps' prices in $.
 	for _, c := range chunks {
-		if c.incomplete && c.list() > 0 {
-			tot.IncompleteChunks++
-		}
-		if c.list() <= 0 {
+		if !c.split() || steps[c.steps[len(c.steps)-1]].At.Before(since) {
 			continue
 		}
+		if c.incomplete() {
+			tot.IncompleteChunks++
+		}
 		tot.SplitRuns++
-		s, tv := c.share(), rateTV(steps, c.steps)
-		tot.SplitSlackPoints++
+		s, tv := c.share(), chunkSlackPoints*rateTV(steps, c.steps)
+		tot.SplitSlackPoints += chunkSlackPoints
 		tot.SplitSlackUSD += tv
-		tot.SplitExternalSlackPoints += s
+		tot.SplitExternalSlackPoints += chunkSlackPoints * s
 		tot.SplitExternalSlackUSD += s * tv
-		tot.SplitCoveySlackPoints += 1 - s
+		tot.SplitCoveySlackPoints += chunkSlackPoints * (1 - s)
 		tot.SplitCoveySlackUSD += (1 - s) * tv
 	}
 	tot.PointRateMixed = len(rates) > 1

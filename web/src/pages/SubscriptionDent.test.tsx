@@ -149,6 +149,8 @@ const U_STEPS = [
 ];
 const U_SEAT = (extra: Partial<ExternalMeterTotal> = {}) => seat(U_STEPS, { points_per_list_usd: 0.1, split_runs: 2,
   split_slack_points: 2, split_slack_usd: 2 * PP, split_external_slack_usd: PP, split_covey_slack_usd: PP, ...extra });
+const escapeRe = (v: string) => v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 const U_EXT = (extra: Partial<ExternalMeterTotal> = {}) => external([{ steps: U_STEPS, total: U_SEAT(extra) }]);
 
 /** The cost cells of one seat over three hours, with the meter's steps. */
@@ -458,8 +460,21 @@ describe("Costs — the headline", () => {
     serve(cells(U_EXT({ points_per_list_usd: null }), [9, 21, 12]));
     const row = await screen.findByRole("region", { name: "The whole dent in the subscription" });
     expect(row.querySelector("[data-dent-rate]")!.textContent).toMatch(
-      /^No chunk of split readings with every call priced moved the meter 10 points or more, so there is no rate yet to measure unattributed use by/);
+      /^No stretch of adjacent chunks of split readings with every call priced moved the meter 10 points or more, so there is no rate yet to measure unattributed use by/);
     expect(row.querySelector("[data-dent-rate]")!.textContent).not.toMatch(/lower bound/);
+    // No seat has a rate: the tile says so, never "beyond the rate: at least $0.00".
+    const tile = within(row).getByRole("group", { name: "Unattributed" }).textContent;
+    expect(tile).toContain("no rate yet to measure use beyond it");
+    expect(tile).not.toContain("beyond the rate");
+  });
+
+  it("names the earlier plan price a seat's rate was measured at (F3c)", async () => {
+    serve(cells(U_EXT({ points_per_list_older_plan_usd: 0.23 }), [9, 21, 12]));
+    const row = await screen.findByRole("region", { name: "The whole dent in the subscription" });
+    expect(row.querySelector("[data-dent-rate]")!.textContent).toMatch(new RegExp("^" + escapeRe(
+      `1 point ≈ ${fmtUSD(10)} of list price at the earlier plan price of ${fmtUSD(0.23)} a point, ` +
+      "the most list price per point seen in the range; the current plan price has no rate yet.")));
+    expect(within(row).getByRole("group", { name: "Unattributed" }).textContent).toContain("beyond the rate: at least");
   });
 
   it("says how many chunks had calls of no list price or bookings without a line (F3c)", async () => {

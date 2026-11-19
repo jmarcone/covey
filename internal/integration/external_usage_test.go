@@ -1247,3 +1247,104 @@ func TestBilledTenHourSaysWhereTheHourlyRowsBegin(t *testing.T) {
 		t.Errorf("/cost/billed hourly_from = %v, want %v", out.HourlyFrom, from)
 	}
 }
+
+// meterSeatFixture is one subscription seat at $200 a month (pp a point)
+// whose meter is read at the given times and percents, linked to "operator:
+// home", whose laptop has reported through the last reading.
+func meterSeatFixture(t *testing.T, slug string, h1 time.Time, readings []struct {
+	at  time.Time
+	pct float64
+}) (*stack, *apiClient, billingFixture, observability.CredentialRef, float64) {
+	t.Helper()
+	s := newStack(t)
+	ctx := context.Background()
+	admin := login(t, s, "admin@test.local", "admin-passwort")
+	agent := s.newSupportAgent(slug)
+	rt, err := s.runtimes.Create(ctx, s.orgID, "claude-code", "Claude", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ord := s.seat(t, rt.ID, daemon.CredSubscription, "claude_code_oauth_token", "sitz", "A")
+	admin.expect(http.MethodPut, fmt.Sprintf("/api/v1/runtime-instances/%s/credentials/%d/plan", rt.ID, ord),
+		map[string]any{"plan_name": "Max", "amount": 200, "currency": "USD", "period": "month", "tax_basis": "net",
+			"valid_from": h1.Add(-48 * time.Hour)}, http.StatusOK)
+	cred := observability.CredentialRef{RuntimeID: rt.ID, Ord: ord, SecretKey: "claude_code_oauth_token", Kind: "subscription"}
+	for _, r := range readings {
+		if err := s.obs.AddUsageReading(ctx, s.orgID, observability.MeterReading{Credential: cred,
+			Supported: true, WindowPercent: -1, WeekPercent: r.pct, FetchedAt: r.at}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return s, admin, billingFixture{s: s, ctx: ctx, agent: agent.ID, org: s.orgID}, cred, 200.0 * 12 / 52 / 100
+}
+
+// A long turn's list over the spans it ran in (F3c): +10 points at h1:40
+// with no line ending in its span, then +10 at h2:40 with a $200 line whose
+// result came at h2:00 after 40 minutes (started_at h1:20): half of it ran
+// in the first span. Spread by time, each reading has $100 and k = (20 + 2)
+// / 200 = 0.11 over the two adjacent chunks; at its result time alone (as on
+// 59512856) the first reading moved with no call (10 points unattributed)
+// and k = 12/200 = 0.06.
+func TestExternalUsageLineSpreadOverItsTurn(t *testing.T) {
+	h1 := time.Now().UTC().Truncate(time.Hour).Add(-4 * time.Hour)
+	h2 := h1.Add(time.Hour)
+	s, admin, f, cred, pp := meterSeatFixture(t, "lange-runde", h1, []struct {
+		at  time.Time
+		pct float64
+	}{{h1.Add(-30 * time.Hour), 10}, {h1.Add(40 * time.Minute), 20}, {h2.Add(40 * time.Minute), 30}})
+	_ = s
+	f.line(t, cred, h2, 10_000_000)
+	f.exec(t, `UPDATE model_usage SET started_at = $1 WHERE created_at = $2`, h1.Add(20*time.Minute), h2)
+	up := extUpload("operator: home")
+	up["meter_credential"] = map[string]any{"secret_key": "claude_code_oauth_token", "secret_slot": 0}
+	up["reported_through"] = map[string]any{"laptop": h2.Add(time.Hour)}
+	admin.expect(http.MethodPost, externalPath, up, http.StatusOK)
+
+	nearV := func(v, want float64) bool { return math.Abs(v-want) < 1e-6 }
+	m := cellsExternal(t, admin, "days=2&bucket=hour").Meter
+	if len(m.Steps) != 2 || len(m.Credentials) != 1 {
+		t.Fatalf("steps %+v, credentials %+v; want two steps on one seat", m.Steps, m.Credentials)
+	}
+	if !nearV(m.Steps[0].CoveyListUSD, 100) || !nearV(m.Steps[1].CoveyListUSD, 100) || !m.Steps[0].Split {
+		t.Errorf("lists %v / %v (step 1 %+v), want 100 / 100, split", m.Steps[0].CoveyListUSD, m.Steps[1].CoveyListUSD, m.Steps[0])
+	}
+	c := m.Credentials[0]
+	if c.PointsPerListUSD == nil || !nearV(*c.PointsPerListUSD, 0.11) || m.UnattributedRealUSD != 0 || !nearV(m.CoveyRealUSD, 20*pp) {
+		t.Errorf("k %v, unattributed %v, covey %v; want 0.11, 0, %v", c.PointsPerListUSD, m.UnattributedRealUSD, m.CoveyRealUSD, 20*pp)
+	}
+}
+
+// A host that never sent a watermark is not waited for once another machine
+// of its source sends them: the push names a desktop in a row and a
+// watermark for the laptop only. The reading at h1:40 is reported and split
+// (on 59512856 the desktop, active for a week by its push, held it unsplit).
+func TestExternalUsageHostWithoutAWatermark(t *testing.T) {
+	h1 := time.Now().UTC().Truncate(time.Hour).Add(-4 * time.Hour)
+	_, admin, f, cred, pp := meterSeatFixture(t, "ohne-stand", h1, []struct {
+		at  time.Time
+		pct float64
+	}{{h1.Add(-30 * time.Hour), 10}, {h1.Add(40 * time.Minute), 12}})
+	f.line(t, cred, h1.Add(10*time.Minute), 50_000)
+	out := func(id, host string, at time.Time) map[string]any {
+		r := extRow(id, at, "claude-opus-5-5", 50_000)
+		r["input"], r["cache_read"], r["cache_write_1h"], r["host"] = 0, 0, 0, host
+		return r
+	}
+	up := extUpload("operator: home", out("a", "laptop", h1.Add(5*time.Minute)), out("b", "desktop", h1.Add(6*time.Minute)))
+	up["meter_credential"] = map[string]any{"secret_key": "claude_code_oauth_token", "secret_slot": 0}
+	up["reported_through"] = map[string]any{"laptop": h1.Add(2 * time.Hour)}
+	admin.expect(http.MethodPost, externalPath, up, http.StatusOK)
+
+	m := cellsExternal(t, admin, "days=2&bucket=hour").Meter
+	if len(m.Steps) != 1 || !m.Steps[0].Reported || !m.Steps[0].Split || m.UnsplitRealUSD != 0 ||
+		math.Abs(m.CoveyRealUSD-2*pp/3) > 1e-6 {
+		t.Errorf("steps %+v, unsplit %v, covey %v; want the reading reported and split 1 : 2", m.Steps, m.UnsplitRealUSD, m.CoveyRealUSD)
+	}
+
+	// More than 100 hosts in one push are refused.
+	var rows []map[string]any
+	for i := 0; i <= 100; i++ {
+		rows = append(rows, out(fmt.Sprintf("x%d", i), fmt.Sprintf("host-%d", i), h1.Add(5*time.Minute)))
+	}
+	admin.expect(http.MethodPost, externalPath, extUpload("operator: home", rows...), http.StatusBadRequest)
+}
