@@ -34,10 +34,13 @@
 # mode: steer reloads the engine and keeps every open run where it stands:
 # each stays on review, watching, with no task, no limit and no notice, and
 # neither the gate nor a start for its case moves it (a start returns the same
-# run). Before the switch, cancel each open run (POST
-# /api/v1/workflows/pr-review/runs/{id}/cancel) and start the PRs to be driven
-# by hand (POST /api/v1/workflows/pr-review/runs with {"case":"github:pull:<key>",
-# "vars":{"no":"<key>","title":"..."}}); a cancelled case that is not started by
+# run). PUT with mode: steer first; then cancel each run still watching (POST
+# /api/v1/workflows/pr-review/runs/{id}/cancel); then start by hand (POST
+# /api/v1/workflows/pr-review/runs) with the cancelled run's case and no = that
+# case without "github:" (e.g. case github:pull:jmarcone/covey#136, no
+# pull:jmarcone/covey#136, plus a title); a start before the switch stays
+# watching, and a cancel before the PUT lets a comment by someone other than
+# covey-bot start a fresh watching run. A cancelled case that is not started by
 # hand waits for a new comment by someone other than covey-bot. The test
 # TestASwitchToSteerLeavesTheWatchWeeksRunsWatching pins this.
 workflow: "PR review to merge-ready"

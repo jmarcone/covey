@@ -341,6 +341,20 @@ func TestASwitchToSteerLeavesTheWatchWeeksRunsWatching(t *testing.T) {
 	if len(w.tasks) != 0 {
 		t.Errorf("Start for a watching case handed out %v", w.tasks)
 	}
+
+	// The recipe: after the switch, cancel the watching run, then start by hand
+	// with the case and no = the case without "github:".
+	_, err = steer.Cancel(id, "admin@covey.local", "switch to steer")
+	must(t, err)
+	hand, err := steer.Start("github:pull:jmarcone/covey#136", map[string]string{"no": "pull:jmarcone/covey#136", "title": "PR review"})
+	must(t, err)
+	if hand.ID == id {
+		t.Errorf("the hand start returned the cancelled run %s", id)
+	}
+	expect(t, at(t, steer, hand.ID), "review", StateWorking)
+	if got := w.handedOut(); got != "review:covey-reviewer" {
+		t.Errorf("the hand start handed out %q, want one task to covey-reviewer", got)
+	}
 }
 
 func TestAnApprovalInTheThirdRoundStillReachesTheOperator(t *testing.T) {
