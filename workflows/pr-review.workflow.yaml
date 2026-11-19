@@ -1,0 +1,116 @@
+# PR review to merge-ready (#131, design note #129 proposal P2).
+#
+# Installed as slug pr-review, in watch mode: the trigger starts a run for each
+# PR the gate sees and puts it on the first step; nothing is assigned, written
+# or asked. Revisions go to the running install with PUT /api/v1/workflows/pr-review,
+# never a second POST (that would create pr-review-2). The test in
+# internal/workflow/prreview_test.go pins this file.
+#
+# Rounds: max_rounds 3 means three reviews and two fix loops. The third
+# "changes" takes the limit exit to the card "stuck". The operator's "changes"
+# on the card and "retry" on the stuck card end the run: the loop counter of a
+# run is never reset, so a second round inside the same run would count against
+# the limit.
+#
+# What starts a run again: the gate (github:pulls) lists only open PRs by the
+# token's account and drops every PR whose last comment is that account's, and
+# every agent posts as covey-bot. The host also counts a change seen in the
+# first firing after a run ended as that run's own. So a new run comes only
+# from a comment by someone other than covey-bot, made after the first firing
+# that follows the run's end (a firing comes every 10m, so that can be less
+# than 10m after the end). A push, or a comment by covey-bot, does not bring
+# the PR back.
+#
+# Exceptions to "one run per PR": with more than 30 open covey-bot PRs the gate
+# returns the one item github:pulls:many instead, so watch mode starts one run
+# for that case and none per PR.
+#
+# Changing this file: edit it and PUT it. Do not save it from the Workflows
+# page, mode buttons included: that rewrites the stored text from the blocks,
+# drops this header and adds a layout: block, and the test here refuses that
+# text.
+#
+# The switch to steer does not take over the watch week's runs. A PUT with
+# mode: steer reloads the engine and keeps every open run where it stands:
+# each stays on review, watching, with no task, no limit and no notice, and
+# neither the gate nor a start for its case moves it (a start returns the same
+# run). PUT with mode: steer first; then cancel each run still watching (POST
+# /api/v1/workflows/pr-review/runs/{id}/cancel); then start by hand (POST
+# /api/v1/workflows/pr-review/runs) with the cancelled run's case and no = that
+# case without "github:" (e.g. case github:pull:jmarcone/covey#136, no
+# pull:jmarcone/covey#136, plus a title); a start before the switch stays
+# watching, and a cancel before the PUT lets a comment by someone other than
+# covey-bot start a fresh watching run. A cancelled case that is not started by
+# hand waits for a new comment by someone other than covey-bot. The test
+# TestASwitchToSteerLeavesTheWatchWeeksRunsWatching pins this.
+workflow: "PR review to merge-ready"
+owner: "admin@covey.local"
+mode: watch
+roles:
+  "Review": [covey-reviewer]
+  "Author": [covey-dev]
+steps:
+  trigger:
+    type: trigger
+    title: "covey-bot PR without an answer"
+    as: "covey-dev"
+    every: "10m"
+    only_if: "github:pulls"
+    next: review
+  review:
+    type: agent
+    title: "Adversarial review"
+    role: "Review"
+    # Decorative today: round 1 has no fixer and the two roles do not overlap.
+    not_same_as: fix
+    task: "Review {{case.no}}. Read the diff first and try to break it; check every line of org-lessons; then the PR body. Post the review comment in the charter format. Report verdict, exactly the word approve or the word changes (nothing else), and majors (the count of open major findings)."
+    result: [verdict, majors]
+    limit: "2h"
+    next: verdict
+  verdict:
+    type: condition
+    title: "Approved?"
+    on: "review.verdict"
+    max_rounds: 3
+    next:
+      "approve": card
+      "changes": fix
+      "else": stuck
+      "limit": stuck
+  fix:
+    type: agent
+    title: "Fix the findings"
+    role: "Author"
+    sticky: true
+    task: "Fix the open blocker and major findings on {{case.no}} from the latest review comment; push to the same branch. Report head (the new sha)."
+    result: [head]
+    limit: "3h"
+    next: review
+  card:
+    type: approval
+    title: "Operator validation"
+    who: "admin@covey.local"
+    ask: "{{case.no}} approved by covey-reviewer, majors reported: {{review.majors}}. Run the outside review, then: merge-ready or back to the author?"
+    next:
+      "merge-ready": ready
+      "changes": back
+  stuck:
+    type: approval
+    title: "No approval"
+    who: "admin@covey.local"
+    ask: "{{case.no}} had no approval after the review rounds (last verdict: {{review.verdict}}). Cut it smaller, retry or drop?"
+    next:
+      "retry": again
+      "drop": dropped
+  ready:
+    type: end
+    title: "Merge-ready"
+  back:
+    type: end
+    title: "Back to the author"
+  again:
+    type: end
+    title: "Retry on the next change"
+  dropped:
+    type: end
+    title: "Dropped"
