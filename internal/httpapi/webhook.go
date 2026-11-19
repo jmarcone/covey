@@ -260,7 +260,11 @@ func readTriggerPayload(w http.ResponseWriter, r *http.Request) (triggerPayload,
 		return in, false
 	}
 	raw := strings.TrimSpace(string(body))
-	if err := json.Unmarshal(body, &in); err != nil {
+	err = json.Unmarshal(body, &in)
+	// A title of only blanks is no title: the same TrimSpace rule as the task
+	// form and the API (#99), so the fallback below also catches it (#128).
+	in.Title = strings.TrimSpace(in.Title)
+	if err != nil {
 		// Not JSON — the raw body is the task.
 		in.Body = raw
 	} else if in.Title == "" && in.Body == "" {

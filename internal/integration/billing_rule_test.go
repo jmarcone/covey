@@ -28,8 +28,9 @@ func (f billingFixture) billedRow(t *testing.T, width string, start time.Time, a
 }
 
 // billedShown is GET /cost/billed as the page reads it: per credential the
-// tile's billed $, and the sum of the chart's points from the window's start
-// on (billedPerPeriod in web/src/pages/costFigures.ts).
+// tile's billed $, and the sum of the chart's points and whole days from the
+// window's start on (billedPerPeriod and billedWholeDays in
+// web/src/pages/costFigures.ts).
 func billedShown(t *testing.T, admin *apiClient, query string) (width string, tile, chart map[string]float64) {
 	t.Helper()
 	got := admin.expect(http.MethodGet, "/api/v1/cost/billed?"+query, nil, http.StatusOK)
@@ -53,7 +54,7 @@ func billedShown(t *testing.T, admin *apiClient, query string) (width string, ti
 		b := x.(map[string]any)
 		tile[b["secret_key"].(string)] += usd(b["billed_usd"])
 	}
-	for _, x := range got["points"].([]any) {
+	for _, x := range billedPoints(got) {
 		p := x.(map[string]any)
 		at, err := time.Parse(time.RFC3339Nano, p["bucket"].(string))
 		if err != nil {
@@ -64,6 +65,14 @@ func billedShown(t *testing.T, admin *apiClient, query string) (width string, ti
 		}
 	}
 	return w["width"].(string), tile, chart
+}
+
+// billedPoints is every point of a GET /cost/billed answer: the buckets'
+// and, at hour and 10hour, the days read whole.
+func billedPoints(got map[string]any) []any {
+	out, _ := got["points"].([]any)
+	whole, _ := got["whole_days"].([]any)
+	return append(append([]any{}, out...), whole...)
 }
 
 // The billed tile reads the same rows per day as the chart beside it, at
@@ -180,7 +189,7 @@ func TestBilledBarsWithoutABucketSplitLikeTheTile(t *testing.T) {
 	perDay := func(q string) (map[string]float64, any) {
 		got := admin.expect(http.MethodGet, "/api/v1/cost/billed?"+q, nil, http.StatusOK)
 		out := map[string]float64{}
-		for _, x := range got["points"].([]any) {
+		for _, x := range billedPoints(got) {
 			p := x.(map[string]any)
 			at, err := time.Parse(time.RFC3339Nano, p["bucket"].(string))
 			if err != nil {
@@ -547,7 +556,7 @@ func TestBilledHourlyTileStartsWhereItsBillDoes(t *testing.T) {
 			t.Fatal(err)
 		}
 		chart := 0.0
-		for _, p := range series.Points {
+		for _, p := range append(series.Points, series.WholeDays...) {
 			if p.SecretKey == nil || *p.SecretKey != "key_p" || p.Bucket.Before(w.Start) {
 				continue
 			}

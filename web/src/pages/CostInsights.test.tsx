@@ -27,7 +27,9 @@ const keyOf = (id: string, billed: Record<string, unknown> = {}) => ({
   id, secretKey: id.split("#")[0], slot: 1, kind: "api_key", real: null, aligned: null, meter: null,
   billed: {
     state: "measured", usd: 80.5, reported: 95, recomputed: 99, status: { state: "complete", completeTo: null },
-    window: { start: new Date("2026-11-17T18:00:00Z"), end: new Date("2026-11-17T23:00:00Z"), width: "1h" }, ...billed,
+    window: {
+      start: new Date("2026-11-17T18:00:00Z"), end: new Date("2026-11-17T23:00:00Z"), comparedUntil: new Date("2026-11-17T20:00:00Z"), width: "1h",
+    }, ...billed,
   },
 }) as unknown as CredentialFigures;
 const seat = seatOf("seat#0");
@@ -390,5 +392,43 @@ describe("Nutzung je Modell: Quellen", () => {
     await totals();
     await waitFor(() => expect(document.querySelector("[data-meter='seat#0']")).not.toBeNull());
     expect(document.querySelector("[data-meter='odd#2']")).toBeNull();
+  });
+});
+
+// #83: an upper bound under a cent read "< <0,01 $" (the sum of the seats'
+// real cost), and the point price of the meter figures had two decimals next to
+// a figure it does not multiply to.
+describe("Nutzung je Modell: Beträge unter einem Cent und Punktpreis", () => {
+  beforeEach(() => { useGerman(); window.localStorage.removeItem(KEY); });
+  afterEach(() => { vi.restoreAllMocks(); window.localStorage.removeItem(KEY); });
+
+  const meter = {
+    secret_key: "claude_code_oauth_token", secret_slot: 0, source: "usage_cmd", window_kind: "seven_day",
+    baseline_at: "2026-11-17T18:00:00Z", baseline_percent: 9, last_at: "2026-11-17T21:00:00Z", last_percent: 13,
+    readings: 4, points: 4,
+  };
+
+  it("schreibt die Obergrenze unter einem Cent als „< 0,01 $“, nie als „< <0,01 $“", async () => {
+    const below = { ...real, value: 0, low: 0, high: 0.004, points: 0, below: true };
+    show([seatOf("seat#0", { real: below, meter })]);
+    await totals();
+    await userEvent.click(chip(/^Echte Kosten/));
+    const cells = await rowCells("tr[data-credential-row=real]");
+    expect(cells[3]).toBe("< 0,01 $");
+    expect(cells.join("")).not.toMatch(/<\s*</);
+    // the meter figures of the card below say the same
+    expect(document.querySelector("[data-meter]")!.textContent).toMatch(/< 0,01 \$ · der Zähler/);
+  });
+
+  it("zeigt in den Zählerzahlen den Punktpreis mit vier Stellen", async () => {
+    const r = { ...real, value: 1.846, low: 1.38, high: 2.31, points: 4 };
+    show([seatOf("seat#0", { real: r, meter })]);
+    await totals();
+    const card = await waitFor(() => {
+      const c = document.querySelector<HTMLElement>("[data-meter]");
+      if (!c) throw new Error("no meter figures yet");
+      return c;
+    });
+    expect(card.textContent).toMatch(/≈ 1,85 \$ · Spanne 1,38 \$ – 2,31 \$ · 4 Punkte × 0,4615 \$/);
   });
 });

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import i18n from "./i18n";
-import { exact, fmtBucket, fmtBytes, fmtCount, fmtDelta, fmtNumber, fmtUSD, fmtUSDAxis } from "./format";
+import { exact, fmtBucket, fmtBytes, fmtClockUTC, fmtCount, fmtDelta, fmtNumber, fmtUSD, fmtUSDAxis, fmtUSDBelow, fmtUSDFixed, fmtUSDUnit } from "./format";
 
 /* The reason stood on the cost side: 147952885 read cache tokens. Nobody reads
    that as a hundred forty-eight million — you count it through digit by digit.
@@ -82,6 +82,84 @@ describe("fmtUSD", () => {
     expect(fmtUSD(2746)).toBe("2.746 $");
     expect(fmtUSD(463.14)).toBe("463,14 $");
     expect(fmtUSD(1_234_567)).toBe("1.234.567 $");
+  });
+});
+
+/* #83: a bound under a cent said "< <$0.01", a small negative ">-$0.01", a
+   price under a cent "<$0.01" whatever it was, and a point price of 0.4615
+   "$0.46" beside a total it does not multiply to. */
+describe("fmtUSD edges", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+
+  it("says a small negative amount is below a cent, not greater than minus one", () => {
+    expect(fmtUSD(-0.004)).toBe("-<$0.01");
+    expect(fmtUSD(-0.5)).toBe("-$0.50");
+  });
+
+  it("writes an upper bound without saying 'below' twice", () => {
+    expect(fmtUSDBelow(1.846)).toBe("< $1.85");
+    expect(fmtUSDBelow(0.004)).toBe("< $0.01");
+    expect(fmtUSDBelow(0.004)).not.toContain("<$");
+    expect(fmtUSDBelow(0)).toBe("< $0.00");
+  });
+
+  it("keeps the digits of a price that is multiplied on the same screen", () => {
+    expect(fmtUSDFixed(1.846 / 4, 4)).toBe("$0.4615");
+    expect(fmtUSDFixed(12.5, 4)).toBe("$12.5000");
+    expect(fmtUSDFixed(0.00001, 4)).toBe("<$0.0001");
+    expect(fmtUSDFixed(0, 4)).toBe("$0.0000");
+    expect(fmtUSDFixed(0.00006, 4)).toBe("$0.0001");
+    expect(fmtUSDFixed(0.00004, 4)).toBe("<$0.0001");
+  });
+
+  it("shows a unit price under a cent with the precision it needs", () => {
+    expect(fmtUSDUnit(0.46)).toBe("$0.46");
+    expect(fmtUSDUnit(0.0042)).toBe("$0.0042");
+    expect(fmtUSDUnit(0.00004)).toBe("$0.000040");
+    expect(fmtUSDUnit(0.0042)).not.toBe(fmtUSDUnit(0.0007));
+    // an exact power of ten keeps two digits, a price that rounds up to a cent is a cent
+    expect(fmtUSDUnit(0.001)).toBe("$0.0010");
+    expect(fmtUSDUnit(0.0005)).toBe("$0.00050");
+    expect(fmtUSDUnit(0.00995)).toBe("$0.01");
+    expect(fmtUSDUnit(0.00999)).toBe("$0.01");
+    expect(fmtUSDUnit(-0.00999)).toBe("-$0.01");
+    // just under a power of ten the two digits come from the rounded price
+    expect(fmtUSDUnit(0.000996)).toBe("$0.0010");
+    expect(fmtUSDUnit(0.0000999)).toBe("$0.00010");
+    expect(fmtUSDUnit(0.000994)).toBe("$0.00099");
+    expect(fmtUSDUnit(1e-12)).toBe("<$0.00000001");
+    expect(fmtUSDUnit(0)).toBe("$0.00");
+  });
+
+  it("follows the UI's separators and symbol", async () => {
+    await i18n.changeLanguage("de");
+    expect(fmtUSDFixed(0.4615, 4)).toBe("0,4615 $");
+    expect(fmtUSDUnit(0.0042)).toBe("0,0042 $");
+    expect(fmtUSDBelow(0.004)).toBe("< 0,01 $");
+  });
+});
+
+/* #83 outside review: `compared until 08:00 PM UTC` in English, though the
+   issue asked for HH:MM UTC. */
+describe("fmtClockUTC", () => {
+  const evening = new Date("2026-11-18T20:00:00Z");
+
+  it("is a 24-hour clock in English", async () => {
+    await i18n.changeLanguage("en");
+    expect(fmtClockUTC(evening)).toBe("20:00 UTC");
+    expect(fmtClockUTC("2026-11-18T08:05:00Z")).toBe("08:05 UTC");
+  });
+
+  it("reads midnight as 00:00, not 24:00", async () => {
+    await i18n.changeLanguage("en");
+    expect(fmtClockUTC(new Date("2026-11-19T00:00:00Z"))).toBe("00:00 UTC");
+  });
+
+  it("is the same in German", async () => {
+    await i18n.changeLanguage("de");
+    expect(fmtClockUTC(evening)).toBe("20:00 UTC");
   });
 });
 
@@ -178,6 +256,18 @@ describe("fmtBucket", () => {
     expect(fmtBucket("2026-11-16T00:00:00Z", "week")).toBe("Woche ab 16.11. UTC");
     await i18n.changeLanguage("en");
     expect(fmtBucket("2026-11-16T00:00:00Z", "week")).toBe("week of 11/16 UTC");
+  });
+
+  // Review of #96: an hour bucket (and the dated "compared until") reads in a
+  // 24-hour clock in every language, as fmtClockUTC does — not "08:00 PM".
+  it("an hour bucket uses a 24-hour clock in English too", async () => {
+    await i18n.changeLanguage("en");
+    const s = fmtBucket("2026-11-17T20:00:00Z", "hour");
+    expect(s).toContain("20:00");
+    expect(s).not.toMatch(/PM|AM/);
+    expect(s.endsWith(" UTC")).toBe(true);
+    await i18n.changeLanguage("de");
+    expect(fmtBucket("2026-11-17T20:00:00Z", "hour")).toBe("17.11., 20:00 UTC");
   });
 });
 

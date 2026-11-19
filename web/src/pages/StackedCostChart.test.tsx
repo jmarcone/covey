@@ -33,3 +33,17 @@ describe("axis ticks", () => {
     expect(ticks(1_000_000, fmtCountAxis)).toEqual(["0", "250 k", "500 k", "750 k", "1,00 M"]);
   });
 });
+
+// Review 5: an hourly label is wider than a slot, so only every n-th is
+// drawn; the spacing follows the label's width, not a fixed 84 px.
+describe("x axis", () => {
+  it("draws only every third hourly label where a slot is 55 px and a label 126", () => {
+    const periods = Array.from({ length: 24 }, (_, i) => new Date(Date.UTC(2026, 10, 17, i)).toISOString());
+    const { container } = render(
+      <BarChart title="t" periods={periods} groups={periods.map(() => bars(1)[0])} fmtPeriod={() => "11/17, 04:00 PM UTC"}
+        fmtValue={fmtUSD} fmtAxis={fmtUSDAxis} />,
+    );
+    // labels 0, 3, ... 21, and the last one
+    expect(container.querySelectorAll("svg > text[aria-hidden]")).toHaveLength(9);
+  });
+});

@@ -13,6 +13,7 @@ import {
   loungeZonen,
   podBreite,
   raumAn,
+  raumFuer,
   sitzMuster,
   spaltenFuer,
   suche,
@@ -544,5 +545,58 @@ describe("floors", () => {
       expect(raumAn(plan, treppe)).toBeNull();
       expect(treppe.y - tresen.plaetze[tresen.plaetze.length - 1].y).toBeGreaterThanOrEqual(200);
     }
+  });
+});
+
+/* ?dept= on the office: which room, on which floor. The component only acts on
+ * the answer; the answer is decided here. */
+describe("raumFuer", () => {
+  const abt = (z: number[], ohne = 0): Gruppe[] => [
+    ...z.map((n, i) => ({
+      id: `d${i}`,
+      name: ABTEILUNGEN[i][0],
+      farbe: ABTEILUNGEN[i][1],
+      leute: Array.from({ length: n }, (_, j) => agent(i, j)),
+    })),
+    ...(ohne ? [{ id: "ohne", name: "Ohne Abteilung", farbe: "", leute: Array.from({ length: ohne }, (_, j) => agent(9, j)) }] : []),
+  ];
+
+  it("finds a department's room on the ground floor", () => {
+    const haus = hausBauen(abt([40, 5]), BREITE, NAMEN);
+    const hit = raumFuer(haus, "d0");
+    expect(hit?.etage).toBe(0);
+    expect(hit?.raum.id).toBe("d0");
+  });
+
+  it("finds a department's room on a higher floor", () => {
+    const haus = hausBauen(abt([40, 5]), BREITE, NAMEN);
+    expect(haus.etagen).toHaveLength(2);
+    const hit = raumFuer(haus, "d1");
+    expect(hit?.etage).toBe(1);
+    expect(hit?.raum).toBe(haus.etagen[1].plan.raeume.find((r) => r.id === "d1"));
+  });
+
+  it("takes none for the room of those without a department", () => {
+    const haus = hausBauen(abt([6, 3], 2), BREITE, NAMEN);
+    expect(raumFuer(haus, "none")?.raum.id).toBe("ohne");
+    expect(raumFuer(haus, "none")?.raum.leute).toHaveLength(2);
+  });
+
+  it("has no room for none when everybody belongs to a department", () => {
+    expect(raumFuer(hausBauen(abt([6, 3]), BREITE, NAMEN), "none")).toBeNull();
+  });
+
+  it("has no room for an id nobody works in, or that nobody has", () => {
+    const haus = hausBauen(abt([6, 3]), BREITE, NAMEN);
+    expect(raumFuer(haus, "gone")).toBeNull();
+    // A common room (kitchen, lounge) is no department, whatever its id says.
+    const gem = haus.etagen[0].plan.raeume.find((r) => r.gem);
+    if (gem) expect(raumFuer(haus, gem.id)).toBeNull();
+  });
+
+  it("has no room at all in an empty house", () => {
+    const haus = hausBauen([], BREITE, NAMEN);
+    expect(raumFuer(haus, "d0")).toBeNull();
+    expect(raumFuer(haus, "none")).toBeNull();
   });
 });

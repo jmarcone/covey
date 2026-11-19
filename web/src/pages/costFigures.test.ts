@@ -14,6 +14,7 @@ import {
   multiple,
   multipleOf,
   perCredentialTotals,
+  periodMultiple,
   pricePerPoint,
   realCost,
   realFromWeeks,
@@ -157,6 +158,23 @@ describe("the meter and the multiple", () => {
     // a foreign plan without a rate is not priced as if it were dollars
     expect(pricePerPoint({ amount: 200, period: "month", fx_to_usd: 0, currency: "EUR" })).toBeNull();
   });
+
+  it("gives a period a multiple only by the tile's rule", () => {
+    const P = "2026-11-17T18:00:00Z";
+    // below 3 points none, however large the list
+    expect(periodMultiple(150, [step(P, 1)])).toBeNull();
+    expect(periodMultiple(8, [step(P, 2)])).toBeNull();
+    // from 3 points the tile's figure and range
+    expect(periodMultiple(8, [step(P, 4)])).toEqual(multipleOf(8, realCost(4, PP)));
+    // a list under a cent, or an estimate that would read 0.0×, says nothing
+    expect(periodMultiple(0.009, [step(P, 4)])).toBeNull();
+    expect(periodMultiple(0.02, [step(P, 4)])).toBeNull();
+    // a reset inside the period is a second run of readings: ±1 point more
+    const reset = periodMultiple(8, [step(P, 4, { resets: 1 })]);
+    expect(reset).toEqual(multipleOf(8, { value: 4 * PP, low: 2 * PP, high: 6 * PP, points: 4 }));
+    // points without a plan price: no figure
+    expect(periodMultiple(8, [step(P, 4, { usd: 2 * PP, unpriced_points: 2 })])).toBeNull();
+  });
 });
 
 describe("window alignment", () => {
@@ -239,7 +257,7 @@ describe("per credential", () => {
     expect(figs.map((f) => f.id)).toEqual([`${KEY}#1`, `${SEAT}#0`, ""]);
     const [key, seat, none] = figs;
     expect(seat.recomputed).toBe(45); // the booking without lines (7) is not measured
-    expect(seat.unattributed).toBe(7);
+    expect(seat.bookedWithoutLine).toBe(7);
     expect(seat.real?.points).toBe(4);
     expect(seat.multiple?.kind).toBe("estimate");
     expect(key.recomputed).toBe(100);
@@ -285,7 +303,7 @@ describe("per credential", () => {
       { bucket: "2026-11-17T18:00:00Z", api_key_id: "apikey_01", workspace_id: "", model: "claude-opus-5-5",
         secret_key: KEY, secret_slot: 1, billed_usd: "80.50", billed_list_usd: "100.00", complete: true },
     ],
-    window: { start: "2026-11-17T18:00:00Z", end: "2026-11-17T23:00:00Z", width: "1h",
+    window: { start: "2026-11-17T18:00:00Z", end: "2026-11-17T23:00:00Z", compared_until: "2026-11-17T20:00:00Z", width: "1h",
       totals: [{ secret_key: KEY, secret_slot: 1, has_billed: true, billed_usd: "80.50", billed_list_usd: "100.00",
         reported_usd: 95, list_usd: 99 }] },
     sync: sync(),
@@ -381,6 +399,8 @@ describe("per credential", () => {
     expect(key.billed).toMatchObject({ state: "measured", usd: 80.5, listUsd: 100, ratio: 0.805, reported: 95, recomputed: 99 });
     expect(key.billed?.window?.start.toISOString()).toBe("2026-11-17T18:00:00.000Z");
     expect(key.billed?.window?.width).toBe("1h");
+    // the lines stop where the bill is complete, not at the window's end
+    expect(key.billed?.window?.comparedUntil.toISOString()).toBe("2026-11-17T20:00:00.000Z");
     expect(key.billed?.status.state).toBe("pending");
     expect(key.billed?.status.completeTo?.toISOString()).toBe("2026-11-17T20:00:00.000Z");
     expect(billedStatus(new Date("2026-11-17T19:00:00Z"), "2026-11-17T20:00:00Z").state).toBe("complete");
@@ -400,7 +420,7 @@ describe("per credential", () => {
       secret_key: KEY, secret_slot: 1, billed_usd: usd, billed_list_usd: usd, complete: true });
     const monthly = billedPerPeriod(report({ bucket: "day",
       points: [days("2026-09-30T00:00:00Z", "7"), days("2026-10-30T00:00:00Z", "1"), days("2026-10-31T00:00:00Z", "2"), days("2026-11-01T00:00:00Z", "4")],
-      window: { start: "2026-10-01T00:00:00Z", end: "2026-11-17T23:00:00Z", width: "1d", totals: [] } }), KEY, 1, "month");
+      window: { start: "2026-10-01T00:00:00Z", end: "2026-11-17T23:00:00Z", compared_until: "2026-11-17T23:00:00Z", width: "1d", totals: [] } }), KEY, 1, "month");
     expect([...monthly.entries()]).toEqual([[Date.parse("2026-10-01T00:00:00Z"), 3], [Date.parse("2026-11-01T00:00:00Z"), 4]]);
     // a week from Monday, as the server cuts it; the bill is never asked for per week
     expect(new Date(bucketStart(Date.parse("2026-11-01T10:00:00Z"), "week")).toISOString()).toBe("2026-10-26T00:00:00.000Z");
@@ -409,10 +429,35 @@ describe("per credential", () => {
     expect(billedFetchBucket(1, "day")).toBe("hour");
   });
 
+  // Review of 3bb3dcea: at 10 h on 7 or 30 days the bill was asked for per
+  // day, so each day landed whole in one epoch-aligned 10-hour bucket and
+  // the others showed $0. A 10-hour chart takes hours at any range.
+  it("asks for the bill per hour at 10 h and spreads a day over its 10-hour buckets", () => {
+    expect(billedFetchBucket(30, "10hour")).toBe("hour");
+    expect(billedFetchBucket(7, "10hour")).toBe("hour");
+    expect(billedFetchBucket(30, "10min")).toBe("hour");
+    expect(billedFetchBucket(30, "day")).toBe("day");
+    const hour = (h: string, usd: string) => ({ bucket: `2026-11-17T${h}:00:00Z`, api_key_id: "apikey_01", workspace_id: "",
+      model: "claude-opus-5-5", secret_key: KEY, secret_slot: 1, billed_usd: usd, billed_list_usd: usd, complete: true });
+    const points = [hour("03", "1"), hour("09", "2"), hour("15", "4"), hour("21", "8")];
+    const tens = billedPerPeriod(report({ bucket: "hour", points,
+      window: { start: "2026-11-17T00:00:00Z", end: "2026-11-18T00:00:00Z", compared_until: "2026-11-18T00:00:00Z", width: "1h", totals: [] } }),
+    KEY, 1, "10hour");
+    const want = new Map<number, number>();
+    for (const p of points) {
+      const k = bucketStart(Date.parse(p.bucket), "10hour");
+      want.set(k, (want.get(k) ?? 0) + Number(p.billed_usd));
+    }
+    expect(tens).toEqual(want);
+    expect(tens.size).toBeGreaterThan(1);
+    expect([...tens.values()].reduce((a, b) => a + b, 0)).toBe(15);
+    for (const k of tens.keys()) expect(k % 36_000_000).toBe(0);
+  });
+
   it("gives no dollar figure where no bill could be read, and says why", () => {
     const quiet = { secret_key: KEY, secret_slot: 1, has_billed: false, billed_usd: "0.00000000", billed_list_usd: "0.00000000",
       reported_usd: 95, list_usd: 99 };
-    const win = (totals: typeof quiet[]) => ({ start: "2026-11-17T18:00:00Z", end: "2026-11-17T23:00:00Z", width: "1h", totals });
+    const win = (totals: typeof quiet[]) => ({ start: "2026-11-17T18:00:00Z", end: "2026-11-17T23:00:00Z", compared_until: "2026-11-17T20:00:00Z", width: "1h", totals });
     expect(keyOf(null).billed?.state).toBe("unavailable");
     expect(keyOf(report({ points: [], window: win([]), sync: sync({ configured: false, data_refreshed_at: null }) })).billed?.state).toBe("unconfigured");
     expect(keyOf(report({ points: [], window: win([]) })).billed?.state).toBe("unmapped");

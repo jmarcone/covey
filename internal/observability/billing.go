@@ -346,8 +346,17 @@ func (s *Store) BillingKeyMappings(ctx context.Context, orgID uuid.UUID) ([]Bill
 // credential: the lines split there, so the bill has to — and the day's
 // hours are complete. A value re-saved on the same credential, a change of
 // workspace only, a key's first mapping or its last one ending without a
-// successor are no hand-over: a 1d row goes whole to the one holder, as the
-// hours would. Everywhere else the day is read from the width read most
+// successor are no hand-over; such a day is read as every other one, below.
+// After a re-save or a change of workspace both widths go to the one holder
+// alike. Not so on the day of a first valid_from, or of a last valid_to
+// without a successor: the hours outside the mapping go to nobody
+// (billedMapping), while a 1d row goes whole to the holder. Inside the hourly
+// reach such a day is read by its hours (a tie); after the first daily
+// re-read once it has left the reach it is read whole, so the credential's
+// figure for that day rises by the unmapped hours with no revision from
+// Anthropic. Every reader shows the same figure at any moment.
+//
+// Everywhere else the day is read from the width read most
 // recently, the hours on a tie: a sync stamps its hourly read and its daily
 // re-read with one instant, so inside the hourly reach the hours stay what
 // the hourly views show, whatever was written last; the daily re-read is
@@ -680,9 +689,8 @@ ORDER BY k.day, k.secret_key, k.secret_slot, f.valid_from, k.api_key_id, k.works
 
 // BilledPoint is one bucket × API key × model of the bill.
 type BilledPoint struct {
-	// Bucket is the start of the point's hour, day or week. In an hourly
-	// series a day read from its 1d rows (see chosenRows) is one point at its
-	// midnight that covers the whole day.
+	// Bucket is the start of the point's hour, 10 hours, day or week; for a
+	// point of BilledSeries.WholeDays, its UTC midnight.
 	Bucket      time.Time `json:"bucket"`
 	APIKeyID    string    `json:"api_key_id"`
 	WorkspaceID string    `json:"workspace_id"`
@@ -702,7 +710,32 @@ type BilledPoint struct {
 type BilledSeries struct {
 	Bucket string        `json:"bucket"`
 	Points []BilledPoint `json:"points"`
+	// WholeDays: at hour and 10hour, the bill of each UTC day × API key that
+	// chosenRows reads from its 1d rows — one point per day, key, workspace
+	// and model at the day's midnight. A day cannot be cut into hours or
+	// 10-hour buckets, so it is not put into any of Points' buckets; Points
+	// and WholeDays together hold the rows every other reader reads, so
+	// their sum from a window's start is that window's tile.
+	WholeDays []BilledPoint `json:"whole_days,omitempty"`
+	// Reason says why Points is empty although the bill may hold rows:
+	// ReasonBucketBelowSource when the bucket is finer than the bill, which
+	// Anthropic reports per hour at the finest.
+	Reason string `json:"reason,omitempty"`
+	// HourlyFrom: at hour and 10hour, where the hours of the bill begin in
+	// the window (the first 1h row the series reads); nil without any. The
+	// hourly sync reaches back 48 hours and the backfill is daily, so before
+	// it the bill is known per day only (WholeDays): a 10-hour bucket that
+	// starts before it is not complete, whatever its rows say, nor is one
+	// that overlaps a whole day of its key. Inside the hourly rows, an hour
+	// without a row cannot be told from an hour without use, so a sync
+	// outage longer than the reach shows as a gap, not as an incomplete
+	// bucket.
+	HourlyFrom *time.Time `json:"hourly_from,omitempty"`
 }
+
+// ReasonBucketBelowSource: the asked bucket is finer than what the source
+// reports, so the series is empty rather than spread over invented buckets.
+const ReasonBucketBelowSource = "bucket_below_source"
 
 // billedMapping joins a bill row c to the ONE mapping it belongs to (mk, NULL
 // columns when none): the API key's mapping valid during the row's bucket, the
@@ -721,42 +754,96 @@ const billedMapping = `LEFT JOIN LATERAL (SELECT k.secret_key, k.secret_slot::in
 			  AND COALESCE(k.valid_to, 'infinity'::timestamptz) > k.valid_from
 			ORDER BY k.valid_from DESC LIMIT 1) mk ON true`
 
-// BilledSeries sums the billed rows per bucket (hour | day | week, UTC; day
-// by default), API key and model, one width per day and key (chosenRows):
-// in an hourly series a day read from its 1d rows is one point at its
-// midnight. The bucket shapes the points only; the rows are the same at
-// every bucket, and BilledWindowFor and Reconcile read them too.
+// BilledSeries sums the billed rows per bucket (hour | 10hour | day | week,
+// UTC; day by default), API key and model. The rows are chosenRows' at every
+// bucket — the ones BilledWindowFor and Reconcile read — and the bucket only
+// shapes the points. At hour and 10hour a day × key read from its 1d rows
+// goes to WholeDays instead of a bucket it does not fit (a UTC day does not
+// split into epoch-aligned 10-hour buckets, and an hour would take the whole
+// day), with HourlyFrom where the hours begin. 10min is finer than any bill
+// row: no points, with ReasonBucketBelowSource.
 func (s *Store) BilledSeries(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time) (BilledSeries, error) {
 	out := BilledSeries{Bucket: bucket, Points: []BilledPoint{}}
 	since = since.UTC().Truncate(24 * time.Hour)
 	switch bucket {
-	case "hour", "week":
+	case "10min":
+		out.Reason = ReasonBucketBelowSource
+		return out, nil
+	case "hour", "10hour", "week":
 	default:
 		out.Bucket, bucket = "day", "day"
 	}
+	sub := bucket == "hour" || bucket == "10hour"
 	src := chosenRows("billed_cost", "cpick", "bcost")
+	period := periodSQL(bucket, "c.bucket_start")
+	whole := `false`
+	if sub {
+		// A day read whole keeps its midnight and is set apart below.
+		whole = `c.bucket_width = '1d'`
+		period = `CASE WHEN ` + whole + ` THEN c.bucket_start ELSE ` + period + ` END`
+		var from *time.Time
+		if err := s.pool.QueryRow(ctx, `WITH `+src+`
+			SELECT min(c.bucket_start) FILTER (WHERE c.bucket_width = '1h') FROM bcost c`, orgID, since).Scan(&from); err != nil {
+			return out, err
+		}
+		if from != nil {
+			f := from.UTC()
+			out.HourlyFrom = &f
+		}
+	}
 	rows, err := s.pool.Query(ctx, `WITH `+src+`
-		SELECT date_trunc('`+bucket+`', c.bucket_start AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS b,
+		SELECT `+period+` AS b, `+whole+` AS whole,
 			c.api_key_id, c.workspace_id, c.model, mk.secret_key, mk.secret_slot,
 			round(SUM(c.amount_cents) / 100, 8)::text, round(SUM(c.list_amount_cents) / 100, 8)::text,
 			bool_and(c.data_refreshed_at IS NOT NULL AND c.bucket_end <= c.data_refreshed_at)
 		FROM bcost c
 		`+billedMapping+`
-		GROUP BY 1, 2, 3, 4, 5, 6
-		ORDER BY 1, 2, 4`, orgID, since)
+		GROUP BY 1, 2, 3, 4, 5, 6, 7
+		ORDER BY 1, 3, 5`, orgID, since)
 	if err != nil {
 		return out, err
 	}
 	defer rows.Close()
+	// The API keys' days read whole: a 10-hour bucket that overlaps one of
+	// its key holds only the hours of the other day.
+	type keyDay struct {
+		apiKey string
+		day    time.Time
+	}
+	wholeDay := map[keyDay]bool{}
 	for rows.Next() {
-		var p BilledPoint
-		if err := rows.Scan(&p.Bucket, &p.APIKeyID, &p.WorkspaceID, &p.Model, &p.SecretKey, &p.SecretSlot,
+		var (
+			p BilledPoint
+			w bool
+		)
+		if err := rows.Scan(&p.Bucket, &w, &p.APIKeyID, &p.WorkspaceID, &p.Model, &p.SecretKey, &p.SecretSlot,
 			&p.BilledUSD, &p.BilledListUSD, &p.Complete); err != nil {
 			return out, err
 		}
+		p.Bucket = p.Bucket.UTC()
+		if w {
+			wholeDay[keyDay{p.APIKeyID, p.Bucket}] = true
+			out.WholeDays = append(out.WholeDays, p)
+			continue
+		}
 		out.Points = append(out.Points, p)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+	if bucket == "10hour" {
+		for i := range out.Points {
+			p := &out.Points[i]
+			first, last := p.Bucket.Truncate(24*time.Hour), p.Bucket.Add(10*time.Hour-time.Nanosecond).Truncate(24*time.Hour)
+			// A 10-hour bucket begun before the hourly rows, or overlapping a
+			// day of its key read whole, holds only some of its hours.
+			if (out.HourlyFrom != nil && p.Bucket.Before(*out.HourlyFrom)) ||
+				wholeDay[keyDay{p.APIKeyID, first}] || wholeDay[keyDay{p.APIKeyID, last}] {
+				p.Complete = false
+			}
+		}
+	}
+	return out, nil
 }
 
 // billedHourlyReach is how far back the poller re-reads the bill per hour on

@@ -395,10 +395,12 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		Body     string `json:"body"`
 		Priority int    `json:"priority"`
 	}
-	if err := readJSON(r, &in); err != nil || in.Title == "" {
+	// A title of blanks is no title: the form's "required" lets it through.
+	if err := readJSON(r, &in); err != nil || strings.TrimSpace(in.Title) == "" {
 		writeErr(w, http.StatusBadRequest, "title is required")
 		return
 	}
+	in.Title = strings.TrimSpace(in.Title)
 	t, err := s.Backlog.Create(r.Context(), p.OrgID, id, in.Title, in.Body, "manual:"+p.Email, in.Priority)
 	if err != nil {
 		mapErr(w, err)
@@ -674,7 +676,11 @@ func (s *Server) handleResumeAgent(w http.ResponseWriter, r *http.Request) {
 		mapErr(w, err)
 		return
 	}
-	s.Orch.EnsureRunning(id)
+	// A press, held on a session that is still registered (WakeNow): the
+	// successor of a killed session may have read the agent as killed just
+	// before this, and an ordinary wake would be dropped on it until the
+	// tick (#111).
+	s.Orch.WakeNow(id)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -1352,7 +1358,8 @@ func (s *Server) handleCost(w http.ResponseWriter, r *http.Request) {
 }
 
 // costWindow reads bucket + days from the query and forms (bucket, since) out
-// of them. Defaults: daily buckets over the last 30 days; days is capped at 365.
+// of them. Defaults: daily buckets over the last 30 days; days is capped at
+// 365, and at maxTenMinuteDays for 10-minute buckets.
 func costWindow(r *http.Request) (string, time.Time) {
 	return costWindowAt(r, time.Now())
 }
@@ -1368,8 +1375,16 @@ func costWindowAt(r *http.Request, now time.Time) (string, time.Time) {
 	if days > 365 {
 		days = 365
 	}
+	// 10-minute buckets are clamped to two days, the most the page offers:
+	// a year of them is tens of megabytes for any reader (#120).
+	if bucket == "10min" && days > maxTenMinuteDays {
+		days = maxTenMinuteDays
+	}
 	return bucket, now.AddDate(0, 0, -days)
 }
+
+// maxTenMinuteDays is how far back costWindow reaches at ?bucket=10min.
+const maxTenMinuteDays = 2
 
 // handleCostSeries returns an agent's cost time series for the chart.
 func (s *Server) handleCostSeries(w http.ResponseWriter, r *http.Request) {

@@ -70,3 +70,17 @@ describe("Die Sprachkataloge", () => {
     expect(fehlend).toEqual([]);
   });
 });
+
+/* fmtUSD brings its own symbol (`$12.30`, `12,30 $`), so a string that takes
+   its output must not carry one: "$$12.30" on the runtime instances screen
+   (#83). */
+describe("strings that take a formatted dollar amount", () => {
+  const catalogues = { de, en, es, fr, it: italienisch, nl, pl, pt, ja, zh };
+  for (const [lang, cat] of Object.entries(catalogues)) {
+    it(`${lang}: usedNoLimit has no currency symbol of its own`, () => {
+      const s = cat.runtimes.instances.usedNoLimit;
+      expect(s).toContain("{{usd}}");
+      expect(s).not.toMatch(/\$|ドル|美元|USD/);
+    });
+  }
+});

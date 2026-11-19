@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { fmtUSD } from "../format";
+import { fmtUSDUnit } from "../format";
 import {
   api,
   del,
@@ -91,7 +91,7 @@ export default function Guardrails({ me }: { me: Principal }) {
           </span>
           <span className="mono text-sm flex-1 min-w-0" style={{ overflowWrap: "anywhere", ...(r.enabled ? {} : { opacity: 0.45 }) }}>
             {r.rule_type === "budget_limit" && r.params?.usd
-              ? `≤ ${fmtUSD(r.params.usd)}`
+              ? `≤ ${fmtUSDUnit(r.params.usd)}`
               : r.rule_type === "style_gate"
                 ? `${r.pattern} · ${t(`guardrails.styleModes.${String(r.params?.mode ?? "warn")}`)}`
                 : r.pattern}

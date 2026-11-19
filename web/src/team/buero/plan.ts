@@ -611,6 +611,19 @@ export function hausBauen(gruppen: Gruppe[], maxB: number, namen: Raumnamen, dic
   };
 }
 
+/** The room `?dept=` points the office at: a department's id, or "none" for
+ *  the room of those without one (it is called "ohne" in the plan). Null
+ *  for an id the house has no room for — unknown, deleted, or nobody works
+ *  there — and for "none" when everybody belongs to a department. */
+export function raumFuer(haus: Haus, dept: string): { etage: number; raum: Raum } | null {
+  const id = dept === "none" ? "ohne" : dept;
+  for (const e of haus.etagen) {
+    const raum = e.plan.raeume.find((r) => !r.gem && r.id === id);
+    if (raum) return { etage: e.nr, raum };
+  }
+  return null;
+}
+
 /* The partition in large rooms. From ten seats on a department is two
    groups, and the wall shows it — glass or half height, so the room stays
    one. It stands only where a lane between the desks is free from top to

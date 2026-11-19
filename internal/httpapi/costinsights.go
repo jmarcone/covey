@@ -80,9 +80,10 @@ func (s *Server) handleUsageReadings(w http.ResponseWriter, r *http.Request) {
 // billingKeysDays: how far back the key list sums the bill.
 const billingKeysDays = 30
 
-// handleBilled: the bill per bucket (hour | day | week), API key and model,
+// handleBilled: the bill per bucket (hour | 10hour | day | week), API key and model,
 // each point with the credential the key is mapped to (none: other use of
-// the account) — the chart's bars. And `window`: per mapped credential the
+// the account) — the chart's bars; at hour and 10hour `whole_days` beside
+// them, the days the bill is read for as a whole. And `window`: per mapped credential the
 // bill over whole billed buckets with the reported and recomputed figures of
 // the same window — the tiles, which must never set a bill over one span
 // against lines over another. Bars and tiles read the same rows whatever the
@@ -110,7 +111,19 @@ func (s *Server) handleBilled(w http.ResponseWriter, r *http.Request) {
 		mapErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"bucket": series.Bucket, "points": series.Points, "window": window, "sync": sync})
+	out := map[string]any{"bucket": series.Bucket, "points": series.Points, "window": window, "sync": sync}
+	if series.Reason != "" {
+		out["reason"] = series.Reason
+	}
+	if series.HourlyFrom != nil {
+		out["hourly_from"] = series.HourlyFrom
+	}
+	// At hour and 10hour, the days read whole: with points, the rows the
+	// window sums.
+	if len(series.WholeDays) > 0 {
+		out["whole_days"] = series.WholeDays
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // handleReconcile: per UTC day × mapped credential × model, what Claude Code

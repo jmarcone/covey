@@ -77,6 +77,12 @@ func TestCostCellsNameTheAgentsDepartment(t *testing.T) {
 	}
 
 	got := admin.expect(http.MethodGet, "/api/v1/cost/cells?days=1&bucket=hour", nil, http.StatusOK)
+	// The window starts at since, which the page cuts a meter reading that
+	// straddles it at (#120 review, M2).
+	sinceStr, _ := got["since"].(string)
+	if since, err := time.Parse(time.RFC3339Nano, sinceStr); err != nil || time.Since(since) < 23*time.Hour || time.Since(since) > 25*time.Hour {
+		t.Errorf("GET /cost/cells since = %v (%v), want a day ago", got["since"], err)
+	}
 	list, _ := got["agents"].([]any)
 	if len(list) != 3 {
 		t.Fatalf("GET /cost/cells agents = %v", got["agents"])

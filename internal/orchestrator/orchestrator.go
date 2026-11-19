@@ -421,6 +421,9 @@ func (o *Orchestrator) Events() *Broadcaster { return o.events }
 type session struct {
 	agent  agents.Agent
 	cancel context.CancelFunc
+	// link and killed are guarded by o.mu: Kill reads and sets them from the
+	// goroutine of whoever pressed the switch, while runAgent works with them
+	// on the session's own.
 	link   DaemonLink
 	killed bool
 	// The pool value this waking phase runs on (spec/04): which secret key it
@@ -463,6 +466,38 @@ type session struct {
 	// run worked against were often brought up in a waking phase that is no
 	// longer on screen. Each job records them again from here.
 	services []sandbox.ServiceRun
+	// idle: the session's last look at the backlog found nothing open —
+	// runAgent's check before the sandbox, or the claim loop after the last
+	// task. Written by runAgent and read by the session's end, both on the
+	// session's own goroutine, so it needs no lock.
+	//
+	// A session stays registered until runAgent has returned, and that is well
+	// after this look: the sandbox goes down (`securing`, up to ten seconds of
+	// stopping plus the home going into the store) or is parked. A task that
+	// became open in that window found the session still there; its wake was
+	// dropped and the work waited for the next tick. The end of an idle
+	// session therefore looks once more (endSession).
+	idle bool
+	// wakeNow: a person pressed Wake or Resume (WakeNow) while the session
+	// was registered. Guarded by o.mu.
+	//
+	// Held apart from the look above because it is answered after ANY end, the
+	// failed wake included, and without the backoff — which is what WakeNow
+	// is for. The session it found may be the very attempt that is about to
+	// fail, started before the person fixed whatever they pressed the button
+	// for.
+	wakeNow bool
+	// taskError: the session stopped on an error from its task — a result the
+	// store refused because the task was cancelled meanwhile, a message that
+	// did not go out — without another look at the backlog. Written and read
+	// on the session's own goroutine, like idle. (A task the runtime reports
+	// as failed is not this: it is a result like any other, and the claim
+	// loop goes on to its look.)
+	//
+	// Its end looks like an idle one's: a delegation that arrived while the
+	// sandbox went down was dropped on the session all the same. A daemon
+	// loss stays quiet (endQuiet).
+	taskError bool
 }
 
 // Run starts the dispatch loop: cheap, permanent, no LLM (spec/03).
@@ -1087,44 +1122,198 @@ func (o *Orchestrator) Placement(agentID uuid.UUID) (uuid.UUID, string, bool) {
 // Whoever presses the button has just changed something — deposited a
 // credential, fixed a host, deployed a version — and is waiting for the answer,
 // not for a wait that was measured for an unattended retry (#139).
+//
+// A press that finds a session running is held on it (session.wakeNow) and
+// answered when the session ends, again without the backoff: the session it
+// found may be past its last look at the backlog, or be the attempt that is
+// about to fail.
+//
+// A resume, of one agent or of the fleet, wakes through here too: the
+// session it finds may be the successor of a killed session that read the
+// agent as killed a moment before the resume (#111).
 func (o *Orchestrator) WakeNow(agentID uuid.UUID) {
 	o.clearWakeFailure(agentID)
+	o.mu.Lock()
+	if s := o.sessions[agentID]; s != nil {
+		s.wakeNow = true
+	}
+	o.mu.Unlock()
 	o.EnsureRunning(agentID)
 }
 
 // EnsureRunning starts an agent session if none is running (idempotent).
+//
+// A wake that finds a session running is not held on it: the end of the
+// session looks at the backlog itself when it needs to (endSession), and that
+// also catches work that became open without any wake at all. Only a person's
+// Wake is held (WakeNow).
 func (o *Orchestrator) EnsureRunning(agentID uuid.UUID) {
-	o.mu.Lock()
-	if _, active := o.sessions[agentID]; active {
-		o.mu.Unlock()
+	ctx, s, ok := o.register(agentID)
+	if !ok {
 		return
+	}
+	o.nebenlaeufig(func() {
+		defer func() {
+			end := o.endSession(agentID, s)
+			s.cancel()
+			o.answerEnd(agentID, end)
+		}()
+		if err := o.runAgent(ctx, agentID, s); err != nil && !errors.Is(err, context.Canceled) {
+			o.Log.Error("agent-session", "agent", agentID, "err", err)
+		}
+	})
+}
+
+// register enters a new session for the agent and returns it with the context
+// it runs under — ok=false when none may start.
+func (o *Orchestrator) register(agentID uuid.UUID) (context.Context, *session, bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if _, active := o.sessions[agentID]; active {
+		return nil, nil, false
 	}
 	// Not while the last wake is still fresh in the wrong way. A cause that
 	// stops a wake does not change in thirty seconds, and asking anyway costs a
 	// runner slot and four lines of recording per attempt (#139). The wait
 	// grows with the number of failures and stops at half an hour.
 	if t := o.wakeFehler[agentID]; t != nil && time.Now().Before(t.Until) {
-		o.mu.Unlock()
-		return
+		return nil, nil, false
+	}
+	// Not during a shutdown either. Asked here, under the lock, and not by
+	// whoever calls: a caller's check can be overtaken between its question
+	// and this line, and whatever reaches here once the lifecycle is done
+	// would only start a session that fails at its first query and that the
+	// shutdown has to wait for.
+	if o.base().Err() != nil {
+		return nil, nil, false
 	}
 	// Hung off the control plane's lifecycle, not off Background: a shutdown
 	// thereby also terminates sessions that came into being this way.
 	ctx, cancel := context.WithCancel(o.base())
 	s := &session{cancel: cancel}
 	o.sessions[agentID] = s
-	o.mu.Unlock()
+	return ctx, s, true
+}
 
-	o.nebenlaeufig(func() {
-		defer func() {
-			o.mu.Lock()
-			delete(o.sessions, agentID)
-			o.mu.Unlock()
-			cancel()
-		}()
-		if err := o.runAgent(ctx, agentID, s); err != nil && !errors.Is(err, context.Canceled) {
-			o.Log.Error("agent-session", "agent", agentID, "err", err)
+// sessionEnd is what the end of a session still has to answer (endSession).
+type sessionEnd int
+
+const (
+	// endQuiet: nothing. Either the control plane is shutting down, or the
+	// session stopped in the middle of something — a lost daemon, a failed
+	// wake, no free credential. Open work then waits for
+	// the tick, with its spacing: a link loss under Docker pressure takes
+	// several agents in the same second, and answering each at once would
+	// restart all of them in the same second too.
+	endQuiet sessionEnd = iota
+	// endLook: the session's last look at the backlog found nothing, and the
+	// session went on after it — mostly to bring its sandbox down or park it.
+	// Whatever became open since, by whichever route, nobody has seen yet.
+	// Or its task ended in an error, and it stopped without that last look.
+	// Or the agent
+	// was stopped — a kill, a budget stop — which put its task
+	// back while the sandbox still had to go down.
+	endLook
+	// endWake: a person pressed Wake while the session ran.
+	endWake
+)
+
+// endSession unregisters a finished session and says what its end has to
+// answer.
+//
+// The answer is given afterwards, by answerEnd, once the session is gone: a
+// wake that arrives in between then finds no session and starts one itself,
+// and a task created before it is visible to the look.
+func (o *Orchestrator) endSession(agentID uuid.UUID, s *session) sessionEnd {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	delete(o.sessions, agentID)
+	switch {
+	case o.base().Err() != nil:
+		// The process is waiting for its own work to stop, not for more
+		// of it.
+		return endQuiet
+	case s.wakeNow:
+		return endWake
+	case s.idle, s.taskError:
+		return endLook
+	case s.killed:
+		// Kill has just put the task back, and the person who pressed it may
+		// take it back before the sandbox is down — "wrong agent, put it
+		// back". The resume found this session and was dropped like any other
+		// wake. The look finds the task; whether the agent is still killed is
+		// for the successor's own check to say, not for this end.
+		return endLook
+	}
+	return endQuiet
+}
+
+// answerEnd does what endSession decided.
+//
+// Both answers end in an ordinary dispatch, so runAgent asks what it always
+// asks — killed, draft, fleet stop, open work, a free credential. That is
+// also the one guard against waking a killed agent. Kill does not take a
+// pressed Wake back, and nothing here asks whether the agent is still killed:
+// a NOTIFY or a person's resume can arrive on either side of a kill, the
+// agent's row says which side won, and the successor of an agent that is
+// still killed ends at its first query.
+//
+// The look is one query. It cannot turn into a loop: a successor starts only
+// for work that is open now, its claim takes that work, and the next look
+// comes after that claim loop has found nothing again. The successor of a
+// killed session that ends at its first query has neither looked nor been
+// killed itself, so its end is quiet. (ClaimNext skips a row another
+// transaction holds locked; those locks last milliseconds, a waking phase
+// seconds.)
+func (o *Orchestrator) answerEnd(agentID uuid.UUID, end sessionEnd) {
+	successor := "none"
+	switch end {
+	case endWake:
+		successor = "wake pressed"
+		// Not WakeNow: that would hold the same press again on whatever
+		// session a NOTIFY or the tick started since endSession, and answer
+		// it once more after that one ends. The press only needs its skip of
+		// the backoff.
+		o.clearWakeFailure(agentID)
+		o.EnsureRunning(agentID)
+	case endLook:
+		o.mu.Lock()
+		ctx := o.base()
+		o.mu.Unlock()
+		open, err := o.Backlog.HasOpen(ctx, agentID)
+		if err != nil {
+			o.Log.Warn("open work after a session not checked", "agent", agentID, "err", err)
+			break
 		}
-	})
+		if open {
+			successor = "open work"
+			o.EnsureRunning(agentID)
+		}
+	}
+	// What started the next session, if anything did. Asked when an agent
+	// wakes again without anybody seeing why, so an end that started
+	// something says so at info level — rare, one line per such end. An end
+	// that started nothing stays at debug: the integration tests wait for it,
+	// so that "nothing started" is a fact and not a pause.
+	level := slog.LevelInfo
+	if successor == "none" {
+		level = slog.LevelDebug
+	}
+	o.Log.Log(context.Background(), level, "session ended", "agent", agentID, "successor", successor)
+}
+
+// markKilled notes on the session that its agent was stopped.
+func (o *Orchestrator) markKilled(s *session) {
+	o.mu.Lock()
+	s.killed = true
+	o.mu.Unlock()
+}
+
+// wasKilled says whether the session's agent was stopped while it ran.
+func (o *Orchestrator) wasKilled(s *session) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return s.killed
 }
 
 // SandboxDied reports a sandbox that ended without being asked to — the runner
@@ -1171,6 +1360,22 @@ func (o *Orchestrator) setStatus(ctx context.Context, agent agents.Agent, taskID
 	o.events.Publish(Event{Type: "agent_status", AgentID: agent.ID.String(), OrgID: agent.OrgID, Data: map[string]string{"status": status}})
 }
 
+// setResting ends a waking phase's status: killed while the agent's kill
+// switch is on, sleeping otherwise. The agent's row decides (agents.SetResting)
+// — not what the session knew, which was read before the sandbox went down:
+// a kill in `securing` showed the agent asleep, and a resume after a kill
+// mid-task showed it killed until it woke again (#111).
+func (o *Orchestrator) setResting(ctx context.Context, agent agents.Agent) {
+	status, err := o.Registry.SetResting(ctx, agent.ID)
+	if err != nil {
+		o.Log.Warn("set status", "agent", agent.ID, "err", err)
+		return
+	}
+	_ = o.Obs.Record(ctx, agent.OrgID, agent.ID, nil, observability.KindLifecycle,
+		map[string]string{"status": status})
+	o.events.Publish(Event{Type: "agent_status", AgentID: agent.ID.String(), OrgID: agent.OrgID, Data: map[string]string{"status": status}})
+}
+
 // runAgent is one complete waking phase: sandbox up, work through the tasks
 // serially, sandbox down. sleeping → triggered → (triage → working)* → sleeping.
 func (o *Orchestrator) runAgent(ctx context.Context, agentID uuid.UUID, s *session) error {
@@ -1191,8 +1396,12 @@ func (o *Orchestrator) runAgent(ctx context.Context, agentID uuid.UUID, s *sessi
 		return err
 	}
 	hasOpen, err := o.Backlog.HasOpen(ctx, agentID)
-	if err != nil || !hasOpen {
+	if err != nil {
 		return err
+	}
+	if !hasOpen {
+		s.idle = true
+		return nil
 	}
 
 	// The LLM credential is chosen BEFORE the sandbox: is the agent's pool value
@@ -1320,15 +1529,14 @@ func (o *Orchestrator) runAgent(ctx context.Context, agentID uuid.UUID, s *sessi
 			})
 		}
 	}
+	o.mu.Lock()
 	s.link = link
+	o.mu.Unlock()
 	defer func() {
-		final := agents.StatusSleeping
-		if s.killed {
-			final = agents.StatusKilled
-		}
+		killed := o.wasKilled(s)
 		// Warm and cleanly asleep: keep sandbox + link alive (drained while
 		// idle). Otherwise — or on kill/abort — tear the compute down.
-		if agent.WarmSandbox && !s.killed && ctx.Err() == nil {
+		if agent.WarmSandbox && !killed && ctx.Err() == nil {
 			ws := o.parkWarm(agent.ID, link, sandbox)
 			// The job is done, the home is what it produced — and for a warm
 			// agent nothing else is going to carry it into the store for the
@@ -1351,7 +1559,9 @@ func (o *Orchestrator) runAgent(ctx context.Context, agentID uuid.UUID, s *sessi
 			}
 			cancel()
 		}
-		o.setStatus(context.WithoutCancel(ctx), agent, nil, final)
+		// Decided only now, by the agent's row: a kill or a resume can land
+		// while the sandbox goes down, and `killed` above is from before.
+		o.setResting(context.WithoutCancel(ctx), agent)
 	}()
 
 	// Broker the runtime LLM key proactively (never permanently in the sandbox).
@@ -1378,7 +1588,7 @@ func (o *Orchestrator) runAgent(ctx context.Context, agentID uuid.UUID, s *sessi
 
 	for ctx.Err() == nil {
 		if killed, _ := o.isKilled(ctx, agent); killed {
-			s.killed = true
+			o.markKilled(s)
 			_ = o.sendMsg(ctx, link, daemon.TypeKill, map[string]string{})
 			return nil
 		}
@@ -1389,6 +1599,7 @@ func (o *Orchestrator) runAgent(ctx context.Context, agentID uuid.UUID, s *sessi
 			if !agent.WarmSandbox {
 				_ = o.sendMsg(ctx, link, daemon.TypeSleep, map[string]string{})
 			}
+			s.idle = true
 			return nil
 		}
 		if err != nil {
@@ -1419,6 +1630,7 @@ func (o *Orchestrator) runAgent(ctx context.Context, agentID uuid.UUID, s *sessi
 			}
 			_, _ = o.Backlog.Complete(context.WithoutCancel(ctx), task.ID, backlog.StateFailed, "", err.Error())
 			o.publishTask(task.ID, agent)
+			s.taskError = true
 			return err
 		}
 	}
@@ -2914,6 +3126,13 @@ func (o *Orchestrator) handleDaemonMessage(ctx context.Context, agent agents.Age
 		resp := o.MessageHuman(ctx, agent, taskID, req)
 		return false, o.sendMsg(ctx, link, daemon.TypeInjectMessage, resp)
 
+	case daemon.TypeRequestNote:
+		req, err := daemon.DecodePayload[daemon.RequestNote](msg)
+		if err != nil {
+			return false, nil
+		}
+		return false, o.sendMsg(ctx, link, daemon.TypeInjectNote, o.NoteOnTask(ctx, agent, taskID, req))
+
 	case daemon.TypeRequestTool:
 		req, err := daemon.DecodePayload[daemon.RequestTool](msg)
 		if err != nil {
@@ -3082,9 +3301,11 @@ func (o *Orchestrator) handleDaemonMessage(ctx context.Context, agent agents.Age
 			}
 		}
 		// Ensure + move + cleanup of empty agent columns in one transaction.
+		// The store moves only the agent's own tasks; another agent's task
+		// fails as not found, the same as an unknown id (#66).
 		stage, err := o.Backlog.SetTaskStageByName(ctx, agent.ID, target, ss.Stage)
 		if err != nil {
-			o.Log.Warn("set_stage: task could not be moved", "err", err)
+			o.Log.Warn("set_stage: task could not be moved", "agent", agent.Slug, "task", target, "err", err)
 			return false, nil
 		}
 		_ = o.Obs.Record(ctx, agent.OrgID, agent.ID, &target, observability.KindLifecycle,
@@ -3102,6 +3323,17 @@ func (o *Orchestrator) handleDaemonMessage(ctx context.Context, agent agents.Age
 			if tid, err := uuid.Parse(n.TaskID); err == nil {
 				target = tid
 			}
+		}
+		if n.Scope != "memory" && target != taskID {
+			// A note on another task is RequestNote's: checked for the
+			// organisation and the guard rails, written under the agent's
+			// name. A daemon that still sends it this way gets the same
+			// checks; it only cannot hear the refusal.
+			if resp := o.NoteOnTask(ctx, agent, taskID, daemon.RequestNote{
+				Target: target.String(), Content: n.Content}); !resp.OK {
+				o.Log.Warn("note: refused", "agent", agent.Slug, "err", resp.Error)
+			}
+			return false, nil
 		}
 		if n.Scope == "memory" {
 			// Generally applicable insight: straight into memory, not only via
@@ -3254,7 +3486,7 @@ func (o *Orchestrator) enforceBudget(ctx context.Context, agent agents.Agent, li
 	_ = o.Obs.Record(ctx, agent.OrgID, agent.ID, &taskID, observability.KindGuardrail,
 		map[string]any{"rule": "budget_limit", "limit_usd": limit, "spent_usd": summary.TotalUSD, "action": "agent paused"})
 	_ = o.Registry.SetKilled(ctx, agent.ID, true)
-	s.killed = true
+	o.markKilled(s)
 	_, _ = o.Backlog.Reopen(ctx, taskID, "budget exceeded — agent paused")
 	_ = o.sendMsg(ctx, link, daemon.TypeKill, map[string]string{"reason": "budget"})
 	o.notifyBudget(ctx, agent, summary.TotalUSD, limit)
@@ -4024,11 +4256,15 @@ func (o *Orchestrator) Kill(ctx context.Context, agentID uuid.UUID) error {
 	}
 	o.mu.Lock()
 	s := o.sessions[agentID]
-	o.mu.Unlock()
+	var link DaemonLink
 	if s != nil {
 		s.killed = true
-		if s.link != nil {
-			_ = o.sendMsg(ctx, s.link, daemon.TypeKill, map[string]string{"reason": "kill-switch"})
+		link = s.link
+	}
+	o.mu.Unlock()
+	if s != nil {
+		if link != nil {
+			_ = o.sendMsg(ctx, link, daemon.TypeKill, map[string]string{"reason": "kill-switch"})
 		}
 		s.cancel()
 	}
@@ -4071,8 +4307,10 @@ func (o *Orchestrator) ResumeFleet(ctx context.Context, orgID uuid.UUID) error {
 			continue
 		}
 		// Whoever has open work should pick it up right away instead of waiting
-		// for the next tick.
-		o.EnsureRunning(id)
+		// for the next tick. As a press (WakeNow), not as EnsureRunning: a
+		// session that read the agent as killed just before this resume may
+		// still be registered, and an ordinary wake is dropped on it (#111).
+		o.WakeNow(id)
 	}
 	return firstErr
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildModel, descendantsOf, allMembers, memberNodeId, deptNodeId, UNASSIGNED } from "./model";
+import { buildModel, descendantsOf, allMembers, memberNodeId, deptNodeId, orgPath, UNASSIGNED } from "./model";
 import type { Agent, Human, OrgChart } from "../../api";
 
 const human = (id: string, extra: Partial<Human> = {}): Human =>
@@ -76,5 +76,88 @@ describe("buildModel", () => {
     // org-wide, so it counts — a cycle through two departments is still one.
     expect([...descendantsOf(allMembers(chart), "benjamin")].sort()).toEqual(["delivery", "egon", "stray"]);
     expect(descendantsOf(allMembers(chart), "doctor").size).toBe(0);
+  });
+});
+
+describe("orgPath", () => {
+  const ofAgent = (a: Agent[], h: Human[] = []): OrgChart => ({ humans: h, agents: a, departments: chart.departments });
+  const names = (p: ReturnType<typeof orgPath>) => p?.chain.map((m) => m.id);
+
+  it("walks agent supervisors up to the top of the department", () => {
+    const p = orgPath(chart, "delivery");
+    expect(p?.dept?.id).toBe("dev");
+    // benjamin is a human: the chain crosses from agents to humans.
+    expect(names(p)).toEqual(["benjamin", "egon"]);
+    expect(p?.outsideBoss).toBeNull();
+  });
+
+  it("follows manager_id for a human", () => {
+    const p = orgPath(chart, "lukas");
+    expect(p?.dept?.id).toBe("pc");
+    expect(names(p)).toEqual(["heike"]);
+    expect(p?.chain[0].kind).toBe("human");
+  });
+
+  it("gives an empty chain for someone without a boss", () => {
+    const p = orgPath(chart, "heike");
+    expect(p?.dept?.id).toBe("pc");
+    expect(p?.chain).toEqual([]);
+    expect(p?.outsideBoss).toBeNull();
+  });
+
+  it("keeps the whole chain at three levels, top first", () => {
+    const c = ofAgent([
+      agent("a", { department_id: "dev", supervisor_id: "b" }),
+      agent("b", { department_id: "dev", supervisor_id: "c" }),
+      agent("c", { department_id: "dev", supervisor_id: "d" }),
+      agent("d", { department_id: "dev" }),
+    ]);
+    expect(names(orgPath(c, "a"))).toEqual(["d", "c", "b"]);
+    expect(names(orgPath(c, "b"))).toEqual(["d", "c"]);
+  });
+
+  it("stops at the department boundary and names the boss outside", () => {
+    const p = orgPath(chart, "stray");
+    expect(p?.dept?.id).toBe("pc");
+    expect(p?.chain).toEqual([]);
+    expect(p?.outsideBoss?.id).toBe("benjamin");
+  });
+
+  it("notes no outside boss when only a higher level is outside", () => {
+    const c = ofAgent([
+      agent("a", { department_id: "dev", supervisor_id: "b" }),
+      agent("b", { department_id: "dev", supervisor_id: "x" }),
+      agent("x", { department_id: "pc" }),
+    ]);
+    const p = orgPath(c, "a");
+    expect(names(p)).toEqual(["b"]);
+    expect(p?.outsideBoss).toBeNull();
+  });
+
+  it("stops at a boss the chart does not have", () => {
+    const c = ofAgent([agent("a", { department_id: "dev", supervisor_id: "gone" })]);
+    const p = orgPath(c, "a");
+    expect(p?.chain).toEqual([]);
+    expect(p?.outsideBoss).toBeNull();
+  });
+
+  it("stops at a cycle instead of looping", () => {
+    const c = ofAgent([
+      agent("a", { department_id: "dev", supervisor_id: "b" }),
+      agent("b", { department_id: "dev", supervisor_id: "c" }),
+      agent("c", { department_id: "dev", supervisor_id: "a" }),
+    ]);
+    expect(names(orgPath(c, "a"))).toEqual(["c", "b"]);
+  });
+
+  it("treats no department as one: agents without one chain among themselves", () => {
+    const c = ofAgent([agent("a", { supervisor_id: "b" }), agent("b")]);
+    const p = orgPath(c, "a");
+    expect(p?.dept).toBeNull();
+    expect(names(p)).toEqual(["b"]);
+  });
+
+  it("is null for a member the chart does not have", () => {
+    expect(orgPath(chart, "nobody")).toBeNull();
   });
 });

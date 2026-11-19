@@ -147,6 +147,7 @@ export default function Ueberblick({ me }: { me: Principal }) {
             laufend={laeuft}
             wartetBei={new Set((offen.data?.items ?? []).map((e) => e.agent_id))}
             me={me}
+            bereit={agents.isSuccess && abteilungen.isSuccess}
           />
         </Suspense>
       </section>
