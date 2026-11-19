@@ -320,7 +320,9 @@ function MeterFigures({ f, readings }: { f: CredentialFigures; readings: UsageRe
   const five = own.filter((x) => x.supported && !x.stale && x.window_percent != null).at(-1);
 
   let real: string;
-  if (!r) real = t("costs.fig.noMeter");
+  // Billed by usage (0151): the meter still moves, but it is not the money.
+  if (f.basis === "usage") real = t("costs.basis.meterNotMoney");
+  else if (!r) real = t("costs.fig.noMeter");
   else if (!r.priced) real = r.unpricedPoints > 0 ? t("costs.fig.noPlanPricePoints", { n: r.unpricedPoints, m: r.points }) : t("costs.fig.noPlan");
   else if (r.below) real = `${fmtUSDBelow(r.high)} · ${t("costs.fig.realBelow")}`;
   else real = `≈ ${fmtUSD(r.value)} · ${t("costs.fig.realRange", { low: fmtUSD(r.low), high: fmtUSD(r.high), pts: r.points, pp: fmtUSDFixed(r.value / r.points, 4) })}`;
@@ -346,6 +348,10 @@ function MeterFigures({ f, readings }: { f: CredentialFigures; readings: UsageRe
     mult = `≥ ${times(f.multiple.low)} · ${t("costs.split.multipleFloor")}`;
   } else if (f.noMultiple === "outside") {
     mult = t("costs.split.noMultipleOutside");
+  } else if (f.basis === "usage") {
+    mult = f.usageMultiple != null ? `${times(f.usageMultiple)} · ${t("costs.basis.usageMultipleSub")}` : t("costs.basis.meterNotMoney");
+  } else if (f.noMultiple === "seatAndUsage") {
+    mult = t("costs.basis.noMultipleBoth");
   } else mult = "–";
 
   const row = (label: string, value: string, color?: string, hatched?: boolean) => (

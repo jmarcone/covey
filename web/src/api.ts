@@ -828,6 +828,49 @@ export type CostCells = {
   bookings?: BookingBasis[] | null;
   /** Usage outside covey (#120): its own series, in none of the fields above. */
   external?: ExternalUsage;
+  /** How each credential's real money is formed (0151), the bases valid in
+   *  the window; absent when none was set. */
+  cost_bases?: CredentialBasis[] | null;
+  /** The usage charges that reach into the window, each in its own currency;
+   *  absent when there are none. */
+  usage_charges?: WindowCharge[] | null;
+};
+
+/** seat: the plan prices the meter; usage: the usage charges are the money;
+ *  seat_and_usage: both. */
+export type CostBasisKind = "seat" | "usage" | "seat_and_usage";
+
+/** A credential's dated cost basis (0151). */
+export type CredentialBasis = {
+  secret_key: string;
+  secret_slot: number;
+  basis: CostBasisKind;
+  valid_from: string;
+  valid_to: string | null;
+};
+
+/** A usage charge as stored: money charged for usage over [from, to), in its
+ *  own currency; a rate to USD only with its date. */
+export type UsageCharge = {
+  id: string;
+  secret_key: string;
+  secret_slot: number;
+  amount: number;
+  currency: string;
+  from: string;
+  to: string;
+  fx_to_usd: number | null;
+  fx_date: string | null;
+  note: string;
+};
+
+/** A usage charge in the cost cells: with the part the window holds and the
+ *  part a usage basis counts, both in its currency, and the counted part in
+ *  USD only where it is in USD or a rate with its date was given. */
+export type WindowCharge = UsageCharge & {
+  window_amount: number;
+  counted_amount: number;
+  counted_usd: number | null;
 };
 
 /** A subscription credential named by its secret, as the meter readings name it. */

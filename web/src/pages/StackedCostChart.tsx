@@ -26,6 +26,7 @@ import {
   EMPTY_SPLIT_PERIOD,
 } from "./costFigures";
 import { PlanPrice } from "./PlanPrice";
+import { CostBasisPanel, fmtMoney } from "./CostBasis";
 import {
   OTHER_SOURCES,
   beforeRange,
@@ -880,7 +881,9 @@ function CredentialTiles({ f, filtered, narrowed, out }: {
       sub={f.check != null ? t("costs.fig.priceTableCheck", { pct: pct(f.check) }) : undefined} color={SOURCE_COLOR.recomputed}
       parts={out ? inclLine(t, filtered, fmtUSD(f.recomputed), outsideMoney(t, out, "list"), range) : undefined} />,
   ];
-  if (isSeat(f)) {
+  // A seat billed by usage (0151): its meter is not its money, the usage
+  // charges are (UsageTiles below).
+  if (isSeat(f) && f.basis !== "usage") {
     const r = f.real;
     // The price per point the server priced the movement at, on average.
     const pp = r && r.points > 0 ? r.value / r.points : null;
@@ -972,6 +975,32 @@ function CredentialTiles({ f, filtered, narrowed, out }: {
         sub={t("costs.fig.billedPerListSub")} />);
     }
   }
+  // Usage charges (0151): each currency in its own, a dollar figure only
+  // where every counted charge has one, never added across currencies.
+  const u = f.usage;
+  if (u && (f.basis === "usage" || f.basis === "seat_and_usage")) {
+    if (filtered) {
+      tiles.push(<Tile key="usage" label={t("costs.basis.usageTile")} value="–" sub={t("costs.basis.usageFiltered")} color={SOURCE_COLOR.real} />);
+    } else if (u.currencies.length === 0) {
+      tiles.push(<Tile key="usage" label={t("costs.basis.usageTile")} value="–" sub={t("costs.basis.noCharge")} color={SOURCE_COLOR.real} />);
+    } else {
+      for (const c of u.currencies) {
+        tiles.push(<Tile key={`usage-${c.currency}`} label={t("costs.basis.usageTile")} value={fmtMoney(c.counted, c.currency)}
+          sub={c.currency === "USD" ? t("costs.basis.usageCount", { n: fmtNumber(c.charges, 0) })
+            : c.usd != null ? t("costs.basis.usageAtRate", { usd: fmtUSD(c.usd) }) : t("costs.basis.noRate")}
+          color={SOURCE_COLOR.real} />);
+      }
+      // Seat and usage together: one figure only where both are in dollars.
+      if (f.basis === "seat_and_usage" && f.real?.priced && u.usd != null) {
+        tiles.push(<Tile key="both" label={t("costs.basis.bothTile")} value={`≈ ${fmtUSD(f.real.value + u.usd)}`}
+          sub={t("costs.basis.bothSub", { seat: fmtUSD(f.real.value), usage: fmtUSD(u.usd) })} color={SOURCE_COLOR.real} hatched />);
+      }
+    }
+    if (f.usageMultiple != null) {
+      tiles.push(<Tile key="umult" label={t("costs.fig.multiple")} value={times(f.usageMultiple)}
+        sub={t("costs.basis.usageMultipleSub")} />);
+    }
+  }
   return <div className="flex flex-wrap gap-3 mb-2">{tiles}</div>;
 }
 
@@ -991,6 +1020,10 @@ function NoMultiple({ f }: { f: CredentialFigures }) {
   let text: string;
   if (f.noMultiple === "agents") text = t("costs.fig.noMultipleAgents");
   else if (f.noMultiple === "outside") text = t("costs.split.noMultipleOutside");
+  else if (f.noMultiple === "rate") text = t("costs.basis.noMultipleRate");
+  else if (f.noMultiple === "noCharge") text = t("costs.basis.noMultipleNoCharge");
+  else if (f.noMultiple === "basisChanged") text = t("costs.basis.noMultipleChanged");
+  else if (f.noMultiple === "seatAndUsage") text = t("costs.basis.noMultipleBoth");
   else if (f.noMultiple === "unpriced") {
     text = f.real && f.real.unpricedPoints > 0
       ? t("costs.fig.noMultipleUnpriced", { n: f.real.unpricedPoints, m: f.real.points })
@@ -1227,6 +1260,7 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
         <span className="muted text-xs">{kind}{plan && !subscription ? ` · ${plan}` : ""}</span>
       </div>
       {subscription && <PlanPrice f={f} name={name} readings={readings} editable={canSetPlan} />}
+      {f.secretKey != null && <CostBasisPanel f={f} name={name} editable={canSetPlan} />}
       <CredentialTiles f={f} filtered={filtered || layout === "agents"} narrowed={filtered} out={mineKpis} />
       <NoMultiple f={f} />
       {f.everything && (f.everything.unmeteredCovey ?? 0) + f.everything.unmeteredOutside >= 0.005 && (

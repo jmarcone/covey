@@ -114,6 +114,15 @@ type CostCells struct {
 	// External is the usage outside covey (#120, external.go): its own
 	// series beside the agents, in none of the fields above.
 	External ExternalUsage `json:"external"`
+	// CostBases are the dated bases valid in the window (0151, credcost.go):
+	// how each credential's real money is formed. Absent for a credential
+	// without one, and the whole field absent when none has one, so an
+	// organisation that never set one gets the cells it got before.
+	CostBases []CredentialBasis `json:"cost_bases,omitempty"`
+	// UsageCharges are the usage charges that reach into the window, each in
+	// its own currency, with the part the window holds and the part a usage
+	// basis counts. Absent when there are none.
+	UsageCharges []WindowCharge `json:"usage_charges,omitempty"`
 }
 
 // cellDepartments fills in the department of every agent in the cells. A
@@ -384,13 +393,24 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 		return out, err
 	}
 	out.Plans = plans
-	steps, coverage, err := s.meterSteps(ctx, orgID, bucket, since, plans)
+	// The basis of each credential (0151): while it is usage, the plan prices
+	// nothing. Without a basis the plans price the meter as they always did.
+	bases, err := s.costBasesFor(ctx, orgID, since)
+	if err != nil {
+		return out, err
+	}
+	out.CostBases = bases
+	priced := seatPlans(plans, bases)
+	steps, coverage, err := s.meterSteps(ctx, orgID, bucket, since, priced)
 	if err != nil {
 		return out, err
 	}
 	out.Subscription, out.Meter = steps, coverage
 
-	if out.External, err = s.externalFor(ctx, orgID, bucket, since, coverage, plans); err != nil {
+	if out.External, err = s.externalFor(ctx, orgID, bucket, since, coverage, priced); err != nil {
+		return out, err
+	}
+	if out.UsageCharges, err = s.usageChargesFor(ctx, orgID, since, time.Now(), bases); err != nil {
 		return out, err
 	}
 	return out, nil
