@@ -14,8 +14,10 @@ import {
   credentialFigures,
   credId,
   isSeat,
+  leadOf,
   meterCrossings,
   periodMultiple,
+  priceTableDifference,
   pricePerPoint,
   recomputedOf,
   meterSplit,
@@ -36,6 +38,7 @@ import {
   seatSources,
   sourceStyles,
   hostsBehind,
+  kpiLead,
   sourceRealParts,
   sourceRealPerPeriod,
   sourcesPerPeriod,
@@ -400,8 +403,10 @@ export function AgentFilter({ agents, selected, onChange }: {
   );
 }
 
-function Tile({ label, value, sub, span, note, color, hatched, parts, orgWide }: {
+function Tile({ label, value, sub, span, note, check, color, hatched, parts, orgWide }: {
   label: string; value: string; sub?: string; span?: string; note?: string; color?: string; hatched?: boolean;
+  /** covey's price table where it differs from the figure (priceTableLine). */
+  check?: string;
   /** With the outside sessions included: the figure's two parts, named. */
   parts?: string;
   /** The figure does not follow the agent filter, and says so. */
@@ -418,6 +423,7 @@ function Tile({ label, value, sub, span, note, color, hatched, parts, orgWide }:
       <div style={{ fontSize: 20, fontWeight: 600, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>{value}</div>
       {parts && <div className="muted text-xs" data-parts style={{ marginTop: 2 }}>{parts}</div>}
       {sub && <div className="muted text-xs" style={{ marginTop: 2 }}>{sub}</div>}
+      {check && <div className="muted text-xs" data-price-check style={{ marginTop: 2 }}>{check}</div>}
       {span && <div className="muted text-xs" data-span style={{ marginTop: 2 }}>{span}</div>}
       {note && <div className="muted text-xs" style={{ marginTop: 2, fontStyle: "italic" }}>{note}</div>}
     </div>
@@ -458,6 +464,10 @@ export type Bar = {
   tag?: string;
   /** What the tag leaves out, in the period's details, e.g. the multiple's range. */
   tagDetail?: string;
+  /** A line under the bar's row in the period's details and a column of its
+   *  own in the table: covey's price table where it differs from the bar
+   *  (priceTableLine); none where they agree. */
+  note?: string;
 };
 
 const sum = (s: Seg[]) => s.reduce((a, x) => a + x.value, 0);
@@ -518,6 +528,9 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
     return [...m.values()];
   }, [groups]);
   const desc = t("costs.fig.chartDesc", { totals: series.map((s) => `${s.label} ${fmtValue(s.total)}`).join(", ") });
+  // The price-table check of a period's bars: a column only where some period has one.
+  const checks = groups.some((g) => g.some((b) => b.note));
+  const checkOf = (i: number) => (groups[i] ?? []).filter((b) => b.note).map((b) => b.note).join(" · ");
 
   if (asTable) {
     return (
@@ -529,6 +542,7 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
               <th scope="col" style={{ textAlign: "left", padding: "2px 8px 4px 0", fontWeight: 500 }}>{t("costs.fig.period")}</th>
               {series.map((s) => <th key={s.key} scope="col" style={{ padding: "2px 8px 4px 0", fontWeight: 500 }}>{s.label}</th>)}
               {extra.map((e) => <th key={e.key} scope="col" data-extra-col style={{ padding: "2px 8px 4px 0", fontWeight: 500 }}>{e.label}</th>)}
+              {checks && <th scope="col" data-check-col style={{ padding: "2px 8px 4px 0", fontWeight: 500, textAlign: "left" }}>{t("costs.lead.colCheck")}</th>}
               {notes && <th scope="col" style={{ padding: "2px 0 4px 0", fontWeight: 500, textAlign: "left" }}>{notesHead}</th>}
             </tr>
           </thead>
@@ -545,6 +559,7 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
                   return <td key={e.key} style={{ textAlign: "right", padding: "2px 8px 2px 0", fontVariantNumeric: "tabular-nums" }}>
                     {!x ? "–" : x.none && x.value === 0 ? x.none : fmtValue(x.value)}</td>;
                 })}
+                {checks && <td data-check style={{ padding: "2px 8px 2px 0" }}>{checkOf(i)}</td>}
                 {notes && <td style={{ padding: "2px 0" }}>{notes.get(i) ?? ""}</td>}
               </tr>
             ))}
@@ -554,6 +569,7 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
               <th scope="row" style={{ textAlign: "left", padding: "4px 8px 2px 0" }}>{t("costs.fig.total")}</th>
               {series.map((s) => <td key={s.key} data-total style={{ textAlign: "right", padding: "4px 8px 2px 0", fontVariantNumeric: "tabular-nums" }}>{fmtValue(s.total)}</td>)}
               {extra.map((e) => <td key={e.key} data-total style={{ textAlign: "right", padding: "4px 8px 2px 0", fontVariantNumeric: "tabular-nums" }}>{e.any || e.total > 0 ? fmtValue(e.total) : "–"}</td>)}
+              {checks && <td />}
               {notes && <td />}
             </tr>
           </tfoot>
@@ -692,6 +708,7 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
                 <span>{fmtValue(sum(b.segs))}</span>
               </div>
               {b.tag && <div className="muted" data-tag-detail style={{ paddingLeft: 16 }}>{b.tag}{b.tagDetail ? ` · ${b.tagDetail}` : ""}</div>}
+              {b.note && <div className="muted" data-price-check style={{ paddingLeft: 16 }}>{b.note}</div>}
               {b.segs.filter((x) => x.value > 0).length > 1 && b.segs.filter((x) => x.value > 0).map((x) => (
                 <div key={x.key} className="muted" style={{ display: "flex", justifyContent: "space-between", gap: 12, paddingLeft: 16 }}>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Swatch color={x.color} hatched={b.hatched} dashed={x.dashed} hatch={x.hatch} ink={x.ink} /> {x.label}</span>
@@ -712,6 +729,21 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
 // amounts next to them.
 const pct = (v: number) => `${v >= 0 ? "+" : ""}${fmtNumber(v, 2)} %`;
 const times = (v: number) => (Number.isFinite(v) ? `${fmtNumber(v, 1)}×` : "∞");
+
+/** covey's own price table against the lead figure, in words (#120): one
+ *  line where the two differ by more than PRICE_CHECK, none where they
+ *  agree. */
+export function priceTableLine(t: TFunction, lead: number, table: number): string | undefined {
+  const d = priceTableDifference(lead, table);
+  if (!d) return undefined;
+  return t(d.pct < 0 ? "costs.lead.checkLess" : "costs.lead.checkMore", { usd: fmtUSD(d.usd), pct: fmtNumber(Math.abs(d.pct), Math.abs(d.pct) < 10 ? 1 : 0) });
+}
+
+/** The same as a table cell: "+3.2 %" where they differ, nothing where they agree. */
+function priceTableCell(lead: number, table: number): string {
+  const d = priceTableDifference(lead, table);
+  return d ? pct(d.pct) : "";
+}
 
 // --- The outside sessions, included by default (#120) ---------------------------
 
@@ -760,16 +792,31 @@ export function withUnpriced(t: TFunction, usd: number, unpriced: boolean): stri
 
 /** An outside part has no complete figure of this kind: some of its calls
  *  carry none (no reported cost, or no list price). */
-export function partUnpriced(o: Pick<OutsideKpis, "calls" | "list" | "reported" | "reportedCalls" | "unpricedTokens">, kind: "reported" | "list"): boolean {
+export function partUnpriced(o: MoneyPart, kind: "reported" | "list" | "lead"): boolean {
   if (o.calls === 0) return false;
+  if (kind === "lead") {
+    const l = kpiLead(o);
+    return l.lead == null || l.unpricedCalls > 0;
+  }
   return kind === "reported" ? o.reported == null || o.reportedCalls < o.calls : o.list == null || o.unpricedTokens > 0;
 }
 
+/** What an outside part's money is read from. */
+type MoneyPart = Pick<OutsideKpis, "calls" | "list" | "reported" | "reportedCalls" | "unpricedTokens">
+  & Partial<Pick<OutsideKpis, "lead" | "leadRecomputed" | "leadUnpricedCalls" | "leadUnpricedTokens">>;
+
 /** The outside sessions' money in a line: their figure, or why there is
  *  none — never $0 where the server has no figure. */
-export function outsideMoney(t: TFunction, o: Pick<OutsideKpis, "calls" | "list" | "reported" | "reportedCalls" | "unpricedTokens">,
-  kind: "reported" | "list"): string {
+export function outsideMoney(t: TFunction, o: MoneyPart, kind: "reported" | "list" | "lead"): string {
   if (o.calls === 0) return t("costs.incl.noCalls");
+  if (kind === "lead") {
+    // At token prices (#120): reported where a call carried it, else the
+    // list price, marked; the calls with neither are said, never $0.
+    const l = kpiLead(o);
+    if (l.lead == null) return l.unpricedTokens > 0 ? t("costs.incl.noListTokens", { n: fmtCount(l.unpricedTokens) }) : t("costs.incl.noList");
+    const usd = l.unpricedTokens > 0 ? t("costs.incl.listUnpriced", { usd: fmtUSD(l.lead), n: fmtCount(l.unpricedTokens) }) : fmtUSD(l.lead);
+    return l.recomputed > 0 ? t("costs.lead.part", { usd }) : usd;
+  }
   if (kind === "reported") {
     if (o.reported == null) return t("costs.incl.noReported");
     return o.reportedCalls > 0 && o.reportedCalls < o.calls
@@ -783,8 +830,10 @@ export function outsideMoney(t: TFunction, o: Pick<OutsideKpis, "calls" | "list"
 /** An outside list within the meter's readings: its figure, or "no list
  *  price" where none of the seat's outside calls had one — never $0 (#120
  *  review, M3). */
-export function withinMoney(t: TFunction, usd: number, o: { priced: boolean; calls: number; unpricedTokens: number }): string {
-  return outsideMoney(t, { calls: o.calls, list: o.priced ? usd : null, reported: null, reportedCalls: 0, unpricedTokens: o.unpricedTokens }, "list");
+export function withinMoney(t: TFunction, usd: number, o: { priced: boolean; calls: number; unpricedTokens: number; recomputed?: number }): string {
+  const s = outsideMoney(t, { calls: o.calls, list: o.priced ? usd : null, reported: null, reportedCalls: 0, unpricedTokens: o.unpricedTokens }, "list");
+  // At the lead price, a part priced at the list for want of a reported cost says so (#120).
+  return o.priced && o.calls > 0 && (o.recomputed ?? 0) > 0 ? t("costs.lead.part", { usd: s }) : s;
 }
 
 /** "not reported yet by: laptop (operator: home) through …; desktop never". */
@@ -805,24 +854,26 @@ function sourceKpis(s: ExternalSource, o: OutsideOnChart): OutsideKpis {
  *  tooltip), each in its source's pattern (#120 review, M5). value: null
  *  where the source has no figure in it. */
 export function sourceSeriesSegs(t: TFunction, styles: SourceStyles, color: string,
-  values: readonly { source: string; value: number | null; calls?: number }[],
-  col: { keyPrefix: string; column?: (name: string) => string; none?: string }): Seg[] {
-  const by = new Map<string, { names: string[]; value: number; none: boolean }>();
+  values: readonly { source: string; value: number | null; calls?: number; marked?: boolean }[],
+  col: { keyPrefix: string; column?: (name: string) => string; none?: string; mark?: string }): Seg[] {
+  const by = new Map<string, { names: string[]; value: number; none: boolean; marked: boolean }>();
   for (const v of values) {
     const k = styles.series(v.source);
-    const e = by.get(k) ?? { names: [], value: 0, none: false };
+    const e = by.get(k) ?? { names: [], value: 0, none: false, marked: false };
     e.names.push(v.source);
     e.value += v.value ?? 0;
     if (v.value == null && (v.calls ?? 0) > 0) e.none = true;
+    if (v.marked) e.marked = true;
     by.set(k, e);
   }
   return [...by.entries()].map(([k, e]): Seg => {
     const other = k === OTHER_SOURCES;
     const st = styles.style(other ? OTHER_SOURCES : k);
     const name = other ? t("costs.incl.otherSources", { n: e.names.length }) : k;
+    const label = other ? t("costs.incl.otherSeg", { n: e.names.length, sources: e.names.join(", ") }) : t("costs.incl.seg", { source: k });
     return {
       key: `${col.keyPrefix}${other ? "other" : k}`,
-      label: other ? t("costs.incl.otherSeg", { n: e.names.length, sources: e.names.join(", ") }) : t("costs.incl.seg", { source: k }),
+      label: e.marked && col.mark ? `${label} · ${col.mark}` : label,
       color, hatch: st.hatch, ink: st.ink, value: e.value,
       column: col.column?.(name),
       none: e.none && e.value === 0 ? col.none : undefined,
@@ -833,16 +884,23 @@ export function sourceSeriesSegs(t: TFunction, styles: SourceStyles, color: stri
 /** The bars' segments of the given sources in one period: their reported
  *  cost or their list price, hatched per source, each with a column of its
  *  own in the table and "no list price" (never $0) where it has none. */
-function outsideSegs(t: TFunction, o: OutsideOnChart, sources: readonly ExternalSource[], at: number, kind: "reported" | "list"): Seg[] {
-  return sourceSeriesSegs(t, o.styles, kind === "reported" ? SOURCE_COLOR.reported : SOURCE_COLOR.recomputed,
+function outsideSegs(t: TFunction, o: OutsideOnChart, sources: readonly ExternalSource[], at: number, kind: "reported" | "list" | "lead"): Seg[] {
+  return sourceSeriesSegs(t, o.styles, kind === "list" ? SOURCE_COLOR.recomputed : SOURCE_COLOR.reported,
     sources.map((s) => {
       const e = o.per.get(s.source)?.get(at);
-      return { source: s.source, value: (kind === "reported" ? e?.reported : e?.list) ?? null, calls: e?.calls ?? 0 };
+      const value = kind === "lead" ? e?.lead : kind === "reported" ? e?.reported : e?.list;
+      return { source: s.source, value: value ?? null, calls: e?.calls ?? 0, marked: kind === "lead" && (e?.leadRecomputed ?? 0) > 0 };
     }), {
       keyPrefix: "out:",
-      column: (name) => t(kind === "reported" ? "costs.incl.colReported" : "costs.incl.colList", { source: name }),
+      column: (name) => t(kind === "lead" ? "costs.lead.col" : kind === "reported" ? "costs.incl.colReported" : "costs.incl.colList", { source: name }),
       none: t(kind === "reported" ? "costs.incl.noReported" : "costs.incl.noList"),
+      mark: t("costs.lead.recomputedMark"),
     });
+}
+
+/** The outside list at covey's price table in one period, for the check. */
+function outsideTable(o: OutsideOnChart, sources: readonly ExternalSource[], at: number): number {
+  return sources.reduce((a, s) => a + (o.per.get(s.source)?.get(at)?.list ?? 0), 0);
 }
 
 /** "$200/mo plan" — the plan as the server stores it. */
@@ -864,22 +922,32 @@ function realSpan(t: TFunction, f: CredentialFigures, key = "costs.fig.realSince
 }
 
 /** The tiles of one credential. */
-function CredentialTiles({ f, filtered, narrowed, out }: {
+function CredentialTiles({ f, filtered, narrowed, out, full }: {
   f: CredentialFigures; filtered: boolean; out: OutsideKpis | null;
   /** The page is narrowed to agents: an org-wide figure says so. */
   narrowed: boolean;
+  /** Claude Code's figure and covey's price table as two tiles (the toggle); else the one lead tile. */
+  full: boolean;
 }) {
   const { t } = useTranslation();
   // With the outside sessions on this seat included, each figure names its
   // parts — the range's, where the multiple of everything on the meter
   // stands beside them with the parts within the meter's readings (L5).
   const range = f.everything != null;
-  const tiles: React.ReactNode[] = [
+  // One list-price figure leads (#120): Claude Code's price of each call,
+  // covey's list price where it reported none; covey's price table is a
+  // check under it. The toggle shows the two as tiles of their own.
+  const lead = f.reported + (out ? kpiLead(out).lead ?? 0 : 0);
+  const tiles: React.ReactNode[] = full ? [
     <Tile key="rep" label={t("costs.fig.reported")} value={fmtUSD(f.reported + (out?.reported ?? 0))} sub={t("costs.fig.reportedSub")} color={SOURCE_COLOR.reported}
       parts={out ? inclLine(t, filtered, fmtUSD(f.reported), outsideMoney(t, out, "reported"), range) : undefined} />,
     <Tile key="rec" label={t("costs.fig.recomputed")} value={fmtUSD(f.recomputed + (out?.list ?? 0))}
       sub={f.check != null ? t("costs.fig.priceTableCheck", { pct: pct(f.check) }) : undefined} color={SOURCE_COLOR.recomputed}
       parts={out ? inclLine(t, filtered, fmtUSD(f.recomputed), outsideMoney(t, out, "list"), range) : undefined} />,
+  ] : [
+    <Tile key="lead" label={t("costs.lead.label")} value={fmtUSD(lead)} sub={t("costs.lead.sub")} color={SOURCE_COLOR.reported}
+      parts={out ? inclLine(t, filtered, fmtUSD(f.reported), outsideMoney(t, out, "lead"), range) : undefined}
+      check={priceTableLine(t, lead, f.recomputed + (out?.list ?? 0))} />,
   ];
   // A seat billed by usage all through the window (0151): its meter is not
   // its money, the usage charges are (below). One that changed basis keeps
@@ -930,7 +998,8 @@ function CredentialTiles({ f, filtered, narrowed, out }: {
         tiles.push(<Tile key="mult" label={t("costs.incl.everything")} value={`≈ ${times(e.estimate)}`} orgWide={narrowed}
           parts={t("costs.incl.everythingFloor", { floor: times(e.multiple.low) })}
           sub={t("costs.incl.everythingSub", { list: fmtUSD(e.coveyList + e.outsideList), covey: fmtUSD(e.coveyList),
-            outside: withinMoney(t, e.outsideList, { priced: e.outsidePriced, calls: e.outsideCalls, unpricedTokens: e.outsideUnpricedTokens }),
+            outside: withinMoney(t, e.outsideList, { priced: e.outsidePriced, calls: e.outsideCalls, unpricedTokens: e.outsideUnpricedTokens,
+              recomputed: e.outsideRecomputed }),
             real: fmtUSD(e.real) })}
           span={span} note={t("costs.incl.everythingNote", { slack: fmtUSD(e.slack) })} />);
       }
@@ -1045,9 +1114,11 @@ function NoMultiple({ f }: { f: CredentialFigures }) {
 }
 
 /** One credential: its tiles, its chart, its agents. */
-function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPeriod, selected, src, split, types, layout, view, sharedScale, asTable, outside }: {
+function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPeriod, selected, src, split, types, layout, view, sharedScale, asTable, outside, full }: {
   f: CredentialFigures; data: CostCells; billed: BilledReport | undefined; readings: readonly UsageReading[]; canSetPlan: boolean; bucket: string; fmtPeriod: (p: string) => string;
   selected: Set<string>; src: Record<Source, boolean>; split: Split; types: Set<string>; layout: Layout; view: View; sharedScale: boolean; asTable: boolean;
+  /** The full view of covey's price table (the toggle): Reported and Recomputed apart. */
+  full: boolean;
   /** The outside sessions, included (null: covey only). */
   outside: OutsideOnChart | null;
 }) {
@@ -1081,7 +1152,7 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
 
   // The cost-type filter belongs to the split by type, and its chips are
   // only on screen then: switched off (or per agent), every type counts.
-  const byType = split === "type" && layout === "combined";
+  const byType = full && split === "type" && layout === "combined";
   const typeList = byType ? COST_TYPES.filter((k) => types.has(k)) : COST_TYPES;
   // Real bars only where every point has a plan price: a bar of the priced
   // part alone would read as the whole. At an hour a bar is the whole points
@@ -1181,6 +1252,16 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
   // The bar's label says when it carries the outside sessions too.
   const withOut = (label: string, on: boolean) => (on && mine.length > 0
     ? t(filtered ? "costs.incl.barInclSelected" : "costs.incl.barIncl", { label }) : label);
+  // The lead bar (#120): covey's lines at Claude Code's figure, each
+  // outside source at its lead price, and covey's price table in a line
+  // under it where the two differ (PRICE_CHECK).
+  const leadBar = (cs: CostCell[], i: number, withMoney: boolean): Bar => {
+    const at = Date.parse(periods[i]);
+    const outSegs = withMoney && outside ? outsideSegs(t, outside, mine, at, "lead") : [];
+    const segs: Seg[] = [{ key: "r", label: t("costs.lead.coveyPart"), color: SOURCE_COLOR.reported, value: cs.reduce((a, c) => a + leadOf(c), 0) }, ...outSegs];
+    const table = cs.reduce((a, c) => a + recomputedOf(c), 0) + (withMoney && outside ? outsideTable(outside, mine, at) : 0);
+    return { key: "reported", label: withOut(t("costs.lead.label"), withMoney), color: SOURCE_COLOR.reported, segs, note: priceTableLine(t, sum(segs), table) };
+  };
   const barsFor = (cs: CostCell[], i: number, withMoney: boolean): Bar[] => {
     const out: Bar[] = [];
     const at = Date.parse(periods[i]);
@@ -1195,25 +1276,34 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
       // tile's rule only (from 3 points, its range in the details).
       const list = cs.reduce((a, c) => a + recomputedOf(c, typeList), 0);
       const listAll = cs.reduce((a, c) => a + recomputedOf(c), 0);
+      const lead = cs.reduce((a, c) => a + leadOf(c), 0);
       // With outside sessions on the meter, covey's list over the whole
-      // movement is no multiple: the headline has the split ones.
-      const m = f.split || f.outsideUnreported ? null : periodMultiple(listAll, stepsPer[i]);
-      const segs = byType
-        ? typeList.map((k) => ({ key: k, label: t(`costs.stack.${k}`), color: TYPE_COLOR[k], value: cs.reduce((a, c) => a + (c.measured[k] ?? 0), 0) }))
-        : [{ key: "m", label: t("costs.fig.recomputed"), color: SOURCE_COLOR.recomputed, value: list }];
-      out.push({ key: "recomputed", label: withOut(t("costs.fig.recomputed"), withMoney), color: SOURCE_COLOR.recomputed, segs: [...segs, ...outSegs("list")] });
+      // movement is no multiple: the headline has the split ones. The
+      // multiple is of the bar drawn: the lead figure, or covey's price
+      // table in the full view.
+      const m = f.split || f.outsideUnreported ? null : periodMultiple(full ? listAll : lead, stepsPer[i]);
+      if (full) {
+        const segs = byType
+          ? typeList.map((k) => ({ key: k, label: t(`costs.stack.${k}`), color: TYPE_COLOR[k], value: cs.reduce((a, c) => a + (c.measured[k] ?? 0), 0) }))
+          : [{ key: "m", label: t("costs.fig.recomputed"), color: SOURCE_COLOR.recomputed, value: list }];
+        out.push({ key: "recomputed", label: withOut(t("costs.fig.recomputed"), withMoney), color: SOURCE_COLOR.recomputed, segs: [...segs, ...outSegs("list")] });
+      } else {
+        out.push(leadBar(cs, i, withMoney));
+      }
       out.push({ key: "real", label: t("costs.fig.realEstimate"), color: SOURCE_COLOR.real, hatched: true, valueLabel: true,
         tag: m?.kind === "estimate" ? `≈ ${times(m.value)}` : undefined,
         tagDetail: m ? t("costs.fig.multipleRange", { low: times(m.low), high: times(m.high) }) : undefined,
         segs: realSegs(i) });
       return out;
     }
-    if (src.reported) {
+    if (src.reported && !full) {
+      out.push(leadBar(cs, i, withMoney));
+    } else if (src.reported) {
       out.push({ key: "reported", label: withOut(t("costs.fig.reported"), withMoney), color: SOURCE_COLOR.reported,
         segs: [{ key: "r", label: t("costs.fig.reported"), color: SOURCE_COLOR.reported, value: cs.reduce((a, c) => a + (c.engine_usd ?? 0), 0) },
           ...outSegs("reported")] });
     }
-    if (src.recomputed) {
+    if (src.recomputed && full) {
       const segs = byType
         ? typeList.map((k) => ({ key: k, label: t(`costs.stack.${k}`), color: TYPE_COLOR[k], value: cs.reduce((a, c) => a + (c.measured[k] ?? 0), 0) }))
         : [{ key: "m", label: t("costs.fig.recomputed"), color: SOURCE_COLOR.recomputed, value: cs.reduce((a, c) => a + recomputedOf(c, typeList), 0) }];
@@ -1239,8 +1329,12 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
     s, groups: periods.map((_, i): Bar[] => {
       const at = Date.parse(periods[i]);
       const bars: Bar[] = [];
-      if (src.reported) bars.push({ key: "reported", label: t("costs.fig.reported"), color: SOURCE_COLOR.reported, segs: outsideSegs(t, outside, [s], at, "reported") });
-      if (src.recomputed) bars.push({ key: "recomputed", label: t("costs.fig.recomputed"), color: SOURCE_COLOR.recomputed, segs: outsideSegs(t, outside, [s], at, "list") });
+      if (src.reported && !full) {
+        const segs = outsideSegs(t, outside, [s], at, "lead");
+        bars.push({ key: "reported", label: t("costs.lead.label"), color: SOURCE_COLOR.reported, segs,
+          note: priceTableLine(t, sum(segs), outsideTable(outside, [s], at)) });
+      } else if (src.reported) bars.push({ key: "reported", label: t("costs.fig.reported"), color: SOURCE_COLOR.reported, segs: outsideSegs(t, outside, [s], at, "reported") });
+      if (src.recomputed && full) bars.push({ key: "recomputed", label: t("costs.fig.recomputed"), color: SOURCE_COLOR.recomputed, segs: outsideSegs(t, outside, [s], at, "list") });
       return bars;
     }),
   })) : [];
@@ -1270,13 +1364,17 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
       </div>
       {subscription && <PlanPrice f={f} name={name} readings={readings} editable={canSetPlan} />}
       {f.secretKey != null && <CostBasisPanel f={f} name={name} editable={canSetPlan} />}
-      <CredentialTiles f={f} filtered={filtered || layout === "agents"} narrowed={filtered} out={mineKpis} />
+      <CredentialTiles f={f} filtered={filtered || layout === "agents"} narrowed={filtered} out={mineKpis} full={full} />
       <NoMultiple f={f} />
-      {f.everything && (f.everything.unmeteredCovey ?? 0) + f.everything.unmeteredOutside >= 0.005 && (
-        <p className="muted text-xs mb-2 mt-0" data-unmetered-note>{t("costs.incl.unmetered", {
-          covey: f.everything.unmeteredCovey != null ? fmtUSD(f.everything.unmeteredCovey) : "–",
-          outside: fmtUSD(f.everything.unmeteredOutside) })}</p>
-      )}
+      {/* Outside every reading's span: before the meter's first reading
+          (no meter data, never a real share) and after its last (pending). */}
+      {f.everything && (["before", "after"] as const).map((k) => {
+        const p = f.everything![k];
+        return (p.covey ?? 0) + p.outside >= 0.005 && (
+          <p key={k} className="muted text-xs mb-2 mt-0" data-unmetered-note={k}>{t(k === "before" ? "costs.incl.unmeteredBefore" : "costs.incl.unmeteredAfter", {
+            covey: p.covey != null ? fmtUSD(p.covey) : "–", outside: fmtUSD(p.outside) })}</p>
+        );
+      })}
       {f.bookingCheck.length > 0 && (
         <p className="text-xs mb-2 mt-0" role="note" style={{ color: "var(--text-warning)" }}>
           {t("costs.fig.bookingCheck", {
@@ -1356,7 +1454,7 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
 
       {(f.agents.length > 0 || mine.length > 0) && <AgentTable f={f} agents={agents} subscription={subscription}
         outside={outside ? mine.map((s) => ({ s, k: sourceKpis(s, outside), style: outside.styles.style(s.source), before: beforeRange(s, outside.real) })) : []}
-        filtered={filtered} />}
+        filtered={filtered} full={full} />}
     </section>
   );
 }
@@ -1372,11 +1470,13 @@ export function OutsideMark() {
   );
 }
 
-function AgentTable({ f, agents, subscription, outside, filtered }: {
+function AgentTable({ f, agents, subscription, outside, filtered, full }: {
   f: CredentialFigures; agents: CellAgent[]; subscription: boolean;
   /** The outside sources on this seat, included: a row each and a total with them. */
   outside: { s: ExternalSource; k: OutsideKpis; style: { hatch: number; ink?: string }; before: boolean }[];
   filtered: boolean;
+  /** Reported and Recomputed columns with their gap (the toggle); else one lead column and the check where it differs. */
+  full: boolean;
 }) {
   const { t } = useTranslation();
   // Included, the shares are of the seat's whole list price, agents and
@@ -1390,6 +1490,19 @@ function AgentTable({ f, agents, subscription, outside, filtered }: {
   const outReal = outside.reduce((a, o) => a + (parts.get(o.s.source) ?? 0), 0);
   const repUnpriced = outside.some((o) => partUnpriced(o.k, "reported"));
   const listUnpriced = outside.some((o) => partUnpriced(o.k, "list"));
+  // At the lead price (#120): one column, and covey's price table beside it
+  // only in the rows where it differs (PRICE_CHECK).
+  const outLead = outside.reduce((a, o) => a + (kpiLead(o.k).lead ?? 0), 0);
+  const leadUnpriced = outside.some((o) => partUnpriced(o.k, "lead"));
+  const leadMarked = outside.some((o) => kpiLead(o.k).recomputed > 0);
+  const outCheck = (k: OutsideKpis) => {
+    const l = kpiLead(k).lead;
+    return l != null && k.list != null ? priceTableCell(l, k.list) : "";
+  };
+  const totalLead = f.reported + outLead;
+  const checks = [...f.agents.filter((a) => !a.beforeWindow).map((a) => priceTableCell(a.reported, a.recomputed)),
+    ...outside.map((o) => outCheck(o.k)), outside.length > 0 ? priceTableCell(totalLead, f.recomputed + outList) : ""];
+  const checkCol = !full && checks.some(Boolean);
   const th: React.CSSProperties = { padding: "4px 8px 6px 0", fontWeight: 500, whiteSpace: "nowrap", textAlign: "right" };
   const td: React.CSSProperties = { padding: "3px 8px 3px 0", textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" };
   return (
@@ -1404,9 +1517,12 @@ function AgentTable({ f, agents, subscription, outside, filtered }: {
         <thead>
           <tr className="muted">
             <th scope="col" style={{ ...th, textAlign: "left" }}>{t("costs.fig.agent")}</th>
-            <th scope="col" style={th}>{t("costs.fig.reported")}</th>
-            <th scope="col" style={th}>{t("costs.fig.recomputed")}</th>
-            <th scope="col" style={th}>{t("costs.fig.gap")}</th>
+            {full ? <>
+              <th scope="col" style={th}>{t("costs.fig.reported")}</th>
+              <th scope="col" style={th}>{t("costs.fig.recomputed")}</th>
+              <th scope="col" style={th}>{t("costs.fig.gap")}</th>
+            </> : <th scope="col" style={th} data-lead-col>{t("costs.lead.label")}</th>}
+            {checkCol && <th scope="col" style={th} data-check-col>{t("costs.lead.colCheck")}</th>}
             <th scope="col" style={th}>{t("costs.fig.share")}</th>
             {subscription && <th scope="col" style={th}>{t("costs.fig.shareOfReal")}</th>}
           </tr>
@@ -1418,9 +1534,12 @@ function AgentTable({ f, agents, subscription, outside, filtered }: {
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Swatch color={agentColor(agents, a.id)} /> {a.label}</span>
                 {a.beforeWindow && <span className="muted" data-before-window style={{ display: "block", fontSize: 11 }}>{t("costs.split.agentBeforeWindow")}</span>}
               </th>
-              <td style={td}>{a.beforeWindow ? "–" : fmtUSD(a.reported)}</td>
-              <td style={td}>{a.beforeWindow ? "–" : fmtUSD(a.recomputed)}</td>
-              <td style={td}>{a.gapPct != null ? pct(a.gapPct) : "–"}</td>
+              {full ? <>
+                <td style={td}>{a.beforeWindow ? "–" : fmtUSD(a.reported)}</td>
+                <td style={td}>{a.beforeWindow ? "–" : fmtUSD(a.recomputed)}</td>
+                <td style={td}>{a.gapPct != null ? pct(a.gapPct) : "–"}</td>
+              </> : <td style={td} data-lead>{a.beforeWindow ? "–" : fmtUSD(a.reported)}</td>}
+              {checkCol && <td style={td} data-check>{a.beforeWindow ? "" : priceTableCell(a.reported, a.recomputed)}</td>}
               <td style={td}>{shareOf(a) != null ? `${fmtNumber(shareOf(a)! * 100, 1)} %` : "–"}</td>
               {subscription && <td style={td} title={a.realWhy === "unsplit" ? t("costs.split.agentUnsplit") : undefined} data-real-share>
                 {a.realShare != null ? `≈ ${fmtUSD(a.realShare)}` : "–"}
@@ -1438,9 +1557,12 @@ function AgentTable({ f, agents, subscription, outside, filtered }: {
                   <OutsideMark />
                   {before && <span className="muted" data-before-range style={{ display: "block", fontSize: 11 }}>{t("costs.incl.beforeRange")}</span>}
                 </th>
-                <td style={td}>{outsideMoney(t, k, "reported")}</td>
-                <td style={td}>{outsideMoney(t, k, "list")}</td>
-                <td style={td}>{k.reported != null && k.reported > 0 && k.list != null && k.reportedCalls === k.calls ? pct(((k.list - k.reported) / k.reported) * 100) : "–"}</td>
+                {full ? <>
+                  <td style={td}>{outsideMoney(t, k, "reported")}</td>
+                  <td style={td}>{outsideMoney(t, k, "list")}</td>
+                  <td style={td}>{k.reported != null && k.reported > 0 && k.list != null && k.reportedCalls === k.calls ? pct(((k.list - k.reported) / k.reported) * 100) : "–"}</td>
+                </> : <td style={td} data-lead>{outsideMoney(t, k, "lead")}</td>}
+                {checkCol && <td style={td} data-check>{outCheck(k)}</td>}
                 <td style={td}>{whole != null && whole > 0 && k.list != null ? `${fmtNumber((k.list / whole) * 100, 1)} %` : "–"}</td>
                 {subscription && <td style={td} data-outside-real>
                   {f.split && real != null ? `≈ ${fmtUSD(real)}` : "–"}
@@ -1451,9 +1573,13 @@ function AgentTable({ f, agents, subscription, outside, filtered }: {
           {outside.length > 0 && (
             <tr data-incl-total style={{ borderTop: "1px solid var(--border-strong)", fontWeight: 600 }}>
               <th scope="row" style={{ ...td, textAlign: "left" }}>{t(filtered ? "costs.incl.totalSelected" : "costs.incl.total")}</th>
-              <td style={td} data-incl-reported>{withUnpriced(t, f.reported + outside.reduce((a, o) => a + (o.k.reported ?? 0), 0), repUnpriced)}</td>
-              <td style={td} data-incl-list>{withUnpriced(t, f.recomputed + outList, listUnpriced)}</td>
-              <td style={td}>–</td>
+              {full ? <>
+                <td style={td} data-incl-reported>{withUnpriced(t, f.reported + outside.reduce((a, o) => a + (o.k.reported ?? 0), 0), repUnpriced)}</td>
+                <td style={td} data-incl-list>{withUnpriced(t, f.recomputed + outList, listUnpriced)}</td>
+                <td style={td}>–</td>
+              </> : <td style={td} data-incl-lead>{leadMarked ? t("costs.lead.part", { usd: withUnpriced(t, totalLead, leadUnpriced) })
+                : withUnpriced(t, totalLead, leadUnpriced)}</td>}
+              {checkCol && <td style={td} data-check>{priceTableCell(totalLead, f.recomputed + outList)}</td>}
               <td style={td}>{whole != null && whole > 0 ? `${fmtNumber(((f.recomputed + outList) / whole) * 100, 1)} %` : "–"}</td>
               {subscription && <td style={td} data-incl-real>
                 {f.real?.priced && (f.split || f.agents.some((a) => a.realShare != null))
@@ -1468,15 +1594,19 @@ function AgentTable({ f, agents, subscription, outside, filtered }: {
 }
 
 /** The colour code of the page, explained once. */
-function ColourKey({ split, sources = [], other = [] }: {
+function ColourKey({ split, sources = [], other = [], full = true, list = full }: {
   split: boolean; sources?: { name: string; hatch: number; ink?: string }[];
   /** The folded sources, drawn as one "other sources" series (M5). */
   other?: string[];
+  /** The full view of covey's price table: Reported and Recomputed apart. Else grey is the lead figure. */
+  full?: boolean;
+  /** covey's price table is drawn (the full view's Recomputed bars). */
+  list?: boolean;
 }) {
   const { t } = useTranslation();
   const items: [Source, string, boolean?][] = [
-    ["reported", t("costs.fig.keyReported")],
-    ["recomputed", t("costs.fig.keyRecomputed")],
+    ["reported", full ? t("costs.fig.keyReported") : t("costs.lead.key")],
+    ...(list ? [["recomputed", t("costs.fig.keyRecomputed")] as [Source, string]] : []),
     ["real", t("costs.fig.keyReal"), true],
     ["billed", t("costs.fig.keyBilled")],
   ];
@@ -1494,13 +1624,13 @@ function ColourKey({ split, sources = [], other = [] }: {
       {/* Each outside source: its own hatch, in the reported and the recomputed colour. */}
       {sources.map((x) => (
         <span key={x.name} style={{ display: "inline-flex", alignItems: "center", gap: 4 }} data-outside-key={x.name}>
-          <Swatch color={SOURCE_COLOR.reported} hatch={x.hatch} ink={x.ink} /><Swatch color={SOURCE_COLOR.recomputed} hatch={x.hatch} ink={x.ink} />
+          <Swatch color={SOURCE_COLOR.reported} hatch={x.hatch} ink={x.ink} />{list && <Swatch color={SOURCE_COLOR.recomputed} hatch={x.hatch} ink={x.ink} />}
           {" "}{t("costs.incl.key", { source: x.name })}
         </span>
       ))}
       {other.length > 0 && (
         <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }} data-outside-key={OTHER_SOURCES}>
-          <Swatch color={SOURCE_COLOR.reported} hatch={DOT_HATCH} /><Swatch color={SOURCE_COLOR.recomputed} hatch={DOT_HATCH} />
+          <Swatch color={SOURCE_COLOR.reported} hatch={DOT_HATCH} />{list && <Swatch color={SOURCE_COLOR.recomputed} hatch={DOT_HATCH} />}
           {" "}{t("costs.incl.otherKey", { n: other.length, sources: other.join(", ") })}
         </span>
       )}
@@ -1508,13 +1638,22 @@ function ColourKey({ split, sources = [], other = [] }: {
   );
 }
 
-export function CostExplorer({ data, billed, readings = [], canSetPlan = false, selected, bucket, fmtPeriod, outside = null }: {
+export function CostExplorer({ data, billed, readings = [], canSetPlan = false, selected, bucket, fmtPeriod, outside = null, full: fullProp, onFull }: {
   data: CostCells | undefined; billed?: BilledReport; readings?: readonly UsageReading[]; canSetPlan?: boolean;
   selected: Set<string>; bucket: string; fmtPeriod: (p: string) => string;
   /** The sessions outside covey, included (#120, the default); null: covey only. */
   outside?: ExternalUsage | null;
+  /** The full view of covey's price table (Reported and Recomputed apart),
+   *  held by the page (in its URL); without it the explorer holds it. */
+  full?: boolean;
+  onFull?: (v: boolean) => void;
 }) {
   const { t } = useTranslation();
+  // One list-price figure leads (#120): the lead series. covey's price
+  // table is a check under it; the full view is the secondary toggle.
+  const [ownFull, setOwnFull] = useState(false);
+  const full = fullProp ?? ownFull;
+  const setFull = onFull ?? setOwnFull;
   const [layout, setLayout] = useState<Layout>("combined");
   const [view, setView] = useState<View>("amounts");
   const [split, setSplit] = useState<Split>("none");
@@ -1540,31 +1679,41 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
   const toggleType = (k: string) => setTypes((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const toggleSrc = (s: Source) => setSrc((v) => {
     const n = { ...v, [s]: !v[s] };
-    return n.reported || n.recomputed || n.real || n.billed ? n : v; // keep at least one
+    // Keep at least one on show: Recomputed counts only in the full view.
+    return n.reported || (full && n.recomputed) || n.real || n.billed ? n : v;
   });
   // The meter and the bill are hourly (#120): at 10 minutes Real and Billed
   // are off and say why; the user's choice comes back at a coarser bucket.
   const hourly = (s: Source) => bucket === "10min" && (s === "real" || s === "billed");
   const tenMinId = `${useId().replace(/[^a-zA-Z0-9_-]/g, "")}-tenmin`;
+  const own: Record<Source, boolean> = full ? src : { ...src, recomputed: false };
   const shown: Record<Source, boolean> = bucket === "10min"
-    ? { ...src, real: false, billed: false, recomputed: src.recomputed || !src.reported }
-    : src;
+    ? full ? { ...own, real: false, billed: false, recomputed: own.recomputed || !own.reported } : { ...own, real: false, billed: false, reported: true }
+    : own;
+  const chips = full ? SOURCES : SOURCES.filter((s) => s !== "recomputed");
+  const chipLabel = (s: Source) => (!full && s === "reported" ? t("costs.lead.label") : sourceLabel(t, s));
 
   return (
     <div>
-      <ColourKey split={figures.some((f) => f.split != null)}
+      <ColourKey split={figures.some((f) => f.split != null)} full={full} list={full && (shown.recomputed || (layout === "combined" && view === "vs"))}
         sources={onChart ? listed.filter((x) => onChart.on.has(x.source) && onChart.styles.series(x.source) !== OTHER_SOURCES)
           .map((x) => ({ name: x.source, ...onChart.styles.style(x.source) })) : []}
         other={onChart ? onChart.styles.folded.filter((n) => onChart.on.has(n)) : []} />
       <Row label={t("costs.filter.source")}>
-        {SOURCES.map((s) => (
+        {chips.map((s) => (
           <Chip key={s} on={shown[s]} color={SOURCE_COLOR[s]} hatched={s === "real"} onClick={() => toggleSrc(s)}
             disabled={hourly(s)} title={hourly(s) ? t("costs.outside.tenMinNoMeter") : undefined}
             describedBy={hourly(s) ? tenMinId : undefined}>
-            {sourceLabel(t, s)}
+            {chipLabel(s)}
           </Chip>
         ))}
         {bucket === "10min" && <span id={tenMinId} className="muted text-xs" data-ten-min-note>{t("costs.outside.tenMinNoMeter")}</span>}
+        {/* The secondary toggle: covey's price table as a figure of its own. */}
+        <label className="text-xs muted" data-full-prices title={t("costs.lead.toggleTitle")}
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, marginLeft: 8, cursor: "pointer" }}>
+          <input type="checkbox" checked={full} onChange={() => setFull(!full)} />
+          {t("costs.lead.toggle")}
+        </label>
       </Row>
       {onChart && listed.length > 0 && (
         <Row label={t("costs.incl.chips")}>
@@ -1580,7 +1729,8 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
       <details className="text-xs muted mb-2" style={{ marginLeft: 92 }}>
         <summary style={{ cursor: "pointer" }}>{t("costs.filter.sourceHints")}</summary>
         <ul style={{ margin: "4px 0 0 0", paddingLeft: 16, maxWidth: 760 }}>
-          {SOURCES.map((s) => <li key={s}>{sourceHint(t, s)}</li>)}
+          {!full && <li>{t("costs.lead.hint")}</li>}
+          {(full ? SOURCES : SOURCES.filter((s) => s !== "reported" && s !== "recomputed")).map((s) => <li key={s}>{sourceHint(t, s)}</li>)}
         </ul>
       </details>
       {layout === "combined" && (
@@ -1600,14 +1750,14 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
         <span style={{ flex: 1 }} />
         <Chip on={asTable} onClick={() => setAsTable((v) => !v)}>{t("costs.fig.showAsTable")}</Chip>
       </Row>
-      {layout === "combined" && (
+      {layout === "combined" && full && (
         <Row label={t("costs.filter.split")}>
           {(["none", "type"] as Split[]).map((s) => (
             <Chip key={s} on={split === s} onClick={() => setSplit(s)}>{t(`costs.filter.split_${s}`)}</Chip>
           ))}
         </Row>
       )}
-      {shown.recomputed && layout === "combined" && split === "type" && (
+      {full && (shown.recomputed || view === "vs") && layout === "combined" && split === "type" && (
         <Row label={t("costs.filter.types")}>
           {COST_TYPES.map((k) => (
             <Chip key={k} on={types.has(k)} color={TYPE_COLOR[k]} onClick={() => toggleType(k)}>{t(`costs.stack.${k}`)}</Chip>
@@ -1619,10 +1769,10 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
         <div className="muted text-sm" style={{ padding: "40px 0", textAlign: "center" }}>{t("costs.empty")}</div>
       ) : figures.map((f) => (
         <CredentialBlock key={f.id} f={f} data={data!} billed={billed} readings={readings} canSetPlan={canSetPlan} bucket={bucket} fmtPeriod={fmtPeriod} selected={selected}
-          src={shown} split={split} types={types} layout={layout} view={view} sharedScale={sharedScale} asTable={asTable} outside={onChart} />
+          src={shown} split={split} types={types} layout={layout} view={view} sharedScale={sharedScale} asTable={asTable} outside={onChart} full={full} />
       ))}
       {onChart && loose.length > 0 && (
-        <OutsideBlock o={onChart} sources={loose} src={shown} fmtPeriod={fmtPeriod} asTable={asTable} filtered={selected.size > 0} />
+        <OutsideBlock o={onChart} sources={loose} src={shown} fmtPeriod={fmtPeriod} asTable={asTable} filtered={selected.size > 0} full={full} />
       )}
     </div>
   );
@@ -1632,8 +1782,9 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
  *  or linked to a seat the range has neither lines nor readings for): their
  *  reported cost and list price, hatched per source, and a row each. No real
  *  cost: no meter of theirs is read here. */
-function OutsideBlock({ o, sources, src, fmtPeriod, asTable, filtered }: {
+function OutsideBlock({ o, sources, src, fmtPeriod, asTable, filtered, full }: {
   o: OutsideOnChart; sources: ExternalSource[]; src: Record<Source, boolean>; fmtPeriod: (p: string) => string; asTable: boolean; filtered: boolean;
+  full: boolean;
 }) {
   const { t } = useTranslation();
   const title = t("costs.incl.noSeatTitle");
@@ -1645,11 +1796,25 @@ function OutsideBlock({ o, sources, src, fmtPeriod, asTable, filtered }: {
   const groups = periods.map((p): Bar[] => {
     const at = Date.parse(p);
     const bars: Bar[] = [];
-    if (src.reported) bars.push({ key: "reported", label: t("costs.fig.reported"), color: SOURCE_COLOR.reported, segs: outsideSegs(t, o, sources, at, "reported") });
-    if (src.recomputed) bars.push({ key: "recomputed", label: t("costs.fig.recomputed"), color: SOURCE_COLOR.recomputed, segs: outsideSegs(t, o, sources, at, "list") });
+    if (src.reported && !full) {
+      const segs = outsideSegs(t, o, sources, at, "lead");
+      bars.push({ key: "reported", label: t("costs.lead.label"), color: SOURCE_COLOR.reported, segs, note: priceTableLine(t, sum(segs), outsideTable(o, sources, at)) });
+    } else if (src.reported) bars.push({ key: "reported", label: t("costs.fig.reported"), color: SOURCE_COLOR.reported, segs: outsideSegs(t, o, sources, at, "reported") });
+    if (src.recomputed && full) bars.push({ key: "recomputed", label: t("costs.fig.recomputed"), color: SOURCE_COLOR.recomputed, segs: outsideSegs(t, o, sources, at, "list") });
     return bars;
   });
   const ks = sources.map((x) => ({ x, k: sourceKpis(x, o) }));
+  // At the lead price: one column, covey's price table only where it differs.
+  const check = (k: OutsideKpis) => {
+    const l = kpiLead(k).lead;
+    return l != null && k.list != null ? priceTableCell(l, k.list) : "";
+  };
+  const leadSum = ks.reduce((a, e) => a + (kpiLead(e.k).lead ?? 0), 0);
+  const listSum = ks.reduce((a, e) => a + (e.k.list ?? 0), 0);
+  const totalCheck = ks.some((e) => e.k.list != null) ? priceTableCell(leadSum, listSum) : "";
+  const checkCol = !full && (ks.some((e) => check(e.k)) || totalCheck !== "");
+  const leadTotal = ks.some((e) => kpiLead(e.k).lead != null)
+    ? withUnpriced(t, leadSum, ks.some((e) => partUnpriced(e.k, "lead"))) : t("costs.incl.noList");
   const td: React.CSSProperties = { padding: "3px 8px 3px 0", textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" };
   return (
     <section className="mb-5" aria-label={title} data-outside-block>
@@ -1658,7 +1823,7 @@ function OutsideBlock({ o, sources, src, fmtPeriod, asTable, filtered }: {
         <OutsideMark />
       </div>
       <p className="muted text-xs mb-2 mt-0" style={{ maxWidth: 760 }}>{t("costs.incl.noSeatHint")}</p>
-      {periods.length > 0 && (src.reported || src.recomputed) && (
+      {periods.length > 0 && (src.reported || (full && src.recomputed)) && (
         <BarChart title={`${t("costs.chartCost")} · ${title}`} periods={periods} groups={groups} fmtPeriod={fmtPeriod}
           fmtValue={fmtUSD} fmtAxis={fmtUSDAxis} asTable={asTable} height={200} />
       )}
@@ -1667,8 +1832,11 @@ function OutsideBlock({ o, sources, src, fmtPeriod, asTable, filtered }: {
           <thead>
             <tr className="muted">
               <th scope="col" style={{ ...td, textAlign: "left", fontWeight: 500 }}>{t("costs.outside.source")}</th>
-              <th scope="col" style={{ ...td, fontWeight: 500 }}>{t("costs.fig.reported")}</th>
-              <th scope="col" style={{ ...td, fontWeight: 500 }}>{t("costs.fig.recomputed")}</th>
+              {full ? <>
+                <th scope="col" style={{ ...td, fontWeight: 500 }}>{t("costs.fig.reported")}</th>
+                <th scope="col" style={{ ...td, fontWeight: 500 }}>{t("costs.fig.recomputed")}</th>
+              </> : <th scope="col" style={{ ...td, fontWeight: 500 }} data-lead-col>{t("costs.lead.label")}</th>}
+              {checkCol && <th scope="col" style={{ ...td, fontWeight: 500 }} data-check-col>{t("costs.lead.colCheck")}</th>}
             </tr>
           </thead>
           <tbody>
@@ -1680,16 +1848,22 @@ function OutsideBlock({ o, sources, src, fmtPeriod, asTable, filtered }: {
                   </span>
                   <OutsideMark />
                 </th>
-                <td style={td}>{outsideMoney(t, k, "reported")}</td>
-                <td style={td}>{outsideMoney(t, k, "list")}</td>
+                {full ? <>
+                  <td style={td}>{outsideMoney(t, k, "reported")}</td>
+                  <td style={td}>{outsideMoney(t, k, "list")}</td>
+                </> : <td style={td} data-lead>{outsideMoney(t, k, "lead")}</td>}
+                {checkCol && <td style={td} data-check>{check(k)}</td>}
               </tr>
             ))}
             <tr data-incl-total style={{ borderTop: "1px solid var(--border-strong)", fontWeight: 600 }}>
               <th scope="row" style={{ ...td, textAlign: "left" }}>{t(filtered ? "costs.incl.totalOutsideSelected" : "costs.incl.totalOutside")}</th>
-              <td style={td}>{ks.some((e) => e.k.reported != null)
-                ? withUnpriced(t, ks.reduce((a, e) => a + (e.k.reported ?? 0), 0), ks.some((e) => partUnpriced(e.k, "reported"))) : t("costs.incl.noReported")}</td>
-              <td style={td}>{ks.some((e) => e.k.list != null)
-                ? withUnpriced(t, ks.reduce((a, e) => a + (e.k.list ?? 0), 0), ks.some((e) => partUnpriced(e.k, "list"))) : t("costs.incl.noList")}</td>
+              {full ? <>
+                <td style={td}>{ks.some((e) => e.k.reported != null)
+                  ? withUnpriced(t, ks.reduce((a, e) => a + (e.k.reported ?? 0), 0), ks.some((e) => partUnpriced(e.k, "reported"))) : t("costs.incl.noReported")}</td>
+                <td style={td}>{ks.some((e) => e.k.list != null)
+                  ? withUnpriced(t, ks.reduce((a, e) => a + (e.k.list ?? 0), 0), ks.some((e) => partUnpriced(e.k, "list"))) : t("costs.incl.noList")}</td>
+              </> : <td style={td} data-incl-lead>{ks.some((e) => kpiLead(e.k).recomputed > 0) ? t("costs.lead.part", { usd: leadTotal }) : leadTotal}</td>}
+              {checkCol && <td style={td} data-check>{totalCheck}</td>}
             </tr>
           </tbody>
         </table>

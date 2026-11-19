@@ -107,7 +107,10 @@ export function outsideLines(t: T, o: OutsideTotals): string[] {
   lines.push(...noCallLines(t, o.noCall), ...unsplitLines(t, o.unsplit));
   if (o.unpricedSteps > 0) lines.push(t("costs.outside.unpricedReadings", counted(o.unpricedSteps)));
   if (o.usageSteps > 0) lines.push(t("costs.outside.usageReadings", counted(o.usageSteps)));
-  if (o.unmeteredList > 0) lines.push(t("costs.outside.unmetered", { usd: fmtUSD(o.unmeteredList) }));
+  // Outside every reading's span: before the meter's first reading (no
+  // meter data, never a share) or after its last one (pending).
+  if (o.unmeteredBefore > 0) lines.push(t("costs.outside.unmeteredBefore", { usd: fmtUSD(o.unmeteredBefore) }));
+  if (o.unmeteredList - o.unmeteredBefore > 0) lines.push(t("costs.outside.unmeteredAfter", { usd: fmtUSD(o.unmeteredList - o.unmeteredBefore) }));
   if (o.reported != null && o.reportedCalls > 0) lines.push(t("costs.outside.reportedLine", { ...counted(o.reportedCalls), usd: fmtUSD(o.reported) }));
   if (o.unpricedTokens > 0) lines.push(t("costs.outside.unpriced", { n: fmtCount(o.unpricedTokens) }));
   return lines;

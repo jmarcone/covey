@@ -16,7 +16,7 @@ import type {
   WindowCharge,
 } from "../api";
 import type { Source } from "./costSources";
-import { beforeRange, listedSource, sourceRealParts } from "./outsideFigures";
+import { beforeRange, listedSource, outsideKpis, sourceLead, sourceRealParts, type OutsideKpis } from "./outsideFigures";
 
 /* The figures of the Costs page, as pure functions — no React, no fetch.
  *
@@ -63,6 +63,39 @@ export function recomputedOf(c: Pick<CostCell, "measured">, types: readonly stri
   for (const k of types) if (k !== "unattributed") s += c.measured[k] ?? 0;
   return s;
 }
+
+// --- The lead figure and its price-table check (#120, the human's rule) ----------
+//
+// One list-price figure leads the page: "At token prices (as reported by
+// Claude Code)". Per call it is the price Claude Code reported for it where
+// it reported one — every line of covey's agents (engine_usd), and an
+// outside call that carried reported_usd — and covey's list price for the
+// call's tokens where it reported none (an upload of token counts only),
+// marked wherever such a call is counted. A call with neither is in no
+// figure and said apart, never $0. covey's own price table (Recomputed) is
+// a check of it, not a second figure: one line says where the two differ
+// noticeably (PRICE_CHECK), nothing where they agree, and the full
+// Recomputed view is one toggle away.
+
+/** When covey's price table differs noticeably from the lead figure: by
+ *  more than 1 % of it AND by more than $0.50. Both must hold, so cent-level
+ *  noise in a small hour and rounding in a large total stay silent. One
+ *  constant for every place the check is said: the tiles, the headline, a
+ *  period's details, a table's rows. */
+export const PRICE_CHECK = { pct: 1, usd: 0.5 } as const;
+
+/** covey's price table against the lead figure: its amount and the
+ *  difference in % of the lead ((table − lead) ÷ lead × 100), or null where
+ *  they agree within PRICE_CHECK or there is no lead to compare with. */
+export function priceTableDifference(lead: number, table: number): { usd: number; pct: number } | null {
+  if (!(lead > 0) || !Number.isFinite(table)) return null;
+  const d = table - lead;
+  if (!(Math.abs(d) > (PRICE_CHECK.pct / 100) * lead) || !(Math.abs(d) > PRICE_CHECK.usd)) return null;
+  return { usd: table, pct: (d / lead) * 100 };
+}
+
+/** A covey cell at the lead price: Claude Code's own figure for its lines. */
+export const leadOf = (c: Pick<CostCell, "engine_usd">): number => c.engine_usd ?? 0;
 
 // --- The meter -----------------------------------------------------------------
 
@@ -679,7 +712,8 @@ export type CredentialFigures = {
  *  real cost yet: it is in the page's totals and stands beside the multiple
  *  (unmetered). */
 export type EverythingMultiple = {
-  /** Within the meter's priced readings, in the range. */
+  /** Within the meter's priced readings, in the range, at the lead price
+   *  (reported where a call carries it, else list). */
   coveyList: number;
   outsideList: number;
   /** Some listed source on the seat had a list price: otherwise the outside
@@ -703,9 +737,18 @@ export type EverythingMultiple = {
   unpricedPoints: number;
   /** Points read while the seat was billed by usage (0151): in neither the real cost nor the list it divides. */
   usagePoints: number;
-  /** List price after the last reading (or with no reading): no real share yet. Null where the server does not say. */
+  /** List price in no reading's span (or with no reading): no real share. Null where the server does not say. */
   unmeteredCovey: number | null;
   unmeteredOutside: number;
+  /** Of it, covey's and the outside sessions' part before the meter's first
+   *  reading in the range (no meter data for that time: never a real share)
+   *  and after its last one (pending until it is read again). */
+  before: { covey: number | null; outside: number };
+  after: { covey: number | null; outside: number };
+  /** The lists at covey's price table (Recomputed), for the price-table check. */
+  table: { coveyList: number; outsideList: number };
+  /** Outside calls priced at the list for want of a reported cost. */
+  outsideRecomputed: number;
 };
 
 /** The price of a point for a seat's slack: the dearest the server priced a
@@ -756,54 +799,81 @@ export function inRange(st: Pick<ExternalMeterStep, "from" | "at">, since: numbe
 
 /** One seat's list price in the range, in its parts (#120 review, M2): the
  *  range's figures (covey's lines on the seat, the listed sources that name
- *  it), the part after the last reading (the server's, no real cost yet),
- *  the part in readings with no plan price (those steps' lists, the one
- *  straddling the range's start by time), and the rest, `metered`: the list
- *  within the priced readings in the range — what the multiple divides. The
- *  readings taken while the seat was billed by usage (0151) are a part of
- *  their own, `usage`: no real cost of the meter, their money is the usage
- *  charges. So range = metered + unmetered + unpriced + usage, in each party;
- *  a reading's span that began before the range brings none of its earlier
- *  list in. */
+ *  it), the part in no reading's span (the server's, no real cost) — before
+ *  the meter's first reading in the range (no meter data for that time,
+ *  never a real share) or after its last one (pending) —, the part in
+ *  readings with no plan price (those steps' lists, the one straddling the
+ *  range's start by time), and the rest, `metered`: the list within the
+ *  priced readings in the range — what the multiple divides. The readings
+ *  taken while the seat was billed by usage (0151) are a part of their own,
+ *  `usage`: no real cost of the meter, their money is the usage charges. So
+ *  range = metered + before + after + unpriced + usage (unmetered = before
+ *  + after), in each party; a reading's span that began before the range
+ *  brings none of its earlier list in. `lead` holds the same parts at the
+ *  lead price (reported where a call carries it, else list), over the same
+ *  calls and spans. */
+export type SeatParts = { range: number; metered: number; unmetered: number; before: number; after: number; unpriced: number; usage: number };
+type OutsideParts = Omit<SeatParts, "range"> & {
+  /** null: the listed sources on the seat had calls, none with a price. */
+  range: number | null; calls: number; unpricedTokens: number;
+};
 export type SeatLists = {
-  covey: { range: number; metered: number; unmetered: number; unpriced: number; usage: number };
-  /** range null: the listed sources on the seat had calls, none with a list price. */
-  outside: { range: number | null; metered: number; unmetered: number; unpriced: number; usage: number; calls: number; unpricedTokens: number };
+  covey: SeatParts;
+  outside: OutsideParts;
+  lead: { covey: SeatParts; outside: OutsideParts & { recomputed: number } };
 };
 
 export function seatLists(cells: CostCells, seat: ExternalMeterTotal): SeatLists {
   const ext = cells.external;
   const id = credId(seat.secret_key, seat.secret_slot);
-  let covey = 0;
-  for (const c of cells.cells) if (credId(c.secret_key, c.secret_slot) === id) covey += recomputedOf(c);
+  let covey = 0, coveyLead = 0;
+  for (const c of cells.cells) {
+    if (credId(c.secret_key, c.secret_slot) !== id) continue;
+    covey += recomputedOf(c);
+    coveyLead += leadOf(c);
+  }
   const real = sourceRealParts(ext);
   let outside: number | null = null, calls = 0, unpricedTokens = 0;
+  let outsideLead: number | null = null, recomputed = 0, leadUnpricedTokens = 0;
   for (const s of ext?.sources ?? []) {
     if (!listedSource(s, real) || s.meter_credential?.secret_key !== seat.secret_key || s.meter_credential.secret_slot !== seat.secret_slot) continue;
     if (s.list_usd != null) outside = (outside ?? 0) + s.list_usd;
     calls += s.calls;
     unpricedTokens += s.unpriced_tokens;
+    const l = sourceLead(s, ext!.cells);
+    if (l.lead != null) outsideLead = (outsideLead ?? 0) + l.lead;
+    recomputed += l.recomputed;
+    leadUnpricedTokens += l.unpricedTokens;
   }
   if (outside == null && calls === 0) outside = 0;
+  if (outsideLead == null && calls === 0) outsideLead = 0;
   const since = cells.since ? Date.parse(cells.since) : null;
-  let unpricedCovey = 0, unpricedOutside = 0, usageCovey = 0, usageOutside = 0;
+  // [covey, outside] of the readings with no plan price and under usage, at both prices.
+  const unpriced = [0, 0], usage = [0, 0], unpricedLead = [0, 0], usageLead = [0, 0];
   for (const st of ext?.meter.steps ?? []) {
     if (st.secret_key !== seat.secret_key || st.secret_slot !== seat.secret_slot || st.real_usd != null) continue;
     const f = inRange(st, since);
-    if (st.reason === "usage") {
-      usageCovey += st.covey_list_usd * f;
-      usageOutside += st.external_list_usd * f;
-    } else {
-      unpricedCovey += st.covey_list_usd * f;
-      unpricedOutside += st.external_list_usd * f;
-    }
+    const [list, lead] = st.reason === "usage" ? [usage, usageLead] : [unpriced, unpricedLead];
+    list[0] += st.covey_list_usd * f;
+    list[1] += st.external_list_usd * f;
+    lead[0] += (st.covey_lead_usd ?? st.covey_list_usd) * f;
+    lead[1] += (st.external_lead_usd ?? st.external_list_usd) * f;
   }
-  const unmeteredCovey = seat.unmetered_covey_list_usd ?? 0, unmeteredOutside = seat.unmetered_list_usd;
+  const parts = (range: number, unmetered: number, before: number, unp: number, use: number) => ({
+    metered: Math.max(0, range - unmetered - unp - use), unmetered, before, after: Math.max(0, unmetered - before), unpriced: unp, usage: use,
+  });
+  // An older server sends no lead and no before parts: the list stands in
+  // for the lead, and everything unmetered is after the last reading.
+  const uc = seat.unmetered_covey_list_usd ?? 0, uo = seat.unmetered_list_usd;
+  const ucLead = seat.unmetered_covey_lead_usd ?? uc, uoLead = seat.unmetered_lead_usd ?? uo;
   return {
-    covey: { range: covey, metered: Math.max(0, covey - unmeteredCovey - unpricedCovey - usageCovey), unmetered: unmeteredCovey,
-      unpriced: unpricedCovey, usage: usageCovey },
-    outside: { range: outside, metered: Math.max(0, (outside ?? 0) - unmeteredOutside - unpricedOutside - usageOutside), unmetered: unmeteredOutside,
-      unpriced: unpricedOutside, usage: usageOutside, calls, unpricedTokens },
+    covey: { range: covey, ...parts(covey, uc, seat.unmetered_covey_before_list_usd ?? 0, unpriced[0], usage[0]) },
+    outside: { range: outside, ...parts(outside ?? 0, uo, seat.unmetered_before_list_usd ?? 0, unpriced[1], usage[1]), calls, unpricedTokens },
+    lead: {
+      covey: { range: coveyLead, ...parts(coveyLead, ucLead, seat.unmetered_covey_before_lead_usd ?? 0, unpricedLead[0], usageLead[0]) },
+      outside: { range: outsideLead, ...parts(outsideLead ?? 0, uoLead, seat.unmetered_before_lead_usd ?? 0, unpricedLead[1], usageLead[1]),
+        calls, unpricedTokens: leadUnpricedTokens, recomputed },
+    },
   };
 }
 
@@ -817,7 +887,10 @@ export function everythingOnMeter(cells: CostCells | null | undefined, key: stri
   const ext = cells?.external;
   const seat = meterSplit(ext, key, slot);
   if (!cells || !seat || seat.sources.length === 0) return null;
-  const l = seatLists(cells, seat);
+  const all = seatLists(cells, seat);
+  // The lead price leads (#120): the multiple divides it; the list at
+  // covey's price table stands beside it for the check.
+  const l = all.lead;
   const coveyList = l.covey.metered, outsideList = l.outside.metered;
   const slack = meterSlack([seat], ext!.meter.steps, slackRate(cells.plans ?? [], ext!.meter.point_rate), seatHasList(cells));
   const real = seat.real_usd;
@@ -827,17 +900,22 @@ export function everythingOnMeter(cells: CostCells | null | undefined, key: stri
   else if (seat.unpriced_points > 0) why = "unpriced";
   else if (seat.points < 3) why = "movement";
   else if (!(coveyList + outsideList >= 0.01) || !(real > 0)) why = "list";
-  // The floor's numerator: the server's list without what began before
-  // since, where it says (floor_list_usd), else the metered list.
-  const floorList = seat.floor_list_usd ?? coveyList + outsideList;
+  // The floor's numerator: the server's lead without what began before
+  // since, where it says (floor_lead_usd), else the metered lead.
+  const floorList = seat.floor_lead_usd ?? coveyList + outsideList;
+  const known = seat.unmetered_covey_list_usd != null;
   return {
     coveyList, outsideList, outsidePriced: l.outside.range != null, outsideCalls: l.outside.calls, outsideUnpricedTokens: l.outside.unpricedTokens,
     real, slack, points: seat.points, floorList,
     multiple: why == null ? { kind: "floor", low: floorList / (real + slack) } : null,
     estimate: why == null ? (coveyList + outsideList) / real : null,
     why, unpricedPoints: seat.unpriced_points, usagePoints: seat.usage_points ?? 0,
-    unmeteredCovey: seat.unmetered_covey_list_usd ?? null,
-    unmeteredOutside: seat.unmetered_list_usd,
+    unmeteredCovey: known ? l.covey.unmetered : null,
+    unmeteredOutside: l.outside.unmetered,
+    before: { covey: known ? l.covey.before : null, outside: l.outside.before },
+    after: { covey: known ? l.covey.after : null, outside: l.outside.after },
+    table: { coveyList: all.covey.metered, outsideList: all.outside.metered },
+    outsideRecomputed: l.outside.recomputed,
   };
 }
 
@@ -1273,8 +1351,11 @@ export type SubscriptionDent = {
   usagePoints: number;
   /** Outside calls with no price at all: left out of the split. */
   unpricedCalls: number;
-  /** The outside calls' list price after the last reading: no real share yet. */
-  unmeteredList: number;
+  /** The outside calls' lead price in no reading's span: before the meters'
+   *  first reading in the range (no meter data for that time, never a real
+   *  share) and after their last one (pending). */
+  unmeteredBefore: number;
+  unmeteredAfter: number;
   /** Why there are no multiples: "movement" (< 3 points in the split readings), "split" (none was split),
    *  "usage" (every reading in the range was under the usage basis, 0151: there is no dent to split). */
   noMultiple: "movement" | "split" | "usage" | null;
@@ -1307,24 +1388,37 @@ export type SubscriptionDent = {
  *  stand beside it per currency, each in its own (usageCharges) — never
  *  added to the real cost, across currencies, or converted. */
 export type Headline = {
+  /** At the lead price (#120: reported where a call carries it, else list):
+   *  list = coveyList + outsideList, and its parts below. */
   list: number; coveyList: number;
-  /** null: the sessions on the meters had calls, none with a list price — never $0. */
+  /** null: the sessions on the meters had calls, none with a price of either kind — never $0. */
   outsideList: number | null;
+  /** The outside calls priced at the list for want of a reported cost (marked). */
+  outsideRecomputed: number;
+  /** The same range at covey's price table (Recomputed), for the check. */
+  table: number;
   reported: number; coveyReported: number; outsideReported: number | null;
   outsideCalls: number; outsideReportedCalls: number; outsideUnpricedTokens: number;
-  /** The listed sources on these seats, with their list price; before: listed only for a real part, its calls lie before the range. */
-  sources: { source: string; list: number | null; reported: number | null; calls: number; before: boolean }[];
+  /** The listed sources on these seats, with their lead price (list: null where none of its calls had a price;
+   *  recomputed: calls priced at the list for want of a reported cost); before: listed only for a real part, its
+   *  calls lie before the range. */
+  sources: { source: string; list: number | null; reported: number | null; calls: number; before: boolean; recomputed: number }[];
   /** The sessions outside covey billed per use (no meter): not in list; null without such a source. */
-  perUse: { list: number | null; reported: number | null; calls: number; reportedCalls: number; unpricedTokens: number } | null;
+  perUse: OutsideKpis | null;
   metered: number;
+  /** unmetered = before + after: before the meters' first reading in the
+   *  range (no meter data for that time, never a real cost) and after their
+   *  last one (pending until they are read again). */
   unmetered: number;
+  before: number;
+  after: number;
   unpriced: number;
   /** null: no reading has a plan price. */
   real: number | null;
   /** null: seats at different point prices. */
   points: number | null;
   slack: number;
-  /** The floor's numerator: the server's floor_list_usd where it sends one (the metered list without what began
+  /** The floor's numerator: the server's floor_lead_usd where it sends one (the metered lead without what began
    *  before since), else metered. */
   floorList: number;
   multiple: number | null;
@@ -1363,17 +1457,24 @@ export function headline(cells: CostCells | null | undefined): Headline | null {
     outsideUnpricedTokens += s.unpriced_tokens;
   }
   for (const c of ext!.cells) if (names.has(c.source)) outsideReportedCalls += c.reported_calls;
-  // The list in its parts, per seat (seatLists): range = metered +
-  // unmetered + unpriced + usage, in each party and so in the whole.
-  let coveyList = 0, outsideList: number | null = null, metered = 0, unmetered = 0, unpriced = 0, usage = 0;
+  // The lead figure in its parts, per seat (seatLists): range = metered +
+  // before + after + unpriced + usage, in each party and so in the whole.
+  // covey's price table over the same range stands beside it as a check.
+  let coveyList = 0, outsideList: number | null = null, metered = 0, before = 0, after = 0, unpriced = 0, usage = 0;
+  let table = 0, outsideRecomputed = 0, outsideLeadUnpricedTokens = 0;
   for (const c of m.credentials) {
-    const l = seatLists(cells, c);
+    const all = seatLists(cells, c);
+    const l = all.lead;
     coveyList += l.covey.range;
     if (l.outside.range != null) outsideList = (outsideList ?? 0) + l.outside.range;
     metered += l.covey.metered + l.outside.metered;
-    unmetered += l.covey.unmetered + l.outside.unmetered;
+    before += l.covey.before + l.outside.before;
+    after += l.covey.after + l.outside.after;
     unpriced += l.covey.unpriced + l.outside.unpriced;
     usage += l.covey.usage + l.outside.usage;
+    outsideRecomputed += l.outside.recomputed;
+    outsideLeadUnpricedTokens += l.outside.unpricedTokens;
+    table += all.covey.range + (all.outside.range ?? 0);
   }
   // The seats left out of the real cost while billed by usage, and the
   // charges that are that time's money: per currency, as the server counted
@@ -1382,27 +1483,25 @@ export function headline(cells: CostCells | null | undefined): Headline | null {
   const counted = usageCurrencies((cells.usage_charges ?? []).filter((c) => seats.has(credId(c.secret_key, c.secret_slot))));
   if (outsideList == null && outsideCalls === 0) outsideList = 0;
   const pu = listed.filter((s) => !s.meter_credential);
-  const perUse = pu.length === 0 ? null : {
-    list: pu.some((s) => s.list_usd != null) ? pu.reduce((a, s) => a + (s.list_usd ?? 0), 0) : null,
-    reported: pu.some((s) => s.reported_usd != null) ? pu.reduce((a, s) => a + (s.reported_usd ?? 0), 0) : null,
-    calls: pu.reduce((a, s) => a + s.calls, 0),
-    reportedCalls: ext!.cells.filter((c) => pu.some((s) => s.source === c.source)).reduce((a, c) => a + c.reported_calls, 0),
-    unpricedTokens: pu.reduce((a, s) => a + s.unpriced_tokens, 0),
-  };
+  const perUse = pu.length === 0 ? null : outsideKpis(ext, new Set(pu.map((s) => s.source)));
+  // Each source on the seats at its lead price.
+  const byLead = new Map(own.map((s) => [s.source, sourceLead(s, ext!.cells)]));
   const priced = m.credentials.some(meterPriced);
   const real = priced ? m.real_usd : null;
   const slack = meterSlack(m.credentials, m.steps, slackRate(cells.plans ?? [], m.point_rate), seatHasList(cells));
-  const floorList = m.floor_list_usd ?? metered;
+  const floorList = m.floor_lead_usd ?? metered;
   let why: Headline["why"] = null;
   if (real == null) why = m.unpriced_points === 0 && (m.usage_steps ?? 0) > 0 ? "usage" : "unpriced";
   else if (m.unpriced_points > 0) why = "unpriced";
   else if (m.points < 3 || m.point_rate_mixed && real / Math.max(m.point_rate, 1e-12) < 3) why = "movement";
   else if (!(metered >= 0.01) || !(real > 0)) why = "list";
   return {
-    list: coveyList + (outsideList ?? 0), coveyList, outsideList,
-    reported: coveyReported + (outsideReported ?? 0), coveyReported, outsideReported, outsideCalls, outsideReportedCalls, outsideUnpricedTokens,
-    sources: own.map((s) => ({ source: s.source, list: s.list_usd, reported: s.reported_usd, calls: s.calls, before: beforeRange(s, realParts) })),
-    perUse, metered, unmetered, unpriced, real, points: m.point_rate_mixed ? null : m.points, slack,
+    list: coveyList + (outsideList ?? 0), coveyList, outsideList, outsideRecomputed, table,
+    reported: coveyReported + (outsideReported ?? 0), coveyReported, outsideReported, outsideCalls, outsideReportedCalls,
+    outsideUnpricedTokens: outsideLeadUnpricedTokens,
+    sources: own.map((s) => ({ source: s.source, list: byLead.get(s.source)?.lead ?? null, reported: s.reported_usd, calls: s.calls,
+      before: beforeRange(s, realParts), recomputed: byLead.get(s.source)?.recomputed ?? 0 })),
+    perUse, metered, unmetered: before + after, before, after, unpriced, real, points: m.point_rate_mixed ? null : m.points, slack,
     multiple: why == null ? metered / real! : null,
     floorList, floor: why == null ? floorList / (real! + slack) : null,
     why, unpricedPoints: m.unpriced_points,
@@ -1447,12 +1546,14 @@ export function subscriptionDent(ext: ExternalUsage | null | undefined): Subscri
   const realParts = sourceRealParts(ext);
   const active = new Set((ext?.sources ?? []).filter((s) => listedSource(s, realParts)).map((s) => s.source));
   const sources = [...new Set(m.credentials.flatMap((c) => c.sources))].filter((s) => active.has(s)).sort();
+  const coveyLead = m.split_covey_lead_usd ?? m.split_covey_list_usd, outsideLead = m.split_external_lead_usd ?? m.split_external_list_usd;
   return {
     real: priced ? real : null,
     points: m.point_rate_mixed ? null : m.points,
-    covey: part(m.covey_real_usd, m.split_covey_list_usd, m.split_covey_points, m.split_covey_slack_usd),
-    outside: part(m.external_real_usd, m.split_external_list_usd, m.split_external_points, m.split_external_slack_usd),
-    together: part(splitReal, m.split_covey_list_usd + m.split_external_list_usd, m.split_covey_points + m.split_external_points, m.split_slack_usd),
+    // The parts' lists at the lead price (#120), an older server's at the list.
+    covey: part(m.covey_real_usd, coveyLead, m.split_covey_points, m.split_covey_slack_usd),
+    outside: part(m.external_real_usd, outsideLead, m.split_external_points, m.split_external_slack_usd),
+    together: part(splitReal, coveyLead + outsideLead, m.split_covey_points + m.split_external_points, m.split_slack_usd),
     unsplit: { real: m.unsplit_real_usd, share: share(m.unsplit_real_usd), steps: m.unsplit_steps,
       unpricedSteps: m.outside_unpriced_steps, unpricedReal: m.outside_unpriced_real_usd },
     unattributed: { real: m.unattributed_real_usd ?? 0, share: share(m.unattributed_real_usd ?? 0),
@@ -1462,7 +1563,8 @@ export function subscriptionDent(ext: ExternalUsage | null | undefined): Subscri
     unpricedPoints: m.unpriced_points,
     usagePoints: m.usage_points ?? 0,
     unpricedCalls: m.unpriced_calls,
-    unmeteredList: m.unmetered_list_usd,
+    unmeteredBefore: m.unmetered_before_lead_usd ?? 0,
+    unmeteredAfter: (m.unmetered_lead_usd ?? m.unmetered_list_usd) - (m.unmetered_before_lead_usd ?? 0),
     noMultiple,
     sources,
     seats: m.credentials.map((c) => ({

@@ -902,6 +902,14 @@ export type ExternalSource = {
   unpriced_tokens: number;
   unpriced_calls: number;
   unpriced_models: string[];
+  /** The lead price (#120): each call's reported_usd where it carried one,
+   *  else its list price; null when no call had either. Absent from older
+   *  servers. */
+  lead_usd?: number | null;
+  /** The calls with neither a reported cost nor a list price, and their
+   *  tokens: in no lead figure, never $0. */
+  lead_unpriced_calls?: number;
+  lead_unpriced_tokens?: number;
   first_at: string | null;
   last_at: string | null;
   hosts: ExternalHost[];
@@ -921,6 +929,14 @@ export type ExternalCell = {
   tokens: Record<string, number>;
   unpriced_tokens: number;
   unpriced_calls: number;
+  /** The lead price (#120): each call's reported_usd where it carried one,
+   *  else its list price; null when no call had either. Absent from older
+   *  servers. */
+  lead_usd?: number | null;
+  /** The calls with neither a reported cost nor a list price, and their
+   *  tokens: in no lead figure, never $0. */
+  lead_unpriced_calls?: number;
+  lead_unpriced_tokens?: number;
 };
 
 /** One reading of a seat's meter over the span since the reading before it, split by its chunk's list-price share (F3c). */
@@ -935,6 +951,10 @@ export type ExternalMeterStep = {
   real_usd: number | null;
   external_list_usd: number;
   covey_list_usd: number;
+  /** The same calls and lines at their lead price (reported where they carry
+   *  one, else list); absent from older servers. */
+  external_lead_usd?: number;
+  covey_lead_usd?: number;
   /** Every active machine of the linked sources has reported through the reading. */
   reported: boolean;
   /** Split: the two parts are set (at the chunk's share, not the reading's) and, with unattributed_real_usd, add up to real_usd.
@@ -1006,6 +1026,9 @@ export type ExternalMeterSums = {
   /** The list prices of the split steps, which the multiples divide. */
   split_external_list_usd: number;
   split_covey_list_usd: number;
+  /** The same at the lead price; absent from older servers. */
+  split_external_lead_usd?: number;
+  split_covey_lead_usd?: number;
   /** The priced movement in points; a sum over seats only while point_rate_mixed is false. */
   points: number;
   split_points: number;
@@ -1048,6 +1071,18 @@ export type ExternalMeterSums = {
   /** The metered list (covey and outside) without the in-range parts of lines that began before since and without the
    *  first step's span before since: the numerator of the "at least" multiple. Absent from older servers. */
   floor_list_usd?: number;
+  /** floor_list_usd at the lead price. */
+  floor_lead_usd?: number;
+  /** The parts of unmetered_list_usd / unmetered_covey_list_usd before the
+   *  seat's first reading in the range (no meter data for that time: never a
+   *  real share); the rest lies after its last reading (pending). */
+  unmetered_before_list_usd?: number;
+  unmetered_covey_before_list_usd?: number;
+  /** The four unmetered figures at the lead price. */
+  unmetered_lead_usd?: number;
+  unmetered_covey_lead_usd?: number;
+  unmetered_before_lead_usd?: number;
+  unmetered_covey_before_lead_usd?: number;
 };
 
 /** One agent's part of covey's share of a seat (the split steps only, by its share of each chunk's covey list). */

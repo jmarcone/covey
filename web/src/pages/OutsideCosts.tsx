@@ -318,7 +318,9 @@ export default function OutsideCosts() {
                     ...(s.usageSteps > 0 ? [t("costs.outside.usageReadings", counted(s.usageSteps))] : [])]
                     .map((l, i) => <span key={i} data-seat-unsplit> · {l}</span>);
                 })()}
-                {c.unmetered_list_usd > 0 && <> · {t("costs.outside.unmetered", { usd: fmtUSD(c.unmetered_list_usd) })}</>}
+                {(c.unmetered_before_list_usd ?? 0) > 0 && <> · {t("costs.outside.unmeteredBefore", { usd: fmtUSD(c.unmetered_before_list_usd!) })}</>}
+                {c.unmetered_list_usd - (c.unmetered_before_list_usd ?? 0) > 0 && <> · {t("costs.outside.unmeteredAfter",
+                  { usd: fmtUSD(c.unmetered_list_usd - (c.unmetered_before_list_usd ?? 0)) })}</>}
                 {(() => {
                   const hs = hostsBehind(data, c.secret_key, c.secret_slot).filter((h) => listed.has(h.source));
                   return hs.length > 0 ? <span data-hosts-behind> · {hostsBehindText(t, hs)}</span> : null;

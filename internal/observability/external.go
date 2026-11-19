@@ -620,11 +620,18 @@ type ExternalSource struct {
 	ReportedUSD *float64 `json:"reported_usd"`
 	// UnpricedTokens/UnpricedCalls: calls of a model the list does not know
 	// (UnpricedModels), with no figure.
-	UnpricedTokens int64      `json:"unpriced_tokens"`
-	UnpricedCalls  int64      `json:"unpriced_calls"`
-	UnpricedModels []string   `json:"unpriced_models"`
-	FirstAt        *time.Time `json:"first_at"`
-	LastAt         *time.Time `json:"last_at"`
+	UnpricedTokens int64    `json:"unpriced_tokens"`
+	UnpricedCalls  int64    `json:"unpriced_calls"`
+	UnpricedModels []string `json:"unpriced_models"`
+	// LeadUSD: the lead price (leadUSD) — each call's reported_usd where it
+	// carried one, else its list price (F1); nil when no call had either.
+	// LeadUnpricedCalls / LeadUnpricedTokens: the calls with neither, which
+	// are in no lead figure (never $0).
+	LeadUSD            *float64   `json:"lead_usd"`
+	LeadUnpricedCalls  int64      `json:"lead_unpriced_calls"`
+	LeadUnpricedTokens int64      `json:"lead_unpriced_tokens"`
+	FirstAt            *time.Time `json:"first_at"`
+	LastAt             *time.Time `json:"last_at"`
 	// Hosts: the source's machines and how far each has reported.
 	Hosts []ExternalHost `json:"hosts"`
 }
@@ -649,7 +656,22 @@ type ExternalCell struct {
 	Tokens         map[string]int64 `json:"tokens"`
 	UnpricedTokens int64            `json:"unpriced_tokens"`
 	UnpricedCalls  int64            `json:"unpriced_calls"`
+	// LeadUSD, LeadUnpricedCalls, LeadUnpricedTokens: as ExternalSource's,
+	// over the cell's calls. The calls whose lead is their list price are
+	// Calls − ReportedCalls − LeadUnpricedCalls.
+	LeadUSD            *float64 `json:"lead_usd"`
+	LeadUnpricedCalls  int64    `json:"lead_unpriced_calls"`
+	LeadUnpricedTokens int64    `json:"lead_unpriced_tokens"`
 }
+
+// The lead price (#120, the human's rule for the cost page): one list-price
+// figure per call, the price Claude Code reported for it where it reported
+// one, else covey's list price for its tokens. covey's lines always carry
+// Claude Code's figure (model_usage.engine_usd), so their lead price is it;
+// an outside call carries one only sometimes (reported_usd). Every list
+// figure of the meter split has a lead counterpart over the same calls,
+// spans and cuts (the *_lead_usd fields), so a multiple of the lead figure
+// divides the same use as its list twin.
 
 // Why a step is not split (ExternalMeterStep.Reason).
 const (
@@ -733,6 +755,9 @@ type ExternalMeterSums struct {
 	// split steps, the list prices the three multiples divide.
 	SplitExternalListUSD float64 `json:"split_external_list_usd"`
 	SplitCoveyListUSD    float64 `json:"split_covey_list_usd"`
+	// SplitExternalLeadUSD / SplitCoveyLeadUSD: the same at the lead price.
+	SplitExternalLeadUSD float64 `json:"split_external_lead_usd"`
+	SplitCoveyLeadUSD    float64 `json:"split_covey_lead_usd"`
 	// FloorListUSD: the list a floor ("at least M×") may divide, over the
 	// priced steps (the steps the page's metered list sums, covey's and the
 	// outside sessions' together): their L_out + L_cov without the parts of
@@ -747,6 +772,9 @@ type ExternalMeterSums struct {
 	FloorListUSD              float64 `json:"floor_list_usd"`
 	SplitExternalFloorListUSD float64 `json:"split_external_floor_list_usd"`
 	SplitCoveyFloorListUSD    float64 `json:"split_covey_floor_list_usd"`
+	// FloorLeadUSD: FloorListUSD at the lead price, with the same parts left
+	// out.
+	FloorLeadUSD float64 `json:"floor_lead_usd"`
 	// Points: the priced movement, the dent in points. SplitPoints: the
 	// split steps' part of it, SplitExternalPoints / SplitCoveyPoints the
 	// share-weighted parts of their attributed points (Σ s_c·(points_i −
@@ -824,6 +852,19 @@ type ExternalMeterSums struct {
 	// UnmeteredCoveyListUSD: L_cov likewise, covey's lines on the seat in the
 	// window that lie in no step's span: no real share yet either.
 	UnmeteredCoveyListUSD float64 `json:"unmetered_covey_list_usd"`
+	// Unmetered*BeforeListUSD: the part of the two above that lies before
+	// the seat's first reading in the range (at or before the first step's
+	// previous reading, From): no meter data for that time, so it never gets
+	// a real share. The rest lies after the last reading: its real share is
+	// pending until the meter is read again. A seat with no step has no
+	// first reading to be before: its unmetered list is all pending.
+	UnmeteredBeforeListUSD      float64 `json:"unmetered_before_list_usd"`
+	UnmeteredCoveyBeforeListUSD float64 `json:"unmetered_covey_before_list_usd"`
+	// The four unmetered figures at the lead price.
+	UnmeteredLeadUSD            float64 `json:"unmetered_lead_usd"`
+	UnmeteredCoveyLeadUSD       float64 `json:"unmetered_covey_lead_usd"`
+	UnmeteredBeforeLeadUSD      float64 `json:"unmetered_before_lead_usd"`
+	UnmeteredCoveyBeforeLeadUSD float64 `json:"unmetered_covey_before_lead_usd"`
 	// SourceParts: the outside part per source (F3c per source): source s's
 	// real part of a split step is the step's outside real × Lo_s,c / Lo_c,
 	// its share of the chunk's outside list; its list is Σ Lo_s over the
@@ -872,6 +913,10 @@ type ExternalMeterStep struct {
 	// ExternalListUSD: L_out; CoveyListUSD: L_cov over (From, At].
 	ExternalListUSD float64 `json:"external_list_usd"`
 	CoveyListUSD    float64 `json:"covey_list_usd"`
+	// ExternalLeadUSD / CoveyLeadUSD: the same calls and lines at their lead
+	// price (reported where they carry one, else list).
+	ExternalLeadUSD float64 `json:"external_lead_usd"`
+	CoveyLeadUSD    float64 `json:"covey_lead_usd"`
 	// Reported: every active machine of the linked sources has reported
 	// through At (stepReported). A seat no source is linked to has nothing
 	// that could report on it: its steps are reported, with L_out = 0.
@@ -1060,7 +1105,7 @@ func (s *Store) externalFor(ctx context.Context, orgID uuid.UUID, bucket string,
 		SUM(reported_usd)::float8, count(reported_usd), MIN(ts), MAX(ts)
 		FROM external_usage
 		WHERE org_id = $1 AND ts >= $2
-		GROUP BY 1, 2, 3, 4`, orgID, since)
+		GROUP BY 1, 2, 3, 4, reported_usd IS NULL`, orgID, since)
 	if err != nil {
 		return out, err
 	}
@@ -1111,6 +1156,21 @@ func (s *Store) externalFor(ctx context.Context, orgID uuid.UUID, bucket string,
 			src.LastAt = &last
 		}
 		pr, ok := ListPrice(model)
+		// The lead price: a group is all reported or all not (the GROUP BY).
+		switch {
+		case t.reportedCalls > 0 && t.reported != nil:
+			c.LeadUSD = addUSD(c.LeadUSD, *t.reported)
+			src.LeadUSD = addUSD(src.LeadUSD, *t.reported)
+		case ok:
+			usd := pr.Cost(t.model())
+			c.LeadUSD = addUSD(c.LeadUSD, usd)
+			src.LeadUSD = addUSD(src.LeadUSD, usd)
+		default:
+			c.LeadUnpricedCalls += t.calls
+			c.LeadUnpricedTokens += t.total()
+			src.LeadUnpricedCalls += t.calls
+			src.LeadUnpricedTokens += t.total()
+		}
 		if !ok {
 			c.UnpricedTokens += t.total()
 			c.UnpricedCalls += t.calls
@@ -1189,12 +1249,15 @@ func (s *Store) externalFor(ctx context.Context, orgID uuid.UUID, bucket string,
 		tot, st := splitSeatSince(seat, linked[seat], in, since)
 		tot.MeterSource = cov.Source
 		n := sort.Search(len(in), func(i int) bool { return !in[i].At.Before(since) })
-		if tot.UnmeteredListUSD, err = s.unmeteredList(ctx, orgID, since, linked[seat], in[n:]); err != nil {
+		um, err := s.unmeteredList(ctx, orgID, since, linked[seat], in[n:])
+		if err != nil {
 			return out, err
 		}
-		if tot.UnmeteredCoveyListUSD, err = s.unmeteredCoveyList(ctx, orgID, since, seat, in[n:]); err != nil {
+		tot.UnmeteredListUSD, tot.UnmeteredBeforeListUSD, tot.UnmeteredLeadUSD, tot.UnmeteredBeforeLeadUSD = um.list, um.beforeList, um.lead, um.beforeLead
+		if um, err = s.unmeteredCoveyList(ctx, orgID, since, seat, in[n:]); err != nil {
 			return out, err
 		}
+		tot.UnmeteredCoveyListUSD, tot.UnmeteredCoveyBeforeListUSD, tot.UnmeteredCoveyLeadUSD, tot.UnmeteredCoveyBeforeLeadUSD = um.list, um.beforeList, um.lead, um.beforeLead
 		totals, steps = append(totals, tot), append(steps, st...)
 	}
 	out.Meter = meterSums(totals, steps)
@@ -1294,6 +1357,9 @@ type shareStep struct {
 	Reset bool
 	LOut  float64
 	LCov  float64
+	// LOutLead / LCovLead: the same calls and lines at their lead price
+	// (reported where they carry one, else list); a spread line's alike.
+	LOutLead, LCovLead float64
 	// LCovSpread: the part of LCov that spreadLine booked here for lines
 	// spread over several spans, in proportion to their time in this one.
 	// The proportional part serves the shares only: for k and U_c a spread
@@ -1319,6 +1385,8 @@ type shareStep struct {
 	// (spread ones are in Spread). The floor lists leave both out
 	// (floorCovExcluded).
 	BeforeSinceOut, BeforeSinceCov float64
+	// The same two at the lead price.
+	BeforeSinceOutLead, BeforeSinceCovLead float64
 	// Usage: read while the seat's basis was usage (0151); its points are
 	// the usage charges', not the plan's.
 	Usage bool
@@ -1463,10 +1531,18 @@ func (s *Store) stepLists(ctx context.Context, orgID uuid.UUID, seat meterSeat, 
 			}
 			st := &steps[i-1]
 			if usd, ok := externalStepUSD(model, t, hasReported, reported); ok {
+				// The lead price: reported where the calls carry it, else
+				// the list price externalStepUSD gave.
+				lead := usd
+				if hasReported {
+					lead = reported
+				}
 				if before {
 					st.BeforeSinceOut += usd
+					st.BeforeSinceOutLead += lead
 				}
 				st.LOut += usd
+				st.LOutLead += lead
 				if st.SrcOut == nil {
 					st.SrcOut = map[string]float64{}
 				}
@@ -1521,13 +1597,15 @@ func (s *Store) stepLists(ctx context.Context, orgID uuid.UUID, seat meterSeat, 
 		if spread != nil && started != nil {
 			// Its part before since is left out of the floor lists by
 			// floorCovExcluded, from its Started.
-			spreadLine(steps, int(i-1), *started, createdAt, agent, usd)
+			spreadLine(steps, int(i-1), *started, createdAt, agent, usd, engine)
 			continue
 		}
 		if before {
 			steps[i-1].BeforeSinceCov += usd
+			steps[i-1].BeforeSinceCovLead += engine
 		}
 		addCovList(&steps[i-1], agent, usd)
+		steps[i-1].LCovLead += engine
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -1594,10 +1672,11 @@ func addCovList(st *shareStep, agent uuid.UUID, usd float64) {
 // lower bound on the stretch's list), U_c at its whole list in every chunk
 // it ran in (an upper bound on the chunk's), so k ≥ k* and U_c ≤ U*_c hold
 // however its use was spread in time.
-func spreadLine(steps []shareStep, i int, started, ended time.Time, agent uuid.UUID, usd float64) {
+func spreadLine(steps []shareStep, i int, started, ended time.Time, agent uuid.UUID, usd, lead float64) {
 	dur := ended.Sub(started)
 	if dur <= 0 || !started.Before(steps[i].From) {
 		addCovList(&steps[i], agent, usd)
+		steps[i].LCovLead += lead
 		return
 	}
 	first := -1
@@ -1613,6 +1692,7 @@ func spreadLine(steps []shareStep, i int, started, ended time.Time, agent uuid.U
 			part := usd * float64(hi.Sub(lo)) / float64(dur)
 			addCovList(&steps[j], agent, part)
 			steps[j].LCovSpread += part
+			steps[j].LCovLead += lead * float64(hi.Sub(lo)) / float64(dur)
 			first = j
 		}
 	}
@@ -1620,15 +1700,17 @@ func spreadLine(steps []shareStep, i int, started, ended time.Time, agent uuid.U
 		// Its part before the first span is in no step: no stretch holds it.
 		first = -1
 	}
-	steps[i].Spread = append(steps[i].Spread, spreadSpan{First: first, USD: usd, Started: started, Ended: ended})
+	steps[i].Spread = append(steps[i].Spread, spreadSpan{First: first, USD: usd, Lead: lead, Started: started, Ended: ended})
 }
 
 // spreadSpan is one line spread by spreadLine: First, the first step it ran
 // in (−1 when it began before the first step's span); USD, its whole list;
 // Started and Ended, the time it ran.
 type spreadSpan struct {
-	First          int
-	USD            float64
+	First int
+	USD   float64
+	// Lead: its whole lead price (Claude Code's figure), spread alike.
+	Lead           float64
 	Started, Ended time.Time
 }
 
@@ -1640,10 +1722,24 @@ type spreadSpan struct {
 // list the range's real cost is known to have paid for: a front-loaded turn
 // read 17.86× for a true 10×. Zero since leaves nothing out.
 func floorCovExcluded(steps []shareStep, since time.Time) []float64 {
+	return floorCovExcludedBy(steps, since, false)
+}
+
+// floorCovExcludedBy is floorCovExcluded at the list price, or with lead at
+// the lead price (FloorLeadUSD).
+func floorCovExcludedBy(steps []shareStep, since time.Time, lead bool) []float64 {
 	out := make([]float64, len(steps))
 	for e := range steps {
-		out[e] += steps[e].BeforeSinceCov
+		if lead {
+			out[e] += steps[e].BeforeSinceCovLead
+		} else {
+			out[e] += steps[e].BeforeSinceCov
+		}
 		for _, ln := range steps[e].Spread {
+			usd := ln.USD
+			if lead {
+				usd = ln.Lead
+			}
 			dur := ln.Ended.Sub(ln.Started)
 			if !ln.Started.Before(since) || dur <= 0 {
 				continue
@@ -1657,7 +1753,7 @@ func floorCovExcluded(steps []shareStep, since time.Time) []float64 {
 					hi = ln.Ended
 				}
 				if hi.After(lo) {
-					out[j] += ln.USD * float64(hi.Sub(lo)) / float64(dur)
+					out[j] += usd * float64(hi.Sub(lo)) / float64(dur)
 				}
 			}
 		}
@@ -1665,86 +1761,110 @@ func floorCovExcluded(steps []shareStep, since time.Time) []float64 {
 	return out
 }
 
+// unmetered is a seat's list in the window that lies in no step's span,
+// at the list and at the lead price, and of each the part before the first
+// step's previous reading (no meter data for that time; the rest lies after
+// the last reading, its real share pending).
+type unmetered struct{ list, beforeList, lead, beforeLead float64 }
+
+func (u *unmetered) add(list, lead float64, before bool) {
+	u.list += list
+	u.lead += lead
+	if before {
+		u.beforeList += list
+		u.beforeLead += lead
+	}
+}
+
+// unmeteredSpan is the stretch the steps cover, (from, to], and whether
+// there is one: with no step, (since, since] and nothing lies before it.
+func unmeteredSpan(since time.Time, steps []shareStep) (from, to time.Time, has bool) {
+	if len(steps) == 0 {
+		return since, since, false
+	}
+	return steps[0].From, steps[len(steps)-1].At, true
+}
+
 // unmeteredList is L_out of the linked calls in the window that lie in no
 // step's span: the steps' spans are contiguous, from the first step's
 // previous reading through the last reading, so it is every call outside
-// that stretch.
-func (s *Store) unmeteredList(ctx context.Context, orgID uuid.UUID, since time.Time, sources []string, steps []shareStep) (float64, error) {
+// that stretch — before it or after it.
+func (s *Store) unmeteredList(ctx context.Context, orgID uuid.UUID, since time.Time, sources []string, steps []shareStep) (unmetered, error) {
+	var u unmetered
 	if len(sources) == 0 {
-		return 0, nil
+		return u, nil
 	}
-	// No step: an empty stretch, (since, since].
-	from, to := since, since
-	if len(steps) > 0 {
-		from, to = steps[0].From, steps[len(steps)-1].At
-	}
-	rows, err := s.pool.Query(ctx, `SELECT model, reported_usd IS NOT NULL,
+	from, to, has := unmeteredSpan(since, steps)
+	rows, err := s.pool.Query(ctx, `SELECT model, reported_usd IS NOT NULL, $6 AND ts <= $4,
 		SUM(input), SUM(output), SUM(cache_read), SUM(cache_write_5m), SUM(cache_write_1h),
 		COALESCE(SUM(reported_usd), 0)::float8
 		FROM external_usage
 		WHERE org_id = $1 AND source = ANY($2) AND ts >= $3 AND NOT (ts > $4 AND ts <= $5)
-		GROUP BY 1, 2`, orgID, sources, since, from, to)
+		GROUP BY 1, 2, 3`, orgID, sources, since, from, to, has)
 	if err != nil {
-		return 0, err
+		return u, err
 	}
 	defer rows.Close()
-	var usd float64
 	for rows.Next() {
 		var (
 			model       string
 			hasReported bool
+			before      bool
 			t           ModelTokens
 			reported    float64
 		)
-		if err := rows.Scan(&model, &hasReported, &t.Input, &t.Output, &t.CacheRead, &t.CacheWrite5m,
+		if err := rows.Scan(&model, &hasReported, &before, &t.Input, &t.Output, &t.CacheRead, &t.CacheWrite5m,
 			&t.CacheWrite1h, &reported); err != nil {
-			return 0, err
+			return u, err
 		}
 		if v, ok := externalStepUSD(model, t, hasReported, reported); ok {
-			usd += v
+			lead := v
+			if hasReported {
+				lead = reported
+			}
+			u.add(v, lead, before)
 		}
 	}
-	return usd, rows.Err()
+	return u, rows.Err()
 }
 
 // unmeteredCoveyList is L_cov of the seat's lines in the window that lie in
-// no step's span, priced as stepLists prices them: covey's list price after
-// the seat's last reading (or with no reading at all), with no real share
-// yet.
-func (s *Store) unmeteredCoveyList(ctx context.Context, orgID uuid.UUID, since time.Time, seat meterSeat, steps []shareStep) (float64, error) {
-	from, to := since, since
-	if len(steps) > 0 {
-		from, to = steps[0].From, steps[len(steps)-1].At
-	}
-	rows, err := s.pool.Query(ctx, `SELECT model,
+// no step's span, priced as stepLists prices them: covey's list price before
+// the seat's first reading in the range or after its last one (or with no
+// reading at all), with no real share. Its lead price is the engine's
+// figure.
+func (s *Store) unmeteredCoveyList(ctx context.Context, orgID uuid.UUID, since time.Time, seat meterSeat, steps []shareStep) (unmetered, error) {
+	var u unmetered
+	from, to, has := unmeteredSpan(since, steps)
+	rows, err := s.pool.Query(ctx, `SELECT model, $7 AND created_at <= $5,
 		SUM(input_tokens), SUM(output_tokens), SUM(cache_read_tokens), SUM(cache_write_5m_tokens),
 		SUM(cache_write_1h_tokens), SUM(web_search_requests), SUM(engine_usd)::float8
 		FROM model_usage
 		WHERE org_id = $1 AND secret_key = $2 AND secret_slot = $3 AND created_at >= $4
 			AND NOT (created_at > $5 AND created_at <= $6)
-		GROUP BY 1`, orgID, seat.key, seat.slot, since, from, to)
+		GROUP BY 1, 2`, orgID, seat.key, seat.slot, since, from, to, has)
 	if err != nil {
-		return 0, err
+		return u, err
 	}
 	defer rows.Close()
-	var usd float64
 	for rows.Next() {
 		var (
 			model  string
+			before bool
 			t      ModelTokens
 			engine float64
 		)
-		if err := rows.Scan(&model, &t.Input, &t.Output, &t.CacheRead, &t.CacheWrite5m, &t.CacheWrite1h,
+		if err := rows.Scan(&model, &before, &t.Input, &t.Output, &t.CacheRead, &t.CacheWrite5m, &t.CacheWrite1h,
 			&t.WebSearches, &engine); err != nil {
-			return 0, err
+			return u, err
 		}
+		usd := engine
 		if pr, ok := ListPrice(model); ok {
-			usd += pr.Cost(t)
-		} else {
-			usd += engine
+			usd = pr.Cost(t)
 		}
+		u.add(usd, engine, before)
 	}
-	return usd, rows.Err()
+	return u, rows.Err()
 }
 
 // externalActiveFor is how long a machine counts as active after a push or
@@ -2631,6 +2751,7 @@ func splitSeatSince(seat meterSeat, sources []string, steps []shareStep, since t
 	hours := map[time.Time]bool{}
 	rates := map[float64]bool{}
 	excluded := floorCovExcluded(steps, since)
+	excludedLead := floorCovExcludedBy(steps, since, true)
 	for i, in := range steps {
 		if in.At.Before(since) {
 			continue
@@ -2638,8 +2759,10 @@ func splitSeatSince(seat meterSeat, sources []string, steps []shareStep, since t
 		// The step's floor lists (FloorListUSD): its lists without what lay or
 		// began before since.
 		floorOut, floorCov := math.Max(0, in.LOut-in.BeforeSinceOut), math.Max(0, in.LCov-excluded[i])
+		floorLead := math.Max(0, in.LOutLead-in.BeforeSinceOutLead) + math.Max(0, in.LCovLead-excludedLead[i])
 		st := ExternalMeterStep{At: in.At, From: in.From, SecretKey: seat.key, SecretSlot: seat.slot,
-			Points: in.Points, Reset: in.Reset, ExternalListUSD: in.LOut, CoveyListUSD: in.LCov, Reported: in.Reported}
+			Points: in.Points, Reset: in.Reset, ExternalListUSD: in.LOut, CoveyListUSD: in.LCov,
+			ExternalLeadUSD: in.LOutLead, CoveyLeadUSD: in.LCovLead, Reported: in.Reported}
 		tot.StepCount++
 		hours[in.At.Truncate(time.Hour)] = true
 		tot.UnpricedCalls += in.UnpricedCalls
@@ -2677,6 +2800,7 @@ func splitSeatSince(seat meterSeat, sources []string, steps []shareStep, since t
 		tot.RealUSD += r
 		tot.Points += in.Points
 		tot.FloorListUSD += floorOut + floorCov
+		tot.FloorLeadUSD += floorLead
 		var c *meterChunk
 		if chunkOf[i] >= 0 {
 			c = &chunks[chunkOf[i]]
@@ -2725,6 +2849,8 @@ func splitSeatSince(seat meterSeat, sources []string, steps []shareStep, since t
 			tot.CoveyRealUSD += rCov
 			tot.SplitExternalListUSD += in.LOut
 			tot.SplitCoveyListUSD += in.LCov
+			tot.SplitExternalLeadUSD += in.LOutLead
+			tot.SplitCoveyLeadUSD += in.LCovLead
 			tot.SplitExternalFloorListUSD += floorOut
 			tot.SplitCoveyFloorListUSD += floorCov
 			tot.SplitPoints += in.Points
@@ -2855,7 +2981,10 @@ func meterSums(totals []ExternalMeterTotal, steps []ExternalMeterStep) ExternalM
 		a.IncompleteChunks += b.IncompleteChunks
 		a.SplitExternalListUSD += b.SplitExternalListUSD
 		a.SplitCoveyListUSD += b.SplitCoveyListUSD
+		a.SplitExternalLeadUSD += b.SplitExternalLeadUSD
+		a.SplitCoveyLeadUSD += b.SplitCoveyLeadUSD
 		a.FloorListUSD += b.FloorListUSD
+		a.FloorLeadUSD += b.FloorLeadUSD
 		a.SplitExternalFloorListUSD += b.SplitExternalFloorListUSD
 		a.SplitCoveyFloorListUSD += b.SplitCoveyFloorListUSD
 		a.Points += b.Points
@@ -2887,6 +3016,12 @@ func meterSums(totals []ExternalMeterTotal, steps []ExternalMeterStep) ExternalM
 		a.UnpricedTokens += b.UnpricedTokens
 		a.UnmeteredListUSD += b.UnmeteredListUSD
 		a.UnmeteredCoveyListUSD += b.UnmeteredCoveyListUSD
+		a.UnmeteredBeforeListUSD += b.UnmeteredBeforeListUSD
+		a.UnmeteredCoveyBeforeListUSD += b.UnmeteredCoveyBeforeListUSD
+		a.UnmeteredLeadUSD += b.UnmeteredLeadUSD
+		a.UnmeteredCoveyLeadUSD += b.UnmeteredCoveyLeadUSD
+		a.UnmeteredBeforeLeadUSD += b.UnmeteredBeforeLeadUSD
+		a.UnmeteredCoveyBeforeLeadUSD += b.UnmeteredCoveyBeforeLeadUSD
 		a.SourceParts = addSourceParts(a.SourceParts, b.SourceParts...)
 	}
 	out.PointRateMixed = out.PointRateMixed || len(rates) > 1

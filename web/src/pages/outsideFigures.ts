@@ -1,5 +1,5 @@
 import type { TFunction } from "i18next";
-import type { CostCells, ExternalMeterStep, ExternalMeterTotal, ExternalModelCell, ExternalSource, ExternalUsage } from "../api";
+import type { CostCells, ExternalCell, ExternalMeterStep, ExternalMeterTotal, ExternalModelCell, ExternalSource, ExternalUsage } from "../api";
 import { bucketStart, meterPriced, recomputedOf } from "./costFigures";
 
 /* The figures of the Claude Code sessions outside covey (#120, part 3/3):
@@ -170,8 +170,12 @@ export type OutsideTotals = {
   unpricedSteps: number;
   /** Their readings while billed by usage (0151): no dent, the usage charges are the money. */
   usageSteps: number;
-  /** Outside list price after the meter's last reading: no reading yet, no share. */
+  /** Outside list price in no reading's span: no share. unmeteredBefore:
+   *  the part before the meter's first reading in the range (no meter data
+   *  for that time, never a share); the rest is after its last reading
+   *  (pending until the next one). */
   unmeteredList: number;
+  unmeteredBefore: number;
 };
 
 /** The outside sessions' part of the given seats' meters (F3c). real: their
@@ -226,6 +230,7 @@ export function outsideTotals(ext: ExternalUsage | null | undefined): OutsideTot
     unpricedSteps,
     usageSteps,
     unmeteredList: creds.reduce((a, c) => a + c.unmetered_list_usd, 0),
+    unmeteredBefore: creds.reduce((a, c) => a + (c.unmetered_before_list_usd ?? 0), 0),
   };
 }
 
@@ -361,6 +366,13 @@ export function sourceStyles(ext: ExternalUsage | null | undefined): SourceStyle
 export const COVEY_ONLY_PARAM = "only";
 export const COVEY_ONLY_VALUE = "covey";
 
+/** The URL parameter of the full view of covey's price table (#120): with
+ *  ?prices=recomputed, Reported by Claude Code and Recomputed from tokens
+ *  stand apart again as tiles, series and columns; without it one lead
+ *  figure stands, with the check under it. */
+export const PRICES_PARAM = "prices";
+export const PRICES_RECOMPUTED = "recomputed";
+
 /** The outside sessions' figures beside the agents' in the tiles: list
  *  price (null when no call was priced — never $0), Claude Code's reported
  *  cost (null when no call carried one) and the calls that did, tokens per
@@ -374,18 +386,72 @@ export type OutsideKpis = {
   reportedCalls: number;
   tokens: Record<string, number>;
   unpricedTokens: number;
+  /** At the lead price (cellLead): null when no call had a price of either
+   *  kind; leadRecomputed, the calls priced at the list for want of a
+   *  reported cost (marked wherever the figure stands); leadUnpriced*, the
+   *  calls with neither. Optional for a part built by hand (kpiLead). */
+  lead?: number | null;
+  leadRecomputed?: number;
+  leadUnpricedCalls?: number;
+  leadUnpricedTokens?: number;
 };
+
+/** Adds a lead price to a part's figures. */
+function addLead(k: OutsideKpis, l: ReturnType<typeof cellLead>) {
+  if (l.lead != null) k.lead = (k.lead ?? 0) + l.lead;
+  k.leadRecomputed = (k.leadRecomputed ?? 0) + l.recomputed;
+  k.leadUnpricedCalls = (k.leadUnpricedCalls ?? 0) + l.unpricedCalls;
+  k.leadUnpricedTokens = (k.leadUnpricedTokens ?? 0) + l.unpricedTokens;
+}
+
+/** One source over the range at the lead price: the sum of its cells'
+ *  (cellLead); a source the answer carries no cell of (a hand-made one)
+ *  at its own lead_usd, else its list price. */
+export function sourceLead(s: Pick<ExternalSource, "source" | "calls" | "list_usd" | "unpriced_calls" | "unpriced_tokens" | "lead_usd"
+  | "lead_unpriced_calls" | "lead_unpriced_tokens">, cells: readonly ExternalCell[]): ReturnType<typeof cellLead> {
+  const out: ReturnType<typeof cellLead> = { lead: null, recomputed: 0, unpricedCalls: 0, unpricedTokens: 0 };
+  let any = false;
+  for (const c of cells) {
+    if (c.source !== s.source) continue;
+    any = true;
+    const l = cellLead(c);
+    if (l.lead != null) out.lead = (out.lead ?? 0) + l.lead;
+    out.recomputed += l.recomputed;
+    out.unpricedCalls += l.unpricedCalls;
+    out.unpricedTokens += l.unpricedTokens;
+  }
+  if (any || s.calls === 0) return out;
+  if (s.lead_usd !== undefined) {
+    return { lead: s.lead_usd, recomputed: 0, unpricedCalls: s.lead_unpriced_calls ?? 0, unpricedTokens: s.lead_unpriced_tokens ?? 0 };
+  }
+  return { lead: s.list_usd, recomputed: s.list_usd != null ? s.calls - s.unpriced_calls : 0, unpricedCalls: s.unpriced_calls,
+    unpricedTokens: s.unpriced_tokens };
+}
+
+/** A part's lead price, its recomputed calls and its calls with neither
+ *  price: its own where it has them (outsideKpis), else read from its
+ *  reported and list figures as an older server's cell is (cellLead). */
+export function kpiLead(o: Pick<OutsideKpis, "calls" | "list" | "reported" | "reportedCalls" | "unpricedTokens"> & Partial<Pick<OutsideKpis,
+  "lead" | "leadRecomputed" | "leadUnpricedCalls" | "leadUnpricedTokens">>): { lead: number | null; recomputed: number; unpricedCalls: number; unpricedTokens: number } {
+  if (o.lead !== undefined) {
+    return { lead: o.lead, recomputed: o.leadRecomputed ?? 0, unpricedCalls: o.leadUnpricedCalls ?? 0, unpricedTokens: o.leadUnpricedTokens ?? 0 };
+  }
+  if (o.reported != null && o.reportedCalls >= o.calls) return { lead: o.reported, recomputed: 0, unpricedCalls: 0, unpricedTokens: 0 };
+  return { lead: o.list, recomputed: o.list != null ? o.calls : 0, unpricedCalls: o.unpricedTokens > 0 ? 1 : 0, unpricedTokens: o.unpricedTokens };
+}
 
 export function outsideKpis(ext: ExternalUsage | null | undefined, only?: ReadonlySet<string>): OutsideKpis | null {
   const sources = listedSources(ext).filter((s) => !only || only.has(s.source));
   if (!ext || sources.length === 0) return null;
   const names = new Set(sources.map((s) => s.source));
-  const out: OutsideKpis = { sources: [...names].sort(), calls: 0, list: null, reported: null, reportedCalls: 0, tokens: {}, unpricedTokens: 0 };
+  const out: OutsideKpis = { sources: [...names].sort(), calls: 0, list: null, reported: null, reportedCalls: 0, tokens: {}, unpricedTokens: 0,
+    lead: null, leadRecomputed: 0, leadUnpricedCalls: 0, leadUnpricedTokens: 0 };
   for (const s of sources) {
     out.calls += s.calls;
     if (s.list_usd != null) out.list = (out.list ?? 0) + s.list_usd;
     if (s.reported_usd != null) out.reported = (out.reported ?? 0) + s.reported_usd;
     out.unpricedTokens += s.unpriced_tokens;
+    addLead(out, sourceLead(s, ext.cells));
   }
   for (const c of ext.cells) {
     if (!names.has(c.source)) continue;
@@ -401,8 +467,9 @@ export function outsideKpisBySource(ext: ExternalUsage | null | undefined): Map<
   const out = new Map<string, OutsideKpis>();
   if (!ext) return out;
   for (const s of listedSources(ext)) {
+    const l = sourceLead(s, ext.cells);
     out.set(s.source, { sources: [s.source], calls: s.calls, list: s.list_usd, reported: s.reported_usd, reportedCalls: 0, tokens: {},
-      unpricedTokens: s.unpriced_tokens });
+      unpricedTokens: s.unpriced_tokens, lead: l.lead, leadRecomputed: l.recomputed, leadUnpricedCalls: l.unpricedCalls, leadUnpricedTokens: l.unpricedTokens });
   }
   for (const c of ext.cells) {
     const k = out.get(c.source);
@@ -423,8 +490,31 @@ export function sourcesByMeter(ext: ExternalUsage | null | undefined): { meter: 
 
 /** One source in one chart period: list price (null when none of its calls
  *  had one), reported cost (null when no call carried one), its calls, and
- *  the list price per cost type, as the agents' cells carry it. */
-export type SourcePeriod = { period: string; calls: number; list: number | null; reported: number | null; measured: Record<string, number>; tokens: Record<string, number> };
+ *  the list price per cost type, as the agents' cells carry it. lead: the
+ *  lead price (cellLead), with the calls it took at their list price
+ *  (leadRecomputed) and those with neither price (leadUnpriced). */
+export type SourcePeriod = {
+  period: string; calls: number; list: number | null; reported: number | null; measured: Record<string, number>; tokens: Record<string, number>;
+  lead: number | null; leadRecomputed: number; leadUnpricedCalls: number; leadUnpricedTokens: number;
+};
+
+/** One outside cell at the lead price (#120, the human's rule): each call's
+ *  reported cost where it carried one, else its list price; null when no
+ *  call had either. recomputed: the calls priced at the list for want of a
+ *  reported cost; unpricedCalls / unpricedTokens: those with neither, in no
+ *  figure. A server without lead_usd (older) is read from what it sends: a
+ *  cell all of whose calls reported leads with that, any other with its
+ *  list price. */
+export function cellLead(c: Pick<ExternalCell, "calls" | "list_usd" | "reported_usd" | "reported_calls" | "unpriced_calls" | "unpriced_tokens"
+  | "lead_usd" | "lead_unpriced_calls" | "lead_unpriced_tokens">): { lead: number | null; recomputed: number; unpricedCalls: number; unpricedTokens: number } {
+  if (c.lead_usd !== undefined) {
+    const unpricedCalls = c.lead_unpriced_calls ?? 0;
+    return { lead: c.lead_usd, recomputed: Math.max(0, c.calls - c.reported_calls - unpricedCalls), unpricedCalls,
+      unpricedTokens: c.lead_unpriced_tokens ?? 0 };
+  }
+  if (c.reported_usd != null && c.reported_calls >= c.calls) return { lead: c.reported_usd, recomputed: 0, unpricedCalls: 0, unpricedTokens: 0 };
+  return { lead: c.list_usd, recomputed: Math.max(0, c.calls - c.unpriced_calls), unpricedCalls: c.unpriced_calls, unpricedTokens: c.unpriced_tokens };
+}
 
 /** Per source, per chart period (keyed by the period's start in ms): the
  *  cells of /cost/cells' external field, which are cut at the chart's bucket. */
@@ -434,10 +524,16 @@ export function sourcesPerPeriod(ext: ExternalUsage | null | undefined): Map<str
     let by = out.get(c.source);
     if (!by) out.set(c.source, (by = new Map()));
     const k = Date.parse(c.period);
-    const e = by.get(k) ?? { period: c.period, calls: 0, list: null, reported: null, measured: {}, tokens: {} };
+    const e = by.get(k) ?? { period: c.period, calls: 0, list: null, reported: null, measured: {}, tokens: {},
+      lead: null, leadRecomputed: 0, leadUnpricedCalls: 0, leadUnpricedTokens: 0 };
     e.calls += c.calls;
     if (c.list_usd != null) e.list = (e.list ?? 0) + c.list_usd;
     if (c.reported_usd != null) e.reported = (e.reported ?? 0) + c.reported_usd;
+    const l = cellLead(c);
+    if (l.lead != null) e.lead = (e.lead ?? 0) + l.lead;
+    e.leadRecomputed += l.recomputed;
+    e.leadUnpricedCalls += l.unpricedCalls;
+    e.leadUnpricedTokens += l.unpricedTokens;
     for (const [t, v] of Object.entries(c.measured ?? {})) e.measured[t] = (e.measured[t] ?? 0) + v;
     for (const [t, v] of Object.entries(c.tokens ?? {})) e.tokens[t] = (e.tokens[t] ?? 0) + v;
     by.set(k, e);

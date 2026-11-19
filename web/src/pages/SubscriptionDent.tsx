@@ -3,7 +3,7 @@ import type { TFunction } from "i18next";
 import { fmtNumber, fmtUSD } from "../format";
 import { SPLIT_COLOR, SPLIT_HATCH } from "./costSources";
 import type { DentPart, FloorMultiple, Headline, SubscriptionDent } from "./costFigures";
-import { OrgWide, Swatch, outsideMoney } from "./StackedCostChart";
+import { OrgWide, Swatch, outsideMoney, priceTableLine } from "./StackedCostChart";
 import { usageList } from "./CostBasis";
 
 /* The headline of the Costs page once Claude Code sessions outside covey
@@ -71,19 +71,27 @@ function Part({ label, value, sub, color, dashed, hatch, test }: {
  *  the estimate and its floor. */
 function HeadlineSentence({ h }: { h: Headline }) {
   const { t } = useTranslation();
-  // The outside part: its figure, or "no list price" with the tokens that
+  // The outside part at its lead price (#120): reported where a call carried
+  // it, else the list price, marked; or "no list price" with the tokens that
   // have none — never $0 where there is no figure (M3).
   const outside = outsideMoney(t, { calls: h.outsideCalls, list: h.outsideList, reported: h.outsideReported,
-    reportedCalls: h.outsideReportedCalls, unpricedTokens: h.outsideUnpricedTokens }, "list");
+    reportedCalls: h.outsideReportedCalls, unpricedTokens: h.outsideUnpricedTokens,
+    lead: h.outsideList, leadRecomputed: h.outsideRecomputed, leadUnpricedTokens: h.outsideUnpricedTokens }, "lead");
   const parts = { list: fmtUSD(h.list), covey: fmtUSD(h.coveyList), outside };
   const sentence = h.real == null ? t(h.why === "usage" ? "costs.dent.head.noRealUsage" : "costs.dent.head.noReal", parts)
     : h.multiple == null ? t("costs.dent.head.sentenceNoMultiple", { ...parts, real: fmtUSD(h.real) })
     : t(h.points != null ? "costs.dent.head.sentence" : "costs.dent.head.sentenceNoPoints", {
       ...parts, real: fmtUSD(h.real), pts: pts(h.points ?? 0), metered: fmtUSD(h.metered), x: times(h.multiple) });
-  const outsideReported = h.outsideReported == null ? t("costs.incl.noReported")
-    : h.outsideReportedCalls > 0 && h.outsideReportedCalls < h.outsideCalls
-      ? t("costs.incl.reportedOf", { usd: fmtUSD(h.outsideReported), n: count(h.outsideReportedCalls), m: count(h.outsideCalls) })
-      : fmtUSD(h.outsideReported);
+  // covey's price table over the same range: a line only where it differs (PRICE_CHECK).
+  const check = priceTableLine(t, h.list, h.table);
+  // What the multiple does not divide, by where it lies: before the meters'
+  // first reading in the range (no meter data, never a real cost), after
+  // their last one (pending), in readings with no plan price.
+  const outsideParts = [
+    h.before >= 0.005 ? t("costs.dent.head.partBefore", { usd: fmtUSD(h.before) }) : null,
+    h.after >= 0.005 ? t("costs.dent.head.partAfter", { usd: fmtUSD(h.after) }) : null,
+    h.unpriced >= 0.005 ? t("costs.dent.head.partUnpriced", { usd: fmtUSD(h.unpriced) }) : null,
+  ].filter((x): x is string => x != null);
   return (
     <div className="mb-3" data-head>
       <p className="text-sm mb-1" style={{ fontWeight: 600 }} data-head-sentence>{sentence}</p>
@@ -108,29 +116,26 @@ function HeadlineSentence({ h }: { h: Headline }) {
       ) : h.usageSeats.length > 0 && (
         <p className="muted text-xs mb-1" data-head-usage-charges>{t("costs.dent.head.usageNoCharge")}</p>
       )}
-      {/* list = metered + unmetered + unpriced: the multiple divides only the first (M2). */}
-      {(h.unmetered >= 0.005 || h.unpriced >= 0.005) && (
+      {/* list = metered + before + after + unpriced (+ usage, said above): the multiple divides only the first (M2). */}
+      {outsideParts.length > 0 && (
         <p className="muted text-xs mb-1" data-head-unmetered>
-          {t(h.unpriced >= 0.005 ? "costs.dent.head.unmeteredUnpriced" : "costs.dent.head.unmetered",
-            { list: fmtUSD(h.list), unmetered: fmtUSD(h.unmetered), metered: fmtUSD(h.metered), unpriced: fmtUSD(h.unpriced) })}
+          {t("costs.dent.head.unmetered", { list: fmtUSD(h.list), metered: fmtUSD(h.metered), parts: outsideParts.join("; ") })}
         </p>
       )}
       {/* Per-use sessions are on no meter: in the tiles, not in this sum (M6). */}
       {h.perUse && h.perUse.calls > 0 && (
         <p className="muted text-xs mb-1" data-head-per-use>
-          {t("costs.dent.head.perUse", { list: outsideMoney(t, h.perUse, "list") })}
+          {t("costs.dent.head.perUse", { list: outsideMoney(t, h.perUse, "lead") })}
         </p>
       )}
-      <p className="muted text-xs mb-1" data-head-reported>
-        {t("costs.dent.head.reported", { reported: fmtUSD(h.reported), covey: fmtUSD(h.coveyReported), outside: outsideReported })}
-        {" "}{t("costs.dent.head.primary")}
-      </p>
+      {check && <p className="muted text-xs mb-1" data-price-check>{check}</p>}
       {h.sources.length > 0 && (
         <ul className="muted text-xs mb-1" aria-label={t("costs.dent.head.sourcesTitle")} data-head-sources style={{ paddingLeft: 16 }}>
           {h.sources.map((s) => (
             <li key={s.source} data-head-source={s.source}>
               {t("costs.dent.head.source", { source: s.source,
-                list: s.before ? t("costs.incl.beforeRange") : s.list != null ? fmtUSD(s.list) : t("costs.incl.noList") })}
+                list: s.before ? t("costs.incl.beforeRange") : s.list == null ? t("costs.incl.noList")
+                  : s.recomputed > 0 ? t("costs.lead.part", { usd: fmtUSD(s.list) }) : fmtUSD(s.list) })}
             </li>
           ))}
         </ul>
@@ -276,8 +281,11 @@ export function SubscriptionDentRow({ d, filtered, h = null, sourceParts = [] }:
       {d.unpricedCalls > 0 && (
         <p className="muted text-xs mb-1" data-dent-unpriced-calls>{t("costs.dent.unpricedCalls", { n: count(d.unpricedCalls) })}</p>
       )}
-      {d.unmeteredList >= 0.005 && (
-        <p className="muted text-xs mb-1" data-dent-unmetered>{t("costs.dent.unmetered", { usd: fmtUSD(d.unmeteredList) })}</p>
+      {d.unmeteredBefore >= 0.005 && (
+        <p className="muted text-xs mb-1" data-dent-unmetered="before">{t("costs.dent.unmeteredBefore", { usd: fmtUSD(d.unmeteredBefore) })}</p>
+      )}
+      {d.unmeteredAfter >= 0.005 && (
+        <p className="muted text-xs mb-1" data-dent-unmetered="after">{t("costs.dent.unmeteredAfter", { usd: fmtUSD(d.unmeteredAfter) })}</p>
       )}
       {/* Per seat: points of seats on different plans are not one unit, and
           a seat whose points have no plan price has no figure. */}

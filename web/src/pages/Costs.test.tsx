@@ -55,7 +55,7 @@ const NO_BILL = { bucket: "hour", points: [], sync: { configured: false, last_at
 
 /** The page's endpoints with these cells; `over` replaces or adds routes
  *  (a pattern with a query goes first, so it wins over the plain one). */
-function serve(data: CostCells, over: Record<string, unknown> = {}) {
+function serve(data: CostCells, over: Record<string, unknown> = {}, route = "/") {
   mockFetch({
     ...over,
     "/api/v1/cost/cells": data,
@@ -65,12 +65,21 @@ function serve(data: CostCells, over: Record<string, unknown> = {}) {
     "/api/v1/cost/usage-readings": [],
     ...over,
   });
-  return renderWithProviders(<Costs />);
+  return renderWithProviders(<Costs />, { route });
 }
 
 function render(points: [number, number]) {
   return serve(cells(points));
 }
+
+/** The full view of covey's price table (#120): Reported and Recomputed apart, as before. */
+const FULL = "/?prices=recomputed";
+function renderFull(points: [number, number]) {
+  return serve(cells(points), {}, FULL);
+}
+
+/** The lead figure's name: one list-price figure leads (#120). */
+const LEAD = "Zu Tokenpreisen (wie von Claude Code gemeldet)";
 
 const MULTIPLE = "Listen-$ je echtem $";
 
@@ -190,8 +199,8 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
       await userEvent.click(screen.getByRole("button", { name: "Als Tabelle zeigen" }));
     });
     const totals = [...block.querySelectorAll("tr[data-totals] td[data-total]")].map((td) => td.textContent);
-    // reported, recomputed, billed
-    expect(totals).toEqual(["4,00 $", "4,00 $", "4,00 $"]);
+    // at token prices (the lead figure), billed
+    expect(totals).toEqual(["4,00 $", "4,00 $"]);
     // the periods 18:00 and 19:00 only: nothing from before the window
     expect(block.querySelector("tr[data-totals]")!.closest("table")!.querySelectorAll("tbody tr")).toHaveLength(2);
   });
@@ -200,12 +209,13 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     const { container } = render([2, 2]);
     await screen.findByRole("group", { name: MULTIPLE });
     const tiles = [...container.querySelectorAll("[data-tile]")];
-    expect(tiles.length).toBeGreaterThan(3);
+    // the lead figure, the real cost, the multiple
+    expect(tiles.length).toBeGreaterThanOrEqual(3);
     for (const tile of tiles) {
       expect(tile.textContent).not.toMatch(/77,77|155,54/);
     }
     // what Claude Code reported for its lines: 6+2 + 5+3
-    expect(within(screen.getAllByRole("group", { name: "Von Claude Code gemeldet" })[0]).getByText("16,00 $")).toBeInTheDocument();
+    expect(within(screen.getAllByRole("group", { name: LEAD })[0]).getByText("16,00 $")).toBeInTheDocument();
   });
 
   it("öffnet die Details eines Zeitraums beim Fokus und schließt sie mit Escape", async () => {
@@ -278,7 +288,7 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
 
   // Review C11: multiples, percents and shares used "." on a German page.
   it("schreibt Vielfache, Prozente und Anteile mit dem Dezimaltrenner der Sprache", async () => {
-    const { container } = render([2, 2]);
+    const { container } = renderFull([2, 2]);
     const tile = await screen.findByRole("group", { name: MULTIPLE });
     // 16 $ over 4 points × 0,4615 $
     expect(within(tile).getByText("≈ 8,7×")).toBeInTheDocument();
@@ -402,7 +412,8 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
   // Review C4: a cost type switched off under "split by cost type" stayed
   // off, invisibly, after the split was switched off again.
   it("lässt einen ausgeblendeten Kostentyp nicht weiterwirken, wenn die Aufteilung aus ist", async () => {
-    const { container } = render([2, 2]);
+    // the split by cost type belongs to covey's price table: its full view
+    const { container } = renderFull([2, 2]);
     await screen.findByRole("group", { name: MULTIPLE });
     const click = async (name: string) => act(async () => { await userEvent.click(screen.getByRole("button", { name })); });
     await click("Kostenart");
@@ -432,7 +443,8 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     });
     const totals = container.querySelector("tr[data-totals]")!;
     const values = [...totals.querySelectorAll("td[data-total]")].map((td) => td.textContent!);
-    expect(values).toEqual(["16,00 $", "16,00 $", "1,85 $"]);
+    // at token prices, real: one list-price column (#120)
+    expect(values).toEqual(["16,00 $", "1,85 $"]);
     for (const v of values) expect(desc).toContain(v);
   });
 
@@ -562,7 +574,7 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     // Review 1: the multiple is the whole list over the real cost, as the
     // tile's; a cost type switched off only shortens the list bar.
     it("lässt das Vielfache der Periode bei einem ausgeblendeten Kostentyp unverändert", async () => {
-      const { container } = render([4, 4]);
+      const { container } = serve(cells([4, 4]), {}, FULL);
       await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
       await click("Echt gegen Liste");
       expect(tags(container)).toEqual(["≈ 4,3×", "≈ 4,3×"]);
@@ -656,16 +668,16 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
       const { container } = render([2, 2]);
       await screen.findByRole("group", { name: MULTIPLE });
       const chip = (name: string) => screen.getByRole("button", { name });
-      await act(async () => { await userEvent.click(within(chartSources()).getByRole("button", { name: "Von Claude Code gemeldet" })); });
+      await act(async () => { await userEvent.click(within(chartSources()).getByRole("button", { name: LEAD })); });
       await click(/^Coordinator/);
       await click("Echt gegen Liste");
-      expect(within(chartSources()).getByRole("button", { name: "Von Claude Code gemeldet" })).toHaveAttribute("aria-pressed", "false");
+      expect(within(chartSources()).getByRole("button", { name: LEAD })).toHaveAttribute("aria-pressed", "false");
       expect(chip("Echt gegen Liste")).toHaveAttribute("aria-pressed", "true");
       expect(screen.getByRole("button", { name: /^Coordinator/ })).toHaveAttribute("aria-pressed", "true");
       // an agent filter has no real bar to set against the list
       expect(container.querySelector("[data-tag]")).toBeNull();
       await click("Beträge");
-      expect(within(chartSources()).getByRole("button", { name: "Von Claude Code gemeldet" })).toHaveAttribute("aria-pressed", "false");
+      expect(within(chartSources()).getByRole("button", { name: LEAD })).toHaveAttribute("aria-pressed", "false");
       expect(screen.getByRole("button", { name: /^Coordinator/ })).toHaveAttribute("aria-pressed", "true");
     });
   });

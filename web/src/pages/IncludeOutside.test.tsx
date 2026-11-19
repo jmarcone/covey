@@ -146,6 +146,8 @@ function serve(data: CostCells = cells(), route = "/costs") {
   return renderWithProviders(<Costs />, { route, path: "/costs" });
 }
 
+/** The full view of covey's price table (#120): Reported and Recomputed apart, as before the lead figure. */
+const FULL = "/costs?prices=recomputed";
 const kpi = (label: string) => document.querySelector<HTMLElement>(`[data-kpi="${label}"]`)!;
 const kpiValue = (label: string) => kpi(label).querySelector("[data-kpi-value]")!.textContent;
 const kpiParts = (label: string) => kpi(label).querySelector("[data-parts]")?.textContent ?? null;
@@ -155,7 +157,7 @@ describe("the sessions outside covey on the cost page, included by default (#120
   beforeEach(async () => { await i18n.changeLanguage("en"); });
 
   it("1: the top tiles include them and name both parts", async () => {
-    serve();
+    serve(cells(), FULL);
     await waitFor(() => expect(kpiParts("Reported by Claude Code")).not.toBeNull());
     // covey reported 9, the outside sessions 2.5 + 1 (sylius reported none).
     expect(kpiValue("Reported by Claude Code")).toBe(fmtUSD(9 + 3.5));
@@ -179,12 +181,12 @@ describe("the sessions outside covey on the cost page, included by default (#120
   });
 
   it("1: “covey only” gives today's numbers back exactly, and is kept in the URL", async () => {
-    serve(cells(null));
+    serve(cells(null), FULL);
     await waitFor(() => expect(kpiValue("Reported by Claude Code")).toBe(fmtUSD(9)));
     const today = ["Reported by Claude Code", "Recomputed from tokens", t("costs.inputTokens"), t("costs.outputTokens"), t("costs.totalTokens")]
       .map((l) => kpiValue(l));
     cleanup();
-    serve(cells(), "/costs?only=covey");
+    serve(cells(), "/costs?only=covey&prices=recomputed");
     await screen.findByRole("button", { name: "covey only" });
     await waitFor(() => expect(kpiValue("Reported by Claude Code")).toBe(fmtUSD(9)));
     expect(["Reported by Claude Code", "Recomputed from tokens", t("costs.inputTokens"), t("costs.outputTokens"), t("costs.totalTokens")]
@@ -202,7 +204,7 @@ describe("the sessions outside covey on the cost page, included by default (#120
   });
 
   it("1: with agents selected they are 'plus outside sessions', never agents", async () => {
-    serve();
+    serve(cells(), FULL);
     fireEvent.click(await screen.findByRole("button", { name: /^Coordinator/ }));
     await waitFor(() => expect(kpiParts("Recomputed from tokens")).toMatch(/^selected agents/));
     expect(kpiParts("Recomputed from tokens")).toBe(
@@ -211,7 +213,7 @@ describe("the sessions outside covey on the cost page, included by default (#120
   });
 
   it("2: the chart stacks one hatched series per source on the reported and recomputed bars, named in the legend, tooltip and table", async () => {
-    const { container } = serve();
+    const { container } = serve(cells(), FULL);
     await waitFor(() => expect(container.querySelector(`[data-outside-key="${OP}"]`)).toBeTruthy());
     expect(container.querySelector(`[data-outside-key="${SY}"]`)).toBeTruthy();
     expect(container.querySelector(`[data-outside-key="${CLAIM}"]`)).toBeNull();
@@ -249,7 +251,7 @@ describe("the sessions outside covey on the cost page, included by default (#120
   });
 
   it("3: the agent table has a row per source on the seat, marked, and a total with them", async () => {
-    const { container } = serve();
+    const { container } = serve(cells(), FULL);
     const block = await waitFor(() => {
       const b = container.querySelector<HTMLElement>(`[data-credential="${SEAT}#0"]`);
       if (!b?.querySelector("[data-incl-total]")) throw new Error("no total yet");
@@ -283,28 +285,32 @@ describe("the sessions outside covey on the cost page, included by default (#120
   });
 
   it("4: the seat's multiple is of everything on its meter, a lower bound, replacing “No multiple here”", async () => {
-    // Within the readings: the range's $10 and $5 less what came after the
-    // last reading ($0.25 and $0.50).
+    // At the lead price (#120): covey's $9 as Claude Code reported it, the
+    // operator's $2.50 reported and sylius's $2 at the list (no reported
+    // cost), less what came after the last reading ($0.25 and $0.50); at
+    // covey's price table, $10 and $5 less the same.
     const e = everythingOnMeter(cells(), SEAT, 0)!;
-    expect(e.coveyList).toBe(9.75);
-    expect(e.outsideList).toBe(4.5);
+    expect(e.coveyList).toBe(8.75);
+    expect(e.outsideList).toBe(4);
+    expect(e.table).toEqual({ coveyList: 9.75, outsideList: 4.5 });
+    expect(e.outsideRecomputed).toBe(5);
     expect(e.real).toBeCloseTo(6 * PP, 12);
     expect(e.slack).toBeCloseTo(2 * PP, 12);
     expect(e.multiple!.kind).toBe("floor");
-    expect(e.multiple!.low).toBeCloseTo(14.25 / (8 * PP), 12);
+    expect(e.multiple!.low).toBeCloseTo(12.75 / (8 * PP), 12);
     const small = cells();
     small.external = { ...external(), meter: { ...external().meter, credentials: [{ ...seatTotal(), points: 2 }] } };
     expect(everythingOnMeter(small, SEAT, 0)!.why).toBe("movement");
     serve();
     const tile = await screen.findByRole("group", { name: "List $ per real $ — everything on this meter" });
     // ≈ list ÷ real, and at least list ÷ (real + 2 points).
-    expect(tile.textContent).toContain(`≈ ${times(14.25 / (6 * PP))}`);
-    expect(tile.textContent).toContain(`at least ${times(14.25 / (8 * PP))}`);
+    expect(tile.textContent).toContain(`≈ ${times(12.75 / (6 * PP))}`);
+    expect(tile.textContent).toContain(`at least ${times(12.75 / (8 * PP))}`);
     // Labelled apart from the tiles' pairs, which are the range's (L5).
-    expect(tile.textContent).toContain(`within the meter's readings: list ${fmtUSD(14.25)} (covey agents ${fmtUSD(9.75)} · outside sessions ` +
-      `${fmtUSD(4.5)} + ${fmtCount(1000)} tokens with no list price) over the meter's real cost ≈ ${fmtUSD(6 * PP)}`);
+    expect(tile.textContent).toContain(`within the meter's readings: at token prices ${fmtUSD(12.75)} (covey agents ${fmtUSD(8.75)} · outside sessions ` +
+      `${fmtUSD(4)} (recomputed for sources without a reported cost)) over the meter's real cost ≈ ${fmtUSD(6 * PP)}`);
     expect(tile.textContent).toContain(`at least list ÷ (real + ${fmtUSD(2 * PP)})`);
-    const rec = screen.getAllByRole("group", { name: "Recomputed from tokens" }).find((g) => g.closest(`[data-credential="${SEAT}#0"]`))!;
+    const rec = screen.getAllByRole("group", { name: t("costs.lead.label") }).find((g) => g.closest(`[data-credential="${SEAT}#0"]`))!;
     expect(rec.querySelector("[data-parts]")!.textContent).toMatch(/^in the range: covey agents /);
     expect(document.body.textContent).not.toContain("No multiple here");
     // The split multiples stay in the headline.
@@ -314,12 +320,14 @@ describe("the sessions outside covey on the cost page, included by default (#120
   it("5: list price after the last reading is in the totals, its real share pending — said next to the multiple", async () => {
     serve();
     const note = await waitFor(() => {
-      const n = document.querySelector("[data-unmetered-note]");
+      const n = document.querySelector("[data-unmetered-note='after']");
       if (!n) throw new Error("no note yet");
       return n;
     });
-    expect(note.textContent).toBe(`After the meter's last reading: list price of covey agents ${fmtUSD(0.25)} · outside sessions ${fmtUSD(0.5)}. ` +
+    expect(note.textContent).toBe(`After the meter's last reading, at token prices: covey agents ${fmtUSD(0.25)} · outside sessions ${fmtUSD(0.5)}. ` +
       "It is in the totals above; its real share is pending until the meter is read again, so it is not in the multiple.");
+    // Nothing before the first reading here (the server sends no such part).
+    expect(document.querySelector("[data-unmetered-note='before']")).toBeNull();
   });
 
   it("figures: kpis, sources per seat, rows per model, real parts per period; sources of 0 calls nowhere", () => {
@@ -341,7 +349,7 @@ describe("the sessions outside covey on the cost page, included by default (#120
     const [f] = credentialFigures({ cells: cells(), bucketMs: 3600_000, windowEnd: new Date("2026-11-17T21:00:00Z") });
     expect(f.everything).toBeNull();
     const [g] = credentialFigures({ cells: cells(), bucketMs: 3600_000, windowEnd: new Date("2026-11-17T21:00:00Z"), includeOutside: true });
-    expect(g.everything!.multiple!.low).toBeCloseTo(14.25 / (8 * PP), 12);
+    expect(g.everything!.multiple!.low).toBeCloseTo(12.75 / (8 * PP), 12);
   });
 });
 
@@ -350,11 +358,16 @@ describe("the headline: all the work at token prices against the one real cost (
 
   it("adds up the list prices, takes the one real cost and one multiple, its floor at ±2 points, and the unmetered part", () => {
     const h = headline(cells())!;
-    // covey's $10 on the seat and the two sources that name it ($3 + $2);
-    // the per-use source and the source of 0 calls are not on the meter.
-    expect(h.coveyList).toBe(10);
-    expect(h.outsideList).toBe(5);
-    expect(h.list).toBe(15);
+    // At the lead price (#120): covey's $9 on the seat as Claude Code
+    // reported it, and the two sources that name it: the operator's $2.50
+    // reported, sylius's $2 at the list (it reported none); covey's price
+    // table gives $10 + $3 + $2. The per-use source and the source of 0
+    // calls are not on the meter.
+    expect(h.coveyList).toBe(9);
+    expect(h.outsideList).toBe(4.5);
+    expect(h.outsideRecomputed).toBe(5);
+    expect(h.list).toBe(13.5);
+    expect(h.table).toBe(15);
     expect(h.sources.map((x) => x.source)).toEqual([OP, SY]);
     expect(h.coveyReported).toBe(9);
     expect(h.outsideReported).toBe(2.5);
@@ -363,15 +376,19 @@ describe("the headline: all the work at token prices against the one real cost (
     // least over 8 points.
     expect(h.real).toBeCloseTo(6 * PP, 12);
     expect(h.points).toBe(6);
-    expect(h.metered).toBe(14.25);
-    expect(h.multiple).toBeCloseTo(14.25 / (6 * PP), 12);
-    expect(h.floor).toBeCloseTo(14.25 / (8 * PP), 12);
-    // After the last reading: covey's $0.25 and the outside sessions' $0.50.
+    expect(h.metered).toBe(12.75);
+    expect(h.multiple).toBeCloseTo(12.75 / (6 * PP), 12);
+    expect(h.floor).toBeCloseTo(12.75 / (8 * PP), 12);
+    // After the last reading: covey's $0.25 and the outside sessions' $0.50
+    // (this server sends no lead counterpart: the list stands in); nothing
+    // before the first one.
     expect(h.unmetered).toBeCloseTo(0.75, 12);
+    expect(h.after).toBeCloseTo(0.75, 12);
+    expect(h.before).toBe(0);
     expect(h.unpriced).toBe(0);
-    expect(h.list).toBeCloseTo(h.metered + h.unmetered + h.unpriced, 12);
-    // The per-use source is apart, named.
-    expect(h.perUse).toEqual({ list: 1.5, reported: 1, calls: 4, reportedCalls: 4, unpricedTokens: 0 });
+    expect(h.list).toBeCloseTo(h.metered + h.before + h.after + h.unpriced + h.usage, 12);
+    // The per-use source is apart, named, at its lead price (reported, every call).
+    expect(h.perUse).toMatchObject({ list: 1.5, reported: 1, calls: 4, reportedCalls: 4, unpricedTokens: 0, lead: 1, leadRecomputed: 0 });
     // Below 3 points, no multiple.
     const small = cells();
     small.external!.meter = { ...small.external!.meter, points: 2 };
@@ -384,23 +401,24 @@ describe("the headline: all the work at token prices against the one real cost (
     serve();
     const row = await screen.findByRole("region", { name: t("costs.dent.title") });
     expect(row.querySelector("[data-head-sentence]")!.textContent).toBe(
-      `All this work on the subscription meters at token prices (recomputed from tokens): ${fmtUSD(15)} = covey's agents ${fmtUSD(10)} ` +
-      `+ sessions outside covey ${fmtUSD(5)} + ${fmtCount(1000)} tokens with no list price, ` +
+      `All this work on the subscription meters at token prices (as reported by Claude Code): ${fmtUSD(13.5)} = covey's agents ${fmtUSD(9)} ` +
+      `+ sessions outside covey ${fmtUSD(4.5)} (recomputed for sources without a reported cost), ` +
       `against the real cost of the subscription for the same period: ${fmtUSD(6 * PP)} (${fmtNumber(6, 1)} points of the meter). ` +
-      `→ ${fmtUSD(14.25)} ÷ ${fmtUSD(6 * PP)} ≈ ${times(14.25 / (6 * PP))}.`);
+      `→ ${fmtUSD(12.75)} ÷ ${fmtUSD(6 * PP)} ≈ ${times(12.75 / (6 * PP))}.`);
     expect(row.querySelector("[data-head-floor]")!.textContent).toBe(
-      `At least ${times(14.25 / (8 * PP))}: the real cost is the meter's movement, known to ±2 points per seat and 2 more per weekly reset ` +
-      `(whole percents and lag), so ${fmtUSD(14.25)} ÷ ${fmtUSD(8 * PP)}. Use nobody reported only raises the multiple of the known work.`);
+      `At least ${times(12.75 / (8 * PP))}: the real cost is the meter's movement, known to ±2 points per seat and 2 more per weekly reset ` +
+      `(whole percents and lag), so ${fmtUSD(12.75)} ÷ ${fmtUSD(8 * PP)}. Use nobody reported only raises the multiple of the known work.`);
     expect(row.querySelector("[data-head-unmetered]")!.textContent).toBe(
-      `Of ${fmtUSD(15)}, ${fmtUSD(14.25)} lies within the meter's priced readings and is what the multiple divides; ` +
-      `${fmtUSD(0.75)} came after the last reading and has no real cost yet.`);
+      `Of ${fmtUSD(13.5)}, ${fmtUSD(12.75)} lies within the meter's priced readings and is what the multiple divides. ` +
+      `The rest has no real cost here: ${fmtUSD(0.75)} after its last reading (real share pending until the meter is read again).`);
     expect(row.querySelector("[data-head-per-use]")!.textContent).toBe(
-      `Not in this sum: sessions outside covey billed per use, on no subscription meter (${fmtUSD(1.5)}). The tiles below include them.`);
-    expect(row.querySelector("[data-head-reported]")!.textContent).toBe(
-      `As reported by Claude Code: ${fmtUSD(11.5)} = covey's agents ${fmtUSD(9)} + sessions outside covey ${fmtUSD(2.5)} (10 of 15 calls reported a cost). ` +
-      "The primary figure is the one recomputed from tokens: the same calls priced with covey's list, for both alike.");
+      `Not in this sum: sessions outside covey billed per use, on no subscription meter (${fmtUSD(1)}). The tiles below include them.`);
+    // covey's own price table: $15 against $13.50, a check line, not a second figure.
+    expect(row.querySelector("[data-price-check]")!.textContent).toBe(
+      `covey's own price table gives ${fmtUSD(15)}, ${fmtNumber(11, 0)} % more than Claude Code reported`);
+    expect(row.querySelector("[data-head-reported]")).toBeNull();
     expect([...row.querySelectorAll("[data-head-source]")].map((e) => e.textContent)).toEqual([
-      `${OP} (outside covey): ${fmtUSD(3)}`, `${SY} (outside covey): ${fmtUSD(2)}`]);
+      `${OP} (outside covey): ${fmtUSD(2.5)}`, `${SY} (outside covey): ${fmtUSD(2)} (recomputed for sources without a reported cost)`]);
     expect(row.textContent).not.toContain(CLAIM);
     // The per-party real shares: a closed detail, labelled as an estimate,
     // with the parts, the split multiples and the outside part per source.
@@ -472,32 +490,47 @@ describe("the #126 review of the cost page", () => {
     data.external!.meter.steps[0] = { ...data.external!.meter.steps[0], real_usd: null, split: false, reason: "unpriced" };
     expect(inRange(data.external!.meter.steps[0], Date.parse(data.since))).toBe(0.5);
     const h = headline(data)!;
+    // The lead figure (#120): $13.50; this server sends no lead per step, so
+    // the unpriced reading's list stands in for it.
     expect(h.unpriced).toBeCloseTo(3.5, 12);
     expect(h.unmetered).toBeCloseTo(0.75, 12);
-    expect(h.metered).toBeCloseTo(15 - 0.75 - 3.5, 12);
-    expect(h.metered + h.unmetered + h.unpriced).toBeCloseTo(h.list, 12);
-    // Each seat's parts add up too.
+    expect(h.metered).toBeCloseTo(13.5 - 0.75 - 3.5, 12);
+    expect(h.metered + h.before + h.after + h.unpriced + h.usage).toBeCloseTo(h.list, 12);
+    // Each seat's parts add up too, at both prices.
     const l = seatLists(data, data.external!.meter.credentials[0]);
-    expect(l.covey.metered + l.covey.unmetered + l.covey.unpriced).toBeCloseTo(l.covey.range, 12);
-    expect(l.outside.metered + l.outside.unmetered + l.outside.unpriced).toBeCloseTo(l.outside.range!, 12);
+    for (const p of [l, l.lead]) {
+      expect(p.covey.metered + p.covey.before + p.covey.after + p.covey.unpriced).toBeCloseTo(p.covey.range, 12);
+      expect(p.outside.metered + p.outside.before + p.outside.after + p.outside.unpriced).toBeCloseTo(p.outside.range!, 12);
+    }
   });
 
-  it("M1/M2: the floor takes the server's floor_list_usd where it sends one, the estimate keeps the metered list", () => {
+  it("M1/M2: the floor takes the server's floor_lead_usd where it sends one, the estimate keeps the metered lead", () => {
     const data = cells();
-    data.external!.meter = { ...data.external!.meter, floor_list_usd: 12 };
-    data.external!.meter.credentials[0] = { ...data.external!.meter.credentials[0], floor_list_usd: 11 };
+    // The floor of the lead figure (#120), not of covey's price table.
+    data.external!.meter = { ...data.external!.meter, floor_list_usd: 12, floor_lead_usd: 11.5 };
+    data.external!.meter.credentials[0] = { ...data.external!.meter.credentials[0], floor_list_usd: 11, floor_lead_usd: 10.5 };
     const h = headline(data)!;
-    expect(h.floor).toBeCloseTo(12 / (8 * PP), 12);
-    expect(h.multiple).toBeCloseTo(14.25 / (6 * PP), 12);
+    expect(h.floor).toBeCloseTo(11.5 / (8 * PP), 12);
+    expect(h.floorList).toBe(11.5);
+    expect(h.multiple).toBeCloseTo(12.75 / (6 * PP), 12);
     const e = everythingOnMeter(data, SEAT, 0)!;
-    expect(e.multiple!.low).toBeCloseTo(11 / (8 * PP), 12);
-    expect(e.estimate).toBeCloseTo(14.25 / (6 * PP), 12);
+    expect(e.multiple!.low).toBeCloseTo(10.5 / (8 * PP), 12);
+    expect(e.estimate).toBeCloseTo(12.75 / (6 * PP), 12);
+    // An older server sends only the list's floor: the metered lead stands in, never the list's.
+    const old = cells();
+    old.external!.meter = { ...old.external!.meter, floor_list_usd: 12 };
+    expect(headline(old)!.floorList).toBe(12.75);
   });
 
   it("M3: no $0 where the outside sessions on the meter have no list price — the headline, the tile and the meter card say so", async () => {
     const ext = external();
     for (const s of ext.sources) if (s.meter_credential) { s.list_usd = null; s.unpriced_tokens = 500; }
     for (const st of ext.meter.steps) st.external_list_usd = 0;
+    // Neither a list price nor a reported cost in their calls: no lead price either.
+    for (const c of ext.cells) {
+      if (c.source === WORK) continue;
+      Object.assign(c, { list_usd: null, reported_usd: null, reported_calls: 0, unpriced_calls: c.calls, unpriced_tokens: c.source === SY ? 500 : 250 });
+    }
     const data = cells(ext);
     const h = headline(data)!;
     expect(h.outsideList).toBeNull();
@@ -566,7 +599,7 @@ describe("the #126 review of the cost page", () => {
   });
 
   it("M6 and L1: the per-use source is apart from the meters; the agent table's totals follow the chips and mark what has no price", async () => {
-    const { container } = serve();
+    const { container } = serve(cells(), FULL);
     const block = await waitFor(() => {
       const b = container.querySelector<HTMLElement>(`[data-credential="${SEAT}#0"]`);
       if (!b?.querySelector("[data-incl-total]")) throw new Error("no total yet");

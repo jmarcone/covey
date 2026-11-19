@@ -10,8 +10,8 @@ import { credentialFigures, headline, subscriptionDent } from "./costFigures";
 import { SubscriptionDentRow } from "./SubscriptionDent";
 import { canSetPlan } from "./PlanPrice";
 import { OutsideOverview } from "./OutsideSessions";
-import { COVEY_ONLY_PARAM, COVEY_ONLY_VALUE, RANGES, beforeRange, bucketOptions, listedSources, outsideKpis, rangeOptions, sourceRealParts,
-  sourcesByMeter, type OutsideKpis } from "./outsideFigures";
+import { COVEY_ONLY_PARAM, COVEY_ONLY_VALUE, PRICES_PARAM, PRICES_RECOMPUTED, RANGES, beforeRange, bucketOptions, kpiLead, listedSources,
+  outsideKpis, rangeOptions, sourceRealParts, sourcesByMeter, type OutsideKpis } from "./outsideFigures";
 import {
   AgentFilter,
   BUCKET_MS,
@@ -26,6 +26,7 @@ import {
   inclLine,
   inclLineMeter,
   outsideMoney,
+  priceTableLine,
   useBilled,
   useCostCells,
   useUsageReadings,
@@ -43,11 +44,12 @@ import {
 type Metric = "cost" | "tokens";
 
 /** An outside part with no source in it. */
-const NO_KPIS: OutsideKpis = { sources: [], calls: 0, list: null, reported: null, reportedCalls: 0, tokens: {}, unpricedTokens: 0 };
+const NO_KPIS: OutsideKpis = { sources: [], calls: 0, list: null, reported: null, reportedCalls: 0, tokens: {}, unpricedTokens: 0,
+  lead: null, leadRecomputed: 0, leadUnpricedCalls: 0, leadUnpricedTokens: 0 };
 
 // --- KPI tiles ---------------------------------------------------------------
 
-function Kpi({ label, value, sub, color, parts }: { label: string; value: string; sub?: string; color?: string; parts?: string }) {
+function Kpi({ label, value, sub, color, parts, check }: { label: string; value: string; sub?: string; color?: string; parts?: string; check?: string }) {
   return (
     <div className="card" data-kpi={label} style={{ flex: 1, minWidth: 150 }}>
       <div className="muted text-xs" style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -58,6 +60,8 @@ function Kpi({ label, value, sub, color, parts }: { label: string; value: string
       {sub && <div className="muted text-xs" style={{ marginTop: 2 }}>{sub}</div>}
       {/* Included, the figure's two parts, always named (#120). */}
       {parts && <div className="muted text-xs" data-parts style={{ marginTop: 2 }}>{parts}</div>}
+      {/* covey's price table, only where it differs from the figure (#120). */}
+      {check && <div className="muted text-xs" data-price-check style={{ marginTop: 2 }}>{check}</div>}
     </div>
   );
 }
@@ -245,6 +249,16 @@ export default function Costs({ me }: { me?: Principal }) {
     else n.delete(COVEY_ONLY_PARAM);
     return n;
   }, { replace: true });
+  // One list-price figure leads (#120); ?prices=recomputed shows covey's
+  // price table as a figure of its own again, in the tiles, the chart and
+  // its tables.
+  const fullPrices = params.get(PRICES_PARAM) === PRICES_RECOMPUTED;
+  const setFullPrices = (v: boolean) => setParams((prev) => {
+    const n = new URLSearchParams(prev);
+    if (v) n.set(PRICES_PARAM, PRICES_RECOMPUTED);
+    else n.delete(PRICES_PARAM);
+    return n;
+  }, { replace: true });
   const scope = selected.size === 1 ? [...selected][0] : "org";
   const cells = useCostCells(days, bucket);
   const billed = useBilled(days, bucket);
@@ -344,6 +358,9 @@ export default function Costs({ me }: { me?: Principal }) {
     : byMeter ? inclLineMeter(t, filtered, covey, of(byMeter.meter), of(byMeter.perUse))
     : inclLine(t, filtered, covey, of(outside)));
   const tokParts = (f: (x: Record<string, number>) => number) => parts(fmtCount(f(coveyTok)), (o) => fmtCount(f(o.tokens)));
+  // The lead figure: covey's lines at Claude Code's figure, the outside
+  // sessions at their lead price.
+  const lead = totals.reported + (outside ? kpiLead(outside).lead ?? 0 : 0);
 
   const agentList = cells.data?.agents ?? [];
   const scopeName =
@@ -392,12 +409,22 @@ export default function Costs({ me }: { me?: Principal }) {
           return s ? [{ ...p, before: beforeRange(s, realParts) }] : [];
         })} />}
 
-      {/* KPIs: over every credential, dollars and tokens of the same lines. */}
+      {/* KPIs: over every credential, dollars and tokens of the same lines.
+          One list-price figure leads (#120): Claude Code's price of each
+          call, covey's list price where it reported none (marked), and
+          covey's price table under it only where it differs; the toggle
+          shows the two apart. */}
       <div className="flex flex-wrap gap-3 mb-4">
-        <Kpi label={t("costs.fig.reported")} value={fmtUSD(totals.reported + (outside?.reported ?? 0))} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.reported}
-          parts={parts(fmtUSD(totals.reported), (o) => outsideMoney(t, o, "reported"))} />
-        <Kpi label={t("costs.fig.recomputed")} value={fmtUSD(totals.recomputed + (outside?.list ?? 0))} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.recomputed}
-          parts={parts(fmtUSD(totals.recomputed), (o) => outsideMoney(t, o, "list"))} />
+        {fullPrices ? <>
+          <Kpi label={t("costs.fig.reported")} value={fmtUSD(totals.reported + (outside?.reported ?? 0))} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.reported}
+            parts={parts(fmtUSD(totals.reported), (o) => outsideMoney(t, o, "reported"))} />
+          <Kpi label={t("costs.fig.recomputed")} value={fmtUSD(totals.recomputed + (outside?.list ?? 0))} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.recomputed}
+            parts={parts(fmtUSD(totals.recomputed), (o) => outsideMoney(t, o, "list"))} />
+        </> : (
+          <Kpi label={t("costs.lead.label")} value={fmtUSD(lead)} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.reported}
+            parts={parts(fmtUSD(totals.reported), (o) => outsideMoney(t, o, "lead"))}
+            check={priceTableLine(t, lead, totals.recomputed + (outside?.list ?? 0))} />
+        )}
         <Kpi
           label={t("costs.inputTokens")}
           value={fmtCount(input)}
@@ -420,7 +447,7 @@ export default function Costs({ me }: { me?: Principal }) {
         </div>
         {metric === "cost" ? (
           <CostExplorer data={cells.data} billed={billed.data} readings={readings.data ?? []} canSetPlan={canSetPlan(me?.Role ?? "")} selected={selected} bucket={bucket} fmtPeriod={fmtPeriod}
-            outside={included} />
+            outside={included} full={fullPrices} onFull={setFullPrices} />
         ) : (
           <TokenExplorer data={cells.data} selected={selected} fmtPeriod={fmtPeriod} outside={included} />
         )}

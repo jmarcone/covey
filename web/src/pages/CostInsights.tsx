@@ -400,7 +400,7 @@ function MeterFigures({ f, readings }: { f: CredentialFigures; readings: UsageRe
       {row(t("costs.fig.realEstimate"), real, SOURCE_COLOR.real, true)}
       {row(t("costs.insights.meterList"), f.aligned != null ? fmtUSD(f.aligned) : "–", SOURCE_COLOR.recomputed)}
       {e && row(t("costs.incl.meterListOutside"), withinMoney(t, e.outsideList,
-        { priced: e.outsidePriced, calls: e.outsideCalls, unpricedTokens: e.outsideUnpricedTokens }), SOURCE_COLOR.recomputed)}
+        { priced: e.outsidePriced, calls: e.outsideCalls, unpricedTokens: e.outsideUnpricedTokens, recomputed: e.outsideRecomputed }), SOURCE_COLOR.recomputed)}
       {row(e ? t("costs.incl.everything") : t("costs.fig.multiple"), mult)}
       <p className="muted text-xs mt-1 mb-0">
         {five

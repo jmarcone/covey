@@ -1637,3 +1637,132 @@ func TestExternalUsageMeterSharePerSource(t *testing.T) {
 		t.Errorf("the seat's sources = %v, still the linked sources' names", seatRaw["sources"])
 	}
 }
+
+// #120, the lead price on the wire: an outside call's lead price is its
+// reported_usd where it carries one, else its list price, and a call with
+// neither is counted, never $0; covey's lines lead with Claude Code's own
+// figure (engine_usd). Every list of the meter split has a lead twin over
+// the same calls. The list in no step's span is split by where it lies:
+// before the seat's first reading in the range (no meter data for that
+// time) or after its last one (real share pending).
+func TestExternalUsageLeadPriceAndUnmeteredSides(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	admin := login(t, s, "admin@test.local", "admin-passwort")
+	agent := s.newSupportAgent("leitpreis")
+	rt, err := s.runtimes.Create(ctx, s.orgID, "claude-code", "Claude", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ord := s.seat(t, rt.ID, daemon.CredSubscription, "claude_code_oauth_token", "sitz", "A")
+	h1 := time.Now().UTC().Truncate(time.Hour).Add(-6 * time.Hour)
+	h2, h3, h4 := h1.Add(time.Hour), h1.Add(2*time.Hour), h1.Add(3*time.Hour)
+	admin.expect(http.MethodPut, fmt.Sprintf("/api/v1/runtime-instances/%s/credentials/%d/plan", rt.ID, ord),
+		map[string]any{"plan_name": "Max", "amount": 200, "currency": "USD", "period": "month", "tax_basis": "net",
+			"valid_from": h1.Add(-48 * time.Hour)}, http.StatusOK)
+	cred := observability.CredentialRef{RuntimeID: rt.ID, Ord: ord, SecretKey: "claude_code_oauth_token", Kind: "subscription"}
+	// The meter's first reading ever is h1:30, inside the range.
+	for _, r := range []struct {
+		at  time.Time
+		pct float64
+	}{{h1.Add(30 * time.Minute), 10}, {h2.Add(30 * time.Minute), 13}, {h3.Add(30 * time.Minute), 15}} {
+		if err := s.obs.AddUsageReading(ctx, s.orgID, observability.MeterReading{Credential: cred,
+			Supported: true, WindowPercent: -1, WeekPercent: r.pct, FetchedAt: r.at}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// covey's lines: Claude Code reports $1 each (the fixture's costUSD);
+	// at the list $2, $2 and $1.
+	f := billingFixture{s: s, ctx: ctx, agent: agent.ID, org: s.orgID}
+	f.line(t, cred, h1.Add(10*time.Minute), 100_000)
+	f.line(t, cred, h2.Add(10*time.Minute), 100_000)
+	f.line(t, cred, h4.Add(10*time.Minute), 50_000)
+	out := func(id string, at time.Time, usd float64, reported *float64) map[string]any {
+		r := extRow(id, at, "claude-opus-5-5", int64(usd*1e6/20))
+		r["input"], r["cache_read"], r["cache_write_1h"] = 0, 0, 0
+		if reported != nil {
+			r["reported_usd"] = *reported
+		}
+		return r
+	}
+	usd := func(v float64) *float64 { return &v }
+	up := extUpload("operator: home",
+		out("a", h1.Add(5*time.Minute), 3, usd(2.5)),                  // before the first reading
+		out("b", h2.Add(5*time.Minute), 5, nil),                       // step 1, no reported cost
+		extRow("u", h2.Add(6*time.Minute), "claude-sonnet-5-7", 1000), // neither price
+		out("c", h3.Add(5*time.Minute), 4, usd(3)),                    // step 2
+		out("d", h4.Add(5*time.Minute), 2, nil))                       // after the last reading
+	up["meter_credential"] = map[string]any{"secret_key": "claude_code_oauth_token", "secret_slot": 0}
+	up["reported_through"] = map[string]any{"laptop": h4.Add(30 * time.Minute)}
+	admin.expect(http.MethodPost, externalPath, up, http.StatusOK)
+
+	nearV := func(v, want float64) bool { return math.Abs(v-want) < 1e-9 }
+	near := func(p *float64, want float64) bool { return p != nil && nearV(*p, want) }
+	ext := cellsExternal(t, admin, "days=1&bucket=hour")
+	if len(ext.Sources) != 1 {
+		t.Fatalf("sources = %+v", ext.Sources)
+	}
+	src := ext.Sources[0]
+	if !near(src.LeadUSD, 2.5+5+3+2) || !near(src.ListUSD, 14) || src.LeadUnpricedCalls != 1 || src.LeadUnpricedTokens == 0 {
+		t.Errorf("source lead %v list %v, lead unpriced %d calls %d tokens; want 12.5, 14, 1 call",
+			src.LeadUSD, src.ListUSD, src.LeadUnpricedCalls, src.LeadUnpricedTokens)
+	}
+	for _, c := range ext.Cells {
+		switch {
+		case c.Period.Equal(h1):
+			if !near(c.LeadUSD, 2.5) || c.ReportedCalls != 1 || c.LeadUnpricedCalls != 0 {
+				t.Errorf("h1 cell = %+v, want lead 2.5 from the reported call", c)
+			}
+		case c.Period.Equal(h2):
+			if !near(c.LeadUSD, 5) || c.Calls != 2 || c.ReportedCalls != 0 || c.LeadUnpricedCalls != 1 {
+				t.Errorf("h2 cell = %+v, want lead 5 at the list price and one call with neither", c)
+			}
+		case c.Period.Equal(h3):
+			if !near(c.LeadUSD, 3) || !near(c.ListUSD, 4) {
+				t.Errorf("h3 cell = %+v, want lead 3 (reported), list 4", c)
+			}
+		}
+	}
+
+	m := ext.Meter
+	if len(m.Steps) != 2 || len(m.Credentials) != 1 {
+		t.Fatalf("steps %+v, seats %+v; want two steps on one seat", m.Steps, m.Credentials)
+	}
+	s1, s2 := m.Steps[0], m.Steps[1]
+	if !nearV(s1.ExternalListUSD, 5) || !nearV(s1.ExternalLeadUSD, 5) || !nearV(s1.CoveyListUSD, 2) || !nearV(s1.CoveyLeadUSD, 1) {
+		t.Errorf("step 1 = %+v, want outside 5 / 5, covey list 2, lead 1", s1)
+	}
+	if !nearV(s2.ExternalListUSD, 4) || !nearV(s2.ExternalLeadUSD, 3) || !nearV(s2.CoveyLeadUSD, 0) {
+		t.Errorf("step 2 = %+v, want outside list 4, lead 3", s2)
+	}
+	seat := m.Credentials[0]
+	if !nearV(seat.FloorLeadUSD, 9) || !nearV(seat.FloorListUSD, 11) {
+		t.Errorf("floor lead %v, list %v; want 9, 11", seat.FloorLeadUSD, seat.FloorListUSD)
+	}
+	var splitOut, splitCov float64
+	for _, st := range m.Steps {
+		if st.Split {
+			splitOut += st.ExternalLeadUSD
+			splitCov += st.CoveyLeadUSD
+		}
+	}
+	if !nearV(seat.SplitExternalLeadUSD, splitOut) || !nearV(seat.SplitCoveyLeadUSD, splitCov) {
+		t.Errorf("split lead %v / %v, want the split steps' %v / %v", seat.SplitExternalLeadUSD, seat.SplitCoveyLeadUSD, splitOut, splitCov)
+	}
+	// Before the first reading: a (3, lead 2.5) and covey's $2 line (lead 1);
+	// after the last: d (2) and covey's $1 line.
+	if !nearV(seat.UnmeteredListUSD, 5) || !nearV(seat.UnmeteredBeforeListUSD, 3) ||
+		!nearV(seat.UnmeteredLeadUSD, 4.5) || !nearV(seat.UnmeteredBeforeLeadUSD, 2.5) {
+		t.Errorf("outside unmetered %v (before %v), lead %v (before %v); want 5 (3), 4.5 (2.5)", seat.UnmeteredListUSD,
+			seat.UnmeteredBeforeListUSD, seat.UnmeteredLeadUSD, seat.UnmeteredBeforeLeadUSD)
+	}
+	if !nearV(seat.UnmeteredCoveyListUSD, 3) || !nearV(seat.UnmeteredCoveyBeforeListUSD, 2) ||
+		!nearV(seat.UnmeteredCoveyLeadUSD, 2) || !nearV(seat.UnmeteredCoveyBeforeLeadUSD, 1) {
+		t.Errorf("covey unmetered %v (before %v), lead %v (before %v); want 3 (2), 2 (1)", seat.UnmeteredCoveyListUSD,
+			seat.UnmeteredCoveyBeforeListUSD, seat.UnmeteredCoveyLeadUSD, seat.UnmeteredCoveyBeforeLeadUSD)
+	}
+	if !nearV(m.UnmeteredBeforeListUSD, 3) || !nearV(m.UnmeteredCoveyBeforeLeadUSD, 1) || !nearV(m.FloorLeadUSD, 9) {
+		t.Errorf("the whole: before %v, covey before lead %v, floor lead %v", m.UnmeteredBeforeListUSD,
+			m.UnmeteredCoveyBeforeLeadUSD, m.FloorLeadUSD)
+	}
+}

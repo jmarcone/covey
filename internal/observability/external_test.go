@@ -1219,7 +1219,7 @@ func TestSpreadLineOverItsTurn(t *testing.T) {
 		{From: tm("10:00"), At: tm("10:40"), Points: 10, Rate: rate(1), Reported: true},
 		{From: tm("10:40"), At: tm("11:40"), Points: 10, Rate: rate(1), Reported: true},
 	}
-	spreadLine(steps, 1, tm("10:20"), tm("11:00"), a, 200)
+	spreadLine(steps, 1, tm("10:20"), tm("11:00"), a, 200, 200)
 	if !near(steps[0].LCov, 100) || !near(steps[1].LCov, 100) || !near(steps[0].Agents[a], 100) {
 		t.Fatalf("lists %v / %v, want 100 / 100", steps[0].LCov, steps[1].LCov)
 	}
@@ -1230,8 +1230,8 @@ func TestSpreadLineOverItsTurn(t *testing.T) {
 	// A line that began before the first span: its part before it is in
 	// no step; one with no time of its own stays at its result.
 	steps = []shareStep{{From: tm("10:00"), At: tm("10:40")}}
-	spreadLine(steps, 0, tm("09:20"), tm("10:20"), a, 30)
-	spreadLine(steps, 0, tm("10:20"), tm("10:20"), a, 5)
+	spreadLine(steps, 0, tm("09:20"), tm("10:20"), a, 30, 30)
+	spreadLine(steps, 0, tm("10:20"), tm("10:20"), a, 5, 5)
 	if !near(steps[0].LCov, 15) {
 		t.Errorf("list %v, want 10 + 5", steps[0].LCov)
 	}
@@ -1613,7 +1613,7 @@ func TestSpreadLineBoundsRateAndUnattributed(t *testing.T) {
 		for i := range ss {
 			ss[i].Reported = true
 		}
-		spreadLine(ss, c.n-1, ss[0].From, ss[c.n-1].At, a, c.total/0.1)
+		spreadLine(ss, c.n-1, ss[0].From, ss[c.n-1].At, a, c.total/0.1, c.total/0.1)
 		prev := 0.0
 		for i := range ss {
 			f := float64(i+1) / float64(c.n)
@@ -1632,7 +1632,7 @@ func TestSpreadLineBoundsRateAndUnattributed(t *testing.T) {
 	// A line that began before the first span is in no stretch whole: no k
 	// from it, and U_c counts it whole.
 	ss := steps10(shareStep{Points: 10, Reported: true}, shareStep{Points: 10, Reported: true})
-	spreadLine(ss, 1, ss[0].From.Add(-10*time.Minute), ss[1].At, a, 300)
+	spreadLine(ss, 1, ss[0].From.Add(-10*time.Minute), ss[1].At, a, 300, 300)
 	if tot, _ := splitSeat(meterSeat{"seat", 0}, nil, ss); tot.PointsPerListUSD != nil || ss[1].Spread[0].First != -1 {
 		t.Errorf("k %v, first %d; want none, −1", tot.PointsPerListUSD, ss[1].Spread[0].First)
 	}
@@ -1802,7 +1802,7 @@ func TestSplitSeatShareRangeOfSpreadLines(t *testing.T) {
 	}{{"back-loaded", [2]float64{10, 10}, 100}, {"front-loaded", [2]float64{40, 0}, 300}} {
 		ss := steps10(shareStep{Points: c.points[0], LOut: c.out, SrcOut: map[string]float64{"src": c.out}, Reported: true},
 			shareStep{Points: c.points[1], Reported: true})
-		spreadLine(ss, 1, ss[0].From, ss[1].At, a, 100)
+		spreadLine(ss, 1, ss[0].From, ss[1].At, a, 100, 100)
 		tot, _ := splitSeat(meterSeat{"seat", 0}, []string{"src"}, ss)
 		if f := tot.SplitExternalFloorListUSD / (tot.ExternalRealUSD + tot.SplitExternalSlackUSD); f > 10+1e-9 {
 			t.Errorf("%s: the outside sessions' floor %.2f×, over the true 10×", c.name, f)
@@ -1833,7 +1833,7 @@ func TestSplitSeatShareRangeOfSpreadLines(t *testing.T) {
 func TestSplitSeatFloorList(t *testing.T) {
 	a := uuid.MustParse("00000000-0000-0000-0000-0000000000a1")
 	ss := steps10(shareStep{Points: 15, Reported: true}, shareStep{Points: 5, LOut: 50, SrcOut: map[string]float64{"src": 50}, Reported: true})
-	spreadLine(ss, 1, ss[0].From, ss[1].At, a, 150)
+	spreadLine(ss, 1, ss[0].From, ss[1].At, a, 150, 150)
 	tot, steps := splitSeatSince(meterSeat{"seat", 0}, []string{"src"}, ss, ss[1].From.Add(time.Second))
 	if len(steps) != 1 || !near(steps[0].CoveyListUSD+steps[0].ExternalListUSD, 125) || !near(tot.FloorListUSD, 50) ||
 		!near(tot.SplitExternalFloorListUSD, 50) || !near(tot.SplitCoveyFloorListUSD, 0) || tot.FloorListUSD/(tot.RealUSD+2) > 10 {
@@ -1851,7 +1851,7 @@ func TestSplitSeatFloorList(t *testing.T) {
 			tot.SplitExternalFloorListUSD, tot.SplitCoveyFloorListUSD, tot.SplitExternalListUSD, tot.SplitCoveyListUSD)
 	}
 	ss = steps10(shareStep{Points: 15, Reported: true}, shareStep{Points: 5, LOut: 50, Reported: true})
-	spreadLine(ss, 1, ss[0].From, ss[1].At, a, 150)
+	spreadLine(ss, 1, ss[0].From, ss[1].At, a, 150, 150)
 	if tot, _ := splitSeat(meterSeat{"seat", 0}, []string{"src"}, ss); tot.FloorListUSD != 200 ||
 		tot.SplitCoveyFloorListUSD != tot.SplitCoveyListUSD || tot.SplitExternalFloorListUSD != tot.SplitExternalListUSD {
 		t.Errorf("without since: floor list %v, split %v / %v of %v / %v; want the lists", tot.FloorListUSD,
@@ -1959,7 +1959,7 @@ func TestSplitSeatFloorsHoldUnderTheModel(t *testing.T) {
 			}
 			w := float64(10 + r.Intn(150))
 			spreadLine(ss, b, ss[a].From.Add(time.Duration(r.Intn(int(10*time.Minute)-1))),
-				ss[b].From.Add(time.Duration(1+r.Intn(int(10*time.Minute)-1))), ag, w)
+				ss[b].From.Add(time.Duration(1+r.Intn(int(10*time.Minute)-1))), ag, w, w)
 			ws, sum := make([]float64, b-a+1), 0.0
 			for j := range ws {
 				if r.Intn(3) != 0 {
@@ -2014,5 +2014,66 @@ func TestSplitSeatFloorsHoldUnderTheModel(t *testing.T) {
 				fail(f.name, kStar*f.list/(f.real+f.sl))
 			}
 		}
+	}
+}
+
+// #120, the lead price: every list of the split has a lead twin over the
+// same calls, spans and cuts. A $150 line (Claude Code reported $120) over
+// two readings, all its use in the first; the second holds $50 of outside
+// calls at list ($40 reported) and is the range. The steps carry both
+// prices; the floor at the lead price leaves out the same part (the
+// line's), and the split lists and the whole's sums follow.
+func TestSplitSeatLeadLists(t *testing.T) {
+	a := uuid.MustParse("00000000-0000-0000-0000-0000000000a1")
+	ss := steps10(shareStep{Points: 15, Reported: true},
+		shareStep{Points: 5, LOut: 50, LOutLead: 40, SrcOut: map[string]float64{"src": 50}, Reported: true})
+	spreadLine(ss, 1, ss[0].From, ss[1].At, a, 150, 120)
+	if !near(ss[0].LCovLead, 60) || !near(ss[1].LCovLead, 60) || !near(ss[1].LCov, 75) {
+		t.Fatalf("spread lead %v / %v (list %v), want 60 / 60 (75)", ss[0].LCovLead, ss[1].LCovLead, ss[1].LCov)
+	}
+	tot, steps := splitSeatSince(meterSeat{"seat", 0}, []string{"src"}, ss, ss[1].From.Add(time.Second))
+	if len(steps) != 1 || !near(steps[0].CoveyLeadUSD, 60) || !near(steps[0].ExternalLeadUSD, 40) ||
+		!near(steps[0].CoveyListUSD, 75) || !near(steps[0].ExternalListUSD, 50) {
+		t.Fatalf("steps %+v; want covey 60 / 75, outside 40 / 50", steps)
+	}
+	if !near(tot.FloorLeadUSD, 40) || !near(tot.FloorListUSD, 50) {
+		t.Errorf("floor lead %v, list %v; want 40, 50", tot.FloorLeadUSD, tot.FloorListUSD)
+	}
+	if !near(tot.SplitExternalLeadUSD, 40) || !near(tot.SplitCoveyLeadUSD, 60) {
+		t.Errorf("split lead %v / %v; want 40 / 60", tot.SplitExternalLeadUSD, tot.SplitCoveyLeadUSD)
+	}
+	tot.UnmeteredLeadUSD, tot.UnmeteredBeforeLeadUSD, tot.UnmeteredBeforeListUSD = 3, 1, 2
+	m := meterSums([]ExternalMeterTotal{tot, tot}, nil)
+	if !near(m.FloorLeadUSD, 80) || !near(m.SplitCoveyLeadUSD, 120) || !near(m.UnmeteredLeadUSD, 6) ||
+		!near(m.UnmeteredBeforeLeadUSD, 2) || !near(m.UnmeteredBeforeListUSD, 4) {
+		t.Errorf("the whole: floor lead %v, covey lead %v, unmetered lead %v (before %v, list before %v); want 80, 120, 6 (2, 4)",
+			m.FloorLeadUSD, m.SplitCoveyLeadUSD, m.UnmeteredLeadUSD, m.UnmeteredBeforeLeadUSD, m.UnmeteredBeforeListUSD)
+	}
+	// Lines that began before since and were not spread: out of the floor at
+	// either price.
+	ss = steps10(shareStep{Points: 6, LOut: 30, LCov: 40, LOutLead: 24, LCovLead: 36,
+		BeforeSinceOut: 10, BeforeSinceCov: 15, BeforeSinceOutLead: 8, BeforeSinceCovLead: 12, Reported: true})
+	tot, _ = splitSeatSince(meterSeat{"seat", 0}, []string{"src"}, ss, ss[0].From.Add(time.Minute))
+	if !near(tot.FloorLeadUSD, 40) || !near(tot.FloorListUSD, 45) {
+		t.Errorf("floor lead %v, list %v; want 16 + 24 = 40, 45", tot.FloorLeadUSD, tot.FloorListUSD)
+	}
+}
+
+// The unmetered list's stretch: a seat with steps covers (first From, last
+// At]; one with none covers nothing, and nothing lies before it.
+func TestUnmeteredSpan(t *testing.T) {
+	since := tm("08:00")
+	if from, to, has := unmeteredSpan(since, nil); has || !from.Equal(since) || !to.Equal(since) {
+		t.Errorf("no step: %v %v %v", from, to, has)
+	}
+	ss := []shareStep{{From: tm("09:00"), At: tm("10:00")}, {From: tm("10:00"), At: tm("11:00")}}
+	if from, to, has := unmeteredSpan(since, ss); !has || !from.Equal(tm("09:00")) || !to.Equal(tm("11:00")) {
+		t.Errorf("steps: %v %v %v", from, to, has)
+	}
+	var u unmetered
+	u.add(10, 8, true)
+	u.add(5, 5, false)
+	if u != (unmetered{list: 15, beforeList: 10, lead: 13, beforeLead: 8}) {
+		t.Errorf("%+v", u)
 	}
 }

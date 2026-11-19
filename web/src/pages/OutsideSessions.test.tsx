@@ -261,7 +261,8 @@ describe("the operator sessions on the cost page (#120)", () => {
   it("changes the total only when combined, says so, and leaves the agents' own figure alone", async () => {
     serveCosts();
     await screen.findByRole("group", { name: t("costs.outside.tile") });
-    const agentsKpi = () => screen.getAllByText(t("costs.fig.recomputed"), { exact: true })
+    // the page's lead figure (#120): one list-price tile
+    const agentsKpi = () => screen.getAllByText(t("costs.lead.label"), { exact: true })
       .map((el) => el.closest(".card")).find((c) => c?.parentElement?.className.includes("gap-3"))!.textContent;
     const before = agentsKpi();
     expect(before).toContain(fmtUSD(7));
@@ -349,8 +350,9 @@ describe("the operator sessions on the cost page (#120)", () => {
         expect(b.getAttribute("aria-pressed")).toBe("false");
       }
     }
-    // The recomputed chip stays.
-    expect(chips(t("costs.fig.recomputed")).every((b) => !(b as HTMLButtonElement).disabled)).toBe(true);
+    // The lead figure's chip stays (#120: covey's price table is not a chip of its own by default).
+    expect(chips(t("costs.lead.label")).length).toBeGreaterThan(0);
+    expect(chips(t("costs.lead.label")).every((b) => !(b as HTMLButtonElement).disabled)).toBe(true);
   });
 
   it("links the series to its detailed view with the range", async () => {
