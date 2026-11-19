@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"math"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -322,5 +324,68 @@ func TestUsageLimitMergesManualAroundRun(t *testing.T) {
 	}
 	if meters != 1 {
 		t.Errorf("meter charges = %d, want 1 (the unread seat has none): %+v", meters, cells.UsageCharges)
+	}
+}
+
+// POST /cost/usage-readings checks a monthly window's typed reset against
+// the one the provider itself last reported (outside review of 1b9d60d0,
+// major 2b): more than an hour off it is a 400 naming the known reset,
+// unless that reset had passed when the reading was taken. A five-hour
+// window's reset may lie at most 6 hours ahead (nit 4).
+func TestManualReadingMustMatchKnownReset(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	admin := login(t, s, "admin@test.local", "admin-passwort")
+	rt, err := s.runtimes.Create(ctx, s.orgID, "claude-code", "Arbeitssitz", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ord := s.seat(t, rt.ID, daemon.CredSubscription, "claude_code_oauth_token", "work-seat", "Work")
+	ord2 := s.seat(t, rt.ID, daemon.CredSubscription, "claude_code_oauth_token", "other-seat", "Other")
+	since := time.Now().Add(-6 * time.Hour).Truncate(time.Hour)
+	ref := since.Add(6 * time.Hour)
+	month := time.Date(ref.Year(), ref.Month()+1, 1, 0, 0, 0, 0, time.UTC)
+	inband := func(o, slot int, resets time.Time, at time.Time) {
+		t.Helper()
+		if err := s.obs.AddUsageReading(ctx, s.orgID, observability.MeterReading{
+			Credential: observability.CredentialRef{RuntimeID: rt.ID, Ord: o, SecretKey: "claude_code_oauth_token", SecretSlot: slot, Kind: "subscription"},
+			Source:     observability.SourceInband, WindowKind: "overage", Supported: true, WindowPercent: -1, WeekPercent: 10,
+			ResetsAt: resets, FetchedAt: at}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	post := func(o int, window string, resets, at time.Time) (int, string) {
+		t.Helper()
+		resp := admin.do(http.MethodPost, "/api/v1/cost/usage-readings", map[string]any{
+			"runtime_id": rt.ID, "ord": o, "window_kind": window, "percent": 20,
+			"resets_at": resets.Format(time.RFC3339), "fetched_at": at.Format(time.RFC3339)})
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(body)
+	}
+
+	// The provider said "month": a typed reset 12 hours off is refused and
+	// told the known one; one within the hour is filed.
+	inband(ord, 0, month, since.Add(time.Hour))
+	if code, body := post(ord, "overage", month.Add(12*time.Hour), since.Add(2*time.Hour)); code != http.StatusBadRequest ||
+		!strings.Contains(body, month.Format(time.RFC3339)) {
+		t.Errorf("typed reset off the provider's: %d %s, want 400 naming %s", code, body, month.Format(time.RFC3339))
+	}
+	if code, body := post(ord, "overage", month.Add(30*time.Minute), since.Add(2*time.Hour)); code != http.StatusCreated {
+		t.Errorf("typed reset within the hour: %d %s, want 201", code, body)
+	}
+
+	// The provider's reset had passed by the reading: it may name the next.
+	inband(ord2, 1, since.Add(90*time.Minute), since.Add(time.Hour))
+	if code, body := post(ord2, "overage", month, since.Add(2*time.Hour)); code != http.StatusCreated {
+		t.Errorf("the next month after a passed reset: %d %s, want 201", code, body)
+	}
+
+	// Five-hour windows: at most 6 hours ahead.
+	if code, body := post(ord, "five_hour", since.Add(9*time.Hour), since.Add(2*time.Hour)); code != http.StatusBadRequest {
+		t.Errorf("five_hour reset 7 hours ahead: %d %s, want 400", code, body)
+	}
+	if code, body := post(ord, "five_hour", since.Add(7*time.Hour), since.Add(2*time.Hour)); code != http.StatusCreated {
+		t.Errorf("five_hour reset 5 hours ahead: %d %s, want 201", code, body)
 	}
 }

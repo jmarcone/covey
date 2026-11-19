@@ -119,7 +119,8 @@ func TestChargeSupersededByLimit(t *testing.T) {
 	t0 := time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC)
 	c := WindowCharge{SecretKey: "claude_code_oauth_token", Amount: 100, Currency: "EUR", From: t0, To: t0.Add(10 * time.Hour)}
 	half := t0.Add(5 * time.Hour)
-	meter := []WindowCharge{{Kind: ChargeKindMeter, SecretKey: "claude_code_oauth_token", From: half, To: t0.Add(20 * time.Hour)}}
+	meter := []WindowCharge{{Kind: ChargeKindMeter, SecretKey: "claude_code_oauth_token", From: half, To: t0.Add(20 * time.Hour),
+		Spans: []span{{half, t0.Add(20 * time.Hour)}}}}
 	got := chargeInWindow(c, t0, t0.Add(24*time.Hour), usageAll(t0), meterSpans(meter, "claude_code_oauth_token", 0))
 	if math.Abs(got.CountedAmount-50) > 1e-9 || math.Abs(got.SupersededAmount-50) > 1e-9 {
 		t.Errorf("counted %v, superseded %v; want 50 and 50", got.CountedAmount, got.SupersededAmount)
@@ -264,5 +265,84 @@ func TestMeterLimitChargesMergesSources(t *testing.T) {
 	rs = []meterRow{row(SourceManual, 1, 48, nil), row(SourceInband, 2, 50, nil), row(SourceManual, 3, 5, nil)}
 	if got := counted(meterLimitCharges(rs, since, limits, usageAll(since))); math.Abs(got-28) > 1e-9 {
 		t.Errorf("drop without reset times: %v EUR, want 28 (2 + 5 points)", got)
+	}
+}
+
+// A meter charge supersedes only the spans its steps priced, not the whole
+// [From, To) of its limit row (outside review of 1b9d60d0, major 1): from Oct
+// 28 to the reset on Nov 1 the meter read nothing, so a charge over that time
+// stays the money.
+func TestMeterSpansSkipUnpricedHoles(t *testing.T) {
+	nov, dec := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
+	oct20, oct28, nov5 := time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC), time.Date(2026, 10, 28, 0, 0, 0, 0, time.UTC), time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC)
+	row := func(at time.Time, pct float64, resets time.Time) meterRow {
+		return meterRow{key: "claude_code_oauth_token", source: SourceInband, window: "overage", at: at, pct: pct, resets: &resets}
+	}
+	rs := []meterRow{row(oct20, 50, nov), row(oct28, 90, nov), row(nov5, 10, dec)}
+	since, now := time.Date(2026, 10, 15, 0, 0, 0, 0, time.UTC), time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC)
+	bases := usageAll(since.AddDate(0, -1, 0))
+	meter := meterLimitCharges(rs, since, []UsageLimit{limitOf(400, since.AddDate(0, -1, 0), nil)}, bases)
+	if len(meter) != 1 || !meter[0].From.Equal(oct20) || !meter[0].To.Equal(nov5) {
+		t.Fatalf("meter charges: %+v", meter)
+	}
+	covered := meterSpans(meter, "claude_code_oauth_token", 0)
+	hole := WindowCharge{SecretKey: "claude_code_oauth_token", Amount: 100, Currency: "EUR", From: oct28, To: nov}
+	if got := chargeInWindow(hole, since, now, bases, covered); got.CountedAmount != 100 || got.SupersededAmount != 0 {
+		t.Errorf("charge over the unpriced hole: counted %v, superseded %v; want 100 and 0", got.CountedAmount, got.SupersededAmount)
+	}
+	half := WindowCharge{SecretKey: "claude_code_oauth_token", Amount: 100, Currency: "EUR",
+		From: time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC), To: time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC)}
+	if got := chargeInWindow(half, since, now, bases, covered); math.Abs(got.SupersededAmount-50) > 1e-9 || math.Abs(got.CountedAmount-50) > 1e-9 {
+		t.Errorf("charge half in the hole: counted %v, superseded %v; want 50 and 50", got.CountedAmount, got.SupersededAmount)
+	}
+}
+
+// The provider's own reset wins over a typed one (outside review of
+// 1b9d60d0, major 2a): a manual reading naming Dec 19 between in-band
+// readings naming Dec 1 is dropped, and never makes the true ones stale.
+func TestManualResetContradictedByProvider(t *testing.T) {
+	dec1, dec19 := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 12, 19, 0, 0, 0, 0, time.UTC)
+	day := func(d int) time.Time { return time.Date(2026, 11, d, 0, 0, 0, 0, time.UTC) }
+	row := func(source string, at time.Time, pct float64, resets time.Time) meterRow {
+		return meterRow{key: "claude_code_oauth_token", source: source, window: "overage", at: at, pct: pct, resets: &resets}
+	}
+	rs := []meterRow{
+		row(SourceInband, day(10), 10, dec1), row(SourceInband, day(12), 30, dec1), row(SourceInband, day(13), 60, dec1),
+		row(SourceManual, day(11), 20, dec19),
+	}
+	since := day(9)
+	limits := []UsageLimit{limitOf(400, day(1), nil)}
+	if got := counted(meterLimitCharges(rs, since, limits, usageAll(day(1)))); math.Abs(got-200) > 1e-9 {
+		t.Errorf("typed reset Dec 19 among Dec 1: %v EUR, want 200 (10 to 60 at 4 EUR)", got)
+	}
+	// Once the provider's reset has passed, a manual reading may name the
+	// next one.
+	rs = []meterRow{row(SourceInband, day(10), 10, day(20)), row(SourceManual, day(21), 5, dec1)}
+	if got := counted(meterLimitCharges(rs, since, limits, usageAll(day(1)))); math.Abs(got-20) > 1e-9 {
+		t.Errorf("manual reading of the next month: %v EUR, want 20 (5 points of a new month)", got)
+	}
+}
+
+// A step counts pro rata by the part of its span a usage basis held, the rule
+// a hand-entered charge follows (outside review of 1b9d60d0, minor 3): a step
+// half under seat, half under usage counts half, and a charge over the same
+// time is superseded over the usage half only.
+func TestMeterStepCountedByBasisOverlap(t *testing.T) {
+	t0 := time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC)
+	mid := t0.Add(5 * time.Hour)
+	bases := []CredentialBasis{
+		{SecretKey: "claude_code_oauth_token", Basis: BasisSeat, ValidFrom: t0.AddDate(0, -1, 0), ValidTo: &mid},
+		{SecretKey: "claude_code_oauth_token", Basis: BasisUsage, ValidFrom: mid},
+	}
+	rs := limitRows(t0, []float64{0, 10}, nil, 10*time.Hour)
+	meter := meterLimitCharges(rs, t0.Add(-time.Hour), []UsageLimit{limitOf(400, t0.AddDate(0, -1, 0), nil)}, bases)
+	if len(meter) != 1 || math.Abs(meter[0].Amount-40) > 1e-9 || math.Abs(meter[0].CountedAmount-20) > 1e-9 ||
+		math.Abs(*meter[0].CountedPoints-5) > 1e-9 {
+		t.Fatalf("meter: %+v, want 40 EUR, 20 counted (5 points)", meter)
+	}
+	c := WindowCharge{SecretKey: "claude_code_oauth_token", Amount: 100, Currency: "EUR", From: t0, To: t0.Add(10 * time.Hour)}
+	got := chargeInWindow(c, t0.Add(-time.Hour), t0.Add(24*time.Hour), bases, meterSpans(meter, "claude_code_oauth_token", 0))
+	if math.Abs(got.SupersededAmount-50) > 1e-9 || got.CountedAmount != 0 {
+		t.Errorf("charge: counted %v, superseded %v; want 0 and 50 (the usage half)", got.CountedAmount, got.SupersededAmount)
 	}
 }

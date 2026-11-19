@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // Pay-per-token seats (migration 0152): an Enterprise seat billed per token
@@ -109,6 +110,9 @@ func sourceRank(s string) int {
 // monthlySeries merges the readings of one credential × window from every
 // source into one series in time order and finds its months:
 //
+//   - the provider's own reset time wins: a manual reading whose reset
+//     disagrees by more than an hour with the non-manual readings around it
+//     is dropped (manualResetAgrees);
 //   - a reading whose reset time lies more than an hour before the latest one
 //     seen so far belongs to a month already over and is dropped;
 //   - a month begins where the reset time advances by more than an hour; a
@@ -126,12 +130,37 @@ func monthlySeries(rs []meterRow) []monthReading {
 		}
 		return sourceRank(sorted[i].source) < sourceRank(sorted[j].source)
 	})
+	// The reset a non-manual source (in band, usage_cmd) names before each
+	// reading (the latest so far, so a late reading of an old month is no
+	// reference) and the next one after it: what the provider itself said.
+	prevAuto := make([]*time.Time, len(sorted))
+	nextAuto := make([]*time.Time, len(sorted))
+	var last *time.Time
+	for i, r := range sorted {
+		prevAuto[i] = last
+		if r.source != SourceManual && r.resets != nil && (last == nil || r.resets.After(*last)) {
+			last = r.resets
+		}
+	}
+	last = nil
+	for i := len(sorted) - 1; i >= 0; i-- {
+		nextAuto[i] = last
+		if sorted[i].source != SourceManual && sorted[i].resets != nil {
+			last = sorted[i].resets
+		}
+	}
 	var out []monthReading
 	var seen, mark *time.Time // latest reset seen at all; latest of this month
 	var top, prevPct float64
 	var prevAt time.Time
 	month := 0
-	for _, r := range sorted {
+	for i, r := range sorted {
+		if r.source == SourceManual && !manualResetAgrees(r, prevAuto[i], nextAuto[i]) {
+			// A person typed a reset the provider's own readings around it
+			// contradict: dropped, and never the "latest seen", which would
+			// make every later true reading look stale.
+			continue
+		}
 		if r.resets != nil && seen != nil && r.resets.Before(seen.Add(-time.Hour)) {
 			continue
 		}
@@ -171,6 +200,28 @@ func monthlySeries(rs []meterRow) []monthReading {
 		out = append(out, m)
 	}
 	return out
+}
+
+// manualResetAgrees says whether a manual reading's reset time fits the
+// resets the non-manual readings before (prev) and after (next) it name: it
+// matches one of them to the hour, or there is none to contradict it, or the
+// one before has passed by the time it was read and none after says
+// otherwise (the reading may name the next month's reset).
+func manualResetAgrees(r meterRow, prev, next *time.Time) bool {
+	if r.resets == nil || (prev == nil && next == nil) {
+		return true
+	}
+	near := func(t *time.Time) bool {
+		if t == nil {
+			return false
+		}
+		d := r.resets.Sub(*t)
+		return d <= time.Hour && d >= -time.Hour
+	}
+	if near(prev) || near(next) {
+		return true
+	}
+	return next == nil && prev != nil && !prev.After(r.at) && r.resets.After(*prev)
 }
 
 // meterLimitCharges prices the readings (meterRows) of every window that has
@@ -275,19 +326,24 @@ func meterLimitCharges(rows []meterRow, since time.Time, limits []UsageLimit, ba
 				order = append(order, l.ValidFrom)
 			}
 			a.c.To = r.at
+			a.c.Spans = append(a.c.Spans, span{from, r.at})
 			amount, points := step*share, r.points*share
 			*a.c.Points += points
 			a.c.Amount += amount
 			a.c.WindowAmount += amount
-			if b := basisAt(bases, k.key, k.slot, r.at); b == BasisUsage || b == BasisSeatAndUsage {
-				*a.c.CountedPoints += points
-				a.c.CountedAmount += amount
+			// Counted pro rata by the part of the step's span a usage basis
+			// held — the rule a hand-entered charge follows, so the counted
+			// meter money and the superseded charge cover the same time.
+			if u := usageShare(bases, k.key, k.slot, from, r.at); u > 0 {
+				*a.c.CountedPoints += points * u
+				a.c.CountedAmount += amount * u
 				a.segments[r.month] = true
 			}
 		}
 		for _, from := range order {
 			a := byLimit[from]
 			c := a.c
+			c.Spans = mergeSpans(c.Spans)
 			// The meter shows whole percents: each month segment of the
 			// counted movement is known to ±1 point of the limit.
 			slack := float64(len(a.segments)) * c.LimitAmount / 100
@@ -305,6 +361,25 @@ func meterLimitCharges(rows []meterRow, since time.Time, limits []UsageLimit, ba
 	}
 	sortCharges(out)
 	return out
+}
+
+// usageShare is the part of [from, to) a usage basis (usage, seat_and_usage)
+// held, 0..1; for an empty span, whether one held at its end.
+func usageShare(bases []CredentialBasis, key string, slot int, from, to time.Time) float64 {
+	if !to.After(from) {
+		if b := basisAt(bases, key, slot, to); b == BasisUsage || b == BasisSeatAndUsage {
+			return 1
+		}
+		return 0
+	}
+	var held time.Duration
+	for _, sp := range basisSpans(bases, key, slot, BasisUsage, BasisSeatAndUsage) {
+		held += overlap(from, to, sp.from, sp.to)
+	}
+	if held >= to.Sub(from) {
+		return 1
+	}
+	return float64(held) / float64(to.Sub(from))
 }
 
 // hasLimit says whether a credential's window has any limit at all.
@@ -341,6 +416,25 @@ var ErrNoCredential = errors.New("no credential of this organisation at that run
 // ErrReadingExists: a reading of that credential and window at that moment is
 // filed already (from the same source); the new one was not stored.
 var ErrReadingExists = errors.New("a manual reading of this credential and window at that fetched_at exists already")
+
+// KnownReset is the reset time the provider itself (a non-manual source)
+// named last for the credential at a place and its window: the latest
+// supported, fresh reading with a reset fetched at or before `at` and no
+// more than 35 days before it. Nil where there is none.
+func (s *Store) KnownReset(ctx context.Context, orgID, runtimeID uuid.UUID, ord int, window string, at time.Time) (*time.Time, error) {
+	var out *time.Time
+	err := s.pool.QueryRow(ctx, `SELECT ur.resets_at FROM usage_readings ur
+		JOIN runtime_credentials rc ON rc.secret_key = ur.secret_key AND rc.secret_slot = ur.secret_slot
+		JOIN runtimes r ON r.id = rc.runtime_id AND r.org_id = ur.org_id
+		WHERE ur.org_id = $1 AND rc.runtime_id = $2 AND rc.ord = $3 AND ur.window_kind = $4
+		  AND ur.source <> 'manual' AND ur.resets_at IS NOT NULL AND ur.supported AND NOT ur.stale
+		  AND ur.fetched_at <= $5 AND ur.fetched_at >= $5::timestamptz - interval '35 days'
+		ORDER BY ur.fetched_at DESC, ur.id DESC LIMIT 1`, orgID, runtimeID, ord, window, at).Scan(&out)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return out, err
+}
 
 // AddManualReading files a meter reading a person read off the provider —
 // Claude Code's /usage screen, or the rate_limit_event a one-line

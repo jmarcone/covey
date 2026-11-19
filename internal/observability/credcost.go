@@ -102,6 +102,11 @@ type WindowCharge struct {
 	CountedPoints *float64 `json:"counted_points,omitempty"`
 	CountedLow    *float64 `json:"counted_low,omitempty"`
 	CountedHigh   *float64 `json:"counted_high,omitempty"`
+	// Spans are the spans a meter charge's steps priced, merged where they
+	// touch. [From, To) may hold holes the meter did not price (the end of a
+	// month after its last reading), and a hand-entered charge is superseded
+	// only over these. Internal: not in the cells.
+	Spans []span `json:"-"`
 }
 
 // costBasesFor returns the organisation's bases valid at any point since
@@ -218,13 +223,25 @@ func overlap(a, b, c, d time.Time) time.Duration {
 	return b.Sub(a)
 }
 
-// meterSpans are the spans the money of a credential's meter charges covers,
-// [From, To) of each, in order and merged where they touch.
+// meterSpans are the spans the money of a credential's meter charges covers
+// (the spans their steps priced), in order and merged where they touch.
 func meterSpans(meter []WindowCharge, key string, slot int) []span {
 	var out []span
 	for _, m := range meter {
-		if m.Kind == ChargeKindMeter && m.SecretKey == key && m.SecretSlot == slot && m.To.After(m.From) {
-			out = append(out, span{m.From, m.To})
+		if m.Kind == ChargeKindMeter && m.SecretKey == key && m.SecretSlot == slot {
+			out = append(out, m.Spans...)
+		}
+	}
+	return mergeSpans(out)
+}
+
+// mergeSpans orders spans and merges those that touch or overlap; empty ones
+// are dropped.
+func mergeSpans(in []span) []span {
+	var out []span
+	for _, sp := range in {
+		if sp.to.After(sp.from) {
+			out = append(out, sp)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].from.Before(out[j].from) })
