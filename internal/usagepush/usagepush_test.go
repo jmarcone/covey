@@ -251,7 +251,7 @@ func TestReadPlacesFilesWhateverTheRoot(t *testing.T) {
 	}
 	want := map[string][2]string{
 		"m-main": {sess1, OriginMain}, "m-sub": {sess1, OriginSubagent},
-		"m-wf": {sess1, OriginWorkflow}, "m-other": {"s2", OriginMain},
+		"m-wf": {sess1, OriginWorkflow}, "m-other": {UnknownSession, OriginMain}, // s2 is no uuid
 		// a folder above subagents/ that is no session folder names no session
 		"m-odd": {UnknownSession, OriginSubagent},
 	}
@@ -266,9 +266,6 @@ func TestReadPlacesFilesWhateverTheRoot(t *testing.T) {
 		}
 		for _, row := range rows {
 			w := want[row.MessageID]
-			if r == sessRoot && w[1] != OriginMain {
-				w[0] = UnknownSession // the root's own name is never a session
-			}
 			if row.SessionID != w[0] || row.Origin != w[1] {
 				t.Errorf("root %s, %s: session %q origin %q, want %q %q", r, row.MessageID, row.SessionID, row.Origin, w[0], w[1])
 			}
@@ -290,13 +287,13 @@ func TestPlaceUsesThePositionBelowTheRoot(t *testing.T) {
 	writeFile(t, filepath.Join(root, "-p", sess1+".jsonl"), callLine("m-main", "2026-11-18T10:00:00Z", ""))
 	writeFile(t, filepath.Join(root, "-p", sess1, "subagents", "agent-a.jsonl"), callLine("m-sub", "2026-11-18T10:00:00Z", ""))
 	writeFile(t, filepath.Join(root, "-p", sess1, "subagents", "workflows", "wf", "agent-b.jsonl"), callLine("m-wf", "2026-11-18T10:00:00Z", ""))
-	// too deep to be either: a main session by the file name
+	// too deep to be either: a main call, its file name no session
 	writeFile(t, filepath.Join(root, "-p", sess1, "subagents", "x", "y", "agent-c.jsonl"), callLine("m-deep", "2026-11-18T10:00:00Z", ""))
 	rows, _, err := Read([]string{root}, "h", time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string][2]string{"m-main": {sess1, OriginMain}, "m-sub": {sess1, OriginSubagent}, "m-wf": {sess1, OriginWorkflow}, "m-deep": {"agent-c", OriginMain}}
+	want := map[string][2]string{"m-main": {sess1, OriginMain}, "m-sub": {sess1, OriginSubagent}, "m-wf": {sess1, OriginWorkflow}, "m-deep": {UnknownSession, OriginMain}}
 	for _, r := range rows {
 		if w := want[r.MessageID]; r.SessionID != w[0] || r.Origin != w[1] {
 			t.Errorf("%s: %q %q, want %q %q", r.MessageID, r.SessionID, r.Origin, w[0], w[1])
@@ -305,10 +302,10 @@ func TestPlaceUsesThePositionBelowTheRoot(t *testing.T) {
 	if len(rows) != len(want) {
 		t.Fatalf("%d rows", len(rows))
 	}
-	// the session folder as root: its name is the root's, never a session
+	// the session folder as root: its name, a uuid, is the session
 	rows, _, _ = Read([]string{filepath.Join(root, "-p", sess1)}, "h", time.Time{})
 	for _, r := range rows {
-		if r.MessageID == "m-sub" && r.SessionID != UnknownSession {
+		if r.MessageID == "m-sub" && r.SessionID != sess1 {
 			t.Errorf("session folder as root: %+v", r)
 		}
 	}
@@ -496,10 +493,17 @@ func TestReadCrashGluedLastLineIsSuspect(t *testing.T) {
 }
 
 func TestReadSingleFileRoot(t *testing.T) {
-	f := filepath.Join(t.TempDir(), "sess9.jsonl")
+	f := filepath.Join(t.TempDir(), sess1+".jsonl")
 	writeFile(t, f, callLine("m", "2026-11-18T10:00:00Z", ""))
 	rows, _, err := Read([]string{f}, "h", time.Time{})
-	if err != nil || len(rows) != 1 || rows[0].SessionID != "sess9" || rows[0].Origin != OriginMain {
+	if err != nil || len(rows) != 1 || rows[0].SessionID != sess1 || rows[0].Origin != OriginMain {
+		t.Fatalf("%+v %v", rows, err)
+	}
+	// a file name that is no uuid names no session
+	g := filepath.Join(t.TempDir(), "notes-of-marco.jsonl")
+	writeFile(t, g, callLine("n", "2026-11-18T10:00:00Z", ""))
+	rows, _, err = Read([]string{g}, "h", time.Time{})
+	if err != nil || len(rows) != 1 || rows[0].SessionID != UnknownSession {
 		t.Fatalf("%+v %v", rows, err)
 	}
 }

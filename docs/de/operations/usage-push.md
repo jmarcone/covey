@@ -36,7 +36,8 @@ covey usage push ~/.claude/projects/<projekt> --source "operator: laptop" \
   Rechner behaupten, obwohl sie verschiedene Transkript-Ablagen lesen. Für
   **jede Transkript-Ablage ein eigenes `--host`** verwenden: `home-win` und
   `home-wsl`, ein anderer OS-Benutzer oder ein mit `CLAUDE_CONFIG_DIR`
-  gesetztes Verzeichnis.
+  gesetztes Verzeichnis. Mit `--source-per-project` ist es Pflicht (siehe
+  unten).
 - `--complete` besagt, dass die genannten Verzeichnisse **alle**
   Claude-Code-Transkripte dieses Rechners für diese Quelle enthalten (in der
   Regel das ganze `~/.claude/projects`). Nur dann sendet der Push
@@ -62,8 +63,10 @@ covey usage push ~/.claude/projects/<projekt> --source "operator: laptop" \
   (Zeitpunkt des Laufs minus fünfzehn Minuten) deshalb nur mit `--complete`
   und nie, wenn Aufrufe fehlen könnten: mit `--since`, mit einem
   Verzeichnis-Symlink unterhalb eines genannten Verzeichnisses (Symlinks werden
-  nicht verfolgt, ebenso wenig Junctions unter Windows; jeder wird auf stderr gemeldet), mit einer Zeile, die nicht
-  gelesen werden konnte (siehe unten), oder mit zurückgehaltenen Aufrufen.
+  nicht verfolgt, ebenso wenig Junctions unter Windows; jeder wird auf stderr gemeldet), mit einem Eintrag, der weder Datei
+  noch Verzeichnis ist (ein ins Leere zeigender Link: Wohin er zeigte,
+  könnten Aufrufe liegen), mit einer Zeile, die nicht gelesen werden konnte
+  (siehe unten), oder mit zurückgehaltenen Aufrufen.
   Der Push sagt jedes Mal, warum er keine Behauptung gesendet hat, und nennt
   Datei und Zeile jeder unlesbaren Zeile und jedes zurückgehaltenen Aufrufs
   (höchstens zwanzig, nie deren Inhalt). Ohne
@@ -88,9 +91,12 @@ covey usage push ~/.claude/projects/<projekt> --source "operator: laptop" \
 - Ein Verzeichnis kann ein Projekt (`~/.claude/projects/<projekt>`), ganz
   `~/.claude/projects` oder der Ordner einer Sitzung sein: Sitzung und
   Herkunft ergeben sich aus dem Ort jeder Datei, nicht aus dem genannten
-  Verzeichnis. Ein Subagent-Aufruf, über dessen `subagents/` kein
-  Sitzungsordner (eine UUID) unterhalb des genannten Verzeichnisses liegt,
-  bekommt die Sitzung `unknown`.
+  Verzeichnis. Eine Sitzung wird nur mit einer UUID benannt, wie Claude Code
+  Sitzungsordner und Haupttranskripte benennt: der Ordner über `subagents/`
+  (das genannte Verzeichnis, wenn es ein Sitzungsordner ist) oder der
+  Dateiname eines Haupttranskripts. Alles andere (der Name eines
+  Projektordners, eine Agent-Datei tiefer als
+  `subagents/workflows/<Lauf>/`) bekommt die Sitzung `unknown`.
 - Mehrere Verzeichnisse sind möglich. Gelesen werden Hauptsitzungen,
   `subagents/` und `workflows/`; gestreamte Kopien eines Aufrufs zählen einmal.
 
@@ -129,16 +135,21 @@ covey usage push ~/.claude/projects --source-per-project --complete --host home-
   geöffneter WSL-Ordner (`--wsl-localhost-<Distribution>-home-<Name>-…`)
   wird in seiner `-home-…`-Form gelesen. Ein Ordner muss in genau einem
   möglichen Home liegen: Auch die Home-Verzeichnisse der anderen Benutzer
-  neben einem bekannten (die übrigen Einträge von `C:\Users`, `/home`) zählen
-  dazu; ein Ordner von `marco-rossi` neben einem bekannten `marco` passt
-  also zu zweien und wird abgelehnt. Außerhalb der bekannten Home-Verzeichnisse
+  neben einem bekannten (die übrigen Einträge von `C:\Users`,
+  `/mnt/<Laufwerk>/Users`, `/home` und `/Users`) zählen dazu; ein Ordner von
+  `marco-rossi` neben einem bekannten `marco` passt also zu zweien und wird
+  abgelehnt. Ein Verzeichnis, das die Home-Verzeichnisse der Benutzer
+  enthält oder darüber liegt (ein Laufwerk, `C:\Users`, `/home`, `/mnt/c`),
+  ist nie ein bekanntes Home. Außerhalb der bekannten Home-Verzeichnisse
   wird nichts geraten: Nur ein Home selbst (`C--Users-me` ist `~`) und
   Ordner unter `/root` bekommen ein Label; jeder andere Ordner hält den Push
   an und verlangt `--home-prefix` oder `--label`.
 - `--home-prefix HOME` nennt das Home-Verzeichnis stattdessen, als Pfad
   (`C:\Users\jean.marc`, `/home/me`) oder kodiert (`C--Users-jean-marc`). Es
   darf mehrfach angegeben werden; das längste, das zu einem Ordner passt,
-  gilt, und nur die angegebenen werden entfernt. Nötig, wenn die Transkripte
+  gilt, und nur die angegebenen werden entfernt. Ein Ordner, der auch zu
+  einem längeren Home eines anderen Benutzers daneben passt, wird
+  abgelehnt. Nötig, wenn die Transkripte
   nicht im `.claude/projects` des Benutzers liegen, der den Push ausführt
   (eine Kopie, `CLAUDE_CONFIG_DIR`, die Ablage eines anderen Benutzers).
 - `--label ORDNER=LABEL` (mehrfach) benennt einen Ordner, zum Beispiel das
@@ -165,20 +176,22 @@ covey usage push ~/.claude/projects --source-per-project --complete --host home-
   Projektordner verschieben oder entfernen. Ein genanntes Verzeichnis, das
   selbst Transkripte oder Sitzungsordner und keine Projektordner enthält,
   ist ein Projekt; der Ordner einer einzelnen Sitzung wird abgelehnt.
-- **Datenschutz:** Nur das Label und die Token-Zahlen verlassen den Rechner.
-  Kein Pfad, kein Ordnername, kein Benutzername, kein Inhalt: Ein Label wird
-  nur abgeleitet, wenn das Home im Ordnernamen sicher bekannt ist, sonst
-  hält der Push an; ein angegebenes `--label` oder `--home-prefix` wird so
-  gesendet, wie es angegeben ist. Die Sitzungs-ID ist die UUID des
-  Sitzungsordners oder der Dateiname des Transkripts; ein Aufruf, über
-  dessen `subagents/` kein Sitzungsordner liegt (ein `subagents/` direkt im
-  Projektordner oder das genannte Verzeichnis selbst), bekommt die Sitzung
-  `unknown`, nie den Namen eines Ordners.
+- **Datenschutz:** Ein Request enthält die Quelle (das Label, mit dem
+  `--source`-Präfix) und je Aufruf den `--host`, die Sitzungs-ID (eine UUID
+  oder `unknown`, siehe oben), die Nachrichten-ID, das Modell, den
+  Zeitpunkt, die Herkunft und die fünf Token-Zahlen. Kein Pfad, kein
+  Ordnername, kein Benutzername, kein Inhalt: Ein Label wird nur
+  abgeleitet, wenn das Home im Ordnernamen sicher bekannt ist, sonst hält
+  der Push an. Ein `--label` wird so gesendet, wie es angegeben ist; ein
+  `--home-prefix` wird entfernt, nicht gesendet, und was im Ordnernamen
+  darauf folgt, geht als Label hinaus. `--host` ist hier Pflicht, weil der
+  Standard, der Name des Rechners, oft einen Benutzernamen enthält.
 - Jede Quelle wird in eigenen Requests mit eigenem `reported_through`
   gesendet, unter demselben `--host` und `--meter-secret`. Mit `--complete`
   behauptet jede Quelle: Sie ist ein ganzer Projektordner, ganz gelesen, also
-  schon dadurch vollständig. Ein Verzeichnis-Symlink, eine unlesbare Zeile,
-  ein Verzeichnis oder eine Datei, die sich nicht lesen lässt, oder ein
+  schon dadurch vollständig. Ein Verzeichnis-Symlink, ein ins Leere
+  zeigender Link, eine unlesbare Zeile, ein Verzeichnis oder eine Datei, die
+  sich nicht lesen lässt, oder ein
   zurückgehaltener Aufruf verhindert nur die Behauptung des Ordners, in dem
   er liegt; `--since` und ein fehlendes `--complete` verhindern jede
   Behauptung. Ein Ordner mit Transkripten, aber ohne Aufruf darin sendet
@@ -234,7 +247,7 @@ cron:
 Mit einer Quelle je Projekt:
 
 ```cron
-*/10 * * * * COVEY_URL=http://localhost:8494 covey usage push $HOME/.claude/projects --source-per-project --complete --label=-home-me-src-covey="covey operator" --meter-secret claude_code_oauth_token:0 --key-file $HOME/.config/covey/usage.key >>$HOME/.cache/covey-usage.log 2>&1
+*/10 * * * * COVEY_URL=http://localhost:8494 covey usage push $HOME/.claude/projects --source-per-project --complete --host laptop --label=-home-me-src-covey="covey operator" --meter-secret claude_code_oauth_token:0 --key-file $HOME/.config/covey/usage.key >>$HOME/.cache/covey-usage.log 2>&1
 ```
 
 systemd (Benutzer-Units):

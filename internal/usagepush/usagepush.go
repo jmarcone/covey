@@ -132,8 +132,8 @@ var clock = time.Now
 // walkDir is filepath.WalkDir, replaced in tests.
 var walkDir = filepath.WalkDir
 
-// UnknownSession is the session of a subagent transcript whose folder above
-// subagents/ is no session folder below the root (see place).
+// UnknownSession is the session of a transcript whose place names no session
+// by a uuid (see place).
 const UnknownSession = "unknown"
 
 // sessionName is the name of a session folder: a uuid.
@@ -378,14 +378,16 @@ func read(roots []string, host string, since time.Time, project bool) ([]Row, St
 // <session>/subagents/workflows/<wf>/<file> a workflow agent, and any other
 // file a main session named after the file. The root may be all projects, one
 // project, or one session's folder (then <session> is the root's own name).
-// Nothing above the root is looked at. The session of a subagent or workflow
-// call is the folder above subagents/ only when that is a session folder
-// below the root (named by a uuid); otherwise, the root's own name included,
-// it is UnknownSession: a project folder's name holds its home directory.
+// Nothing above the root is looked at. A session is named only by a uuid,
+// as Claude Code names session folders and main transcripts: the folder
+// above subagents/ (the root itself when subagents/ lies directly in it, a
+// session folder pushed alone), or a main transcript's file name. Any other
+// name (a project folder's, which holds its home directory, or an agent's
+// file nested deeper than this layout) gives UnknownSession.
 func place(root, abs string) (session, origin string) {
 	rel, err := filepath.Rel(root, abs)
 	if err == nil && rel == "." { // the root is the file itself
-		return strings.TrimSuffix(filepath.Base(abs), ".jsonl"), OriginMain
+		return sessionOf(strings.TrimSuffix(filepath.Base(abs), ".jsonl")), OriginMain
 	}
 	if err != nil {
 		rel = filepath.Base(abs)
@@ -393,10 +395,10 @@ func place(root, abs string) (session, origin string) {
 	parts := strings.Split(filepath.ToSlash(rel), "/")
 	n := len(parts)
 	sessionAt := func(k int) string { // the directory just above parts[k]
-		if k > 0 && sessionName.MatchString(parts[k-1]) {
-			return parts[k-1]
+		if k > 0 {
+			return sessionOf(parts[k-1])
 		}
-		return UnknownSession
+		return sessionOf(filepath.Base(root))
 	}
 	for k := 0; k < n-1; k++ {
 		if parts[k] != "subagents" {
@@ -409,7 +411,15 @@ func place(root, abs string) (session, origin string) {
 			return sessionAt(k), OriginWorkflow
 		}
 	}
-	return strings.TrimSuffix(parts[n-1], ".jsonl"), OriginMain
+	return sessionOf(strings.TrimSuffix(parts[n-1], ".jsonl")), OriginMain
+}
+
+// sessionOf is name when it is a session's (a uuid), else UnknownSession.
+func sessionOf(name string) string {
+	if sessionName.MatchString(name) {
+		return name
+	}
+	return UnknownSession
 }
 
 // visit sorts one walked entry: a *.jsonl file is collected; a symlink or

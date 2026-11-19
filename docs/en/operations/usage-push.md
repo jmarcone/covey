@@ -34,7 +34,8 @@ covey usage push ~/.claude/projects/<project> --source "operator: laptop" \
   from WSL and one from Windows would claim as one host although they read
   different transcript stores. Use **one distinct `--host` per transcript
   store**: `home-win` and `home-wsl`, another OS user, or a directory set with
-  `CLAUDE_CONFIG_DIR`.
+  `CLAUDE_CONFIG_DIR`. With `--source-per-project` it is required (see
+  below).
 - `--complete` says that the directories named hold **every** Claude Code
   transcript of this host for this source (normally the whole
   `~/.claude/projects`). Only then does the push send `reported_through`.
@@ -58,7 +59,8 @@ covey usage push ~/.claude/projects/<project> --source "operator: laptop" \
   only with `--complete`, and never when calls may be missing: with
   `--since`, with a symlinked directory below a named one (they are not
   followed, and neither are junctions on Windows; each is warned about on
-  stderr), with a line that could not be
+  stderr), with an entry that is neither a file nor a directory (a dangling
+  link: what it pointed to may hold calls), with a line that could not be
   read (see below), or with calls held back. Each time the push says why no
   claim was sent, and lists the file and line of every unreadable line and
   held-back call (twenty at most; never their contents). Without `--complete` it sends the calls only and says that
@@ -79,9 +81,12 @@ covey usage push ~/.claude/projects/<project> --source "operator: laptop" \
   unencrypted.
 - A directory may be one project (`~/.claude/projects/<project>`), all of
   `~/.claude/projects`, or one session's folder: the session and its origin
-  come from each file's own place, not from the directory named. A subagent
-  call whose folder above `subagents/` is no session folder below the
-  directory named (a uuid) gets the session `unknown`.
+  come from each file's own place, not from the directory named. A session
+  is named only by a uuid, as Claude Code names session folders and main
+  transcripts: the folder above `subagents/` (the directory named, when it
+  is a session folder), or a main transcript's file name. Anything else (a
+  project folder's name, an agent file nested deeper than
+  `subagents/workflows/<run>/`) gets the session `unknown`.
 - Several directories may be named at once. Main sessions, `subagents/` and
   `workflows/` transcripts are read; streamed copies of one call count once.
 
@@ -115,17 +120,20 @@ covey usage push ~/.claude/projects --source-per-project --complete --host home-
   `C--Users-jean-marc`) and the home directory of the user running the
   push; a WSL folder opened from Windows
   (`--wsl-localhost-<distro>-home-<name>-…`) is read as its `-home-…` form.
-  A folder must lie in exactly one candidate home: the other users' homes
-  beside a known one (the other entries of `C:\Users`, `/home`) are
-  candidates too, so a folder of `marco-rossi` next to a known `marco`
-  fits two and is refused. Outside the known homes nothing is guessed: only
+  A directory that holds the users' homes or lies above them (a drive,
+  `C:\Users`, `/home`, `/mnt/c`) is never a known home. A folder must lie in
+  exactly one candidate home: the other users' homes beside a known one
+  (the other entries of `C:\Users`, `/mnt/<drive>/Users`, `/home` and
+  `/Users`) are candidates too, so a folder of `marco-rossi` next to a
+  known `marco` fits two and is refused. Outside the known homes nothing is guessed: only
   a bare home (`C--Users-me` is `~`) and folders below `/root` get a label;
   any other folder stops the push and asks for `--home-prefix` or
   `--label`.
 - `--home-prefix HOME` names the home directory instead, as a path
   (`C:\Users\jean.marc`, `/home/me`) or encoded (`C--Users-jean-marc`). It
   may be given several times; the longest that fits a folder wins, and only
-  the homes given are stripped. Give it when the transcripts are not in the
+  the homes given are stripped. A folder that also fits another user's home
+  listed beside it, longer than the one given, is refused. Give it when the transcripts are not in the
   `.claude/projects` of the user running the push (a copy,
   `CLAUDE_CONFIG_DIR`, another user's store).
 - `--label FOLDER=LABEL` (several times) labels one folder, for example the
@@ -148,19 +156,21 @@ covey usage push ~/.claude/projects --source-per-project --complete --host home-
   project folder or away. A named directory that holds transcripts or
   session folders itself, and no project folders, is one project; a
   session's own folder is refused.
-- **Privacy:** only the label and the token counts leave the machine. No
-  path, no folder name, no user name, no content: a label is derived only
-  when the home in the folder name is known for sure, and otherwise the
-  push stops; a `--label` or `--home-prefix` you give is sent as you give
-  it. The session id is the session folder's uuid or the transcript's file
-  name; a call whose folder above `subagents/` is no session folder (a
-  `subagents/` directly in a project folder, or the named directory itself)
-  gets the session `unknown`, never a folder's name.
+- **Privacy:** a request carries the source (the label, with the
+  `--source` prefix) and, per call, the `--host`, the session id (a uuid or
+  `unknown`, see above), the message id, the model, the timestamp, the
+  origin and the five token counts. No path, no folder name, no user name,
+  no content: a label is derived only when the home in the folder name is
+  known for sure, and otherwise the push stops. A `--label` is sent as you
+  give it; a `--home-prefix` is stripped, not sent, and what follows it in
+  the folder name goes out as the label. `--host` is required here, as the
+  default, this machine's name, often holds a user name.
 - Each source is sent in its own requests with its own `reported_through`,
   under the same `--host` and `--meter-secret`. With `--complete` each source
   claims: it is one whole project folder, read whole, so it is complete by
-  construction. A symlinked directory, an unreadable line, a directory or
-  file that cannot be read, or a held-back call withholds only the claim of
+  construction. A symlinked directory, a dangling link, an unreadable line,
+  a directory or file that cannot be read, or a held-back call withholds
+  only the claim of
   the folder it is in; `--since` and a missing `--complete` withhold every
   claim. A folder with transcripts but no call in them still sends its claim
   (a request without calls). Name the whole `~/.claude/projects`, so that
@@ -207,7 +217,7 @@ cron:
 With one source per project:
 
 ```cron
-*/10 * * * * COVEY_URL=http://localhost:8494 covey usage push $HOME/.claude/projects --source-per-project --complete --label=-home-me-src-covey="covey operator" --meter-secret claude_code_oauth_token:0 --key-file $HOME/.config/covey/usage.key >>$HOME/.cache/covey-usage.log 2>&1
+*/10 * * * * COVEY_URL=http://localhost:8494 covey usage push $HOME/.claude/projects --source-per-project --complete --host laptop --label=-home-me-src-covey="covey operator" --meter-secret claude_code_oauth_token:0 --key-file $HOME/.config/covey/usage.key >>$HOME/.cache/covey-usage.log 2>&1
 ```
 
 systemd (user units):

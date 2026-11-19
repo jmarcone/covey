@@ -182,14 +182,14 @@ func TestUsagePushPerProjectDryRun(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "D--work-z", sessA), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := runUsage([]string{"push", root, "--source-per-project", "--no-meter", "--dry-run"}, &bytes.Buffer{}, func(string) string { return "" }); err != nil {
+	if err := runUsage([]string{"push", root, "--source-per-project", "--no-meter", "--host", "h1", "--dry-run"}, &bytes.Buffer{}, func(string) string { return "" }); err != nil {
 		t.Fatalf("empty folder: %v", err)
 	}
 	// with a transcript it is a source, and its unknown home is refused, not sent
 	if err := os.WriteFile(filepath.Join(root, "D--work-z", sessA+".jsonl"), []byte("{}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err = runUsage([]string{"push", root, "--source-per-project", "--no-meter", "--dry-run"}, &bytes.Buffer{}, func(string) string { return "" })
+	err = runUsage([]string{"push", root, "--source-per-project", "--no-meter", "--host", "h1", "--dry-run"}, &bytes.Buffer{}, func(string) string { return "" })
 	if err == nil || !strings.Contains(err.Error(), "D--work-z") || !strings.Contains(err.Error(), "--home-prefix") {
 		t.Fatalf("%v", err)
 	}
@@ -260,5 +260,14 @@ func TestUsagePushPerProjectDanglingLinkWithholdsItsClaim(t *testing.T) {
 	}
 	if !strings.Contains(out, `no reported_through sent for "projects-f": 1 entries are neither a file nor a directory`) {
 		t.Errorf("output:\n%s", out)
+	}
+}
+
+// The default host, this machine's name, often holds a user name: a
+// per-project push names its host.
+func TestUsagePushPerProjectNeedsAHost(t *testing.T) {
+	err := runUsage([]string{"push", projectsTree(t), "--source-per-project", "--no-meter", "--dry-run"}, &bytes.Buffer{}, func(string) string { return "" })
+	if err == nil || !strings.Contains(err.Error(), "--host") {
+		t.Fatalf("%v", err)
 	}
 }

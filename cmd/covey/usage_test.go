@@ -142,6 +142,14 @@ func TestUsagePushSendsTheWatermarkOnlyWhenItCanClaim(t *testing.T) {
 		}
 		os.Remove(filepath.Join(dir, "linked"))
 	}
+	// a dangling link: what it pointed to may hold calls, no watermark
+	if err := os.Symlink(filepath.Join(t.TempDir(), "gone"), filepath.Join(dir, "dangling")); err == nil {
+		bodies, out, _, err := pushTo(t, dir, "--source", "x", "--host", "h1", "--complete")
+		if err != nil || len(bodies) != 1 || bodies[0]["reported_through"] != nil || !strings.Contains(out, "neither a file nor a directory") {
+			t.Errorf("dangling link: %v %v %q", err, bodies, out)
+		}
+		os.Remove(filepath.Join(dir, "dangling"))
+	}
 	// an unreadable line in a settled file
 	bad := filepath.Join(dir, "bad.jsonl")
 	os.WriteFile(bad, []byte("{\"type\":\"assistant\",\"message\":{\"usage\":{\n{}\n"), 0o644)

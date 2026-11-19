@@ -106,6 +106,11 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 			return errors.New("covey usage push: --source must be 1-64 characters of UTF-8 without NUL")
 		}
 		rules.Prefix = src
+		// The default host, this machine's name, often holds a user name
+		// (DESKTOP-MARCO, marcos-mbp): a per-project push names it.
+		if strings.TrimSpace(*host) == "" {
+			return errors.New("covey usage push: --source-per-project needs --host NAME: the default, this machine's name, often holds a user name")
+		}
 		// covey links a source to its meter per source, from a push that
 		// names it: a new project pushed without --meter-secret would stay
 		// unlinked, and its use would be booked to covey's agents.
@@ -250,7 +255,7 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 		for _, p := range s.st.Other {
 			fmt.Fprintf(usageStderr, "warning: %s is neither a regular file nor a directory; it is left out\n", p)
 		}
-		own := sourceProblems(s.st, *perProject)
+		own := sourceProblems(s.st)
 		for _, w := range own {
 			if *perProject {
 				fmt.Fprintf(info, "no reported_through sent for %q: %s\n", s.name, w)
@@ -401,13 +406,12 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 	return nil
 }
 
-// sourceProblems says why a read may lack calls of its source. Per project,
-// an entry that is neither file nor directory (a dangling link where a
-// session folder was) withholds the claim too: the folder is a source only
-// because of it.
-func sourceProblems(st usagepush.Stats, perProject bool) []string {
+// sourceProblems says why a read may lack calls of its source. An entry that
+// is neither file nor directory (a dangling link where a session folder was)
+// withholds the claim too: what it pointed to may hold calls.
+func sourceProblems(st usagepush.Stats) []string {
 	var why []string
-	if perProject && len(st.Other) > 0 {
+	if len(st.Other) > 0 {
 		why = append(why, fmt.Sprintf("%d entries are neither a file nor a directory (a dangling link?)", len(st.Other)))
 	}
 	if len(st.Symlinks) > 0 {

@@ -60,6 +60,7 @@ var homeHeads = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)^[a-z]--users-`), // C:\Users\<name>
 	regexp.MustCompile(`^-home-`),            // /home/<name>
 	regexp.MustCompile(`^-Users-`),           // /Users/<name> (macOS)
+	regexp.MustCompile(`^-mnt-[a-z]-Users-`), // /mnt/c/Users/<name> (WSL)
 }
 
 // wslHead is the start of a WSL directory opened from Windows,
@@ -78,42 +79,70 @@ var (
 // encoded home directory, "~" for the home directory itself. It fails closed:
 // a label is given only when the home is known for sure.
 //
-// homes are the --home-prefix values; given, only they are stripped. Else
-// the folder must lie in exactly one of the candidate homes: known (the
-// homes known for sure) and others (the other users' homes listed beside
-// them). A folder that fits two (marco and marco-rossi) is ErrAmbiguousHome.
-// A WSL folder seen from Windows is read as its -home-… form. A folder in no
-// candidate home is labelled only when it is a bare home (C--Users-me is
-// "~") or below /root; any other text after a home's start could hold the
-// rest of a user name (ErrAmbiguousHome), and a folder without a home's
-// start might hold one (ErrNoHome). Both need --home-prefix or --label.
+// homes are the --home-prefix values; given, only they are stripped (the
+// longest that fits). Else the folder must lie in exactly one candidate
+// home: known (the homes known for sure) or others (the other users' homes
+// listed beside them). Either way a folder that also fits a listed home
+// longer than the one stripped (marco-rossi beside marco), or whose home's
+// start (C--Users-, -home-, ...) reaches past the home stripped (a home that
+// is a drive or the users directory), is ErrAmbiguousHome. A WSL folder seen
+// from Windows is read as its -home-... form. A folder in no candidate home is
+// labelled only when it is a bare home (C--Users-me is "~") or below /root;
+// any other text after a home's start could hold the rest of a user name
+// (ErrAmbiguousHome), and a folder without a home's start might hold one
+// (ErrNoHome). Both need --home-prefix or --label.
 func HomeLabel(folder string, homes, known, others []string) (string, error) {
-	if len(homes) > 0 {
-		if l, ok := stripHome(folder, homes); ok {
-			return l, nil
-		}
-		return "", ErrNoHome
-	}
 	f := folder
 	if m := wslHead.FindString(f); m != "" {
 		f = "-home-" + f[len(m):]
 	}
-	var fits []string
-	for _, c := range append(append([]string{}, known...), others...) {
-		if !hasHomePrefix(f, c) {
-			continue
+	fitting := func(cands []string) []string {
+		var fits []string
+		for _, c := range cands {
+			if !hasHomePrefix(f, c) {
+				continue
+			}
+			dup := false
+			for _, x := range fits {
+				dup = dup || strings.EqualFold(x, c)
+			}
+			if !dup {
+				fits = append(fits, c)
+			}
 		}
-		dup := false
-		for _, x := range fits {
-			dup = dup || strings.EqualFold(x, c)
-		}
-		if !dup {
-			fits = append(fits, c)
-		}
+		return fits
 	}
+	// strip checks that nothing else could be the home of f: no listed home
+	// longer than home fits, and no home's start reaches past it.
+	strip := func(home string) (string, error) {
+		for _, o := range fitting(others) {
+			if len(o) > len(home) {
+				return "", ErrAmbiguousHome
+			}
+		}
+		for _, h := range homeHeads {
+			if m := h.FindString(f); m != "" && len(m) > len(home) {
+				return "", ErrAmbiguousHome
+			}
+		}
+		return labelAfter(f[len(home):]), nil
+	}
+	if len(homes) > 0 {
+		best := ""
+		for _, h := range fitting(homes) {
+			if len(h) > len(best) {
+				best = h
+			}
+		}
+		if best == "" {
+			return "", ErrNoHome
+		}
+		return strip(best)
+	}
+	fits := fitting(append(append([]string{}, known...), others...))
 	switch {
 	case len(fits) == 1:
-		return labelAfter(f[len(fits[0]):]), nil
+		return strip(fits[0])
 	case len(fits) > 1:
 		return "", ErrAmbiguousHome
 	}
@@ -136,20 +165,6 @@ func HomeLabel(folder string, homes, known, others []string) (string, error) {
 func hasHomePrefix(s, h string) bool {
 	n := len(h)
 	return n > 0 && len(s) >= n && strings.EqualFold(s[:n], h) && (len(s) == n || s[n] == '-')
-}
-
-// stripHome strips the longest of homes from folder.
-func stripHome(folder string, homes []string) (string, bool) {
-	best := -1
-	for _, h := range homes {
-		if hasHomePrefix(folder, h) && len(h) > best {
-			best = len(h)
-		}
-	}
-	if best < 0 {
-		return "", false
-	}
-	return labelAfter(folder[best:]), true
 }
 
 // labelAfter makes the label of what follows a home: "-x" is x, "" is ~.
@@ -209,6 +224,10 @@ func otherHomes(known []string) []string {
 
 var mntDrive = regexp.MustCompile(`^/mnt/([a-zA-Z])/(.+)$`)
 
+// notAHome: an encoded directory that holds users' homes, or lies above
+// them (C:\, C:\Users, /home, /Users, /mnt, /mnt/c, /mnt/c/Users).
+var notAHome = regexp.MustCompile(`(?i)^([a-z]|[a-z]--users|-home|-users|-mnt|-mnt-[a-z]|-mnt-[a-z]-users)$`)
+
 // knownHomes are the homes known for sure: the directory above
 // .claude/projects in each root, and this user's home directory, encoded.
 // A Windows directory seen from WSL (/mnt/c/Users/me) is also encoded as
@@ -219,11 +238,16 @@ func knownHomes(roots []string) []string {
 		if dir == "" {
 			return
 		}
-		if e := strings.TrimRight(EncodePath(dir), "-"); e != "" {
-			out = append(out, e)
-		}
+		cands := []string{strings.TrimRight(EncodePath(dir), "-")}
 		if m := mntDrive.FindStringSubmatch(filepath.ToSlash(dir)); m != nil {
-			out = append(out, strings.ToUpper(m[1])+"--"+strings.TrimRight(EncodePath(m[2]), "-"))
+			cands = append(cands, strings.ToUpper(m[1])+"--"+strings.TrimRight(EncodePath(m[2]), "-"))
+		}
+		for _, e := range cands {
+			// a drive, a users directory or above: every user's folder
+			// would lie in it, and its "label" would start with a user name
+			if e != "" && !notAHome.MatchString(e) {
+				out = append(out, e)
+			}
 		}
 	}
 	for _, r := range roots {
@@ -409,7 +433,7 @@ func Projects(roots []string, rules LabelRules) ([]Project, error) {
 	}
 
 	known := append(knownHomes(roots), rules.Known...)
-	others := otherHomes(known)
+	others := otherHomes(append(append([]string{}, known...), rules.Homes...))
 	var out []Project
 	var unknown, ambiguous []string
 	bySource := map[string]string{}

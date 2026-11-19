@@ -449,3 +449,76 @@ func TestReadProjectsNeverNamesASessionAfterTheFolder(t *testing.T) {
 		t.Fatal("no subagent call read")
 	}
 }
+
+// A store whose "home" is a drive, the users directory or above holds every
+// user's folders: it is no known home, and a label from it would start with
+// a user name.
+func TestNoKnownHomeAboveTheUsers(t *testing.T) {
+	for _, c := range []struct{ store, home, folder string }{
+		{"/mnt/c/.claude/projects", "", "C--Users-marco-proj"},
+		{"/mnt/c/.claude/projects", "", "-mnt-c-Users-marco-proj"},
+		{`C:\.claude\projects`, "", "C--Users-marco-proj"},
+		{`C:\Users\.claude\projects`, "", "C--Users-marco-proj"},
+		{"/srv/x", "/home", "-home-marco-proj"},
+		{"/mnt/c/Users/.claude/projects", "", "-mnt-c-Users-marco-proj"},
+	} {
+		old := userHomeDir
+		userHomeDir = func() (string, error) { return c.home, nil }
+		known := knownHomes([]string{c.store})
+		userHomeDir = old
+		for _, k := range known {
+			if notAHome.MatchString(k) || k == "C" {
+				t.Errorf("%s: %q among the known homes", c.store, k)
+			}
+		}
+		if got, err := HomeLabel(c.folder, nil, known, nil); err == nil {
+			t.Errorf("%s %s: label %q from known %v", c.store, c.folder, got, known)
+		}
+	}
+	// and should such a home come in (a --home-prefix of C:\Users), a
+	// home's start reaching past it refuses the label
+	for _, c := range []struct{ home, folder string }{
+		{"C", "C--Users-marco-proj"}, {"C--Users", "C--Users-marco-proj"},
+		{"-home", "-home-marco-proj"}, {"-mnt-c", "-mnt-c-Users-marco-proj"},
+	} {
+		if got, err := HomeLabel(c.folder, nil, []string{c.home}, nil); !errors.Is(err, ErrAmbiguousHome) {
+			t.Errorf("known %s, %s: %q %v", c.home, c.folder, got, err)
+		}
+		if got, err := HomeLabel(c.folder, []string{c.home}, nil, nil); !errors.Is(err, ErrAmbiguousHome) {
+			t.Errorf("--home-prefix %s, %s: %q %v", c.home, c.folder, got, err)
+		}
+	}
+	if got, err := HomeLabel("-mnt-c-Users-marco-proj", nil, []string{"-mnt-c-Users-marco"}, nil); err != nil || got != "proj" {
+		t.Errorf("/mnt/c/Users/marco: %q %v", got, err)
+	}
+}
+
+// --home-prefix is checked against the other users' homes too.
+func TestHomePrefixMeetsTheOtherHomes(t *testing.T) {
+	others := []string{"C--Users-marco", "C--Users-marco-rossi", "C--Users-bob"}
+	for folder, want := range map[string]string{
+		"C--Users-marco-x":       "x",
+		"C--Users-marco-rossi-x": "",
+		"C--Users-marco-rossi":   "",
+		"C--Users-bob-x":         "", // only the homes given are stripped
+	} {
+		got, err := HomeLabel(folder, []string{"C--Users-marco"}, nil, others)
+		if want == "" && err == nil || want != "" && (err != nil || got != want) {
+			t.Errorf("%s: %q %v, want %q", folder, got, err, want)
+		}
+	}
+	// Projects lists the homes beside a --home-prefix
+	oldRead := readDir
+	readDir = func(dir string) ([]fs.DirEntry, error) {
+		if filepath.ToSlash(dir) == "/mnt/c/Users" || dir == `C:\Users` {
+			return []fs.DirEntry{fakeEntry{"marco", fs.ModeDir}, fakeEntry{"marco.rossi", fs.ModeDir}}, nil
+		}
+		return nil, fs.ErrNotExist
+	}
+	defer func() { readDir = oldRead }()
+	root := projectsRoot(t, map[string][]string{"C--Users-marco-a": {"m1"}, "C--Users-marco-rossi-b": {"m2"}})
+	_, err := Projects([]string{root}, LabelRules{Homes: []string{"C--Users-marco"}})
+	if err == nil || !strings.Contains(err.Error(), "C--Users-marco-rossi-b") || strings.Contains(err.Error(), "marco-a") {
+		t.Fatalf("%v", err)
+	}
+}
