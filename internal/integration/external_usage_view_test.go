@@ -416,6 +416,63 @@ func TestExternalUsageByModelAccess(t *testing.T) {
 	}
 }
 
+// Two organisations with a source of the same name: each reads its own rows
+// only, with and without ?source=; the other's never show, not as a cell, a
+// source, a model or a meter step.
+func TestExternalUsageByModelStaysInItsOrganisation(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	admin := login(t, s, "admin@test.local", "admin-passwort")
+	at := time.Now().Add(-time.Hour)
+	admin.expect(http.MethodPost, externalPath, extUpload("operator: home",
+		viewRow("a1", at, "claude-opus-5-5", "main", 1, 2, 3, 0, 0, nil),
+		viewRow("a2", at, "claude-opus-5-5", "subagent", 1, 2, 3, 0, 0, nil)), http.StatusOK)
+
+	second := uuid.New()
+	if _, err := s.pool.Exec(ctx, `INSERT INTO organizations (id, name) VALUES ($1, 'Zweite GmbH')`, second); err != nil {
+		t.Fatal(err)
+	}
+	var account uuid.UUID
+	if err := s.pool.QueryRow(ctx, `SELECT account_id FROM humans WHERE id = $1`, s.adminID).Scan(&account); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(ctx, `INSERT INTO humans (id, org_id, account_id, email, display_name, password_hash, role)
+		VALUES ($1, $2, $3, 'admin@test.local', 'Admin', ' ', 'org_admin')`, uuid.New(), second, account); err != nil {
+		t.Fatal(err)
+	}
+	other := login(t, s, "admin@test.local", "admin-passwort")
+	other.expect(http.MethodPost, "/api/v1/auth/switch-org", map[string]any{"org_id": second.String()}, http.StatusOK)
+
+	// Before the second organisation has a row: nothing of the first's.
+	for _, q := range []string{"days=1&bucket=hour", "days=1&bucket=10min&source=operator%3A%20home"} {
+		if v := viewGet(t, other, q); len(v.Cells) != 0 || len(v.Sources) != 0 || len(v.Models) != 0 || len(v.Meter.Steps) != 0 {
+			t.Errorf("%s: the second organisation reads %d cells, %d sources, %d models, %d steps of the first",
+				q, len(v.Cells), len(v.Sources), len(v.Models), len(v.Meter.Steps))
+		}
+	}
+
+	other.expect(http.MethodPost, externalPath, extUpload("operator: home",
+		viewRow("b1", at, "claude-haiku-5-5", "main", 1, 2, 3, 0, 0, nil)), http.StatusOK)
+	check := func(who string, c *apiClient, calls int64, model string) {
+		t.Helper()
+		for _, q := range []string{"days=1&bucket=hour", "days=1&bucket=hour&source=operator%3A%20home"} {
+			v := viewGet(t, c, q)
+			var n int64
+			for _, cell := range v.Cells {
+				n += cell.Calls
+				if cell.Model != model {
+					t.Errorf("%s %s: a cell of %s", who, q, cell.Model)
+				}
+			}
+			if n != calls || len(v.Sources) != 1 || v.Sources[0].Calls != calls || len(v.Models) != 1 || v.Models[0].Model != model {
+				t.Errorf("%s %s: %d calls, sources %+v, models %+v; want %d calls of %s only", who, q, n, v.Sources, v.Models, calls, model)
+			}
+		}
+	}
+	check("first", admin, 2, "claude-opus-5-5")
+	check("second", other, 1, "claude-haiku-5-5")
+}
+
 // F4: /cost/cells (without its external field), /cost/models and /cost/org
 // are byte-identical with and without outside rows, and reading the new
 // endpoint changes nothing at all.

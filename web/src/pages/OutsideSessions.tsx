@@ -4,7 +4,15 @@ import { Link } from "react-router";
 import type { CostCells } from "../api";
 import { fmtCount, fmtNumber, fmtUSD, fmtUSDAxis } from "../format";
 import { BarChart, Chip, SOURCE_COLOR, Swatch, type Bar } from "./StackedCostChart";
-import { agentsPerPeriod, outsideDefaultOn, outsidePerPeriod, outsideTotals, type OutsideTotals } from "./outsideFigures";
+import {
+  UNSPLIT_REASONS,
+  agentsPerPeriod,
+  outsideDefaultOn,
+  outsidePerPeriod,
+  outsideTotals,
+  type OutsideTotals,
+  type Unsplit,
+} from "./outsideFigures";
 
 /* The Claude Code sessions outside covey on the overview (#120, part C): a
  * consumer next to the agents, never a fifth money source and never folded
@@ -36,15 +44,34 @@ export function FigureTile({ label, value, lines, color, hatched, test }: {
   );
 }
 
+type T = ReturnType<typeof useTranslation>["t"];
+
+/** A count for a t() call: count picks the plural, n is the number as shown. */
+export const counted = (v: number) => ({ count: v, n: fmtNumber(v, 0) });
+
+/** The readings not split, one line per reason, each with its real cost
+ *  split to nobody. */
+export function unsplitLines(t: T, u: Unsplit): string[] {
+  return UNSPLIT_REASONS.filter((r) => u[r].steps > 0)
+    .map((r) => t(`costs.outside.unsplit_${r}`, { ...counted(u[r].steps), usd: fmtUSD(u[r].usd) }));
+}
+
+/** The list price over a range: the figure, or why there is none — no call
+ *  at all, or calls none of which had a list price (never $0). */
+export const listValue = (list: number | null) => (list != null ? fmtUSD(list) : "–");
+export const listLine = (t: T, list: number | null, calls: number) =>
+  calls === 0 ? t("costs.outside.noCalls") : list == null ? t("costs.outside.noPrice") : t("costs.outside.tileSub", counted(calls));
+
 /** The lines under the outside figures: their real share of the meter (F3),
- *  readings they did not report, work after the last reading, unpriced tokens. */
-export function outsideLines(t: ReturnType<typeof useTranslation>["t"], o: OutsideTotals): string[] {
+ *  readings not split, work after the last reading, reported costs, unpriced tokens. */
+export function outsideLines(t: T, o: OutsideTotals): string[] {
   const lines: string[] = [];
   if (!o.linked) lines.push(t("costs.outside.noMeterLinked"));
   else if (o.share != null) lines.push(t("costs.outside.realShare", { usd: fmtUSD(o.real), pct: pct(o.share) }));
   else lines.push(t("costs.outside.noShare"));
-  if (o.notReported > 0) lines.push(t("costs.outside.notReported", { count: o.notReported, usd: fmtUSD(o.notReportedUSD) }));
+  lines.push(...unsplitLines(t, o.unsplit));
   if (o.unmeteredList > 0) lines.push(t("costs.outside.unmetered", { usd: fmtUSD(o.unmeteredList) }));
+  if (o.reported != null && o.reportedCalls > 0) lines.push(t("costs.outside.reportedLine", { ...counted(o.reportedCalls), usd: fmtUSD(o.reported) }));
   if (o.unpricedTokens > 0) lines.push(t("costs.outside.unpriced", { n: fmtCount(o.unpricedTokens) }));
   return lines;
 }
@@ -68,19 +95,26 @@ export function OutsideOverview({ data, selected, days, bucket, fmtPeriod }: {
   if (!totals) return null;
 
   const agentsList = [...agents.values()].reduce((a, e) => a + e.usd, 0);
-  const outsideList = totals.list ?? 0;
   const combined = mode === "combined";
   const keys = [...new Set([...outside.keys(), ...(combined ? agents.keys() : [])])].sort((a, b) => a - b);
   const periods = keys.map((k) => outside.get(k)?.period ?? agents.get(k)!.period);
   const seriesLabel = t("costs.outside.series");
-  const groups: Bar[][] = keys.map((k) => {
-    const o = outside.get(k)?.usd ?? 0;
-    if (!combined) return [{ key: "outside", label: seriesLabel, color: OUTSIDE_COLOR, segs: [{ key: "outside", label: seriesLabel, color: OUTSIDE_COLOR, value: o }] }];
+  // A period whose outside calls all had no list price has no outside bar
+  // (never one of $0) and says so.
+  const notes = new Map<number, string>();
+  const groups: Bar[][] = keys.map((k, i) => {
+    const e = outside.get(k);
+    const o = e?.usd ?? null;
+    if (e && o == null) notes.set(i, combined ? t("costs.outside.chartNoPriceCombined") : t("costs.outside.noPrice"));
+    if (!combined) return o == null ? [] : [{ key: "outside", label: seriesLabel, color: OUTSIDE_COLOR, segs: [{ key: "outside", label: seriesLabel, color: OUTSIDE_COLOR, value: o }] }];
     return [{ key: "combined", label: t("costs.outside.combinedTotal"), color: OUTSIDE_COLOR, segs: [
       { key: "agents", label: t("costs.outside.agentsPart"), color: SOURCE_COLOR.recomputed, value: agents.get(k)?.usd ?? 0 },
-      { key: "outside", label: seriesLabel, color: OUTSIDE_COLOR, value: o },
+      ...(o == null ? [] : [{ key: "outside", label: seriesLabel, color: OUTSIDE_COLOR, value: o }]),
     ] }];
   });
+  const combinedSub = totals.list != null
+    ? t("costs.outside.combinedSub", { outside: fmtUSD(totals.list), agents: fmtUSD(agentsList) })
+    : t(totals.calls === 0 ? "costs.outside.combinedSubNoCalls" : "costs.outside.combinedSubNoPrice", { agents: fmtUSD(agentsList) });
   const detail = `/costs/outside?days=${days}&bucket=${bucket}`;
 
   return (
@@ -106,20 +140,21 @@ export function OutsideOverview({ data, selected, days, bucket, fmtPeriod }: {
       {on && <>
         <div className="flex flex-wrap gap-3 mb-3">
           <FigureTile test="outside" label={t("costs.outside.tile")} color={OUTSIDE_COLOR}
-            value={totals.list != null ? fmtUSD(totals.list) : "–"}
-            lines={[totals.list != null ? t("costs.outside.tileSub", { calls: fmtCount(totals.calls) }) : t("costs.outside.noPrice"), ...outsideLines(t, totals)]} />
+            value={listValue(totals.list)}
+            lines={[listLine(t, totals.list, totals.calls), ...outsideLines(t, totals)]} />
           {combined && (
             <FigureTile test="combined" label={t("costs.outside.combinedTotal")}
-              value={fmtUSD(agentsList + outsideList)}
-              lines={[t("costs.outside.combinedSub", { outside: fmtUSD(outsideList), agents: fmtUSD(agentsList) })]} />
+              value={fmtUSD(agentsList + (totals.list ?? 0))}
+              lines={[combinedSub]} />
           )}
         </div>
         {periods.length === 0 ? (
           <div className="muted text-sm">{t("costs.empty")}</div>
         ) : (
           <BarChart title={combined ? t("costs.outside.chartCombined") : t("costs.outside.chartApart")} periods={periods} groups={groups}
-            fmtPeriod={fmtPeriod} fmtValue={fmtUSD} fmtAxis={fmtUSDAxis} asTable={asTable} height={200} />
+            fmtPeriod={fmtPeriod} fmtValue={fmtUSD} fmtAxis={fmtUSDAxis} asTable={asTable} height={200} notes={notes} />
         )}
+        {totals.unpricedTokens > 0 && <p className="muted text-xs mt-1 mb-0" data-outside-unpriced-note>{t("costs.outside.chartUnpriced")}</p>}
         {combined && <p className="muted text-xs mt-1 mb-0" data-combined-note>{t("costs.outside.combinedNote")}</p>}
       </>}
     </section>
