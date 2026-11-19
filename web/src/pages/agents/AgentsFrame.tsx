@@ -4,7 +4,7 @@ import { useLocation, useMatch } from "react-router";
 import ViewSwitch from "../../components/ViewSwitch";
 import { AgentCrumb } from "../agent/AgentCrumb";
 import { agentQuery } from "./agentQuery";
-import { originOf, rememberViewUrl, viewOf, viewsFor } from "./views";
+import { originOf, rememberView, rememberViewUrl, viewOf, viewsFor } from "./views";
 
 /* The bar of the agents area, above the view: the view switch, and on an
  * agent's page the organisation path after it (AgentCrumb). It stands outside
@@ -14,7 +14,7 @@ import { originOf, rememberViewUrl, viewOf, viewsFor } from "./views";
  *
  * It renders before any data arrives; loading, empty and error states stay
  * with each view. */
-export default function AgentsFrame({ teamSurface }: { teamSurface: boolean }) {
+export default function AgentsFrame({ teamSurface, principal }: { teamSurface: boolean; principal: string }) {
   const { pathname, search, state } = useLocation();
   const current = viewOf(pathname);
   const detail = useMatch("/agents/:id")?.params.id;
@@ -31,7 +31,7 @@ export default function AgentsFrame({ teamSurface }: { teamSurface: boolean }) {
 
   return (
     <div className="av-bar">
-      <ViewSwitch views={views} current={current} origin={origin} />
+      <ViewSwitch views={views} current={current} onPick={(v) => rememberView(principal, v)} origin={origin} />
       {origin && agent.data && <AgentCrumb agent={agent.data} origin={origin} />}
     </div>
   );

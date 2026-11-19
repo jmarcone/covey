@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link, useLocation } from "react-router";
 import { api, inbox, myThreads, setupIsOpen, type Principal, type SetupState } from "../api";
+import { chosenView } from "../pages/agents/views";
 import { BirdMark } from "./BirdMark";
 import { NavIcon } from "./navicons";
 import ShellFoot from "./ShellFoot";
@@ -37,32 +38,11 @@ export function railPlace(path: string, teamSurface: boolean): RailPlace {
   return "admin";
 }
 
-/* The agents entry opens the view used last in this browser: whoever works
- * from the list should not land on the office every time, and the other way
- * round. A view the installation does not offer — the office without the
- * team surface — falls back to the list. */
-const AGENTS_VIEW = "covey.agents.view";
-type AgentsView = "office" | "list";
-
-export function rememberAgentsView(path: string) {
-  const view: AgentsView | null = path === "/" ? "office" : path === "/agents" ? "list" : null;
-  if (!view) return;
-  try {
-    localStorage.setItem(AGENTS_VIEW, view);
-  } catch {
-    // Without storage the entry opens the default view; nothing more is lost.
-  }
-}
-
-export function agentsEntryTarget(teamSurface: boolean): string {
-  let view: string | null = null;
-  try {
-    view = localStorage.getItem(AGENTS_VIEW);
-  } catch {
-    view = null;
-  }
-  if (!teamSurface || view === "list") return "/agents";
-  return "/";
+/* The agents entry opens the view the person chose in the switch of the
+ * agents area, the one the root opens too. A view the installation does not
+ * offer — the office without the team surface — is the list. */
+export function agentsEntryTarget(principal: string, teamSurface: boolean): string {
+  return chosenView(principal, teamSurface) === "office" ? "/" : "/agents";
 }
 
 export default function Rail({
@@ -80,10 +60,7 @@ export default function Rail({
   const team = !!me.TeamSurface;
   const path = useLocation().pathname;
   const active = railPlace(path, team);
-  /* On one of the two views the entry leads to the view on screen. The shell
-     remembers the view in an effect, after this render, so reading the
-     storage alone would leave the link one view behind. */
-  const agentsTo = !team ? "/agents" : path === "/" || path === "/agents" ? path : agentsEntryTarget(team);
+  const agentsTo = agentsEntryTarget(me.ID, team);
   const threads = useQuery({
     queryKey: ["threads"],
     queryFn: myThreads,
