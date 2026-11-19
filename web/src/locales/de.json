@@ -1084,6 +1084,11 @@
       "editColumns": "Spalten bearbeiten",
       "doneEditing": "Fertig",
       "noStageColumn": "Ohne Stage",
+      "defaultStage": {
+        "open": "Backlog",
+        "in_progress": "In Arbeit",
+        "done": "Erledigt"
+      },
       "empty": "Backlog ist leer.",
       "archived": "archiviert",
       "waitingOn": "wartet auf {{key}}",
@@ -1127,7 +1132,8 @@
       "changeColor": "Farbe wechseln",
       "delete": "Löschen",
       "newColumn": "Neue Spalte …",
-      "add": "Hinzufügen"
+      "add": "Hinzufügen",
+      "nameTaken": "Dieses Board hat schon eine Spalte mit diesem Namen oder dieser Bedeutung."
     },
     "recording": {
       "taskFilter": "Aufgabe: {{title}}",

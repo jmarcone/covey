@@ -463,7 +463,7 @@ func TestBacklogCleanupAndRetry(t *testing.T) {
 }
 
 // TestStageFollowsState checks the auto-follow of the default columns: as long
-// as a task sits in Backlog/In Arbeit/Erledigt (or in no column), the column
+// as a task sits in one of the keyed default columns (or in no column), the column
 // follows the lifecycle state; a deliberately chosen own column wins.
 func TestStageFollowsState(t *testing.T) {
 	s := newStack(t)
@@ -485,7 +485,8 @@ func TestStageFollowsState(t *testing.T) {
 		return "?"
 	}
 
-	// A successful task: Backlog → (In Arbeit) → Erledigt.
+	// A successful task: Backlog → (In Arbeit) → Erledigt — the stored names of
+	// the default columns, which the board shows in the reader's language.
 	task, _ := s.backlog.Create(ctx, s.orgID, agent.ID, "Läuft durch", "[mock:result ok]", "manual", 3)
 	if got := stageName(task.StageID); got != "Backlog" {
 		t.Fatalf("a new task must start in 'Backlog', got %q", got)

@@ -1129,7 +1129,9 @@ func mapErr(w http.ResponseWriter, err error) {
 		// A reserved key sent where it may not go (internal/secrets): the
 		// request is refused, and the sentence says what to do instead.
 		writeErr(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, backlog.ErrInvalidTransition),
+	case errors.Is(err, backlog.ErrStageNameRequired):
+		writeErr(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, backlog.ErrInvalidTransition), errors.Is(err, backlog.ErrStageNameTaken),
 		errors.Is(err, org.ErrLastAdmin), errors.Is(err, org.ErrEmailTaken),
 		errors.Is(err, org.ErrAlreadyMember), errors.Is(err, org.ErrSharedLogin),
 		errors.Is(err, org.ErrUnconfirmedLogin),

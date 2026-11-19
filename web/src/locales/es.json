@@ -1084,6 +1084,11 @@
       "editColumns": "Editar columnas",
       "doneEditing": "Listo",
       "noStageColumn": "Sin fase",
+      "defaultStage": {
+        "open": "Backlog",
+        "in_progress": "En curso",
+        "done": "Hecho"
+      },
       "empty": "El backlog está vacío.",
       "archived": "archivada",
       "waitingOn": "esperando a {{key}}",
@@ -1127,7 +1132,8 @@
       "changeColor": "Cambiar el color",
       "delete": "Eliminar",
       "newColumn": "Nueva columna…",
-      "add": "Añadir"
+      "add": "Añadir",
+      "nameTaken": "Este tablero ya tiene una columna con ese nombre o significado."
     },
     "recording": {
       "taskFilter": "Tarea: {{title}}",

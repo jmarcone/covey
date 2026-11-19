@@ -178,7 +178,15 @@ export type Stage = {
   // as soon as they are empty. 'human' columns stay.
   created_by: string;
   created_at: string;
+  // The three default columns carry a key; auto-follow finds them by it. As
+  // long as renamed is false the board shows the label of the chosen language
+  // (stageLabel) — name then holds the column's old German name ("Backlog",
+  // "In Arbeit", "Erledigt"), which the server keeps for older instances.
+  key?: StageKey | null;
+  renamed?: boolean;
 };
+
+export type StageKey = "open" | "in_progress" | "done";
 
 // TaskNote is a proactive note by the agent on a task
 // (state of play, findings) — GET /tasks/{id}/notes.

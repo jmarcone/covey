@@ -1084,6 +1084,11 @@
       "editColumns": "Edit columns",
       "doneEditing": "Done",
       "noStageColumn": "No stage",
+      "defaultStage": {
+        "open": "Backlog",
+        "in_progress": "In progress",
+        "done": "Done"
+      },
       "empty": "Backlog is empty.",
       "archived": "archived",
       "waitingOn": "waiting on {{key}}",
@@ -1127,7 +1132,8 @@
       "changeColor": "Change color",
       "delete": "Delete",
       "newColumn": "New column…",
-      "add": "Add"
+      "add": "Add",
+      "nameTaken": "This board already has a column with that name or meaning."
     },
     "recording": {
       "taskFilter": "Task: {{title}}",

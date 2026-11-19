@@ -883,6 +883,11 @@ func runServe(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	if err := runner.CheckMemoryLimit(cfg.SandboxMemory); err != nil {
 		return err
 	}
+	// A broken stage label catalogue stops here rather than in the first
+	// set_stage or column request.
+	if err := backlog.LoadStageLabels(); err != nil {
+		return err
+	}
 	// Make hardening hints for non-local deployments visible.
 	for _, warn := range cfg.SecurityWarnings() {
 		log.Warn("security: " + warn)
