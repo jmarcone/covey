@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -83,6 +84,9 @@ type CostCell struct {
 
 // CostCells is the whole data set for the chart.
 type CostCells struct {
+	// Since is the window's start: every line and source total is from it
+	// on, while a meter step's span (from, at] may begin before it (#120).
+	Since   time.Time   `json:"since"`
 	Periods []time.Time `json:"periods"`
 	Agents  []CellAgent `json:"agents"`
 	Types   []string    `json:"types"`
@@ -107,6 +111,18 @@ type CostCells struct {
 	// some of the booked figures are an older daemon's running totals
 	// (legacy, cumulative) rather than a run's own spend.
 	Bookings []BookingBasis `json:"bookings"`
+	// External is the usage outside covey (#120, external.go): its own
+	// series beside the agents, in none of the fields above.
+	External ExternalUsage `json:"external"`
+	// CostBases are the dated bases valid in the window (0151, credcost.go):
+	// how each credential's real money is formed. Absent for a credential
+	// without one, and the whole field absent when none has one, so an
+	// organisation that never set one gets the cells it got before.
+	CostBases []CredentialBasis `json:"cost_bases,omitempty"`
+	// UsageCharges are the usage charges that reach into the window, each in
+	// its own currency, with the part the window holds and the part a usage
+	// basis counts. Absent when there are none.
+	UsageCharges []WindowCharge `json:"usage_charges,omitempty"`
 }
 
 // cellDepartments fills in the department of every agent in the cells. A
@@ -154,7 +170,7 @@ type BookingBasis struct {
 // CostCellsFor builds the data set for the organisation since `since`.
 func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time) (CostCells, error) {
 	bucket = normalizeBucket(bucket)
-	out := CostCells{Periods: []time.Time{}, Agents: []CellAgent{}, Types: CostTypes, Cells: []CostCell{}, Bookings: []BookingBasis{}}
+	out := CostCells{Since: since.UTC(), Periods: []time.Time{}, Agents: []CellAgent{}, Types: CostTypes, Cells: []CostCell{}, Bookings: []BookingBasis{}}
 	type key struct {
 		p    time.Time
 		a    uuid.UUID
@@ -192,12 +208,12 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 	}
 
 	// Reported: what was booked per bucket, agent and credential.
-	rows, err := s.pool.Query(ctx, `SELECT date_trunc($2, ce.created_at, 'UTC'), a.id, a.display_name,
+	rows, err := s.pool.Query(ctx, `SELECT `+periodSQL(bucket, "ce.created_at")+`, a.id, a.display_name,
 		ce.secret_key, ce.secret_slot, COALESCE(MAX(rc.kind),''), COALESCE(SUM(ce.usd),0)::float8
 		FROM cost_entries ce JOIN agents a ON a.id = ce.agent_id
 		LEFT JOIN runtime_credentials rc ON rc.runtime_id = ce.runtime_id AND rc.ord = ce.credential_ord
-		WHERE a.org_id = $1 AND ce.created_at >= $3
-		GROUP BY 1,2,3,4,5`, orgID, bucket, since)
+		WHERE a.org_id = $1 AND ce.created_at >= $2
+		GROUP BY 1,2,3,4,5`, orgID, since)
 	if err != nil {
 		return out, err
 	}
@@ -225,14 +241,14 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 
 	// Measured: the per-line deltas per bucket, agent, credential and model,
 	// priced per type. model_usage carries the org, so this is a range scan.
-	rows, err = s.pool.Query(ctx, `SELECT date_trunc($2, mu.created_at, 'UTC'), mu.agent_id, a.display_name,
+	rows, err = s.pool.Query(ctx, `SELECT `+periodSQL(bucket, "mu.created_at")+`, mu.agent_id, a.display_name,
 		mu.secret_key, mu.secret_slot, mu.credential_kind, mu.model,
 		SUM(mu.input_tokens), SUM(mu.output_tokens), SUM(mu.cache_read_tokens),
 		SUM(mu.cache_write_5m_tokens), SUM(mu.cache_write_1h_tokens), SUM(mu.web_search_requests),
 		SUM(mu.engine_usd)::float8
 		FROM model_usage mu JOIN agents a ON a.id = mu.agent_id
-		WHERE mu.org_id = $1 AND mu.created_at >= $3
-		GROUP BY 1,2,3,4,5,6,7`, orgID, bucket, since)
+		WHERE mu.org_id = $1 AND mu.created_at >= $2
+		GROUP BY 1,2,3,4,5,6,7`, orgID, since)
 	if err != nil {
 		return out, err
 	}
@@ -283,13 +299,13 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 
 	// Bookings no line was linked to keep their booked cost, visible as its
 	// own part: there is nothing to measure them by.
-	rows, err = s.pool.Query(ctx, `SELECT date_trunc($2, ce.created_at, 'UTC'), ce.agent_id,
+	rows, err = s.pool.Query(ctx, `SELECT `+periodSQL(bucket, "ce.created_at")+`, ce.agent_id,
 		ce.secret_key, ce.secret_slot, COALESCE(MAX(rc.kind),''), COALESCE(SUM(ce.usd),0)::float8
 		FROM cost_entries ce JOIN agents a ON a.id = ce.agent_id
 		LEFT JOIN runtime_credentials rc ON rc.runtime_id = ce.runtime_id AND rc.ord = ce.credential_ord
-		WHERE a.org_id = $1 AND ce.created_at >= $3
+		WHERE a.org_id = $1 AND ce.created_at >= $2
 		  AND NOT EXISTS (SELECT 1 FROM model_usage m WHERE m.cost_entry_id = ce.id)
-		GROUP BY 1,2,3,4`, orgID, bucket, since)
+		GROUP BY 1,2,3,4`, orgID, since)
 	if err != nil {
 		return out, err
 	}
@@ -377,11 +393,26 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 		return out, err
 	}
 	out.Plans = plans
-	steps, coverage, err := s.meterSteps(ctx, orgID, bucket, since, plans)
+	// The basis of each credential (0151): while it is usage, the plan prices
+	// nothing. Without a basis the plans price the meter as they always did.
+	bases, err := s.costBasesFor(ctx, orgID, since)
+	if err != nil {
+		return out, err
+	}
+	out.CostBases = bases
+	priced := seatPlans(plans, bases)
+	steps, coverage, err := s.meterSteps(ctx, orgID, bucket, since, priced, bases)
 	if err != nil {
 		return out, err
 	}
 	out.Subscription, out.Meter = steps, coverage
+
+	if out.External, err = s.externalFor(ctx, orgID, bucket, since, coverage, priced, bases); err != nil {
+		return out, err
+	}
+	if out.UsageCharges, err = s.usageChargesFor(ctx, orgID, since, time.Now(), bases); err != nil {
+		return out, err
+	}
 	return out, nil
 }
 
@@ -417,6 +448,10 @@ type MeterStep struct {
 	// while no plan was valid are UnpricedPoints and not in USD.
 	USD            *float64 `json:"usd"`
 	UnpricedPoints float64  `json:"unpriced_points"`
+	// UsagePoints are points read while the credential's basis was usage
+	// (0151): not in USD and not unpriced either — their money is the usage
+	// charges. Absent without such a basis.
+	UsagePoints float64 `json:"usage_points,omitempty"`
 }
 
 // MeterCoverage is how well one credential's meter was read over the window,
@@ -463,6 +498,8 @@ type MeterCoverage struct {
 	// while no plan was valid are UnpricedPoints and not in USD.
 	USD            *float64 `json:"usd"`
 	UnpricedPoints float64  `json:"unpriced_points"`
+	// UsagePoints: as on the steps, summed over the window.
+	UsagePoints float64 `json:"usage_points,omitempty"`
 }
 
 // MeterSegment is one week of a credential's meter within the window.
@@ -578,8 +615,9 @@ func planAt(plans []CredentialPlan, key string, slot int, t time.Time) (Credenti
 //     0); the first reading of a credential is its baseline and counts 0.
 //
 // Partitioned by the secret, not the runtime: the same value on two runtimes
-// is one meter, and its history survives a Reorder.
-const meterQuery = `
+// is one meter, and its history survives a Reorder. The period column comes
+// from periodSQL (meterQuery).
+const meterQueryTemplate = `
 WITH r0 AS (
 	SELECT id, secret_key, secret_slot, source, window_kind, credential_kind, fetched_at,
 		week_percent AS pct, resets_at,
@@ -587,7 +625,7 @@ WITH r0 AS (
 			ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS seen_resets
 	FROM usage_readings
 	WHERE org_id = $1 AND supported AND NOT stale AND week_percent IS NOT NULL AND secret_key IS NOT NULL
-	  AND fetched_at >= $3::timestamptz - interval '8 days'),
+	  AND fetched_at >= $2::timestamptz - interval '8 days'),
 r AS (
 	SELECT id, secret_key, secret_slot, source, window_kind, credential_kind, fetched_at, pct, resets_at
 	FROM r0
@@ -615,7 +653,7 @@ m AS (
 		ORDER BY fetched_at, id) AS top
 	FROM g)
 SELECT secret_key, secret_slot, MAX(credential_kind) OVER (PARTITION BY secret_key, secret_slot),
-	source, window_kind, fetched_at, date_trunc($2, fetched_at, 'UTC'),
+	source, window_kind, fetched_at, {{period}},
 	pct, top, week::bigint, reset = 1,
 	CASE WHEN prev_pct IS NULL THEN 0
 	     WHEN reset = 1 THEN top
@@ -623,6 +661,11 @@ SELECT secret_key, secret_slot, MAX(credential_kind) OVER (PARTITION BY secret_k
 	COALESCE(EXTRACT(EPOCH FROM fetched_at - prev_at)::float8, 0)
 FROM m
 ORDER BY secret_key, secret_slot, source, window_kind, fetched_at, id`
+
+// meterQuery is meterQueryTemplate with the bucket's period: $1 org, $2 since.
+func meterQuery(bucket string) string {
+	return strings.Replace(meterQueryTemplate, "{{period}}", periodSQL(bucket, "fetched_at"), 1)
+}
 
 // meterRow is one reading with its step.
 type meterRow struct {
@@ -637,27 +680,40 @@ type meterRow struct {
 	points, gap    float64
 }
 
-// meterSteps turns the readings into movement per period, per credential and
-// source, and says how well each was covered. Points of the weekly all-models
-// window are priced with the plan valid when they were read.
-func (s *Store) meterSteps(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time, plans []CredentialPlan) ([]MeterStep, []MeterCoverage, error) {
-	rows, err := s.pool.Query(ctx, meterQuery, orgID, bucket, since)
+// meterRowsAt are the readings with their steps (meterQuery), in partition
+// and time order, each with the bucket's period.
+func (s *Store) meterRowsAt(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time) ([]meterRow, error) {
+	rows, err := s.pool.Query(ctx, meterQuery(bucket), orgID, since)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
+	defer rows.Close()
 	var all []meterRow
 	for rows.Next() {
 		var m meterRow
 		if err := rows.Scan(&m.key, &m.slot, &m.kind, &m.source, &m.window, &m.at, &m.period,
 			&m.pct, &m.top, &m.week, &m.reset, &m.points, &m.gap); err != nil {
-			rows.Close()
-			return nil, nil, err
+			return nil, err
 		}
 		m.period = m.period.UTC()
 		all = append(all, m)
 	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
+	return all, rows.Err()
+}
+
+// meterRows are the readings with their steps, for the meter share, which
+// splits per reading whatever the chart's bucket.
+func (s *Store) meterRows(ctx context.Context, orgID uuid.UUID, since time.Time) ([]meterRow, error) {
+	return s.meterRowsAt(ctx, orgID, "hour", since)
+}
+
+// meterSteps turns the readings into movement per period, per credential and
+// source, and says how well each was covered. Points of the weekly all-models
+// window are priced with the plan valid when they were read; those read while
+// the credential's basis was usage (0151) are its usage points instead.
+func (s *Store) meterSteps(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time, plans []CredentialPlan, bases []CredentialBasis) ([]MeterStep, []MeterCoverage, error) {
+	all, err := s.meterRowsAt(ctx, orgID, bucket, since)
+	if err != nil {
 		return nil, nil, err
 	}
 
@@ -668,7 +724,7 @@ func (s *Store) meterSteps(ctx context.Context, orgID uuid.UUID, bucket string, 
 			all[end].source == all[start].source && all[end].window == all[start].window {
 			end++
 		}
-		if st, cov, ok := meterPartition(all[start:end], since, plans); ok {
+		if st, cov, ok := meterPartition(all[start:end], since, plans, bases); ok {
 			steps = append(steps, st...)
 			coverage = append(coverage, cov)
 		}
@@ -733,7 +789,7 @@ func addUSD(sum *float64, usd float64) *float64 {
 // meterPartition is one credential × source × window: its steps per period
 // within the window, and its coverage. ok is false when nothing was read in
 // the window.
-func meterPartition(rs []meterRow, since time.Time, plans []CredentialPlan) ([]MeterStep, MeterCoverage, bool) {
+func meterPartition(rs []meterRow, since time.Time, plans []CredentialPlan, bases []CredentialBasis) ([]MeterStep, MeterCoverage, bool) {
 	first := 0
 	for first < len(rs) && rs[first].at.Before(since) {
 		first++
@@ -785,6 +841,10 @@ func meterPartition(rs []meterRow, since time.Time, plans []CredentialPlan) ([]M
 			if p, ok := planAt(plans, r.key, r.slot, r.at); ok {
 				st.USD = addUSD(st.USD, r.points*p.USDPerPoint)
 				c.USD = addUSD(c.USD, r.points*p.USDPerPoint)
+			} else if len(bases) > 0 && basisAt(bases, r.key, r.slot, r.at) == BasisUsage {
+				// Billed by usage then: the charges are these points' money.
+				st.UsagePoints += r.points
+				c.UsagePoints += r.points
 			} else {
 				st.UnpricedPoints += r.points
 				c.UnpricedPoints += r.points

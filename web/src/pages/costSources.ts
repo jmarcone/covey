@@ -54,6 +54,25 @@ export const SOURCE_COLOR: Record<Source, string> = {
   billed: "var(--cost-billed)",
 };
 
+/** The parts of a meter's real cost once sessions outside covey report on it
+ *  (#120): covey's agents, the outside sessions, the unattributed movement
+ *  neither explains (F3c, booked to nobody), and movement in a reading the
+ *  outside sessions did not report, split to nobody — drawn plain with a
+ *  dashed edge (unsplitEdge) rather than hatched, so it tells from covey's
+ *  part by its pattern too. */
+/** The split parts' patterns (HATCH_ANGLES in StackedCostChart): covey's
+ *  the real bar's own 45°, the outside sessions' 135°, the unattributed part
+ *  cross-hatched; the unsplit part is plain with a dashed edge. */
+export const SPLIT_HATCH = { outside: 1, unattributed: 4 } as const;
+
+export const SPLIT_COLOR = {
+  covey: "var(--cost-real)",
+  outside: "var(--cost-outside)",
+  unattributed: "var(--cost-unattributed)",
+  unsplit: "var(--cost-unsplit)",
+  unsplitEdge: "var(--cost-unsplit-edge)",
+} as const;
+
 /** The source's full name, as the chips carry it. */
 export function sourceLabel(t: TFunction, s: Source): string {
   return t(s === "real" ? "costs.fig.realEstimate" : `costs.fig.${s}`);

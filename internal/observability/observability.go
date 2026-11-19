@@ -1096,21 +1096,39 @@ func (s *Store) CostByAgent(ctx context.Context, agentID uuid.UUID) (CostSummary
 	return c, err
 }
 
-// normalizeBucket restricts the time granularity to valid date_trunc values
-// (no SQL injection vector, sensible default).
+// normalizeBucket restricts the time granularity to the known buckets (no SQL
+// injection vector, sensible default). periodSQL writes the result into the
+// query, so nothing else may reach it.
 //
-// Every bucket is cut in UTC, date_trunc's three-argument form: the
-// two-argument one follows the session's TimeZone, so the same row would land
-// in another day (or hour, for a half-hour zone) depending on how the
-// connection happened to be configured. UTC days and Monday-UTC weeks, the
-// same for the cost and the meter series.
+// Every bucket is cut in UTC. hour, day, week and month are date_trunc's
+// three-argument form: the two-argument one follows the session's TimeZone, so
+// the same row would land in another day (or hour, for a half-hour zone)
+// depending on how the connection happened to be configured. UTC days and
+// Monday-UTC weeks, the same for the cost and the meter series.
+//
+// 10min and 10hour have no date_trunc unit. They are cut with date_bin from
+// the Unix epoch in UTC, so their boundaries are fixed and do not move with
+// the window: 10-hour buckets start at 00:00, 10:00 and 20:00 UTC on
+// 2026-11-18, whatever ?days= says (#120).
 func normalizeBucket(bucket string) string {
 	switch bucket {
-	case "hour", "day", "week", "month":
+	case "10min", "10hour", "hour", "day", "week", "month":
 		return bucket
 	default:
 		return "day"
 	}
+}
+
+// binWidths are the buckets date_bin cuts, with their width.
+var binWidths = map[string]string{"10min": "10 minutes", "10hour": "10 hours"}
+
+// periodSQL is the SQL expression that puts col into its bucket's period. The
+// bucket must have come through normalizeBucket.
+func periodSQL(bucket, col string) string {
+	if w, ok := binWidths[bucket]; ok {
+		return `date_bin('` + w + `', ` + col + `, TIMESTAMPTZ '1970-01-01 00:00 UTC')`
+	}
+	return `date_trunc('` + bucket + `', ` + col + `, 'UTC')`
 }
 
 func scanBuckets(rows pgx.Rows) ([]CostBucket, error) {
@@ -1129,10 +1147,10 @@ func scanBuckets(rows pgx.Rows) ([]CostBucket, error) {
 // CostSeriesByAgent returns an agent's cost time series, grouped into time
 // windows (bucket) and starting at since. For the cost/token chart.
 func (s *Store) CostSeriesByAgent(ctx context.Context, agentID uuid.UUID, bucket string, since time.Time) ([]CostBucket, error) {
-	rows, err := s.pool.Query(ctx, `SELECT date_trunc($2, created_at, 'UTC') AS period,
+	rows, err := s.pool.Query(ctx, `SELECT `+periodSQL(normalizeBucket(bucket), "created_at")+` AS period,
 		COALESCE(SUM(usd),0), `+tokenSums("")+`, COUNT(*)
-		FROM cost_entries WHERE agent_id=$1 AND created_at >= $3
-		GROUP BY period ORDER BY period`, agentID, normalizeBucket(bucket), since)
+		FROM cost_entries WHERE agent_id=$1 AND created_at >= $2
+		GROUP BY period ORDER BY period`, agentID, since)
 	if err != nil {
 		return nil, err
 	}
@@ -1211,11 +1229,11 @@ func (s *Store) OrgCostReport(ctx context.Context, orgID uuid.UUID, bucket strin
 	}
 
 	// Time series.
-	rows, err := s.pool.Query(ctx, `SELECT date_trunc($2, ce.created_at, 'UTC') AS period,
+	rows, err := s.pool.Query(ctx, `SELECT `+periodSQL(rep.Bucket, "ce.created_at")+` AS period,
 		COALESCE(SUM(ce.usd),0), `+tokenSums("ce.")+`, COUNT(*)
 		FROM cost_entries ce JOIN agents a ON a.id=ce.agent_id
-		WHERE a.org_id=$1 AND ce.created_at >= $3
-		GROUP BY period ORDER BY period`, orgID, rep.Bucket, since)
+		WHERE a.org_id=$1 AND ce.created_at >= $2
+		GROUP BY period ORDER BY period`, orgID, since)
 	if err != nil {
 		return rep, err
 	}

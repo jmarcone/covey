@@ -178,6 +178,37 @@ picture { display: contents; }
   --cost-recomputed: light-dark(#2f6db5, #6fa8e8);
   --cost-real: light-dark(#2e7d3e, #4fbf6a);
   --cost-billed: light-dark(#0e7a7e, #3fc1c0);
+  /* The meter's real cost split between covey and the sessions outside it
+     (#120). Every part is at least 3:1 against the card (#ffffff /
+     #1f1f22), and each has a pattern of its own, so no two neighbours are
+     told apart by hue alone: covey's green hatched at 45°; the outside
+     sessions' indigo (16.0:1 light, 8.9:1 dark) hatched at 135°, or per
+     source at an angle of each source's own; the unattributed amber (5.0:1,
+     3.2:1) cross-hatched, and 2.8:1 lighter than the indigo in the dark
+     scheme; the part not split a grey (3.9:1, 5.2:1) drawn plain with a
+     dashed edge. The tooltip names every part. */
+  --cost-outside: light-dark(#1e1b4b, #c4b5fd);
+  --cost-unsplit: light-dark(#7b8189, #8b929a);
+  --cost-unsplit-edge: light-dark(#3f444a, #d1d5db);
+  /* Unattributed movement (F3b): neither covey's agents nor the reported
+     sessions explain it, booked to nobody. */
+  --cost-unattributed: light-dark(#b45309, #c2410c);
+  /* The inks of the outside sources' stripes (#120 review, M5): each source
+     changes angle and ink from its neighbour, over a tint of its bar's own
+     colour. Indigo, fuchsia and near-black / near-white, at least 3:1
+     against the card (light 7.9 / 6.3 / 17.7, dark 5.5 / 9.3 / 15.8) and
+     apart from each other by hue and lightness. */
+  --cost-source-1: light-dark(#4338ca, #818cf8);
+  --cost-source-2: light-dark(#a21caf, #f0abfc);
+  --cost-source-3: light-dark(#18181b, #fafafa);
+  /* The outside sessions per origin (#120, their detailed view): indigo from
+     dark to light, main session to workflows (each at least 3:1 against the
+     card: light 11.4 / 6.3 / 3.3, dark 11.8 / 6.0 / 3.5); a grey where the
+     uploader did not say (4.8:1, 6.5:1). */
+  --cost-origin-main: light-dark(#312e81, #ddd6fe);
+  --cost-origin-subagent: light-dark(#4f46e5, #a78bfa);
+  --cost-origin-workflow: light-dark(#7c83f0, #6d5df0);
+  --cost-origin-unknown: light-dark(#6b7280, #9ca3af);
   /* Cost and token types: one blue family, light (cheap, plentiful) to dark
      (dear). Only for types — never for a source or an agent. */
   --cost-type-input: light-dark(#7d9fd0, #9dbbe8);

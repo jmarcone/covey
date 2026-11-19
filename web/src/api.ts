@@ -750,6 +750,9 @@ export type MeterStep = {
   longest_gap_secs: number;
   usd: number | null;
   unpriced_points: number;
+  /** Points read while the basis was usage (0151): the usage charges are
+   *  their money — neither in usd nor unpriced. Absent without one. */
+  usage_points?: number;
 };
 
 /** One week of a credential's meter within the window. */
@@ -783,6 +786,8 @@ export type MeterCoverage = {
   /** The credential's recomputed list $ with created_at in (baseline_at, last_at],
    *  by the lines' own timestamps: what the multiple divides. */
   measured_usd?: number;
+  /** Points read under the usage basis (0151), summed; absent without one. */
+  usage_points?: number;
 };
 
 /** A credential's dated plan price (0145), for measurement only. */
@@ -816,6 +821,8 @@ export type BookingBasis = {
 };
 
 export type CostCells = {
+  /** The window's start: every line and source total is from it on; a meter step's span (from, at] may begin before it. */
+  since?: string;
   periods: string[];
   agents: CellAgent[];
   types: string[];
@@ -824,6 +831,289 @@ export type CostCells = {
   meter?: MeterCoverage[] | null;
   plans?: CredentialPlan[] | null;
   bookings?: BookingBasis[] | null;
+  /** Usage outside covey (#120): its own series, in none of the fields above. */
+  external?: ExternalUsage;
+  /** How each credential's real money is formed (0151), the bases valid in
+   *  the window; absent when none was set. */
+  cost_bases?: CredentialBasis[] | null;
+  /** The usage charges that reach into the window, each in its own currency;
+   *  absent when there are none. */
+  usage_charges?: WindowCharge[] | null;
+};
+
+/** seat: the plan prices the meter; usage: the usage charges are the money;
+ *  seat_and_usage: both. */
+export type CostBasisKind = "seat" | "usage" | "seat_and_usage";
+
+/** A credential's dated cost basis (0151). */
+export type CredentialBasis = {
+  secret_key: string;
+  secret_slot: number;
+  basis: CostBasisKind;
+  valid_from: string;
+  valid_to: string | null;
+};
+
+/** A usage charge as stored: money charged for usage over [from, to), in its
+ *  own currency; a rate to USD only with its date. */
+export type UsageCharge = {
+  id: string;
+  secret_key: string;
+  secret_slot: number;
+  amount: number;
+  currency: string;
+  from: string;
+  to: string;
+  fx_to_usd: number | null;
+  fx_date: string | null;
+  note: string;
+};
+
+/** A usage charge in the cost cells: with the part the window holds and the
+ *  part a usage basis counts, both in its currency, and the counted part in
+ *  USD only where it is in USD or a rate with its date was given. No note:
+ *  every role reads the cells; the note is in the credential's own list. */
+export type WindowCharge = Omit<UsageCharge, "note"> & {
+  window_amount: number;
+  counted_amount: number;
+  counted_usd: number | null;
+};
+
+/** A subscription credential named by its secret, as the meter readings name it. */
+export type MeterCredentialRef = { secret_key: string; secret_slot: number };
+
+/** One machine of an outside source: how far it has reported its calls. */
+export type ExternalHost = {
+  host: string;
+  /** Every call of the host up to here has been sent; null: it never said. */
+  reported_through: string | null;
+  pushed_at: string;
+};
+
+/** One outside source over the window (an operator's machine). */
+export type ExternalSource = {
+  source: string;
+  /** The seat whose meter the source shares; null: billed per use, no meter share. */
+  meter_credential: MeterCredentialRef | null;
+  calls: number;
+  /** List price of the priced calls; null when none was priced. */
+  list_usd: number | null;
+  reported_usd: number | null;
+  unpriced_tokens: number;
+  unpriced_calls: number;
+  unpriced_models: string[];
+  /** The lead price (#120): each call's reported_usd where it carried one,
+   *  else its list price; null when no call had either. Absent from older
+   *  servers. */
+  lead_usd?: number | null;
+  /** The calls with neither a reported cost nor a list price, and their
+   *  tokens: in no lead figure, never $0. */
+  lead_unpriced_calls?: number;
+  lead_unpriced_tokens?: number;
+  first_at: string | null;
+  last_at: string | null;
+  hosts: ExternalHost[];
+};
+
+/** One bucket × source × origin of the outside calls. */
+export type ExternalCell = {
+  period: string;
+  source: string;
+  /** main | subagent | workflow; null where the uploader did not say. */
+  origin: string | null;
+  calls: number;
+  list_usd: number | null;
+  measured: Record<string, number>;
+  reported_usd: number | null;
+  reported_calls: number;
+  tokens: Record<string, number>;
+  unpriced_tokens: number;
+  unpriced_calls: number;
+  /** The lead price (#120): each call's reported_usd where it carried one,
+   *  else its list price; null when no call had either. Absent from older
+   *  servers. */
+  lead_usd?: number | null;
+  /** The calls with neither a reported cost nor a list price, and their
+   *  tokens: in no lead figure, never $0. */
+  lead_unpriced_calls?: number;
+  lead_unpriced_tokens?: number;
+};
+
+/** One reading of a seat's meter over the span since the reading before it, split by its chunk's list-price share (F3c). */
+export type ExternalMeterStep = {
+  at: string;
+  from: string;
+  secret_key: string;
+  secret_slot: number;
+  points: number;
+  reset: boolean;
+  /** The step's priced movement; null when no plan prices its points. */
+  real_usd: number | null;
+  external_list_usd: number;
+  covey_list_usd: number;
+  /** The same calls and lines at their lead price (reported where they carry
+   *  one, else list); absent from older servers. */
+  external_lead_usd?: number;
+  covey_lead_usd?: number;
+  /** Every active machine of the linked sources has reported through the reading. */
+  reported: boolean;
+  /** Split: the two parts are set (at the chunk's share, not the reading's) and, with unattributed_real_usd, add up to real_usd.
+   *  A split step may carry reason moved_without_reported_call. Otherwise reason says why not. */
+  split: boolean;
+  /** outside_unpriced: the outside calls of the span all had no price, so their share is unknown. idle: a reported reading that did not move, with no call on either side.
+   *  moved_without_reported_call: the meter moved with no call in the span (mostly its lag after use): split with its chunk,
+   *  or unattributed whole in a chunk with no list at all. usage: read while the seat's cost basis was usage (0151): out of
+   *  the dent and of every chunk, moved or not; its points are the usage charges', neither priced nor unpriced. */
+  reason?: "not_reported" | "moved_without_reported_call" | "outside_unpriced" | "unpriced" | "idle" | "usage";
+  external_real_usd: number | null;
+  covey_real_usd: number | null;
+  /** The step's unattributed part (F3c): its chunk's points beyond the rate, spread by points, or all of it in a chunk with no list.
+   *  covey + outside + unattributed + unsplit = real_usd. */
+  unattributed_real_usd: number;
+  unattributed_points: number;
+  unsplit_real_usd: number;
+  /** A split step's outside part per source (its share of the chunk's outside list); absent otherwise. */
+  source_parts?: ExternalMeterSourcePart[];
+};
+
+/** One outside source's part of the split movement: its list over the split steps, and
+ *  Σ step outside real × its share of each chunk's outside list. The parts add up to the outside part. */
+export type ExternalMeterSourcePart = { source: string; list_usd: number; real_usd: number };
+
+/** One UTC hour of one seat: the sums of the steps placed in it. */
+export type ExternalMeterHour = {
+  hour: string;
+  secret_key: string;
+  secret_slot: number;
+  real_usd: number | null;
+  points: number;
+  external_list_usd: number;
+  covey_list_usd: number;
+  external_real_usd: number;
+  covey_real_usd: number;
+  unattributed_real_usd: number;
+  unattributed_points: number;
+  unsplit_real_usd: number;
+  steps: number;
+  split_steps: number;
+  unattributed_steps: number;
+  unpriced_points: number;
+  /** Points of its steps under the usage basis (0151): not in real_usd, not unpriced. Absent without one. */
+  usage_points?: number;
+  source_parts?: ExternalMeterSourcePart[];
+};
+
+/** The split's sums: per seat, and over every seat. */
+export type ExternalMeterSums = {
+  /** Σ real over the priced steps: the dent. The four parts below add up to it. */
+  real_usd: number;
+  external_real_usd: number;
+  covey_real_usd: number;
+  /** Movement neither covey nor the reported sources explain (F3c): booked to nobody. */
+  unattributed_real_usd: number;
+  unsplit_real_usd: number;
+  unattributed_points: number;
+  unattributed_steps: number;
+  /** The part of it in chunks with no list at all (moved with no call: lag, or another machine), an estimate;
+   *  the rest, beyond the rate, is a lower bound. */
+  unattributed_no_call_real_usd: number;
+  unattributed_no_call_points: number;
+  /** Chunks with list price whose use is not all in it (outside calls without a price, covey bookings without a line):
+   *  they set no rate and have no unattributed part. */
+  incomplete_chunks: number;
+  /** external_real_usd over the split steps' real cost; null without one. */
+  share: number | null;
+  /** The list prices of the split steps, which the multiples divide. */
+  split_external_list_usd: number;
+  split_covey_list_usd: number;
+  /** The same at the lead price; absent from older servers. */
+  split_external_lead_usd?: number;
+  split_covey_lead_usd?: number;
+  /** The priced movement in points; a sum over seats only while point_rate_mixed is false. */
+  points: number;
+  split_points: number;
+  split_external_points: number;
+  split_covey_points: number;
+  /** Since F3c the split chunks; each leaves ±2 points of the whole (the whole percents at both ends, a point of lag). */
+  split_runs: number;
+  /** The ranges the whole percents and the lag leave: the whole's, and each part's (2 points × ½·TV of its share per chunk). */
+  split_slack_points: number;
+  split_slack_usd: number;
+  split_external_slack_points: number;
+  split_external_slack_usd: number;
+  split_covey_slack_points: number;
+  split_covey_slack_usd: number;
+  /** The dearest price per point among the priced steps that moved; mixed: some moved at another. */
+  point_rate: number;
+  point_rate_mixed: boolean;
+  step_count: number;
+  split_steps: number;
+  unsplit_steps: number;
+  /** The part of unsplit_steps / unsplit_real_usd not split because the outside calls of the span all had no price. */
+  outside_unpriced_steps: number;
+  outside_unpriced_real_usd: number;
+  /** Steps that moved at no plan price: out of the dent, never $0. */
+  unpriced_steps: number;
+  unpriced_points: number;
+  /** Steps read while the seat's cost basis was usage (0151), idle ones included, and their points: out of the dent
+   *  and of the split, not unpriced (their money is the usage charges). Absent without such a basis. */
+  usage_steps?: number;
+  usage_points?: number;
+  /** Linked outside calls with neither a list price nor reported_usd: not in the split. */
+  unpriced_calls: number;
+  unpriced_tokens: number;
+  /** Outside list price after the seat's last reading: no real share yet. */
+  unmetered_list_usd: number;
+  /** covey's list price on the seat after its last reading: no real share yet either. */
+  unmetered_covey_list_usd?: number;
+  /** The outside part per source; a seat lists every source linked to it. */
+  source_parts?: ExternalMeterSourcePart[];
+  /** The metered list (covey and outside) without the in-range parts of lines that began before since and without the
+   *  first step's span before since: the numerator of the "at least" multiple. Absent from older servers. */
+  floor_list_usd?: number;
+  /** floor_list_usd at the lead price. */
+  floor_lead_usd?: number;
+  /** The parts of unmetered_list_usd / unmetered_covey_list_usd before the
+   *  seat's first reading in the range (no meter data for that time: never a
+   *  real share); the rest lies after its last reading (pending). */
+  unmetered_before_list_usd?: number;
+  unmetered_covey_before_list_usd?: number;
+  /** The four unmetered figures at the lead price. */
+  unmetered_lead_usd?: number;
+  unmetered_covey_lead_usd?: number;
+  unmetered_before_lead_usd?: number;
+  unmetered_covey_before_lead_usd?: number;
+};
+
+/** One agent's part of covey's share of a seat (the split steps only, by its share of each chunk's covey list). */
+export type ExternalMeterAgent = {
+  agent_id: string;
+  split_list_usd: number;
+  real_usd: number;
+  unsplit_list_usd: number;
+};
+
+export type ExternalMeterTotal = ExternalMeterSums & {
+  secret_key: string;
+  secret_slot: number;
+  meter_source: string;
+  /** The outside sources linked to this meter; none: every step is unsplit. */
+  sources: string[];
+  hours_with_reading: number;
+  /** k of F3c at the seat's latest plan price that has one: the lowest points per list $ of a stretch of adjacent chunks
+   *  of 10 points or more with every call priced, at its upper end; null without one. */
+  points_per_list_usd: number | null;
+  /** The plan price per point points_per_list_usd is at, when that is not the seat's latest plan price; null otherwise. */
+  points_per_list_older_plan_usd?: number | null;
+  /** k per plan price per point, in the order the prices first appear. */
+  plan_rates: { usd_per_point: number; points_per_list_usd: number | null }[];
+  agents: ExternalMeterAgent[];
+};
+
+export type ExternalUsage = {
+  sources: ExternalSource[];
+  cells: ExternalCell[];
+  meter: ExternalMeterSums & { steps: ExternalMeterStep[]; hours: ExternalMeterHour[]; credentials: ExternalMeterTotal[] };
 };
 
 /** One reading of the provider's meter, with the measured cost on its credential up to it. */
@@ -906,6 +1196,10 @@ export type BilledReport = {
   points: BilledPoint[] | null;
   window?: BilledWindow | null;
   sync: BillingSyncStatus;
+  /** Why points is empty: "bucket_below_source" when the bucket is finer than the bill. */
+  reason?: string;
+  /** At hour and 10hour: where the hourly bill rows begin; a 10-hour bucket before it is not complete. */
+  hourly_from?: string;
 };
 
 export type TokenDiff = { type: string; reported: number; billed: number; diff: number };
@@ -2446,3 +2740,36 @@ export async function saveWorkflow(
   if (!res.ok) throw new ApiError(res.status, body.error ?? res.statusText);
   return { ok: true, version: body.version, warning: body.warning };
 }
+
+/** GET /cost/external-usage: the sessions outside covey per model (#120), for their detailed view. */
+export type ExternalModelCell = {
+  period: string;
+  source: string;
+  /** main | subagent | workflow; null where the uploader did not say. */
+  origin: string | null;
+  model: string;
+  calls: number;
+  /** F1 over the cell; null for a model the list does not know (never 0). */
+  list_usd: number | null;
+  measured: Record<string, number>;
+  /** $ per token type (input, output, cache_read, cache_write_5m, cache_write_1h); empty when unpriced. */
+  type_usd: Record<string, number>;
+  reported_usd: number | null;
+  reported_calls: number;
+  tokens: Record<string, number>;
+  unpriced_tokens: number;
+  unpriced_calls: number;
+};
+
+export type ExternalModelUsage = {
+  bucket: string;
+  since: string;
+  /** The source the cells are narrowed to; null for every source. */
+  source: string | null;
+  /** Every source of the window, as /cost/cells has them. */
+  sources: ExternalSource[];
+  models: { model: string; priced: boolean }[];
+  cells: ExternalModelCell[];
+  /** F3, exactly the external.meter of /cost/cells (always the whole meter). */
+  meter: ExternalUsage["meter"];
+};
