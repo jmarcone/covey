@@ -377,6 +377,10 @@
       "seatLine": "{{seat}}: ≈ {{real}} ({{pts}} punten) – agents van covey ≈ {{covey}}, buiten covey ≈ {{outside}}, niet toegerekend ≈ {{unattributed}}, niet verdeeld ≈ {{unsplit}}",
       "seatNoPrice": "{{seat}}: – ({{n}} punten zonder planprijs)",
       "seatUsage": "{{seat}}: – (op gebruik gefactureerd: {{n}} punten, hun geld zijn de gebruikskosten)",
+      "noMultipleUsage": "Hier geen veelvouden: de meteraflezingen in de periode werden op gebruik gefactureerd. Het gebruiksveelvoud van een stoel, covey's lijstprijs over zijn kosten, staat bij zijn inloggegevens.",
+      "noPart": "geen aflezing met prijs om te verdelen",
+      "noPricedReadingUsage": "Elke meteraflezing in de periode viel in een tijd waarin de stoel op gebruik werd gefactureerd: hier geen deuk, de gebruikskosten zijn het geld.",
+      "seatNoPriceAndUsage": "{{seat}}: – ({{n}} punten zonder planprijs, {{m}} op gebruik gefactureerd)",
       "seatNoReading": "{{seat}}: – (geen meterstand in de periode)",
       "seatNoSource": " · geen externe bron rapporteert op deze meter",
       "caveat": "Een schatting: een meter geldt voor het hele account en toont hele procenten. De veelvouden rusten op de verdeelde standen en zijn ondergrenzen, aan de onderkant van het bereik dat de hele procenten laten."
@@ -402,6 +406,7 @@
       "notReportedSeat": "Sessies buiten covey zijn aan deze meter gekoppeld, maar hebben niet tot zijn standen gerapporteerd: zijn beweging wordt aan niemand toegewezen, en de cijfers van covey hier zijn grenzen (echt aandeel hoogstens, veelvoud minstens).",
       "unpricedSeat": "Sessies buiten covey rapporteren op deze meter, maar geen van hun aanroepen in zijn standen had een prijs: zijn beweging wordt aan niemand toegewezen, en de cijfers van covey hier zijn grenzen (echt aandeel hoogstens, veelvoud minstens).",
       "mayIncludeOutside": "Geen externe bron rapporteert op deze meter, maar hij kan gebruik buiten covey bevatten: de cijfers van covey hier zijn grenzen (echt aandeel hoogstens, veelvoud minstens).",
+      "usageSeat": "De hele periode op gebruik gefactureerd: de aflezingen van de meter worden niet verdeeld, hun punten horen bij de gebruikskosten.",
       "key_outside": "Echte kosten, sessies buiten covey",
       "key_unsplit": "Echte kosten niet verdeeld (externe sessies hadden niet gerapporteerd, of hun aanroepen hadden geen prijs)",
       "key_unattributed": "Echte kosten niet toegerekend (niet verklaard door de agents van covey of de gerapporteerde sessies)"
@@ -548,6 +553,7 @@
       "bothTile": "Echte kosten, stoel + gebruik",
       "bothSub": "stoel ≈ {{seat}} + gebruik {{usage}}",
       "usageMultipleSub": "covey-lijstprijs over de perioden van de getelde gebruiksbedragen ({{list}}; randperioden naar rato van de tijd) per getelde USD",
+      "usageMultipleShared": "minstens: operatorsessies buiten covey ({{sources}}) draaien ook op deze inloggegevens, en de kosten betalen ook hun gebruik, dus covey's eigen veelvoud is hoger",
       "noMultipleRate": "Geen veelvoud: zonder koers en datum hebben de gebruikskosten geen USD-bedrag.",
       "noMultipleNoCharge": "Geen veelvoud: in deze periode telt geen gebruikspost mee.",
       "noMultipleChanged": "Geen veelvoud: de basis is binnen deze periode gewijzigd.",

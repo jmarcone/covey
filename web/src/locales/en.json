@@ -377,6 +377,10 @@
       "seatLine": "{{seat}}: ≈ {{real}} ({{pts}} points) — covey's agents ≈ {{covey}}, outside covey ≈ {{outside}}, unattributed ≈ {{unattributed}}, not split ≈ {{unsplit}}",
       "seatNoPrice": "{{seat}}: – ({{n}} points without a plan price)",
       "seatUsage": "{{seat}}: – (billed by usage: {{n}} points, their money is the usage charges)",
+      "noMultipleUsage": "No multiples here: the meter readings in the range were billed by usage. A seat's usage multiple, covey's list over its charges, is on its credential.",
+      "noPart": "no priced reading to split",
+      "noPricedReadingUsage": "Every meter reading in the range was taken while the seat was billed by usage: no dent here, the usage charges are the money.",
+      "seatNoPriceAndUsage": "{{seat}}: – ({{n}} points without a plan price, {{m}} billed by usage)",
       "seatNoReading": "{{seat}}: – (no meter reading in the range)",
       "seatNoSource": " · no outside source reports on this meter",
       "caveat": "An estimate: a meter is account-wide and shows whole percents. The multiples rest on the split readings and are lower bounds, at the low end of the range the whole percents leave."
@@ -402,6 +406,7 @@
       "notReportedSeat": "Sessions outside covey are linked to this meter but have not reported through its readings: its movement is split to nobody, and covey's figures here are bounds (real share at most, multiple at least).",
       "unpricedSeat": "Sessions outside covey report on this meter, but none of their calls in its readings had a price: its movement is split to nobody, and covey's figures here are bounds (real share at most, multiple at least).",
       "mayIncludeOutside": "No outside source reports on this meter, but it may carry use outside covey: covey's figures here are bounds (real share at most, multiple at least).",
+      "usageSeat": "Billed by usage over the whole range: the meter's readings are not split, their points are the usage charges'.",
       "key_outside": "Real cost, sessions outside covey",
       "key_unsplit": "Real cost not split (outside sessions had not reported, or their calls had no price)",
       "key_unattributed": "Real cost unattributed (not explained by covey's agents or the reported sessions)"
@@ -548,6 +553,7 @@
       "bothTile": "Real cost, seat + usage",
       "bothSub": "seat ≈ {{seat}} + usage {{usage}}",
       "usageMultipleSub": "covey's list over the spans the counted usage charges cover ({{list}}; boundary periods pro rata by time) per counted USD",
+      "usageMultipleShared": "at least: operator sessions outside covey ({{sources}}) run on this credential too, and the charges pay for their use as well, so covey's own multiple is higher",
       "noMultipleRate": "No multiple: the usage charges have no USD figure without a rate and its date.",
       "noMultipleNoCharge": "No multiple: no usage charge counted in this window.",
       "noMultipleChanged": "No multiple: the basis changed within this window.",

@@ -377,6 +377,10 @@
       "seatLine": "{{seat}}: ≈ {{real}} ({{pts}} puntos) – agentes de covey ≈ {{covey}}, fuera de covey ≈ {{outside}}, sin atribuir ≈ {{unattributed}}, sin repartir ≈ {{unsplit}}",
       "seatNoPrice": "{{seat}}: – ({{n}} puntos sin precio de plan)",
       "seatUsage": "{{seat}}: – (facturado por uso: {{n}} puntos, su dinero son los cargos por uso)",
+      "noMultipleUsage": "Aquí no hay múltiplos: las lecturas del contador del periodo se facturaron por uso. El múltiplo de uso de un puesto, la lista de covey sobre sus cargos, está en su credencial.",
+      "noPart": "ninguna lectura con precio que repartir",
+      "noPricedReadingUsage": "Todas las lecturas del contador del periodo se tomaron mientras el puesto se facturaba por uso: aquí no hay mella, los cargos por uso son el dinero.",
+      "seatNoPriceAndUsage": "{{seat}}: – ({{n}} puntos sin precio de plan, {{m}} facturados por uso)",
       "seatNoReading": "{{seat}}: – (ninguna lectura del contador en el periodo)",
       "seatNoSource": " · ninguna fuente externa informa sobre este contador",
       "caveat": "Una estimación: un contador abarca toda la cuenta y muestra porcentajes enteros. Los múltiplos se basan en las lecturas repartidas y son límites inferiores, en el extremo bajo del rango que dejan los porcentajes enteros."
@@ -402,6 +406,7 @@
       "notReportedSeat": "Hay sesiones fuera de covey vinculadas a este contador, pero no han informado hasta sus lecturas: su movimiento no se reparte a nadie, y las cifras de covey aquí son cotas (parte real como máximo, múltiplo como mínimo).",
       "unpricedSeat": "Hay sesiones fuera de covey que informan sobre este contador, pero ninguna de sus llamadas en sus lecturas tenía precio: su movimiento no se reparte a nadie, y las cifras de covey aquí son cotas (parte real como máximo, múltiplo como mínimo).",
       "mayIncludeOutside": "Ninguna fuente externa informa sobre este contador, pero puede incluir uso fuera de covey: las cifras de covey aquí son cotas (parte real como máximo, múltiplo como mínimo).",
+      "usageSeat": "Facturado por uso durante todo el periodo: las lecturas del contador no se reparten, sus puntos son de los cargos por uso.",
       "key_outside": "Coste real, sesiones fuera de covey",
       "key_unsplit": "Coste real sin repartir (sesiones externas sin informar, o sus llamadas sin precio)",
       "key_unattributed": "Coste real sin atribuir (no lo explican ni los agentes de covey ni las sesiones informadas)"
@@ -548,6 +553,7 @@
       "bothTile": "Coste real, puesto + uso",
       "bothSub": "puesto ≈ {{seat}} + uso {{usage}}",
       "usageMultipleSub": "lista de covey en los periodos de los importes por uso contados ({{list}}; periodos límite prorrateados por tiempo) por USD contado",
+      "usageMultipleShared": "como mínimo: sesiones de operador fuera de covey ({{sources}}) también usan esta credencial, y los cargos pagan también su uso, así que el múltiplo propio de covey es mayor",
       "noMultipleRate": "Sin múltiplo: sin tipo de cambio y su fecha, los cargos por uso no tienen cifra en USD.",
       "noMultipleNoCharge": "Sin múltiplo: ningún cargo por uso cuenta en este periodo.",
       "noMultipleChanged": "Sin múltiplo: la base cambió dentro de este periodo.",

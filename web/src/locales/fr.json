@@ -377,6 +377,10 @@
       "seatLine": "{{seat}} : ≈ {{real}} ({{pts}} points) – agents de covey ≈ {{covey}}, hors de covey ≈ {{outside}}, non attribué ≈ {{unattributed}}, non réparti ≈ {{unsplit}}",
       "seatNoPrice": "{{seat}} : – ({{n}} points sans prix de forfait)",
       "seatUsage": "{{seat}} : – (facturé à l'usage : {{n}} points, leur argent sont les montants d'usage)",
+      "noMultipleUsage": "Pas de multiples ici : les relevés du compteur sur la période ont été facturés à l'usage. Le multiple d'usage d'un siège, la liste de covey sur ses montants, figure sur son identifiant.",
+      "noPart": "aucun relevé avec prix à répartir",
+      "noPricedReadingUsage": "Chaque relevé du compteur sur la période a été pris pendant que le siège était facturé à l'usage : pas d'entame ici, les montants d'usage sont l'argent.",
+      "seatNoPriceAndUsage": "{{seat}} : – ({{n}} points sans prix de forfait, {{m}} facturés à l'usage)",
       "seatNoReading": "{{seat}} : – (aucun relevé du compteur sur la période)",
       "seatNoSource": " · aucune source externe ne déclare sur ce compteur",
       "caveat": "Une estimation : un compteur vaut pour tout le compte et affiche des pourcentages entiers. Les multiples reposent sur les relevés répartis et sont des minimums, au bas de la fourchette que laissent les pourcentages entiers."
@@ -402,6 +406,7 @@
       "notReportedSeat": "Des sessions hors de covey sont liées à ce compteur mais n'ont pas déclaré jusqu'à ses relevés : son mouvement n'est attribué à personne, et les chiffres de covey ici sont des bornes (part réelle au plus, multiple au moins).",
       "unpricedSeat": "Des sessions hors de covey déclarent sur ce compteur, mais aucun de leurs appels dans ses relevés n'avait de prix : son mouvement n'est attribué à personne, et les chiffres de covey ici sont des bornes (part réelle au plus, multiple au moins).",
       "mayIncludeOutside": "Aucune source externe ne déclare sur ce compteur, mais il peut inclure un usage hors de covey : les chiffres de covey ici sont des bornes (part réelle au plus, multiple au moins).",
+      "usageSeat": "Facturé à l'usage sur toute la période : les relevés du compteur ne sont pas répartis, leurs points appartiennent aux montants d'usage.",
       "key_outside": "Coût réel, sessions hors de covey",
       "key_unsplit": "Coût réel non réparti (sessions externes non déclarées, ou appels sans prix)",
       "key_unattributed": "Coût réel non attribué (expliqué ni par les agents de covey ni par les sessions déclarées)"
@@ -548,6 +553,7 @@
       "bothTile": "Coût réel, siège + usage",
       "bothSub": "siège ≈ {{seat}} + usage {{usage}}",
       "usageMultipleSub": "liste covey sur les périodes des montants d'usage comptés ({{list}} ; tranches en bordure au prorata du temps) par USD compté",
+      "usageMultipleShared": "au moins : des sessions d'opérateur hors de covey ({{sources}}) utilisent aussi cet identifiant, et les montants paient aussi leur usage, donc le multiple propre de covey est plus élevé",
       "noMultipleRate": "Pas de multiple : sans taux ni date, les montants d'usage n'ont pas de montant en USD.",
       "noMultipleNoCharge": "Pas de multiple : aucun montant d'usage compté sur cette période.",
       "noMultipleChanged": "Pas de multiple : la base a changé au cours de cette période.",

@@ -377,6 +377,10 @@
       "seatLine": "{{seat}}: ≈ {{real}} ({{pts}} pkt) – agenci covey ≈ {{covey}}, poza covey ≈ {{outside}}, nieprzypisane ≈ {{unattributed}}, niepodzielone ≈ {{unsplit}}",
       "seatNoPrice": "{{seat}}: – ({{n}} pkt bez ceny planu)",
       "seatUsage": "{{seat}}: – (rozliczane według użycia: {{n}} pkt, ich pieniądze to opłaty za użycie)",
+      "noMultipleUsage": "Tu brak mnożników: odczyty licznika w zakresie były rozliczane według użycia. Mnożnik użycia miejsca, lista covey wobec jego opłat, jest przy jego poświadczeniu.",
+      "noPart": "brak wycenionego odczytu do podziału",
+      "noPricedReadingUsage": "Każdy odczyt licznika w zakresie przypadł na czas, gdy miejsce było rozliczane według użycia: tu nie ma zużycia, pieniądze to opłaty za użycie.",
+      "seatNoPriceAndUsage": "{{seat}}: – ({{n}} pkt bez ceny planu, {{m}} rozliczanych według użycia)",
       "seatNoReading": "{{seat}}: – (brak odczytu licznika w okresie)",
       "seatNoSource": " · żadne źródło zewnętrzne nie raportuje na ten licznik",
       "caveat": "Szacunek: licznik obejmuje całe konto i pokazuje pełne procenty. Krotności opierają się na podzielonych odczytach i są dolnymi granicami, z dolnego końca zakresu, jaki zostawiają pełne procenty."
@@ -402,6 +406,7 @@
       "notReportedSeat": "Sesje poza covey są powiązane z tym licznikiem, ale nie zaraportowały do jego odczytów: jego ruch nie jest przypisany nikomu, a liczby covey są tu granicami (udział rzeczywisty najwyżej, krotność co najmniej).",
       "unpricedSeat": "Sesje poza covey raportują na ten licznik, ale żadne z ich wywołań w jego odczytach nie miało ceny: jego ruch nie jest przypisany nikomu, a liczby covey są tu granicami (udział rzeczywisty najwyżej, krotność co najmniej).",
       "mayIncludeOutside": "Żadne źródło zewnętrzne nie raportuje na ten licznik, ale może on obejmować użycie poza covey: liczby covey są tu granicami (udział rzeczywisty najwyżej, krotność co najmniej).",
+      "usageSeat": "Rozliczane według użycia przez cały zakres: odczyty licznika nie są dzielone, ich punkty należą do opłat za użycie.",
       "key_outside": "Rzeczywisty koszt, sesje poza covey",
       "key_unsplit": "Rzeczywisty koszt niepodzielony (sesje zewnętrzne nie zaraportowały lub ich wywołania nie miały ceny)",
       "key_unattributed": "Rzeczywisty koszt nieprzypisany (niewyjaśniony ani przez agentów covey, ani przez zaraportowane sesje)"
@@ -548,6 +553,7 @@
       "bothTile": "Rzeczywisty koszt, miejsce + użycie",
       "bothSub": "miejsce ≈ {{seat}} + użycie {{usage}}",
       "usageMultipleSub": "cena katalogowa covey w okresach liczonych opłat za użycie ({{list}}; okresy graniczne proporcjonalnie do czasu) na liczony USD",
+      "usageMultipleShared": "co najmniej: sesje operatora poza covey ({{sources}}) też korzystają z tego poświadczenia, a opłaty pokrywają także ich użycie, więc własny mnożnik covey jest wyższy",
       "noMultipleRate": "Brak krotności: bez kursu z datą opłaty za użycie nie mają kwoty w USD.",
       "noMultipleNoCharge": "Brak krotności: w tym okresie nie liczy się żadna opłata za użycie.",
       "noMultipleChanged": "Brak krotności: podstawa zmieniła się w tym okresie.",

@@ -89,21 +89,30 @@ export function SubscriptionDentRow({ d, filtered }: { d: SubscriptionDent; filt
       <p className="muted text-xs mb-3" style={{ maxWidth: 760 }}>{t("costs.dent.hint")}</p>
       <div className="flex flex-wrap gap-3 mb-3">
         {d.real == null ? (
-          // No reading has a plan price: no figure, never ≈ $0.00.
-          <Part test="total" label={t("costs.dent.total")} value="–" sub={t("costs.dent.noPricedReading")} />
+          // No reading has a plan price: no figure, never ≈ $0.00. Every one
+          // under the usage basis (0151): the charges are the money.
+          <Part test="total" label={t("costs.dent.total")} value="–"
+            sub={t(d.usagePoints > 0 && d.unpricedPoints === 0 || d.noMultiple === "usage" ? "costs.dent.noPricedReadingUsage" : "costs.dent.noPricedReading")} />
         ) : (
           <Part test="total" label={t("costs.dent.total")} value={`≈ ${fmtUSD(d.real)}`}
             sub={d.points != null ? t("costs.dent.totalSubPoints", { pts: pts(d.points), sources }) : t("costs.dent.totalSub", { sources })} />
         )}
         {/* Estimates, per chunk (F3c): the bounds are on the multiples and
-            on the unattributed part beyond the rate. */}
-        <Part test="covey" label={t("costs.dent.covey")} value={`≈ ${fmtUSD(d.covey.real)}`} sub={part(d.covey)} color={SPLIT_COLOR.covey} />
-        <Part test="outside" label={t("costs.dent.outside")} value={`≈ ${fmtUSD(d.outside.real)}`} sub={part(d.outside)} color={SPLIT_COLOR.outside} />
-        <Part test="unattributed" label={t("costs.dent.unattributed")} value={`≈ ${fmtUSD(un.real)}`}
-          sub={d.points != null
-            ? t("costs.dent.unattributedSubPoints", { pct: pctOf(un.share), pts: pts(un.points), parts: unParts.join(" · ") })
-            : t("costs.dent.unattributedSub", { pct: pctOf(un.share), parts: unParts.join(" · ") })}
-          color={SPLIT_COLOR.unattributed} />
+            on the unattributed part beyond the rate. Without a priced
+            reading there is nothing to split: "–", never ≈ $0.00. */}
+        {d.real == null ? <>
+          <Part test="covey" label={t("costs.dent.covey")} value="–" sub={t("costs.dent.noPart")} color={SPLIT_COLOR.covey} />
+          <Part test="outside" label={t("costs.dent.outside")} value="–" sub={t("costs.dent.noPart")} color={SPLIT_COLOR.outside} />
+          <Part test="unattributed" label={t("costs.dent.unattributed")} value="–" sub={t("costs.dent.noPart")} color={SPLIT_COLOR.unattributed} />
+        </> : <>
+          <Part test="covey" label={t("costs.dent.covey")} value={`≈ ${fmtUSD(d.covey.real)}`} sub={part(d.covey)} color={SPLIT_COLOR.covey} />
+          <Part test="outside" label={t("costs.dent.outside")} value={`≈ ${fmtUSD(d.outside.real)}`} sub={part(d.outside)} color={SPLIT_COLOR.outside} />
+          <Part test="unattributed" label={t("costs.dent.unattributed")} value={`≈ ${fmtUSD(un.real)}`}
+            sub={d.points != null
+              ? t("costs.dent.unattributedSubPoints", { pct: pctOf(un.share), pts: pts(un.points), parts: unParts.join(" · ") })
+              : t("costs.dent.unattributedSub", { pct: pctOf(un.share), parts: unParts.join(" · ") })}
+            color={SPLIT_COLOR.unattributed} />
+        </>}
         {d.unsplit.steps > 0 && (
           <Part test="unsplit" label={t("costs.dent.unsplit")} value={`≈ ${fmtUSD(d.unsplit.real)}`}
             sub={unsplitSub}
@@ -137,7 +146,8 @@ export function SubscriptionDentRow({ d, filtered }: { d: SubscriptionDent; filt
         </p>
       ) : (
         <p className="muted text-xs mb-1" data-dent-no-multiple>
-          {d.noMultiple === "split"
+          {d.noMultiple === "usage" ? t("costs.dent.noMultipleUsage")
+            : d.noMultiple === "split"
             ? t(d.unsplit.steps === 0 && un.steps > 0 ? "costs.dent.noMultipleSplitNoCall"
               : unpricedSteps > 0 && notReported === 0 ? "costs.dent.noMultipleSplitUnpriced" : "costs.dent.noMultipleSplit")
             : t("costs.dent.noMultipleMovement", { pts: pts(tg.points) })}
@@ -176,7 +186,8 @@ export function SubscriptionDentRow({ d, filtered }: { d: SubscriptionDent; filt
             <li key={seat(s)} data-dent-seat={seat(s)}>
               {s.real == null
                 ? (s.steps === 0 ? t("costs.dent.seatNoReading", { seat: seat(s) })
-                  : s.usagePoints > 0 && s.unpricedPoints === 0 ? t("costs.dent.seatUsage", { seat: seat(s), n: pts(s.usagePoints) })
+                  : s.usageSteps > 0 && s.unpricedPoints === 0 ? t("costs.dent.seatUsage", { seat: seat(s), n: pts(s.usagePoints) })
+                  : s.usageSteps > 0 ? t("costs.dent.seatNoPriceAndUsage", { seat: seat(s), n: pts(s.unpricedPoints), m: pts(s.usagePoints) })
                   : t("costs.dent.seatNoPrice", { seat: seat(s), n: pts(s.unpricedPoints) }))
                 : t("costs.dent.seatLine", { seat: seat(s), real: fmtUSD(s.real), pts: pts(s.points),
                   covey: fmtUSD(s.covey), outside: fmtUSD(s.outside), unattributed: fmtUSD(s.unattributed), unsplit: fmtUSD(s.unsplit) })}

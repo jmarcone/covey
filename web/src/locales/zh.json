@@ -377,6 +377,10 @@
       "seatLine": "{{seat}}：≈ {{real}}（{{pts}} 点）— covey 的智能体 ≈ {{covey}}，covey 之外 ≈ {{outside}}，未归属 ≈ {{unattributed}}，未分摊 ≈ {{unsplit}}",
       "seatNoPrice": "{{seat}}：–（{{n}} 点没有套餐价格）",
       "seatUsage": "{{seat}}：–（按用量计费：{{n}} 点，其金额是用量费用）",
+      "noMultipleUsage": "此处没有倍数：范围内的计量器读数按用量计费。席位的用量倍数（covey 的标价除以其费用）见其凭据。",
+      "noPart": "没有可拆分的有价格读数",
+      "noPricedReadingUsage": "范围内的每个计量器读数都在席位按用量计费期间读取：此处没有消耗，用量费用才是金额。",
+      "seatNoPriceAndUsage": "{{seat}}：–（{{n}} 点没有套餐价格，{{m}} 点按用量计费）",
       "seatNoReading": "{{seat}}：–（期间内没有计量器读数）",
       "seatNoSource": " · 没有外部来源向此计量器报告",
       "caveat": "这是估算：计量器覆盖整个账户且只显示整数百分比。倍数基于已分摊的读数，是下限，取整数百分比所留范围的低端。"
@@ -402,6 +406,7 @@
       "notReportedSeat": "covey 之外的会话已关联到此计量器，但尚未报告到其读数：其变动不分摊给任何人，此处 covey 的数字是界限（实际份额为上限，倍数为下限）。",
       "unpricedSeat": "covey 之外的会话在此计量器上报告，但其读数中的调用都没有价格：其变动不分摊给任何人，此处 covey 的数字是界限（实际份额为上限，倍数为下限）。",
       "mayIncludeOutside": "没有外部来源向此计量器报告，但它可能包含 covey 之外的使用：此处 covey 的数字是界限（实际份额为上限，倍数为下限）。",
+      "usageSeat": "整个范围按用量计费：计量器读数不拆分，其点数属于用量费用。",
       "key_outside": "实际成本，covey 之外的会话",
       "key_unsplit": "未分摊的实际成本（外部会话尚未报告，或其调用没有价格）",
       "key_unattributed": "未归属的实际成本（无法由 covey 的智能体或已报告的会话解释）"
@@ -548,6 +553,7 @@
       "bothTile": "真实成本，席位 + 用量",
       "bothSub": "席位 ≈ {{seat}} + 用量 {{usage}}",
       "usageMultipleSub": "已计入用量费用所覆盖时段内的 covey 标价（{{list}}；边界区段按时间折算）÷ 已计入 USD",
+      "usageMultipleShared": "至少：covey 之外的操作员会话（{{sources}}）也使用此凭据，费用也为它们的使用付费，因此 covey 自身的倍数更高",
       "noMultipleRate": "无倍数：没有带日期的汇率，用量费用没有美元金额。",
       "noMultipleNoCharge": "无倍数：此时段内没有计入的用量费用。",
       "noMultipleChanged": "无倍数：此时段内计费方式有变化。",

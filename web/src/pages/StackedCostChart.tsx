@@ -736,8 +736,9 @@ function CredentialTiles({ f, filtered }: { f: CredentialFigures; filtered: bool
       }
     }
     if (f.usageMultiple != null) {
-      tiles.push(<Tile key="umult" label={t("costs.fig.multiple")} value={times(f.usageMultiple)}
-        sub={t("costs.basis.usageMultipleSub", { list: fmtUSD(f.usageList ?? 0) })} />);
+      tiles.push(<Tile key="umult" label={t("costs.fig.multiple")} value={`${f.usageShared ? "≥ " : ""}${times(f.usageMultiple)}`}
+        sub={t("costs.basis.usageMultipleSub", { list: fmtUSD(f.usageList ?? 0) })
+          + (f.usageShared ? ` · ${t("costs.basis.usageMultipleShared", { sources: f.usageShared.join(", ") })}` : "")} />);
     }
   }
   return <div className="flex flex-wrap gap-3 mb-2">{tiles}</div>;
@@ -995,6 +996,7 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
         {f.split.outside_unpriced_steps > 0 && <> {t("costs.split.unsplitUnpricedNote", {
           n: fmtNumber(f.split.outside_unpriced_steps, 0), usd: fmtUSD(f.split.outside_unpriced_real_usd) })}</>}
       </p>}
+      {subscription && f.meterOnUsage && <p className="muted text-xs mt-1 mb-0" data-meter-on-usage>{t("costs.split.usageSeat")}</p>}
       {subscription && f.outsideUnreported && <p className="muted text-xs mt-1 mb-0" data-outside-unreported>
         {t(seatTotal == null || seatTotal.sources.length === 0 ? "costs.split.mayIncludeOutside"
           : seatTotal.unsplit_steps > 0 && seatTotal.outside_unpriced_steps === seatTotal.unsplit_steps
