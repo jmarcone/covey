@@ -26,7 +26,9 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -115,16 +117,26 @@ const (
 const UnknownModel = "unknown"
 
 // WatermarkMargin is left between the run's time and the claim, for replies
-// still being written and for clock skew. A broken last line is taken for
-// one still being written only in a file modified within it (after the time
+// still being written and for clock skew. A broken last line is looked at
+// again (see RecheckWait) only in a file modified within it (after the time
 // the claim is made for), and only when none of its timestamps is older.
 const WatermarkMargin = 15 * time.Minute
+
+// RecheckWait is how long after the first look a broken last line is read
+// again. Claude Code appends each line in one write, so a line that was only
+// half written at the first look is whole by then; one that is unchanged was
+// cut short (a crash) and is suspect.
+const RecheckWait = 1500 * time.Millisecond
 
 // tsInText finds the timestamps in a line too broken to decode.
 var tsInText = regexp.MustCompile(`"timestamp"\s*:\s*"([^"]+)"`)
 
 // clock is time.Now, replaced in tests.
 var clock = time.Now
+
+// settle waits until RecheckWait has passed since first, the latest first
+// look at a broken last line; replaced in tests.
+var settle = func(first time.Time) { time.Sleep(time.Until(first.Add(RecheckWait))) }
 
 // walkDir is filepath.WalkDir, replaced in tests.
 var walkDir = filepath.WalkDir
@@ -153,12 +165,17 @@ type Stats struct {
 	// and lines with a usage that gave no call: no message id, no valid
 	// timestamp.
 	Skipped int
-	// Suspect is the part of Skipped that is not just the last line of a file
-	// modified within WatermarkMargin. Calls may be missing then, so the
-	// caller must not claim to have sent every call.
+	// Suspect is the part of Skipped that is not a last line still being
+	// written: one cut short at its end (nothing after the break) that grew
+	// between two looks RecheckWait apart, in a file modified within
+	// WatermarkMargin. Calls may be missing then, so the caller must not
+	// claim to have sent every call.
 	Suspect int
-	// MidWrite is the earliest change time of a file whose broken last line
-	// was taken for one still being written; a claim must stay below it.
+	// MidWrite is set when a last line was taken for one still being
+	// written: the earliest of that file's change time and the timestamp of
+	// the first copy of the last call before it in that file (the line may be
+	// its final copy, with more output than the copy sent). A claim must stay
+	// below it.
 	MidWrite time.Time
 	// Symlinks lists symlinked directories below a root. They are not
 	// followed, so calls below them are not read.
@@ -232,11 +249,28 @@ func Read(roots []string, host string, since time.Time) ([]Row, Stats, error) {
 func read(roots []string, host string, since time.Time, project bool) ([]Row, Stats, error) {
 	var st Stats
 	type kept struct {
-		row  Row
-		path string
-		line int
+		row   Row
+		path  string
+		line  int
+		first time.Time // the earliest copy's timestamp
 	}
 	seen := map[string]*kept{}
+	// Broken last lines to look at again once everything else is read.
+	type pendingTail struct {
+		*tail
+		abs    string
+		lastID string // the last call before it in its file
+		each   func(l *line, no int) bool
+		skip   func(no int)
+	}
+	var tails []pendingTail
+	suspect := func(abs string, no int) {
+		st.Skipped++
+		st.Suspect++
+		if len(st.SuspectAt) < MaxListed {
+			st.SuspectAt = append(st.SuspectAt, fmt.Sprintf("%s:%d", abs, no))
+		}
+	}
 	for _, root := range roots {
 		// A root that is itself a symlink (a dotfiles setup) is followed;
 		// WalkDir alone would list nothing below it.
@@ -272,8 +306,8 @@ func read(roots []string, host string, since time.Time, project bool) ([]Row, St
 			}
 			session, origin := place(root, abs)
 			st.Files++
-			midWrite := false
-			mtime, err := readFile(f, func(l *line, no int) bool {
+			lastID := ""
+			each := func(l *line, no int) bool {
 				m := l.Message
 				st.Lines++
 				if m.ID == "" {
@@ -307,8 +341,12 @@ func read(roots []string, host string, since time.Time, project bool) ([]Row, St
 					Input: u.InputTokens, Output: u.OutputTokens, CacheRead: u.CacheReadInputTokens,
 					CacheWrite5m: w5m, CacheWrite1h: w1h, Origin: origin,
 				}
+				lastID = m.ID
 				if prev, ok := seen[m.ID]; ok {
 					st.Copies++
+					if r.TS.Before(prev.first) {
+						prev.first = r.TS
+					}
 					// The copy with the most output wins. On equal output the
 					// later timestamp, as the script keeps the later copy (the
 					// streamed message's last line, nearest to when the meter
@@ -325,18 +363,11 @@ func read(roots []string, host string, since time.Time, project bool) ([]Row, St
 					}
 					return true
 				}
-				seen[m.ID] = &kept{row: r, path: abs, line: no}
+				seen[m.ID] = &kept{row: r, path: abs, line: no, first: r.TS}
 				return true
-			}, func(no int, tolerated bool) {
-				st.Skipped++
-				midWrite = midWrite || tolerated
-				if !tolerated {
-					st.Suspect++
-					if len(st.SuspectAt) < MaxListed {
-						st.SuspectAt = append(st.SuspectAt, fmt.Sprintf("%s:%d", abs, no))
-					}
-				}
-			})
+			}
+			skip := func(no int) { suspect(abs, no) }
+			tl, err := readFile(f, each, skip)
 			if err != nil {
 				if project {
 					st.Unread = append(st.Unread, abs)
@@ -344,8 +375,41 @@ func read(roots []string, host string, since time.Time, project bool) ([]Row, St
 				}
 				return nil, st, fmt.Errorf("read %s: %w", f, err)
 			}
-			if midWrite && (st.MidWrite.IsZero() || mtime.Before(st.MidWrite)) {
-				st.MidWrite = mtime
+			if tl != nil {
+				tails = append(tails, pendingTail{tail: tl, abs: abs, lastID: lastID, each: each, skip: skip})
+			}
+		}
+	}
+	// A broken last line is looked at again, RecheckWait after the first
+	// look: a line still being written is whole by then (it is read as any
+	// other), a line cut short by a crash is unchanged (suspect).
+	if len(tails) > 0 {
+		latest := tails[0].at
+		for _, p := range tails {
+			if p.at.After(latest) {
+				latest = p.at
+			}
+		}
+		settle(latest)
+	}
+	for _, p := range tails {
+		b, live := recheck(p.tail)
+		switch {
+		case b != nil:
+			takeLine(b, p.no, p.each, p.skip)
+		case !live:
+			suspect(p.abs, p.no)
+		default:
+			// Still being written: the claim stays below the file's change
+			// and below the first copy of the last call before the line,
+			// which may be that call's final copy with more output.
+			st.Skipped++
+			mw := p.mtime
+			if k, ok := seen[p.lastID]; ok && k.first.Before(mw) {
+				mw = k.first
+			}
+			if st.MidWrite.IsZero() || mw.Before(st.MidWrite) {
+				st.MidWrite = mw
 			}
 		}
 	}
@@ -464,77 +528,168 @@ func visit(p string, d fs.DirEntry, st *Stats, files *[]string) {
 	}
 }
 
+// tail is a broken last line that may still be being written; it is looked
+// at again once the rest of the read is done (see recheck).
+type tail struct {
+	path  string
+	off   int64  // where the line starts in the file
+	raw   []byte // the line as first seen, without a line end
+	no    int
+	mtime time.Time // the file's change time at the first look
+	at    time.Time // the first look
+}
+
 // readFile calls each for every assistant line with a usage; each says false
 // when the line gave no call. skip is called for every line that is no
-// well-formed JSON, and for every line with a usage that gave none
-// (tolerated: only a broken last line of a file changed within
-// WatermarkMargin, after the time a claim is made for, whose text holds no
-// older timestamp: probably still being written). It returns the file's
-// change time.
-func readFile(path string, each func(l *line, lineNo int) bool, skip func(lineNo int, tolerated bool)) (time.Time, error) {
+// well-formed JSON, and for every line with a usage that gave none. A broken
+// last line is returned instead, to be looked at again, when it may still be
+// being written: the file was changed within WatermarkMargin (after the time
+// a claim is made for), the line is cut short at its end with nothing after
+// the break (no line end, no next record glued on), and its text holds no
+// older timestamp.
+func readFile(path string, each func(l *line, lineNo int) bool, skip func(lineNo int)) (*tail, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return time.Time{}, err
+		return nil, err
 	}
 	defer f.Close()
 	fi, err := f.Stat()
 	if err != nil {
-		return time.Time{}, err
+		return nil, err
 	}
 	mtime := fi.ModTime()
 	recent := clock().Sub(mtime) < WatermarkMargin
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 1<<20), 64<<20)
-	// A broken line, so far the last one; stale when its text holds a
-	// timestamp older than the margin (a crash-glued line: the broken record
-	// then the next one appended).
-	pending, pendingStale, pendingNo, no := false, false, 0, 0
+	// Lines as bufio.ScanLines splits them, keeping where each starts and
+	// whether it ended with a line end.
+	var pos, start int64
+	ended := false
+	sc.Split(func(data []byte, atEOF bool) (int, []byte, error) {
+		if i := bytes.IndexByte(data, '\n'); i >= 0 {
+			start, ended = pos, true
+			pos += int64(i + 1)
+			return i + 1, data[:i], nil
+		}
+		if atEOF && len(data) > 0 {
+			start, ended = pos, false
+			pos += int64(len(data))
+			return len(data), data, nil
+		}
+		return 0, nil, nil
+	})
+	// A broken line, so far the last one. It cannot still be being written
+	// when it ended with a line end (Claude Code writes a line and its end in
+	// one write), when its decode fails before the end of the text (a crash
+	// cut it and the next record was glued on), or when its text holds a
+	// timestamp older than the margin.
+	var pending *tail
+	pendingOK := false
+	no := 0
 	for sc.Scan() {
 		no++
-		b := bytes.TrimSpace(sc.Bytes())
+		raw := sc.Bytes()
+		b := bytes.TrimSpace(raw)
 		if len(b) == 0 {
 			continue
 		}
-		if pending {
-			skip(pendingNo, false)
-			pending = false
+		if pending != nil {
+			skip(pending.no)
+			pending = nil
 		}
 		// Every line must be whole JSON, before the cheap usage filter: a
 		// line cut short (a killed process) loses its "usage" first, since
 		// the content comes before it, and could have been a call.
 		if !json.Valid(b) {
-			pending, pendingNo, pendingStale = true, no, false
+			pending = &tail{path: path, off: start, raw: bytes.Clone(raw), no: no, mtime: mtime}
+			pendingOK = !ended && pureCut(b)
 			for _, m := range tsInText.FindAllSubmatch(b, -1) {
 				if t, ok := parseTS(string(m[1])); ok && clock().Sub(t) > WatermarkMargin {
-					pendingStale = true
+					pendingOK = false
 				}
 			}
 			continue
 		}
-		// Cheap filter before decoding, as the script does: most lines are
-		// user turns and tool results without a usage.
-		if !bytes.Contains(b, []byte(`"usage"`)) {
-			continue
-		}
-		var l line
-		if json.Unmarshal(b, &l) != nil {
-			skip(no, false) // valid JSON of another shape: not a cut line
-			continue
-		}
-		if l.Type != "assistant" || l.Message == nil || l.Message.Usage == nil {
-			continue
-		}
-		if !each(&l, no) {
-			skip(no, false)
-		}
+		takeLine(b, no, each, skip)
 	}
 	if err := sc.Err(); err != nil {
-		return mtime, err
+		return nil, err
 	}
-	if pending {
-		skip(pendingNo, recent && !pendingStale)
+	if pending == nil {
+		return nil, nil
 	}
-	return mtime, nil
+	if !recent || !pendingOK {
+		skip(pending.no)
+		return nil, nil
+	}
+	pending.at = time.Now()
+	return pending, nil
+}
+
+// takeLine reads one whole JSON line b: each for an assistant line with a
+// usage, skip when it gave no call.
+func takeLine(b []byte, no int, each func(l *line, lineNo int) bool, skip func(lineNo int)) {
+	// Cheap filter before decoding, as the script does: most lines are
+	// user turns and tool results without a usage.
+	if !bytes.Contains(b, []byte(`"usage"`)) {
+		return
+	}
+	var l line
+	if json.Unmarshal(b, &l) != nil {
+		skip(no) // valid JSON of another shape: not a cut line
+		return
+	}
+	if l.Type != "assistant" || l.Message == nil || l.Message.Usage == nil {
+		return
+	}
+	if !each(&l, no) {
+		skip(no)
+	}
+}
+
+// pureCut says whether b, no well-formed JSON, is only cut short: its decode
+// runs out of text (io.ErrUnexpectedEOF), as for a line still being written.
+// A line with text after the break (the next record glued on after a crash)
+// fails before its end with a *json.SyntaxError, and a whole value followed
+// by more text decodes without error. (json.Unmarshal's SyntaxError offset
+// does not tell these apart: it is the text's length for {"a":1}x too.)
+func pureCut(b []byte) bool {
+	var v json.RawMessage
+	return errors.Is(json.NewDecoder(bytes.NewReader(b)).Decode(&v), io.ErrUnexpectedEOF)
+}
+
+// recheck looks at a broken last line again: it re-reads the file from where
+// the line starts. It returns the line when it is now whole JSON (it was
+// still being written at the first look), or live when it grew but is still
+// cut short at its end (it is being written now). Neither when the line is
+// unchanged (cut short by a crash, the file's change time bumped by a copy,
+// sync or restore), now ends broken, or was rewritten.
+func recheck(t *tail) (whole []byte, live bool) {
+	f, err := os.Open(t.path)
+	if err != nil {
+		return nil, false
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil || fi.Size() < t.off+int64(len(t.raw)) {
+		return nil, false
+	}
+	got, err := bufio.NewReader(io.NewSectionReader(f, t.off, fi.Size()-t.off)).ReadBytes('\n')
+	if err != nil && err != io.EOF {
+		return nil, false
+	}
+	ended := err == nil
+	if !bytes.HasPrefix(got, t.raw) {
+		return nil, false
+	}
+	b := bytes.TrimSpace(got)
+	switch {
+	case json.Valid(b):
+		return b, false
+	case ended || len(got) == len(t.raw):
+		return nil, false
+	}
+	return nil, pureCut(b)
 }
 
 // Totals sums rows per origin and model, for --dry-run and the tests.

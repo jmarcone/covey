@@ -79,13 +79,24 @@ covey usage push ~/.claude/projects/<projekt> --source "operator: laptop" \
   weil der Inhalt davor steht), und eine Zeile mit „usage“, die keinen
   Aufruf ergibt (keine Nachrichten-ID, kein Zeitstempel), zählt als
   übersprungen, und die Zahl wird ausgegeben. Nur die letzte Zeile einer
-  Datei, die in den letzten fünfzehn Minuten geändert wurde, also nach dem
-  Zeitpunkt, für den behauptet wird, gilt als noch in Arbeit, und nur wenn
-  ihr Text keinen Zeitstempel enthält, der älter als fünfzehn Minuten ist
-  (eine durch einen Absturz abgeschnittene Zeile, an die der nächste Eintrag
-  angehängt wurde, hat einen); die Behauptung bleibt dann unter dem
-  Änderungszeitpunkt dieser Datei. Jede andere übersprungene Zeile
-  verhindert die Behauptung. Aufrufe mit einer Zahl über einer Milliarde oder
+  Datei kann noch in Arbeit sein, und nur wenn die Datei in den letzten
+  fünfzehn Minuten geändert wurde (nach dem Zeitpunkt, für den behauptet
+  wird), die Zeile genau an ihrem Ende abgeschnitten ist (kein Zeilenende,
+  nichts hinter dem Bruch angehängt, wie wenn eine abgestürzte Sitzung
+  fortgesetzt wird) und ihr Text keinen Zeitstempel enthält, der älter als
+  fünfzehn Minuten ist. Eine durch einen Absturz abgeschnittene Zeile hat
+  meist gar keinen Zeitstempel (er steht hinter „usage“), und Kopieren,
+  Synchronisieren oder Wiederherstellen lässt eine alte Datei frisch
+  geändert aussehen; deshalb wird eine solche Zeile, wenn alles andere
+  gelesen ist, mindestens anderthalb Sekunden nach dem ersten Blick noch
+  einmal gelesen: Claude Code schreibt jede Zeile in einem Zug, eine Zeile in
+  Arbeit ist dann also vollständig und wird wie jede andere gelesen; eine
+  unveränderte wurde abgeschnitten und gilt als übersprungen. Ist sie
+  gewachsen, aber noch immer abgeschnitten, wird sie gerade geschrieben: die
+  Behauptung bleibt dann unter dem Änderungszeitpunkt der Datei und unter
+  der ersten Kopie des letzten Aufrufs vor ihr in dieser Datei (die Zeile
+  kann dessen letzte Kopie sein, mit mehr Ausgabe als die gesendete). Jede
+  andere übersprungene Zeile verhindert die Behauptung. Aufrufe mit einer Zahl über einer Milliarde oder
   unter null oder mit einem Text über 256 Bytes lehnt covey ab; der Push hält
   sie zurück und listet sie auf. Ein leeres Modell wird als `unknown`
   gesendet.

@@ -70,11 +70,21 @@ covey usage push ~/.claude/projects/<project> --source "operator: laptop" \
   process; it loses its `usage` first, as the content comes before it), and
   a line with a usage that gives no call (no message id, no timestamp), is
   counted as skipped, and the count is printed. Only the last line of a file
-  changed in the last fifteen minutes, so after the time the claim is made
-  for, is taken for a reply still being written, and only if its text holds
-  no timestamp older than fifteen minutes (a line cut off by a crash and
-  followed by the next record has one); the claim then stays below that
-  file's change time. Any other skipped line sends no claim. Calls with a count
+  can be a reply still being written, and only when the file changed in the
+  last fifteen minutes (after the time the claim is made for), the line is
+  cut short at its very end (no line end, nothing glued on after the break,
+  as when a crashed session is resumed) and its text holds no timestamp
+  older than fifteen minutes. A line cut by a crash usually holds no
+  timestamp at all (the timestamp comes after the usage), and a copy, sync
+  or restore makes an old file look freshly changed, so such a line is read
+  again once the rest is read, at least one and a half seconds after the
+  first look: Claude Code writes each line in one go, so a line still being
+  written is whole by then and is read as any other; one that is unchanged
+  was cut short and is skipped. One that grew but is still cut short is
+  being written now: the claim then stays below the file's change time and
+  below the first copy of the last call before it in that file (the line
+  may be that call's final copy, with more output than the copy sent). Any
+  other skipped line sends no claim. Calls with a count
   above one billion or below zero, or with a text over 256 bytes, are
   refused by covey; the push holds them back and lists them. An empty model
   is sent as `unknown`.

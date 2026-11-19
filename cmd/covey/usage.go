@@ -259,8 +259,9 @@ func runUsage(args []string, stdout io.Writer, getenv func(string) string) error
 			}
 		}
 		if len(why) == 0 && len(own) == 0 {
-			// A line still being written lies in a file changed after the
-			// claim time; the claim stays below that change.
+			// A line still being written: the claim stays below its file's
+			// change and below the first copy of the call before it (see
+			// Stats.MidWrite).
 			at := claimAt
 			if mw := s.st.MidWrite; !mw.IsZero() && !at.Before(mw) {
 				at = mw.Add(-time.Second).Truncate(time.Second)

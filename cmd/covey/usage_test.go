@@ -228,15 +228,17 @@ func TestUsagePushListsTheLinesThatBlockTheClaim(t *testing.T) {
 }
 
 // A broken last line is taken for one still being written only in a file
-// changed after the claim time; then the claim stays below that change.
-// One older (20 minutes, inside the old 30-minute window) withholds it, as
-// does a line cut short before its "usage", wherever it is.
+// changed after the claim time, cut short at its end and growing between two
+// looks. One older (20 minutes, inside the old 30-minute window) withholds the
+// claim, as does a line cut short before its "usage", wherever it is, and a
+// fresh one that ended, has the next record glued on, or stays the same at
+// the second look (a crash-cut line in a copied or restored file).
 func TestUsagePushBrokenLinesAndTheClaim(t *testing.T) {
-	claim := func(name string, age time.Duration, lines ...string) (time.Time, bool, string) {
+	claim := func(name string, age time.Duration, body string) (time.Time, bool, string) {
 		t.Helper()
 		dir := transcriptDir(t)
 		f := filepath.Join(dir, name)
-		os.WriteFile(f, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
+		os.WriteFile(f, []byte(body), 0o644)
 		at := time.Now().Add(-age)
 		os.Chtimes(f, at, at)
 		bodies, out, _, err := pushTo(t, dir, "--source", "x", "--host", "h1", "--complete")
@@ -253,17 +255,20 @@ func TestUsagePushBrokenLinesAndTheClaim(t *testing.T) {
 	call := `{"type":"assistant","timestamp":"2026-11-18T10:00:00Z","message":{"id":"m9","model":"claude-opus-5-5","usage":{"input_tokens":1,"output_tokens":2}}}`
 	cutCall := `{"type":"assistant","message":{"usage":{"input_tok`
 	cutUser := `{"type":"user","message":{"content":"a long answer, cut off by a killed pro`
-	if _, ok, out := claim("old.jsonl", 20*time.Minute, call, cutCall); ok {
-		t.Errorf("a broken last line 20 minutes old: claim sent\n%s", out)
-	}
-	if _, ok, out := claim("cut.jsonl", 2*time.Hour, cutUser, call); ok || !strings.Contains(out, "cut.jsonl:1") {
-		t.Errorf("a line cut before its usage: claim sent\n%s", out)
-	}
-	if _, ok, out := claim("cutlast.jsonl", 20*time.Minute, call, cutUser); ok {
-		t.Errorf("a cut last line 20 minutes old: claim sent\n%s", out)
-	}
-	at, ok, out := claim("fresh.jsonl", time.Minute, call, cutUser)
-	if !ok || !at.Before(time.Now().Add(-time.Minute)) {
-		t.Errorf("a line being written a minute ago: claim %v %v\n%s", at, ok, out)
+	for _, c := range []struct {
+		name, what string
+		age        time.Duration
+		body       string
+	}{
+		{"old.jsonl", "a broken last line 20 minutes old", 20 * time.Minute, call + "\n" + cutCall},
+		{"cut.jsonl", "a line cut before its usage", 2 * time.Hour, cutUser + "\n" + call + "\n"},
+		{"cutlast.jsonl", "a cut last line 20 minutes old", 20 * time.Minute, call + "\n" + cutUser},
+		{"ended.jsonl", "a fresh broken last line with a line end", time.Minute, call + "\n" + cutUser + "\n"},
+		{"glued.jsonl", "a fresh cut line with the next record glued on", time.Minute, call + "\n" + cutCall + call + "\n"},
+		{"same.jsonl", "a fresh cut last line unchanged at the second look", time.Minute, call + "\n" + cutUser},
+	} {
+		if _, ok, out := claim(c.name, c.age, c.body); ok || !strings.Contains(out, c.name+":2") && !strings.Contains(out, c.name+":1") {
+			t.Errorf("%s: claim sent or line not listed\n%s", c.what, out)
+		}
 	}
 }

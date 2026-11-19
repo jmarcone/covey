@@ -3,6 +3,7 @@ package usagepush
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
@@ -333,14 +334,16 @@ func TestReadReportsSymlinkedDirectories(t *testing.T) {
 }
 
 // A line with a usage that cannot be read is counted; only the last line of a
-// file touched in the last 30 minutes is taken for a reply still being written.
+// file touched within WatermarkMargin, cut short at its end and growing
+// between two looks, is taken for a reply still being written.
 func TestReadCountsUnreadableLines(t *testing.T) {
 	dir := t.TempDir()
 	good := callLine("m1", "2026-11-18T10:00:00Z", "")
 	mid := filepath.Join(dir, "mid.jsonl")
 	writeFile(t, mid, good, `{"type":"assistant","message":{"usage":{"input_tok`, callLine("m2", "2026-11-18T10:01:00Z", ""))
 	tail := filepath.Join(dir, "tail.jsonl")
-	writeFile(t, tail, callLine("m3", "2026-11-18T10:02:00Z", ""), `{"type":"assistant","message":{"usage":{"input_tok`)
+	writeRaw(t, tail, callLine("m3", "2026-11-18T10:02:00Z", "")+"\n"+`{"type":"assistant","message":{"usage":{"input_tok`)
+	between(t, func() { appendTo(t, tail, "ens") })
 
 	_, st, err := Read([]string{dir}, "h", time.Time{})
 	if err != nil || st.Skipped != 2 || st.Suspect != 1 {
@@ -484,8 +487,10 @@ func TestReadCrashGluedLastLineIsSuspect(t *testing.T) {
 	if err != nil || st.Suspect != 1 || len(st.SuspectAt) != 1 || st.SuspectAt[0] != f+":2" {
 		t.Fatalf("%+v %v", st, err)
 	}
-	// a broken last line with only recent timestamps is still being written
-	writeFile(t, f, callLine("m1", recent, ""), `{"type":"assistant","timestamp":"`+recent+`","message":{"usage":{"input_tok`)
+	// a broken last line with only recent timestamps that grows between the
+	// two looks is still being written
+	writeRaw(t, f, callLine("m1", recent, "")+"\n"+`{"type":"assistant","timestamp":"`+recent+`","message":{"usage":{"input_tok`)
+	between(t, func() { appendTo(t, f, "ens") })
 	_, st, _ = Read([]string{dir}, "h", time.Time{})
 	if st.Skipped != 1 || st.Suspect != 0 {
 		t.Fatalf("%+v", st)
@@ -526,11 +531,11 @@ func TestReadCountsLinesCutBeforeTheirUsage(t *testing.T) {
 		t.Fatalf("whole lines: %+v", st)
 	}
 	// a cut last line: still being written only in a file changed within
-	// the margin, and then MidWrite holds the change time
-	writeFile(t, f, callLine("m1", "2026-11-18T10:00:00Z", ""), cut)
+	// the margin, growing between the two looks, and then MidWrite is set
+	writeRaw(t, f, callLine("m1", "2026-11-18T10:00:00Z", "")+"\n"+cut)
+	between(t, func() { appendTo(t, f, "cess") })
 	_, st, _ = Read([]string{dir}, "h", time.Time{})
-	fi, _ := os.Stat(f)
-	if st.Skipped != 1 || st.Suspect != 0 || !st.MidWrite.Equal(fi.ModTime()) {
+	if st.Skipped != 1 || st.Suspect != 0 || st.MidWrite.IsZero() {
 		t.Fatalf("fresh cut last line: %+v", st)
 	}
 	for _, age := range []time.Duration{16 * time.Minute, 20 * time.Minute, time.Hour} {
@@ -540,6 +545,165 @@ func TestReadCountsLinesCutBeforeTheirUsage(t *testing.T) {
 		if st.Suspect != 1 || !st.MidWrite.IsZero() {
 			t.Errorf("cut last line %v old: %+v", age, st)
 		}
+	}
+}
+
+// The second look at a broken last line comes at once in the tests; between
+// runs something before it, for one test.
+func TestMain(m *testing.M) {
+	settle = func(time.Time) {}
+	os.Exit(m.Run())
+}
+
+func between(t *testing.T, f func()) {
+	t.Helper()
+	old := settle
+	settle = func(time.Time) { f() }
+	t.Cleanup(func() { settle = old })
+}
+
+// writeRaw writes text as it is: a last line without a line end, as a write
+// still under way or a crash leaves it.
+func writeRaw(t *testing.T, path, text string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func appendTo(t *testing.T, path, text string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err == nil {
+		_, err = f.WriteString(text)
+		f.Close()
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPureCut(t *testing.T) {
+	for s, want := range map[string]bool{
+		`{"type":"assistant","message":{"usage":{"input_tok`: true,
+		`{"a":1,"b":tr`:    true,
+		`{"a":12`:          true,
+		`{"a":"x\`:         true, // cut inside an escape
+		`{"a":1}x`:         false,
+		`{"a":1}{"b":2}`:   false,
+		`{"a":"x{"type":1`: false, // the next record glued into a key
+	} {
+		if pureCut([]byte(s)) != want {
+			t.Errorf("pureCut(%s) = %v", s, !want)
+		}
+	}
+}
+
+// A crash cuts a line before its timestamp (the timestamp comes after the
+// usage), and a resumed session glues its next record onto it: no old
+// timestamp is left to see, but the decode fails before the end of the text.
+// Suspect, with or without a line end, in a file written a minute ago, and
+// without waiting for a second look.
+func TestReadGluedLastLineIsSuspect(t *testing.T) {
+	dir := t.TempDir()
+	recent := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+	f := filepath.Join(dir, "s.jsonl")
+	cut := `{"type":"assistant","message":{"id":"m2","model":"claude-opus-5-5","usage":{"input_tok`
+	looked := false
+	between(t, func() { looked = true })
+	for _, end := range []string{"\n", ""} {
+		writeRaw(t, f, callLine("m1", recent, "")+"\n"+cut+callLine("m3", recent, "")+end)
+		rows, st, err := Read([]string{dir}, "h", time.Time{})
+		if err != nil || len(rows) != 1 || st.Suspect != 1 || len(st.SuspectAt) != 1 || st.SuspectAt[0] != f+":2" || !st.MidWrite.IsZero() {
+			t.Errorf("glued last line, end %q: %d rows %+v %v", end, len(rows), st, err)
+		}
+	}
+	if looked {
+		t.Error("a glued line was looked at again")
+	}
+}
+
+// A line cut by a crash long ago, in a file whose change time a copy, sync or
+// restore has just bumped: it is the same at the second look, so suspect,
+// whatever the change time says then.
+func TestReadUnchangedCutLineIsSuspect(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "s.jsonl")
+	writeRaw(t, f, callLine("m1", "2026-11-01T10:00:00Z", "")+"\n"+`{"type":"assistant","message":{"id":"m2","model":"claude-opus-5-5","usage":{"input_tok`)
+	now := time.Now()
+	if err := os.Chtimes(f, now, now); err != nil {
+		t.Fatal(err)
+	}
+	for name, f2 := range map[string]func(){
+		"untouched": func() {},
+		"touched":   func() { later := time.Now(); os.Chtimes(f, later, later) },
+	} {
+		looked := false
+		between(t, func() { looked = true; f2() })
+		rows, st, err := Read([]string{dir}, "h", time.Time{})
+		if err != nil || !looked || len(rows) != 1 || st.Skipped != 1 || st.Suspect != 1 || st.SuspectAt[0] != f+":2" || !st.MidWrite.IsZero() {
+			t.Errorf("%s: looked %v, %d rows %+v %v", name, looked, len(rows), st, err)
+		}
+	}
+}
+
+// A line half written at the first look is whole at the second: it is read
+// as any other line, and nothing withholds the claim. A line appended after
+// it is left for the next run, as any line written after a read.
+func TestReadLineFinishedBetweenTheLooks(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "s.jsonl")
+	ts := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+	full := callLine("m2", ts, `,"cache_read_input_tokens":7`)
+	writeRaw(t, f, callLine("m1", ts, "")+"\n"+full[:60])
+	between(t, func() { appendTo(t, f, full[60:]+"\n"+callLine("m3", ts, "")+"\n") })
+	rows, st, err := Read([]string{dir}, "h", time.Time{})
+	if err != nil || len(rows) != 2 || rows[1].MessageID != "m2" || rows[1].CacheRead != 7 ||
+		st.Skipped != 0 || st.Suspect != 0 || !st.MidWrite.IsZero() {
+		t.Fatalf("%+v %+v %v", rows, st, err)
+	}
+	// rewritten in between (not an append): suspect
+	writeRaw(t, f, callLine("m1", ts, "")+"\n"+full[:60])
+	between(t, func() { writeRaw(t, f, callLine("m1", ts, "")+"\n"+`{"type":"user","message":{"content":"x"}}`+"\n") })
+	_, st, _ = Read([]string{dir}, "h", time.Time{})
+	if st.Suspect != 1 {
+		t.Fatalf("rewritten: %+v", st)
+	}
+	// ended broken in between: suspect
+	writeRaw(t, f, callLine("m1", ts, "")+"\n"+full[:60])
+	between(t, func() { appendTo(t, f, "\n") })
+	_, st, _ = Read([]string{dir}, "h", time.Time{})
+	if st.Suspect != 1 {
+		t.Fatalf("ended broken: %+v", st)
+	}
+}
+
+// A last line still being written may be the final copy of the call before
+// it, with more output than the copy sent: MidWrite, which the claim stays
+// below, is the first copy's timestamp when that is before the file's change.
+func TestReadMidWriteStaysBelowTheFirstCopy(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "s.jsonl")
+	first := time.Now().UTC().Add(-20 * time.Minute).Truncate(time.Second)
+	cp := func(at time.Time, out int) string {
+		return fmt.Sprintf(`{"type":"assistant","timestamp":"%s","message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":1,"output_tokens":%d}}}`, at.Format(time.RFC3339), out)
+	}
+	writeRaw(t, f, callLine("m0", first.Add(-time.Hour).Format(time.RFC3339), "")+"\n"+
+		cp(first, 1)+"\n"+cp(first.Add(10*time.Minute), 5)+"\n"+
+		`{"type":"assistant","message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":1,"output_tok`)
+	between(t, func() { appendTo(t, f, `ens":`) })
+	rows, st, err := Read([]string{dir}, "h", time.Time{})
+	if err != nil || len(rows) != 2 || rows[1].Output != 5 || st.Skipped != 1 || st.Suspect != 0 || !st.MidWrite.Equal(first) {
+		t.Fatalf("%+v %+v %v", rows, st, err)
+	}
+	// with no call before the line, the file's change time
+	g := filepath.Join(t.TempDir(), "s.jsonl")
+	writeRaw(t, g, `{"type":"assistant","message":{"id":"m1","usage":{"input_tok`)
+	between(t, func() { appendTo(t, g, `ens":`) })
+	_, st, _ = Read([]string{g}, "h", time.Time{})
+	fi, _ := os.Stat(g)
+	if st.Suspect != 0 || st.MidWrite.IsZero() || st.MidWrite.After(fi.ModTime()) {
+		t.Fatalf("no call before: %+v", st)
 	}
 }
 
