@@ -652,7 +652,6 @@ function lichter(szene: THREE.Scene): { himmel: THREE.HemisphereLight; licht: TH
     licht.castShadow = true;
     licht.shadow.mapSize.set(2048, 2048);
     licht.shadow.bias = -0.0006;
-    licht.shadow.radius = 2;
     szene.add(licht, licht.target);
   }
   return { himmel, licht };
