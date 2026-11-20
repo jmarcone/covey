@@ -1013,10 +1013,11 @@ func (o *Orchestrator) rememberWorkSignature(ctx context.Context, agentID uuid.U
 // carries the action, not the id of the note it produced (see
 // spec/03-lifecycle-scheduling.md).
 //
-// The check runs synchronously in the completion path, after the task is
-// already finished: the watermark has to be settled before the next tick can
-// read it. It costs one work check — and only for runs that wrote something at
-// all; a silent run does not even get that far.
+// The check runs synchronously in the completion path, BEFORE the task is
+// finished: the watermark has to be settled before the next tick can read it,
+// and a tick only counts the heartbeat as due once its task is done. It costs
+// one work check — and only for runs that wrote something at all; a silent run
+// does not even get that far.
 func (o *Orchestrator) refreshWorkSignature(ctx context.Context, agentID, orgID uuid.UUID, name string, since time.Time) {
 	var condition string
 	if err := o.Pool.QueryRow(ctx,
@@ -3199,13 +3200,19 @@ func (o *Orchestrator) handleDaemonMessage(ctx context.Context, agent agents.Age
 				result += " (to " + name + ")"
 			}
 		}
-		if _, err := o.Backlog.Complete(ctx, taskID, state, result, d.Error); err != nil {
-			return true, err
-		}
+		// The watermark is settled BEFORE the task turns done. Done makes the
+		// heartbeat due again (no pending task left, see fireHeartbeats), and a
+		// tick between the two would read the agent's own comment as new work and
+		// wake it for it — the self-comment loop the refresh exists to prevent.
+		// The refresh costs a work check, so that window is as wide as a network
+		// round trip, not a few microseconds (#13). While the task is still
+		// running its heartbeat counts as pending and no tick can interleave.
+		//
 		// A run that ended without a result must not keep its wake-up: the work
 		// it was woken for is still lying there. A successful run does the
 		// converse and advances its watermark past any target-system action it
 		// performed itself, so that action cannot wake it again.
+		advanced, advancedTitle := false, ""
 		if t, err := o.Backlog.Get(ctx, taskID); err == nil {
 			heartbeatRun := t.Origin == "heartbeat"
 			if !heartbeatRun && strings.HasPrefix(t.Origin, originContinuation+":") {
@@ -3237,8 +3244,19 @@ func (o *Orchestrator) handleDaemonMessage(ctx context.Context, agent agents.Age
 						since = time.Time{}
 					}
 					o.refreshWorkSignature(ctx, agent.ID, agent.OrgID, t.Title, since)
+					advanced, advancedTitle = true, t.Title
 				}
 			}
+		}
+		if _, err := o.Backlog.Complete(ctx, taskID, state, result, d.Error); err != nil {
+			// Killed or cancelled while the check was running: the task does not
+			// end as this run reports it, so neither does the advance stand. The
+			// state it was moved past may hold foreign work; waking once too
+			// often is harmless, swallowing it is not.
+			if advanced {
+				o.releaseWorkSignature(ctx, agent.ID, advancedTitle)
+			}
+			return true, err
 		}
 		// done step: feed what was learned into the wiki (spec/05). The
 		// consolidation (merging near-duplicates) runs task-independently in the

@@ -17,6 +17,9 @@ type heartbeatSignatureTestSystem struct{}
 var heartbeatSignatureState struct {
 	sync.Mutex
 	sig string
+	// delay slows the work check down, so a completion path that checks AFTER
+	// the task turned done is observable instead of a race of microseconds.
+	delay time.Duration
 }
 
 func init() {
@@ -39,8 +42,10 @@ func (heartbeatSignatureTestSystem) HasWork(context.Context, target.Credential) 
 }
 func (heartbeatSignatureTestSystem) HasWorkSigned(context.Context, target.Credential, string) (bool, string, error) {
 	heartbeatSignatureState.Lock()
-	defer heartbeatSignatureState.Unlock()
-	return true, heartbeatSignatureState.sig, nil
+	sig, delay := heartbeatSignatureState.sig, heartbeatSignatureState.delay
+	heartbeatSignatureState.Unlock()
+	time.Sleep(delay)
+	return true, sig, nil
 }
 
 // Only "write" changes the state in this system — like a comment in GitLab.
@@ -325,7 +330,17 @@ func TestHeartbeatSignatureAdvancesAfterASuccessfulRun(t *testing.T) {
 	}
 	heartbeatSignatureState.Lock()
 	heartbeatSignatureState.sig = "issue15!23@42"
+	// The check after the run takes a moment. The watermark must be settled by
+	// the time the task reads done, whatever that moment is: a heartbeat that is
+	// due right after done would otherwise read the agent's own comment as new
+	// work (#13: the window behind the flake).
+	heartbeatSignatureState.delay = 400 * time.Millisecond
 	heartbeatSignatureState.Unlock()
+	t.Cleanup(func() {
+		heartbeatSignatureState.Lock()
+		heartbeatSignatureState.delay = 0
+		heartbeatSignatureState.Unlock()
+	})
 
 	admin := login(t, s, "admin@test.local", "admin-passwort")
 	admin.expect(http.MethodPost,
