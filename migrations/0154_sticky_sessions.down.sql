@@ -24,5 +24,6 @@ ALTER TABLE backlog_tasks
     DROP COLUMN IF EXISTS session_prompt,
     DROP COLUMN IF EXISTS session_memory,
     DROP COLUMN IF EXISTS session_basis,
-    DROP COLUMN IF EXISTS session_successor;
+    DROP COLUMN IF EXISTS session_successor,
+    DROP COLUMN IF EXISTS routed_wake;
 -- topic_key is 0153's (#45) and stays.

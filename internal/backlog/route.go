@@ -140,8 +140,10 @@ func routeNote(ctx context.Context, tx pgx.Tx, taskID, routedFrom uuid.UUID, aut
 		WHERE task_id=$1 AND to_state='blocked'`, taskID).Scan(&out.Park); err != nil {
 		return Routed{}, err
 	}
+	// routed_wake (#130): the session this resumes was parked for a reason
+	// the note does not end; the dispatch checks it like a new round's.
 	if err := applyTransition(ctx, tx, t, StateOpen, "answered by "+author,
-		"resume_input=$3, priority=1", resumeInput); err != nil {
+		"resume_input=$3, priority=1, routed_wake=true", resumeInput); err != nil {
 		return Routed{}, err
 	}
 	if out.Task, err = scanTask(tx.QueryRow(ctx, "SELECT "+taskCols+" FROM backlog_tasks WHERE id=$1", taskID)); err != nil {

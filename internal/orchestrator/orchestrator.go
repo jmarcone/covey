@@ -2816,7 +2816,12 @@ func (o *Orchestrator) processTask(ctx context.Context, agent agents.Agent, link
 	if plan.handover != "" {
 		assign.Body = plan.handover + task.Body
 	}
-	if task.RuntimeSessionID != nil && task.ResumeInput != nil {
+	if plan.wokenBy != "" {
+		// A routed wake that may not continue its session (#130): the task
+		// starts afresh, with the note that woke it.
+		assign.Body += "\n\n## What woke this task\n\n" + plan.wokenBy
+	}
+	if task.RuntimeSessionID != nil && task.ResumeInput != nil && !plan.dropResume {
 		// blocked→working: resumption through the native runtime session (spec/12).
 		assign.ResumeSessionID = *task.RuntimeSessionID
 		assign.ResumeInput = *task.ResumeInput
@@ -3228,6 +3233,11 @@ func (o *Orchestrator) handleDaemonMessage(ctx context.Context, agent agents.Age
 		question := b.Question
 		if o.fromConversation(ctx, taskID) {
 			question = replyWithQuestion(b.Reply, b.Question)
+		}
+		// Where the session stood when it parked (#130): a routed note that
+		// wakes it later is checked against this like a new round would be.
+		if err := o.Backlog.RecordSessionEnd(ctx, taskID, b.SessionID, s.lastContext(taskID), credentialKey(s)); err != nil {
+			o.Log.Warn("sticky: session pause not recorded", "task", taskID, "err", err)
 		}
 		if _, err := o.Backlog.Block(ctx, taskID, b.CorrelationKey, b.SessionID, question); err != nil {
 			return true, err

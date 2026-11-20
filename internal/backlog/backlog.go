@@ -831,7 +831,7 @@ func (s *Store) Block(ctx context.Context, id uuid.UUID, correlationKey, session
 		return Task{}, err
 	}
 	if err := applyTransition(ctx, tx, t, StateBlocked, "blocked: "+question,
-		"correlation_key=$3, runtime_session_id=$4, resume_input=NULL, daemon_retries=0", correlationKey, sessionID); err != nil {
+		"correlation_key=$3, runtime_session_id=$4, resume_input=NULL, daemon_retries=0, routed_wake=false", correlationKey, sessionID); err != nil {
 		return Task{}, err
 	}
 	resumed := false

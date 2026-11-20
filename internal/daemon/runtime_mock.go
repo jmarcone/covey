@@ -23,6 +23,7 @@ import (
 //
 //	[mock:action <system>/<action> <json-params>]  → action through the action proxy
 //	[mock:block key=<correlation-key> question=<text>]
+//	[mock:block-first key=<key> question=<text>] → likewise, on the task's first run only
 //	[mock:fail <error-text>]
 //	[mock:result <text>]
 //	[mock:memory <text>]
@@ -88,7 +89,7 @@ func init() {
 // the parameter. A bare `]` still gets the group no further, so two directives
 // on one line stay separate.
 var mockDirective = regexp.MustCompile(
-	`\[mock:(action|block|fail|result|memory|reply|sleep|maxturns-always|maxturns|prompt|session|line|cost)\s*((?:[^\[\]]|\[[^\]]*\])*)\]`)
+	`\[mock:(action|block-first|block|fail|result|memory|reply|sleep|maxturns-always|maxturns|prompt|session|line|cost)\s*((?:[^\[\]]|\[[^\]]*\])*)\]`)
 
 // Run is run plus the one thing a real engine leaves behind: the session's
 // transcript, here a marker per working directory under the home, so that a
@@ -221,6 +222,26 @@ func (Mock) run(ctx context.Context, spec RunSpec, onEvent func(kind string, pay
 				res.Error = fmt.Sprintf("action %s: %s", path, e.Error)
 				return res, nil
 			}
+		case "block-first":
+			// Blocks on the task's first run only, resumed or not after it:
+			// a run started afresh after a wake (#130) carries on.
+			marker := ""
+			if spec.HomeDir != "" && isTaskID(spec.TaskID) {
+				marker = filepath.Join(spec.HomeDir, ".mock", "blocked", spec.TaskID)
+			}
+			if marker == "" || spec.ResumeSessionID != "" {
+				continue
+			}
+			if _, err := os.Stat(marker); err == nil {
+				continue
+			}
+			if os.MkdirAll(filepath.Dir(marker), 0o755) == nil {
+				_ = os.WriteFile(marker, nil, 0o644)
+			}
+			res.Status = "blocked"
+			res.CorrelationKey = mockKV(arg, "key")
+			res.Question = mockKV(arg, "question")
+			return res, nil
 		case "block":
 			if spec.ResumeSessionID != "" {
 				continue // do not block again on resume

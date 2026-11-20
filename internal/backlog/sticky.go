@@ -255,22 +255,38 @@ func (s *Store) LatestReview(ctx context.Context, orgID, agentID uuid.UUID, topi
 }
 
 // StickyState is what a task recorded about its session so far: the policy
-// it was dispatched under ("" = never) and the prompt its session runs with.
+// it was dispatched under ("" = never), the prompt its session runs with, and
+// — for a task woken by a routed note (RoutedWake) — where its session stood
+// when it parked: when, how large, on which credential.
 type StickyState struct {
-	Policy string
-	Prompt *string
-	Memory string
+	Policy     string
+	Prompt     *string
+	Memory     string
+	Basis      string
+	RoutedWake bool
+	PausedAt   *time.Time
+	Context    int64
+	Credential string
 }
 
 // StickyState reads it.
 func (s *Store) StickyState(ctx context.Context, id uuid.UUID) (StickyState, error) {
 	var st StickyState
-	err := s.pool.QueryRow(ctx, `SELECT COALESCE(sticky_policy,''), session_prompt, COALESCE(session_memory,'')
-		FROM backlog_tasks WHERE id=$1`, id).Scan(&st.Policy, &st.Prompt, &st.Memory)
+	err := s.pool.QueryRow(ctx, `SELECT COALESCE(sticky_policy,''), session_prompt, COALESCE(session_memory,''),
+			COALESCE(session_basis,''), routed_wake, session_finished_at, COALESCE(session_context_tokens,0),
+			COALESCE(session_credential,'')
+		FROM backlog_tasks WHERE id=$1`, id).Scan(&st.Policy, &st.Prompt, &st.Memory, &st.Basis, &st.RoutedWake,
+		&st.PausedAt, &st.Context, &st.Credential)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return st, ErrNotFound
 	}
 	return st, err
+}
+
+// ClearRoutedWake marks a routed wake as dealt with.
+func (s *Store) ClearRoutedWake(ctx context.Context, id uuid.UUID) error {
+	_, err := s.pool.Exec(ctx, "UPDATE backlog_tasks SET routed_wake=false WHERE id=$1", id)
+	return err
 }
 
 // ChainRoot is the first task of a turn-limit continuation chain: the task

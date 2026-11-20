@@ -306,8 +306,8 @@ func TestStickyFreshCases(t *testing.T) {
 	// Stickiness off.
 	s.setStickyAtRest(dev.ID, agents.StickyFresh)
 	f, vf := s.runTopic(dev, "Round 4", "pr:example/app#42", "")
-	if vf.Resume != "" || !strings.Contains(vf.Prompt, "## Handover (pr:example/app#42)") || vf.WorkDir == va.WorkDir {
-		t.Fatalf("off: fresh with handover in its own dir, got %+v", vf)
+	if vf.Resume != "" || strings.Contains(vf.Prompt, "## Handover") || vf.WorkDir == va.WorkDir {
+		t.Fatalf("off: fully fresh (no handover) in its own dir, got %+v", vf)
 	}
 	if d, r := s.decision(f.ID); d != backlog.DecisionFresh || r != backlog.ReasonOff {
 		t.Fatalf("off: %s/%s", d, r)
@@ -327,6 +327,11 @@ func TestStickyReviewerNeverResumes(t *testing.T) {
 	b, vb := s.runTopic(reviewer, "Review round 2", "pr:example/app#9", "")
 	if vb.Resume != "" || vb.WorkDir == va.WorkDir || !strings.HasSuffix(vb.WorkDir, b.ID.String()) {
 		t.Fatalf("the reviewer resumed or shares a dir: %+v", vb)
+	}
+	// Nor is it handed its own previous report: a review round is a fresh
+	// adversarial review, not one anchored on the last.
+	if strings.Contains(vb.Prompt, "## Handover") || strings.Contains(vb.Prompt, "previous report") {
+		t.Fatalf("the reviewer got a handover: %q", vb.Prompt)
 	}
 	if d, r := s.decision(b.ID); d != backlog.DecisionFresh || r != backlog.ReasonOff {
 		t.Fatalf("reviewer: %s/%s", d, r)
@@ -886,5 +891,83 @@ func TestStickyFreshRoundBesideABlockedOne(t *testing.T) {
 	}
 	if !strings.HasSuffix(vb.WorkDir, "/scratch/"+b.ID.String()) {
 		t.Fatalf("round 2 works in its own directory, is %q", vb.WorkDir)
+	}
+}
+
+// A note routed onto a blocked sticky round (#45) wakes it through the same
+// checks a new round goes through: inside the window it continues its own
+// session; outside it starts afresh, with a handover and the note that woke it.
+func TestStickyRoutedWakeIsChecked(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	dev := s.stickyAgent("wake-dev", agents.StickyConditional)
+	y, own := s.caller(t, "wake-sender")
+	block := func(title, topic string) backlog.Task {
+		t.Helper()
+		task, err := s.backlog.CreateWithTopic(ctx, s.orgID, dev.ID, title,
+			"[mock:block-first key=ext:"+title+" question=which?]\n[mock:session]", "manual", 3, topic)
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, title+" blocked", 30*time.Second, func() bool { return s.taskState(task.ID) == backlog.StateBlocked })
+		return task
+	}
+	route := func(topic, title string) {
+		t.Helper()
+		resp := s.orch.CreateAgentTask(ctx, y, own.ID, daemon.RequestCreateTask{Agent: dev.Slug, Title: title,
+			Body: "the review asks for the lock order", Topic: topic})
+		if !resp.OK || !resp.Woken {
+			t.Fatalf("the note must wake the blocked round: %+v", resp)
+		}
+	}
+	result := func(id uuid.UUID) sessionView {
+		t.Helper()
+		waitFor(t, "woken round done", 30*time.Second, func() bool { return s.taskState(id) == backlog.StateDone })
+		got, _ := s.backlog.Get(ctx, id)
+		var v sessionView
+		if err := json.Unmarshal([]byte(*got.Result), &v); err != nil {
+			t.Fatalf("result %q", *got.Result)
+		}
+		return v
+	}
+	wakeOutcome := func(id uuid.UUID) string {
+		t.Helper()
+		var out string
+		_ = s.pool.QueryRow(ctx, `SELECT payload->>'outcome' FROM recording_events
+			WHERE task_id=$1 AND kind='lifecycle' AND payload->>'status'='sticky_wake' ORDER BY id DESC LIMIT 1`, id).Scan(&out)
+		return out
+	}
+
+	// Inside the window: the round continues its own session.
+	inside := block("inside-round", "pr:example/app#30")
+	route("pr:example/app#30", "amend round inside")
+	vi := result(inside.ID)
+	if vi.Resume != mockSessionID(inside.ID) {
+		t.Fatalf("inside the window the woken round resumes its own session, resumed %q", vi.Resume)
+	}
+	if o := wakeOutcome(inside.ID); o != "resumed" {
+		t.Fatalf("wake outcome %q", o)
+	}
+
+	// Outside the window: fresh, with the note that woke it.
+	outside := block("outside-round", "pr:example/app#31")
+	if _, err := s.pool.Exec(ctx, `UPDATE backlog_tasks SET session_finished_at = now() - interval '2 hours' WHERE id=$1`, outside.ID); err != nil {
+		t.Fatal(err)
+	}
+	route("pr:example/app#31", "amend round outside")
+	vo := result(outside.ID)
+	if vo.Resume != "" {
+		t.Fatalf("outside the window the woken round starts fresh, resumed %q", vo.Resume)
+	}
+	if !strings.Contains(vo.Prompt, "## What woke this task") || !strings.Contains(vo.Prompt, "the review asks for the lock order") {
+		t.Fatalf("the fresh start carries the note that woke it: %q", vo.Prompt)
+	}
+	if o := wakeOutcome(outside.ID); o != "fresh:window" {
+		t.Fatalf("wake outcome %q", o)
+	}
+	// A later block and an ordinary answer resume as before: the flag is spent.
+	var wake bool
+	if err := s.pool.QueryRow(ctx, `SELECT routed_wake FROM backlog_tasks WHERE id=$1`, outside.ID).Scan(&wake); err != nil || wake {
+		t.Fatalf("the routed wake is consumed: %v %v", wake, err)
 	}
 }

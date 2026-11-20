@@ -29,7 +29,11 @@ ALTER TABLE backlog_tasks
     -- The one task that continues this task's session. Claimed with a
     -- conditional UPDATE, so two rounds on one topic never resume the same
     -- session at once.
-    ADD COLUMN session_successor UUID REFERENCES backlog_tasks(id) ON DELETE SET NULL;
+    ADD COLUMN session_successor UUID REFERENCES backlog_tasks(id) ON DELETE SET NULL,
+    -- Set when a note routed onto the task (#45) woke it from blocked: its
+    -- resume then goes through the same checks a new round's would (window,
+    -- cap, credential, prompt) before it continues its session.
+    ADD COLUMN routed_wake BOOLEAN NOT NULL DEFAULT false;
 
 -- (3) The dispatch decision, recorded on the task it was made for:
 -- sticky_resumed, fresh (with its reason) or sticky_pending (asked the daemon
