@@ -394,14 +394,21 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		Title    string `json:"title"`
 		Body     string `json:"body"`
 		Priority int    `json:"priority"`
+		// Topic: pr:<n> or issue:<n>, optional (#130).
+		Topic string `json:"topic"`
 	}
 	// A title of blanks is no title: the form's "required" lets it through.
 	if err := readJSON(r, &in); err != nil || strings.TrimSpace(in.Title) == "" {
 		writeErr(w, http.StatusBadRequest, "title is required")
 		return
 	}
+	topic, err := daemon.ParseTopic(in.Topic)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	in.Title = strings.TrimSpace(in.Title)
-	t, err := s.Backlog.Create(r.Context(), p.OrgID, id, in.Title, in.Body, "manual:"+p.Email, in.Priority)
+	t, err := s.Backlog.CreateOnTopic(r.Context(), p.OrgID, id, in.Title, in.Body, "manual:"+p.Email, in.Priority, topic)
 	if err != nil {
 		mapErr(w, err)
 		return
@@ -1287,6 +1294,35 @@ func (s *Server) handleSetMaxTurns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Registry.SetMaxTurns(r.Context(), id, in.MaxTurns); err != nil {
+		mapErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleSetSticky sets whether the agent's tasks on a topic resume the
+// previous task's session, and the window and context cap of that (#130).
+// Takes effect at the next dispatch.
+func (s *Server) handleSetSticky(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var in struct {
+		On            bool `json:"sticky_sessions"`
+		WindowMinutes int  `json:"sticky_window_minutes"`
+		ContextCap    int  `json:"sticky_context_cap"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "sticky_sessions, sticky_window_minutes and sticky_context_cap missing")
+		return
+	}
+	if err := s.Registry.SetSticky(r.Context(), id, in.On, in.WindowMinutes, in.ContextCap); err != nil {
+		if errors.Is(err, agents.ErrStickySettings) {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		mapErr(w, err)
 		return
 	}

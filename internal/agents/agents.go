@@ -112,6 +112,14 @@ type Agent struct {
 	// (opt-in): dev servers and caches survive, the next run starts without a
 	// cold build-up. Default false → ephemeral like everyone else (spec/01).
 	WarmSandbox bool `json:"warm_sandbox"`
+	// StickySessions: a task on a topic (a PR, an issue) resumes the engine
+	// session of this agent's previous task on it, when that ended less than
+	// StickyWindowMinutes ago and its last turn's context stayed below
+	// StickyContextCap tokens (#130). Off by default: a reviewer, say, is meant
+	// to look at every round afresh.
+	StickySessions      bool `json:"sticky_sessions"`
+	StickyWindowMinutes int  `json:"sticky_window_minutes"`
+	StickyContextCap    int  `json:"sticky_context_cap"`
 	// HiredAt is the agent's first day. nil = a draft: it exists and can be
 	// configured, but it is not dispatched, has no heartbeat, no live webhook,
 	// no sandbox and no cost (spec/20). Hiring is a human act — no action of the
@@ -165,13 +173,13 @@ type Registry struct {
 
 func NewRegistry(pool *pgxpool.Pool) *Registry { return &Registry{pool: pool} }
 
-const agentCols = "id, org_id, slug, display_name, runtime, model, effort, max_turns, status, owner_id, supervisor_id, department_id, job_title, identities, phone, responsibilities, custom, killed, budget_usd, runtime_id, voice_id, webhook_token, COALESCE(recording_level,''), recording_retention_days, sandbox_image, runner_tags, services, warm_sandbox, hired_at, created_at, updated_at"
+const agentCols = "id, org_id, slug, display_name, runtime, model, effort, max_turns, status, owner_id, supervisor_id, department_id, job_title, identities, phone, responsibilities, custom, killed, budget_usd, runtime_id, voice_id, webhook_token, COALESCE(recording_level,''), recording_retention_days, sandbox_image, runner_tags, services, warm_sandbox, sticky_sessions, sticky_window_minutes, sticky_context_cap, hired_at, created_at, updated_at"
 
 func scanAgent(row pgx.Row) (Agent, error) {
 	var a Agent
 	err := row.Scan(&a.ID, &a.OrgID, &a.Slug, &a.DisplayName, &a.Runtime, &a.Model, &a.Effort, &a.MaxTurns, &a.Status,
 		&a.OwnerID, &a.SupervisorID, &a.DepartmentID, &a.JobTitle, &a.Identities, &a.Phone, &a.Responsibilities, &a.Custom,
-		&a.Killed, &a.BudgetUSD, &a.RuntimeID, &a.VoiceID, &a.WebhookToken, &a.RecordingLevel, &a.RecordingRetentionDays, &a.SandboxImage, &a.RunnerTags, &a.Services, &a.WarmSandbox, &a.HiredAt, &a.CreatedAt, &a.UpdatedAt)
+		&a.Killed, &a.BudgetUSD, &a.RuntimeID, &a.VoiceID, &a.WebhookToken, &a.RecordingLevel, &a.RecordingRetentionDays, &a.SandboxImage, &a.RunnerTags, &a.Services, &a.WarmSandbox, &a.StickySessions, &a.StickyWindowMinutes, &a.StickyContextCap, &a.HiredAt, &a.CreatedAt, &a.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return a, ErrNotFound
 	}
@@ -640,6 +648,32 @@ func (r *Registry) SetServices(ctx context.Context, id uuid.UUID, services []san
 // the next falling asleep on: with true the sandbox is no longer torn down.
 func (r *Registry) SetWarmSandbox(ctx context.Context, id uuid.UUID, warm bool) error {
 	tag, err := r.pool.Exec(ctx, "UPDATE agents SET warm_sandbox=$2, updated_at=now() WHERE id=$1", id, warm)
+	if err == nil && tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return err
+}
+
+// The bounds of the sticky settings, the same as the CHECK constraints of
+// migration 0154. The window may reach past the prompt cache's hour: a resume
+// after it reads nothing from the cache, but keeps the context.
+const (
+	MaxStickyWindowMinutes = 1440
+	MaxStickyContextCap    = 1_000_000
+)
+
+// ErrStickySettings refuses a window or cap outside its bounds.
+var ErrStickySettings = errors.New("sticky_window_minutes must be 1–1440 and sticky_context_cap 1–1000000")
+
+// SetSticky sets whether the agent's tasks on a topic resume the previous
+// task's session, and within which window and context cap (#130). Takes
+// effect at the next dispatch.
+func (r *Registry) SetSticky(ctx context.Context, id uuid.UUID, on bool, windowMinutes, contextCap int) error {
+	if windowMinutes < 1 || windowMinutes > MaxStickyWindowMinutes || contextCap < 1 || contextCap > MaxStickyContextCap {
+		return ErrStickySettings
+	}
+	tag, err := r.pool.Exec(ctx, `UPDATE agents SET sticky_sessions=$2, sticky_window_minutes=$3,
+		sticky_context_cap=$4, updated_at=now() WHERE id=$1`, id, on, windowMinutes, contextCap)
 	if err == nil && tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}

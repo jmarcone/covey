@@ -48,6 +48,12 @@ export type Agent = {
   model: string;
   effort: string; // "" = runtime default, otherwise low|medium|high|xhigh|max
   max_turns: number;
+  // Sticky sessions (#130): a task on a topic (pr:<n>, issue:<n>) resumes the
+  // session of this agent's previous task on it, within the window (minutes
+  // since that task ended) and below the cap (tokens of its last turn).
+  sticky_sessions: boolean;
+  sticky_window_minutes: number;
+  sticky_context_cap: number;
   recording_level: string; // "" = inherits the org floor, otherwise minimal|standard|full
   // How long this agent's verbatim run is kept (spec/06). null/undefined =
   // inherits the organisation; a number only ever EXTENDS it, never shortens.

@@ -503,9 +503,16 @@ func (p *actionProxy) createTask(ctx context.Context, params json.RawMessage) an
 		Body     string `json:"body"`
 		Agent    string `json:"agent"`
 		Priority int    `json:"priority"`
+		Topic    string `json:"topic"`
 	}
 	if err := json.Unmarshal(params, &in); err != nil || strings.TrimSpace(in.Title) == "" {
 		return map[string]string{"status": "error", "error": "title missing"}
+	}
+	// Refused before the guard rails: an approval asked for a task that can
+	// never be created would be a person's time spent on nothing.
+	topic, err := ParseTopic(in.Topic)
+	if err != nil {
+		return map[string]string{"status": "error", "error": err.Error()}
 	}
 	subject := "covey:create_task"
 	if strings.TrimSpace(in.Agent) != "" {
@@ -528,7 +535,7 @@ func (p *actionProxy) createTask(ctx context.Context, params json.RawMessage) an
 
 	resp, err := p.client.createTask(ctx, RequestCreateTask{
 		TaskID: p.taskID, Agent: in.Agent, Title: in.Title, Body: in.Body, Priority: in.Priority,
-		ApprovalID: dec.ApprovalID,
+		Topic: topic, ApprovalID: dec.ApprovalID,
 	})
 	if err != nil {
 		return map[string]string{"status": "error", "error": err.Error()}

@@ -2776,10 +2776,27 @@ func (o *Orchestrator) processTask(ctx context.Context, agent agents.Agent, link
 		Priority:      task.Priority,
 		MemoryContext: memCtx,
 	}
-	if task.RuntimeSessionID != nil && task.ResumeInput != nil {
+	ownSession := task.RuntimeSessionID != nil && task.ResumeInput != nil
+	if ownSession {
 		// blocked→working: resumption through the native runtime session (spec/12).
 		assign.ResumeSessionID = *task.RuntimeSessionID
 		assign.ResumeInput = *task.ResumeInput
+	}
+	if task.TopicKey != nil {
+		// Every run of a task on a topic works in the topic's directory, its
+		// own resumes included: the session it left is there (#130).
+		assign.Topic = *task.TopicKey
+		assign.TopicDir = daemon.TopicDir(agent.Slug, *task.TopicKey)
+		if !ownSession {
+			plan := o.planSession(ctx, agent, task)
+			assign.StickySessionID = plan.sticky
+			assign.Handover = plan.handover
+			// A resume is recorded when the daemon has done it; a fresh
+			// start is decided here.
+			if plan.sticky == "" {
+				o.recordSession(ctx, agent, taskID, plan.decision, plan.reason)
+			}
+		}
 	}
 	if err := o.sendMsg(ctx, link, daemon.TypeAssignTask, assign); err != nil {
 		return err
@@ -2979,6 +2996,11 @@ func (o *Orchestrator) handleDaemonMessage(ctx context.Context, agent agents.Age
 		// recording timeline — own retention, own view (spec/06).
 		if ev.Kind == daemon.EventKindHTTP {
 			o.recordHTTP(ctx, agent, taskID, ev.Payload)
+			return false, nil
+		}
+		// How a run on a topic started, from the daemon that started it.
+		if ev.Kind == daemon.EventKindSession {
+			o.sessionStarted(ctx, agent, taskID, ev.Payload)
 			return false, nil
 		}
 		kind := observability.KindRuntime
@@ -3199,7 +3221,10 @@ func (o *Orchestrator) handleDaemonMessage(ctx context.Context, agent agents.Age
 				result += " (to " + name + ")"
 			}
 		}
-		if _, err := o.Backlog.Complete(ctx, taskID, state, result, d.Error); err != nil {
+		// The session and its last turn's context stay on the task for the
+		// next task on its topic (#130).
+		if _, err := o.Backlog.CompleteRun(ctx, taskID, state, result, d.Error,
+			backlog.RunEnd{SessionID: d.SessionID, ContextTokens: d.ContextTokens}); err != nil {
 			return true, err
 		}
 		// A run that ended without a result must not keep its wake-up: the work
@@ -3615,6 +3640,12 @@ func (o *Orchestrator) CreateAgentTask(ctx context.Context, agent agents.Agent, 
 	if title == "" {
 		return fail("title is missing")
 	}
+	// Checked again here: the daemon's check is the agent's convenience, this
+	// one is the rule.
+	topic, err := daemon.ParseTopic(req.Topic)
+	if err != nil {
+		return fail(err.Error())
+	}
 	subject := "covey:create_task"
 	if strings.TrimSpace(req.Agent) != "" {
 		subject += guardrails.ForeignSuffix
@@ -3700,6 +3731,7 @@ func (o *Orchestrator) CreateAgentTask(ctx context.Context, agent agents.Agent, 
 		Body:     req.Body,
 		Origin:   originAgentTask + ":" + agent.Slug,
 		Priority: req.Priority,
+		Topic:    topic,
 	})
 	if err != nil {
 		return fail(err.Error())

@@ -30,7 +30,7 @@ The control maps almost 1:1 onto the daemon protocol:
 | `--max-turns <n>` | `inject_config.max_turns` — the turn limit per agent (registry field, PATCH `/agents/{id}/max-turns`); 0 = orchestrator default (30) |
 | `--output-format stream-json` | the `event` stream → recording ([`06`](06-observability-control.md)) |
 | `result` → `model_usage_since_last_result` | `cost` → cost control ([`06`](06-observability-control.md)); see [Cost](#cost) for why not `total_cost_usd` |
-| `--resume <session_id>` | `blocked → working` — resumption ([`03`](03-lifecycle-scheduling.md)) |
+| `--resume <session_id>` | `blocked → working` — resumption ([`03`](03-lifecycle-scheduling.md)); the next task on a topic (sticky session, below) |
 | `--allowedTools` / `--permission-mode` | tool guard rails ([`06`](06-observability-control.md)) |
 | `--max-turns`, `--max-budget-usd` | budget/runaway guard rails ([`06`](06-observability-control.md)) |
 | `--mcp-config` | the action proxy as a tool server — target actions as typed tool calls instead of `curl` in the shell ([`01`](01-architecture.md)) |
@@ -54,6 +54,12 @@ That maps exactly onto covey's `blocked` mechanic:
 4. Claude Code restores the conversation context **itself** — covey does not have to reconstruct it.
 
 With that, the `blocked → working` edge from [`03-lifecycle-scheduling.md`](03-lifecycle-scheduling.md) is realised with the runtime's own means.
+
+## Sticky sessions: the next task on a topic
+
+A task can name its **topic**, `pr:<n>` or `issue:<n>` (`covey/create_task` and `POST /api/v1/agents/{id}/tasks`, parameter `topic`; stored as `backlog_tasks.topic_key`). Every run of an agent's tasks on one topic works in one directory, `~/scratch/topic-<agent>-<topic>/`, aged like a task's. When a task ends, its session id, its finish time and the context of its run's last assistant turn (input + cache read + cache write) stay on it.
+
+The agent's next task on the topic **resumes that session** with the new task's title and body (and its wiki hits) as the resume message, if the agent's `sticky_sessions` is on, the previous task ended less than `sticky_window_minutes` ago (default 55, inside the prompt cache's hour), its last turn's context is below `sticky_context_cap` (default 200,000 tokens), and the session's transcript is on the daemon that runs the task. The daemon sends the system prompt the session started with, recorded beside the transcript (`.covey-session.json`), so the resumed request begins with the same bytes and reads the context from the cache. Otherwise the run starts fresh, opened by a handover of at most 4,000 characters: the previous task's result and, for a `pr:` topic, the latest `## Review round` comment on the PR from the recording. The decision stands on the task (`session_decision`: `sticky_resumed`, or `fresh` with `session_reason` `window`, `cap`, `off`, `no_session` or `no_previous`) and in the recording. Stickiness is off by default; a reviewer is meant to look at every round afresh.
 
 > **Short term vs. long term.** The Claude Code session is the *short-term working context* (a limited context window, possibly expiring). *Durable* memory across tasks stays covey's memory layer ([`05-memory.md`](05-memory.md)) — ingest at `done`, query at `triage`. Session persistence alone should not be relied on for long-term knowledge.
 

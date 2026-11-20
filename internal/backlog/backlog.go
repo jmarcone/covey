@@ -92,6 +92,22 @@ type Task struct {
 	// (#502). Its reply or result is heard as well as read, and carries a
 	// spoken form beside the written one. Inherited by its continuations.
 	SaidInCall bool `json:"said_in_call,omitempty"`
+	// TopicKey names what the task is about across tasks — pr:<n> or
+	// issue:<n> (#130). The next task of the same agent on the same topic
+	// resumes this one's session while it is warm (orchestrator, sticky.go).
+	// A column of its own: the correlation key is overwritten by Block,
+	// cleared by Complete and woken on by CorrelateWake.
+	TopicKey *string `json:"topic_key,omitempty"`
+	// FinishedAt and LastTurnContextTokens are written when the task ends:
+	// the time, and the context the run's last turn carried (input + cache
+	// read + cache write). With RuntimeSessionID they decide whether the next
+	// task of the topic resumes the session.
+	FinishedAt            *time.Time `json:"finished_at,omitempty"`
+	LastTurnContextTokens *int64     `json:"last_turn_context_tokens,omitempty"`
+	// SessionDecision is how the run of a task with a topic started:
+	// SessionStickyResumed, or SessionFresh with SessionReason saying why.
+	SessionDecision *string `json:"session_decision,omitempty"`
+	SessionReason   *string `json:"session_reason,omitempty"`
 	// Redacted is never stored: the API sets it when it withheld the task's
 	// text from a reader who may not read the conversation it came from
 	// (spec/28, section 3). See Redact.
@@ -176,14 +192,16 @@ func NewStore(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
 const taskCols = `id, org_id, agent_id, title, body, state, priority, origin,
 	correlation_key, runtime_session_id, resume_input, result, error, stage_id, parent_task_id,
-	archived_at, daemon_retries, created_at, updated_at, conversation_id, chat_answer, said_in_call`
+	archived_at, daemon_retries, created_at, updated_at, conversation_id, chat_answer, said_in_call,
+	topic_key, finished_at, last_turn_context_tokens, session_decision, session_reason`
 
 // scanDest lists where the columns of taskCols land, in their order — for a
 // query that selects more than the task (see agentview.go).
 func (t *Task) scanDest() []any {
 	return []any{&t.ID, &t.OrgID, &t.AgentID, &t.Title, &t.Body, &t.State, &t.Priority, &t.Origin,
 		&t.CorrelationKey, &t.RuntimeSessionID, &t.ResumeInput, &t.Result, &t.Error, &t.StageID, &t.ParentTaskID,
-		&t.ArchivedAt, &t.DaemonRetries, &t.CreatedAt, &t.UpdatedAt, &t.ConversationID, &t.ChatAnswer, &t.SaidInCall}
+		&t.ArchivedAt, &t.DaemonRetries, &t.CreatedAt, &t.UpdatedAt, &t.ConversationID, &t.ChatAnswer, &t.SaidInCall,
+		&t.TopicKey, &t.FinishedAt, &t.LastTurnContextTokens, &t.SessionDecision, &t.SessionReason}
 }
 
 func scanTask(row pgx.Row) (Task, error) {
@@ -223,16 +241,26 @@ func (s *Store) CreateChatAnswer(ctx context.Context, orgID, agentID uuid.UUID, 
 	return s.create(ctx, orgID, agentID, title, body, origin, 0, &conversationID, true, false)
 }
 
+// CreateOnTopic creates a task as Create does, on a topic (#130): pr:<n> or
+// issue:<n>, checked by the caller (daemon.ParseTopic). Empty = no topic.
+func (s *Store) CreateOnTopic(ctx context.Context, orgID, agentID uuid.UUID, title, body, origin string, priority int, topic string) (Task, error) {
+	return s.createTask(ctx, orgID, agentID, title, body, origin, priority, nil, false, false, topic)
+}
+
 func (s *Store) create(ctx context.Context, orgID, agentID uuid.UUID, title, body, origin string, priority int, conversationID *uuid.UUID, chatAnswer, saidInCall bool) (Task, error) {
+	return s.createTask(ctx, orgID, agentID, title, body, origin, priority, conversationID, chatAnswer, saidInCall, "")
+}
+
+func (s *Store) createTask(ctx context.Context, orgID, agentID uuid.UUID, title, body, origin string, priority int, conversationID *uuid.UUID, chatAnswer, saidInCall bool, topic string) (Task, error) {
 	if priority == 0 {
 		priority = 5
 	}
 	// A new task lands in the agent's first stage (if one is defined).
-	row := s.pool.QueryRow(ctx, `INSERT INTO backlog_tasks (id, org_id, agent_id, title, body, origin, priority, stage_id, conversation_id, chat_answer, said_in_call)
+	row := s.pool.QueryRow(ctx, `INSERT INTO backlog_tasks (id, org_id, agent_id, title, body, origin, priority, stage_id, conversation_id, chat_answer, said_in_call, topic_key)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,
-			(SELECT id FROM agent_stages WHERE agent_id=$3 ORDER BY position, created_at LIMIT 1), $8, $9, $10)
+			(SELECT id FROM agent_stages WHERE agent_id=$3 ORDER BY position, created_at LIMIT 1), $8, $9, $10, NULLIF($11,''))
 		RETURNING `+taskCols,
-		uuid.New(), orgID, agentID, title, body, origin, priority, conversationID, chatAnswer, saidInCall)
+		uuid.New(), orgID, agentID, title, body, origin, priority, conversationID, chatAnswer, saidInCall, topic)
 	t, err := scanTask(row)
 	if err != nil {
 		return t, err
@@ -256,6 +284,10 @@ type ChildSpec struct {
 	Priority    int
 	SessionID   string
 	ResumeInput string
+	// Topic is the new task's topic (#130), pr:<n> or issue:<n>, checked by
+	// the caller. A continuation carries its parent's on without being told:
+	// it is the same work.
+	Topic string
 }
 
 // CreateChild creates a task that hangs off an originating task. It inherits
@@ -278,19 +310,24 @@ func (s *Store) CreateChild(ctx context.Context, parentID uuid.UUID, spec ChildS
 	   nowhere unless somebody gives it a conversation. */
 	var conversationID *uuid.UUID
 	chatAnswer, saidInCall := false, false
+	topic := spec.Topic
 	if strings.HasPrefix(spec.Origin, "continuation:") && agentID == parent.AgentID {
 		conversationID = parent.ConversationID
 		chatAnswer = parent.ChatAnswer
 		saidInCall = parent.SaidInCall
+		if topic == "" && parent.TopicKey != nil {
+			topic = *parent.TopicKey
+		}
 	}
 	row := s.pool.QueryRow(ctx, `INSERT INTO backlog_tasks
 		(id, org_id, agent_id, title, body, origin, priority, parent_task_id,
-		 runtime_session_id, resume_input, stage_id, conversation_id, chat_answer, said_in_call)
+		 runtime_session_id, resume_input, stage_id, conversation_id, chat_answer, said_in_call, topic_key)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8, NULLIF($9,''), NULLIF($10,''),
-			(SELECT id FROM agent_stages WHERE agent_id=$3 ORDER BY position, created_at LIMIT 1), $11, $12, $13)
+			(SELECT id FROM agent_stages WHERE agent_id=$3 ORDER BY position, created_at LIMIT 1), $11, $12, $13,
+			NULLIF($14,''))
 		RETURNING `+taskCols,
 		uuid.New(), parent.OrgID, agentID, spec.Title, spec.Body, spec.Origin, spec.Priority,
-		parentID, spec.SessionID, spec.ResumeInput, conversationID, chatAnswer, saidInCall)
+		parentID, spec.SessionID, spec.ResumeInput, conversationID, chatAnswer, saidInCall, topic)
 	t, err := scanTask(row)
 	if err != nil {
 		return t, err
@@ -733,10 +770,29 @@ func (s *Store) Block(ctx context.Context, id uuid.UUID, correlationKey, session
 
 // Complete finishes the task (done) or fails it (failed).
 func (s *Store) Complete(ctx context.Context, id uuid.UUID, state, result, errMsg string) (Task, error) {
+	return s.CompleteRun(ctx, id, state, result, errMsg, RunEnd{})
+}
+
+// RunEnd is what the run that ends a task leaves for the next task on its
+// topic (#130): the engine session and the context of the run's last turn.
+// Zero values leave the stored ones as they are.
+type RunEnd struct {
+	SessionID     string
+	ContextTokens int64
+}
+
+// CompleteRun is Complete with what the run reported about its session. The
+// finish time is written either way; topic_key stays, so that the next task
+// of the topic finds this one.
+func (s *Store) CompleteRun(ctx context.Context, id uuid.UUID, state, result, errMsg string, run RunEnd) (Task, error) {
 	if state != StateDone && state != StateFailed {
 		return Task{}, fmt.Errorf("%w: complete to %s", ErrInvalidTransition, state)
 	}
-	task, err := s.transition(ctx, id, state, "", "result=$3, error=NULLIF($4,''), correlation_key=NULL", result, errMsg)
+	task, err := s.transition(ctx, id, state, "", `result=$3, error=NULLIF($4,''), correlation_key=NULL,
+		finished_at=now(),
+		runtime_session_id=COALESCE(NULLIF($5,''), runtime_session_id),
+		last_turn_context_tokens=COALESCE(NULLIF($6::bigint,0), last_turn_context_tokens)`,
+		result, errMsg, run.SessionID, run.ContextTokens)
 	if err == nil && s.OnComplete != nil {
 		s.OnComplete(ctx, task)
 	}

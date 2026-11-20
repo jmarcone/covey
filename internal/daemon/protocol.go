@@ -132,6 +132,22 @@ type AssignTask struct {
 	MemoryContext   string `json:"memory_context,omitempty"`
 	ResumeSessionID string `json:"resume_session_id,omitempty"`
 	ResumeInput     string `json:"resume_input,omitempty"`
+	// Topic and TopicDir: the task is about a PR or an issue (#130), and
+	// every task of this agent on it works in ~/scratch/<TopicDir> instead of
+	// a directory of its own. Empty for a task without a topic.
+	Topic    string `json:"topic,omitempty"`
+	TopicDir string `json:"topic_dir,omitempty"`
+	// StickySessionID asks the daemon to resume the previous task's session
+	// on the topic, with the task as the resume message. The daemon does so
+	// only if the session is there (the engine holds its transcript for the
+	// topic directory, and the system prompt it started with is on record);
+	// otherwise it starts fresh with Handover. Either way it says which with
+	// an Event of EventKindSession.
+	StickySessionID string `json:"sticky_session_id,omitempty"`
+	// Handover is what a fresh run on a topic is told first: the previous
+	// task's result and the latest review comment. Empty without a previous
+	// task.
+	Handover string `json:"handover,omitempty"`
 }
 
 type InjectCredentials struct {
@@ -186,7 +202,18 @@ const (
 	// the sandbox (payload: reqlog.Entry). It does not go into the recording but
 	// into the request log — diagnostics, not an audit trail.
 	EventKindHTTP = "http"
+	// EventKindSession says how a run on a topic started (#130), payload
+	// SessionStart. Sent before the run, for a task that carried a
+	// StickySessionID: the control plane records it on the task.
+	EventKindSession = "session"
 )
+
+// SessionStart is the payload of an EventKindSession event: "sticky_resumed",
+// or "fresh" with the reason (no_session, when the daemon could not resume).
+type SessionStart struct {
+	Decision string `json:"decision"`
+	Reason   string `json:"reason,omitempty"`
+}
 
 // RequestTarget/InjectTarget broker the definition of a manifest plugin
 // (kind=custom) into the sandbox: the daemon knows compiled plugins itself,
@@ -291,6 +318,10 @@ type TaskDone struct {
 	// Reply is what the run wrote before its status line (#650). Empty from
 	// a daemon that predates it.
 	Reply string `json:"reply,omitempty"`
+	// ContextTokens is the context the run's last turn carried: input +
+	// cache read + cache write of the last assistant turn of the main
+	// session (#130). 0 where the engine does not say.
+	ContextTokens int64 `json:"context_tokens,omitempty"`
 }
 
 // SetStage moves a task on the kanban board into a (possibly new) stage. Purely
@@ -493,6 +524,8 @@ type RequestCreateTask struct {
 	Title     string `json:"title"`
 	Body      string `json:"body"`
 	Priority  int    `json:"priority,omitempty"`
+	// Topic is pr:<n> or issue:<n> (ParseTopic), empty = none (#130).
+	Topic string `json:"topic,omitempty"`
 	// ApprovalID is the approval the daemon's guard-rail check consumed for
 	// this request, if a rule required one. The control plane checks the rule
 	// again itself and accepts the request only with that approval (#703).

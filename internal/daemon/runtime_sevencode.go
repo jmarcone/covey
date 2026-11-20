@@ -282,7 +282,7 @@ func (s *SevenCode) Name() string { return "sevencode" }
 // one message the CLI takes. See the package comment: there is no flag for a
 // system prompt, and the file that would do it is the operator's.
 func (s *SevenCode) taskPrompt(spec RunSpec) string {
-	task := spec.Title + "\n\n" + spec.Body
+	task := taskText(spec)
 	if spec.ResumeSessionID != "" {
 		// A resumed run speaks into a session that already carries the config,
 		// so repeating it would say it twice.

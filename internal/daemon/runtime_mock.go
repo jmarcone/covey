@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -29,6 +30,7 @@ import (
 //	[mock:maxturns <handover-state>]         → run ends at the turn limit
 //	[mock:maxturns-always <handover-state>]  → likewise, on every resumption too
 //	[mock:prompt]                            → returns the system prompt as the result
+//	[mock:spec]                              → returns what the run was started with as JSON (mockSpec)
 //	[mock:line <json>]                       → emits <json> as a runtime line, verbatim
 //	[mock:cost <json>]                       → the run's cost message (daemon.Cost fields)
 //
@@ -86,7 +88,7 @@ func init() {
 // the parameter. A bare `]` still gets the group no further, so two directives
 // on one line stay separate.
 var mockDirective = regexp.MustCompile(
-	`\[mock:(action|block|fail|result|memory|reply|sleep|maxturns-always|maxturns|prompt|line|cost)\s*((?:[^\[\]]|\[[^\]]*\])*)\]`)
+	`\[mock:(action|block|fail|result|memory|reply|sleep|maxturns-always|maxturns|prompt|spec|line|cost)\s*((?:[^\[\]]|\[[^\]]*\])*)\]`)
 
 func (Mock) Run(ctx context.Context, spec RunSpec, onEvent func(kind string, payload json.RawMessage)) (RunResult, error) {
 	res := RunResult{
@@ -239,6 +241,17 @@ func (Mock) Run(ctx context.Context, spec RunSpec, onEvent func(kind string, pay
 			if c.SessionID != "" {
 				res.SessionID = c.SessionID
 			}
+		case "spec":
+			// The whole start of the run, for the tests of a run on a topic
+			// (#130): which session it resumed, in which directory, with
+			// which system prompt and which message.
+			raw, _ := json.Marshal(mockSpec{
+				SystemPrompt: spec.SystemPrompt, MemoryContext: spec.MemoryContext,
+				WorkDir: spec.WorkDir, Topic: spec.Topic, Handover: spec.Handover,
+				ResumeSessionID: spec.ResumeSessionID, ResumeInput: spec.ResumeInput,
+				Prompt: taskText(spec),
+			})
+			res.Result = string(raw)
 		case "prompt":
 			// Makes the assembled system prompt inspectable (platform protocol,
 			// target-system docs, team directory) — otherwise it is invisible
@@ -264,7 +277,43 @@ func (Mock) Run(ctx context.Context, spec RunSpec, onEvent func(kind string, pay
 	for _, n := range notices {
 		res.Result += "\nnotice: " + n
 	}
+	if spec.Topic != "" && spec.WorkDir != "" {
+		// The transcript a real engine would leave in the topic's directory.
+		_ = os.MkdirAll(filepath.Join(spec.WorkDir, mockSessionDir), 0o755)
+		_ = os.WriteFile(filepath.Join(spec.WorkDir, mockSessionDir, res.SessionID), nil, 0o644)
+	}
+	// The context of the last turn, as Claude Code's adapter reports it: the
+	// cost figures' input side, so the sticky cap can be driven with
+	// mock:cost.
+	res.ContextTokens = res.TotalInputTokens()
 	return res, nil
+}
+
+// mockSpec is the answer of [mock:spec].
+type mockSpec struct {
+	SystemPrompt    string `json:"system_prompt"`
+	MemoryContext   string `json:"memory_context"`
+	WorkDir         string `json:"work_dir"`
+	Topic           string `json:"topic"`
+	Handover        string `json:"handover"`
+	ResumeSessionID string `json:"resume_session_id"`
+	ResumeInput     string `json:"resume_input"`
+	// Prompt is the task text a fresh run would send (taskText).
+	Prompt string `json:"prompt"`
+}
+
+// mockSessionDir holds the mock's stand-in for a session transcript: one empty
+// file per session that ran on a topic, under the topic's directory.
+const mockSessionDir = ".mock-sessions"
+
+// HasSession makes the mock a SessionKeeper: it holds a session where a run on
+// a topic left its file.
+func (Mock) HasSession(home, workDir, sessionID string) bool {
+	if workDir == "" || sessionID == "" || strings.ContainsAny(sessionID, `/\`) || strings.Contains(sessionID, "..") {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(workDir, mockSessionDir, sessionID))
+	return err == nil
 }
 
 // mockKV reads key=... question=... out of a directive (question swallows the rest).

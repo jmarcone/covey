@@ -22,6 +22,7 @@ import { Config } from "./Config";
 import { Heartbeats } from "./Heartbeats";
 import { WebhookTrigger } from "./Webhook";
 import { AgentVoices } from "../voices/Slots";
+import { clampInt, STICKY_CAP_MAX, STICKY_WINDOW_MAX, type StickySettings } from "./sticky";
 
 export function AgentSettings({
   agent,
@@ -142,6 +143,15 @@ function AgentSettingsGeneral({ agent, editable }: { agent: Agent; editable: boo
     mutationFn: (maxTurns: number) => patch(`/agents/${agent.id}/max-turns`, { max_turns: maxTurns }),
     onSuccess: invalidate,
   });
+  const setSticky = useMutation({
+    mutationFn: (v: StickySettings) => patch(`/agents/${agent.id}/sticky-sessions`, v),
+    onSuccess: invalidate,
+  });
+  const sticky: StickySettings = {
+    sticky_sessions: agent.sticky_sessions,
+    sticky_window_minutes: agent.sticky_window_minutes,
+    sticky_context_cap: agent.sticky_context_cap,
+  };
   const setRecordingLevel = useMutation({
     mutationFn: (level: string) => patch(`/agents/${agent.id}/recording-level`, { level }),
     onSuccess: invalidate,
@@ -385,7 +395,7 @@ function AgentSettingsGeneral({ agent, editable }: { agent: Agent; editable: boo
           <span className="muted text-xs">{t("agent.settings.effortHint")}</span>
         </div>
       )}
-      <div style={{ ...row, borderBottom: "none" }}>
+      <div style={row}>
         <span className="text-sm">{t("agent.settings.maxTurns")}</span>
         <input
           key={`turns:${agent.max_turns}`}
@@ -402,6 +412,68 @@ function AgentSettingsGeneral({ agent, editable }: { agent: Agent; editable: boo
           className="mono"
         />
         <span className="muted text-xs">{t("agent.settings.maxTurnsHint")}</span>
+      </div>
+      <div style={{ ...row, borderBottom: "none" }}>
+        <span className="text-sm">{t("agent.settings.sticky")}</span>
+        <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={agent.sticky_sessions}
+              disabled={!editable || setSticky.isPending}
+              onChange={(e) => setSticky.mutate({ ...sticky, sticky_sessions: e.target.checked })}
+            />
+            {agent.sticky_sessions ? t("agent.settings.stickyOn") : t("agent.settings.stickyOff")}
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            {t("agent.settings.stickyWindow")}
+            <input
+              key={`window:${agent.sticky_window_minutes}`}
+              type="number"
+              min={1}
+              max={STICKY_WINDOW_MAX}
+              defaultValue={agent.sticky_window_minutes}
+              disabled={!editable || setSticky.isPending}
+              onBlur={(e) => {
+                const v = clampInt(e.target.value, 1, STICKY_WINDOW_MAX, agent.sticky_window_minutes);
+                e.target.value = String(v);
+                if (v !== agent.sticky_window_minutes) setSticky.mutate({ ...sticky, sticky_window_minutes: v });
+              }}
+              onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+              className="mono"
+              style={{ width: 80 }}
+            />
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            {t("agent.settings.stickyCap")}
+            <input
+              key={`cap:${agent.sticky_context_cap}`}
+              type="number"
+              min={1}
+              max={STICKY_CAP_MAX}
+              step={1000}
+              defaultValue={agent.sticky_context_cap}
+              disabled={!editable || setSticky.isPending}
+              onBlur={(e) => {
+                const v = clampInt(e.target.value, 1, STICKY_CAP_MAX, agent.sticky_context_cap);
+                e.target.value = String(v);
+                if (v !== agent.sticky_context_cap) setSticky.mutate({ ...sticky, sticky_context_cap: v });
+              }}
+              onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+              className="mono"
+              style={{ width: 110 }}
+            />
+          </label>
+        </div>
+        <span className="muted text-xs">
+          {setSticky.isError ? (
+            <span role="alert" style={{ color: "var(--text-danger)" }}>
+              {t("agent.settings.stickyError")}
+            </span>
+          ) : (
+            t("agent.settings.stickyHint")
+          )}
+        </span>
       </div>
     </div>
     {/* The voices it writes in, per occasion (#471) — beside how it thinks,

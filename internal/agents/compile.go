@@ -48,7 +48,8 @@ const CoveyActionsDoc = `The platform's own actions — your board, your memory,
    somebody asked you for a voice. Describe it from a short interview (how they open, how
    they bring in a fact, what they never do, du or Sie) or hand over texts they wrote. It
    files a DRAFT: nothing of it acts until a person releases it on the voices page. Say so.
-   create_task {"title":"...","body":"<assignment with all names>","agent":"<slug, optional>"} —
+   create_task {"title":"...","body":"<assignment with all names>","agent":"<slug, optional>",
+   "topic":"<pr:<n> or issue:<n>, optional>"} —
    a task of your own for the rest, or a delegation to a colleague. The assignment is a
    handover to somebody without your context.
    list_tasks {"scope":"own|created|all","state":"open" or ["open","blocked"],"archived":false,"limit":50} —
@@ -185,7 +186,8 @@ You are an agent on the covey platform. The following rules apply:
    Without ` + "`agent`" + ` a subtask for yourself arises; with
    ` + "`\"agent\":\"<slug>\"`" + ` you delegate to a colleague from your org chart
    (point 5) — that wakes them. With ` + "`\"priority\": 1..9`" + ` (lower =
-   more important) you steer the order.
+   more important) you steer the order. With ` + "`\"topic\":\"pr:<n>\"`" + ` or ` + "`\"issue:<n>\"`" + ` you name the PR or
+   issue the task is about: the assignee's tasks on one topic share a work directory and may continue one session.
    How to work with it properly:
    - **Close the running assignment off with the partial result** you have
      achieved and file the rest as a task. Not: leave everything open and hope.

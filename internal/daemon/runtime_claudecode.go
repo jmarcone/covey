@@ -127,6 +127,11 @@ type streamEvent struct {
 	// session's running total and is not read here: the control plane files
 	// it per model (observability.RecordRuntime), the daemon books deltas.
 	SinceLast map[string]ccModelUsage
+	// TurnUsage is an assistant line's message.usage: what that turn read,
+	// cached or not. Sidechain is set for a sub-agent's turn (the line names
+	// the tool call it runs under), whose context is not the session's.
+	TurnUsage resultUsage
+	Sidechain bool
 }
 
 // resultUsage is a result line's top-level usage: the main model's, per
@@ -219,9 +224,13 @@ func decodeStreamEvent(line []byte) (ev streamEvent, ok bool) {
 	ev.TotalCostUSD = float64(jsonField[lenientFloat](f, "total_cost_usd"))
 	ev.TerminalReason = jsonField[string](f, "terminal_reason")
 	ev.Usage = jsonField[resultUsage](f, "usage")
-	ev.Model = jsonField[struct {
-		Model string `json:"model"`
-	}](f, "message").Model
+	msg := jsonField[struct {
+		Model string      `json:"model"`
+		Usage resultUsage `json:"usage"`
+	}](f, "message")
+	ev.Model = msg.Model
+	ev.TurnUsage = msg.Usage
+	ev.Sidechain = jsonField[string](f, "parent_tool_use_id") != ""
 	if raw, ok := f["model_usage_since_last_result"]; ok {
 		ev.SinceLast = decodeModelUsage(raw)
 	}
@@ -293,6 +302,10 @@ type outcome struct {
 	basis     string
 	sawResult bool
 	waitErr   error
+	// lastContext is the context of the main session's last assistant turn:
+	// input + cache read + cache write (#130). The next task on the topic
+	// resumes this session only while it is below the agent's cap.
+	lastContext int64
 }
 
 // truncated recognizes the run that ended at the turn limit: Claude Code then
@@ -348,7 +361,7 @@ const summaryToolGuard = `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type
 	`"command":"echo 'No tools in the handover turn. Answer only with the handover state.' >&2; exit 2"}]}]}}`
 
 func (c *ClaudeCode) buildArgs(spec RunSpec) ([]string, string) {
-	prompt := spec.Title + "\n\n" + spec.Body
+	prompt := taskText(spec)
 	if spec.ResumeSessionID != "" {
 		// Resumption: Claude Code restores the context itself, we only feed in
 		// the correlated event as the new input.
@@ -449,6 +462,13 @@ func hasSession(home, cwd, id string) bool {
 	return false
 }
 
+// HasSession makes ClaudeCode a SessionKeeper (#130): a later task on the same
+// topic resumes the session when its transcript lies under the topic's
+// directory.
+func (*ClaudeCode) HasSession(home, workDir, sessionID string) bool {
+	return hasSession(home, workDir, sessionID)
+}
+
 // claudeProjectKey replaces per character, not per byte: Claude Code does it on
 // a JavaScript string, where "ü" is one character and becomes one "-".
 func claudeProjectKey(cwd string) string {
@@ -519,6 +539,12 @@ func (c *ClaudeCode) stream(ctx context.Context, spec RunSpec, args []string, ba
 		// up here.
 		if ev.Model != "" {
 			out.model = ev.Model
+		}
+		if ev.Type == "assistant" && !ev.Sidechain {
+			if n := int64(ev.TurnUsage.InputTokens + ev.TurnUsage.CacheReadTokens +
+				ev.TurnUsage.CacheCreationTokens); n > 0 {
+				out.lastContext = n
+			}
 		}
 		if ev.Type == "result" {
 			// The status fields are the LAST line's: a process can write more
@@ -615,6 +641,7 @@ func (c *ClaudeCode) Run(ctx context.Context, spec RunSpec, onEvent func(kind st
 		Model:               out.model,
 		Basis:               out.basis,
 		SessionTotalUSD:     out.lastTotalUSD,
+		ContextTokens:       out.lastContext,
 	}
 	resultText := out.resultText
 	if out.isError {

@@ -97,11 +97,35 @@ type RunSpec struct {
 	// skills), while HOME still points at the persistent agent home — that is
 	// where ~/.claude, the wiki working copy and the dependency caches live.
 	WorkDir string
-	Env     []string // extra ENV (e.g. COVEY_ACTION_PORT, brokered keys)
+	// Topic is the PR or issue the task is about (#130), "" without one.
+	// WorkDir is then the topic's directory, shared by the agent's tasks on it.
+	Topic string
+	// Handover opens a fresh run on a topic whose previous session is not
+	// resumed: what the previous task left (taskText).
+	Handover string
+	Env      []string // extra ENV (e.g. COVEY_ACTION_PORT, brokered keys)
 	// MCPConfig is the MCP server document the runtime is started with — the
 	// action proxy, so target actions arrive as typed tools instead of as a curl
 	// in the shell (actionmcp.go). Empty = without, the shell route as before.
 	MCPConfig string
+}
+
+// taskText is a fresh run's task as the engine reads it: title and body, and
+// before both the handover when there is one (#130). The handover comes first
+// because it is what the agent knew before the task was put to it.
+func taskText(spec RunSpec) string {
+	task := spec.Title + "\n\n" + spec.Body
+	if h := strings.TrimSpace(spec.Handover); h != "" {
+		return h + "\n\n---\n\n" + task
+	}
+	return task
+}
+
+// SessionKeeper is a runtime that can resume a session in a later task, and
+// can say whether it holds that session for a work directory (#130). A
+// runtime without it never resumes across tasks.
+type SessionKeeper interface {
+	HasSession(home, workDir, sessionID string) bool
 }
 
 // RunResult is the normalized result of a runtime run.
@@ -136,6 +160,8 @@ type RunResult struct {
 	// from a conversation, the message itself — the status line's result and
 	// question are a summary of it.
 	Reply string
+	// ContextTokens is the context of the run's last turn (TaskDone).
+	ContextTokens int64
 }
 
 // Measured reports whether a run brought back anything worth booking.

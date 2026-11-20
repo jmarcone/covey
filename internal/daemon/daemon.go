@@ -663,7 +663,13 @@ func (c *Client) runTask(ctx context.Context, task AssignTask) {
 	// Every task works in a directory of its own, and the ones no run has
 	// entered for a week go (scratch.go, #271). Removed before the run rather
 	// than after: a run that is killed never reaches its end.
-	scratch := scratchDir(c.homeDir, task.TaskID)
+	// A task on a topic works in the topic's directory instead, shared with
+	// the agent's other tasks on it (#130).
+	scratch := workDir(c.homeDir, task.TaskID, task.TopicDir)
+	topic := ""
+	if scratch != "" && task.TopicDir != "" && filepath.Base(scratch) == task.TopicDir {
+		topic = task.Topic
+	}
 	if n, err := sweepScratch(c.homeDir, time.Now(), scratch); err != nil {
 		c.log.Warn("scratch directories of past tasks not all removed", "removed", n, "err", err)
 	} else if n > 0 {
@@ -689,6 +695,7 @@ func (c *Client) runTask(ctx context.Context, task AssignTask) {
 		ResumeInput:     task.ResumeInput,
 		HomeDir:         c.homeDir,
 		WorkDir:         scratch,
+		Topic:           topic,
 		Env:             env,
 		// The action proxy as an MCP server: with it the runtime calls a target
 		// action as a typed tool instead of assembling a curl in the shell
@@ -704,6 +711,14 @@ func (c *Client) runTask(ctx context.Context, task AssignTask) {
 	// whether the Skill tool belongs in the run's loading scope: without skills
 	// it would only drag the built-in ones' descriptions into every turn.
 	spec.Skills = c.materializeSkills(runCtx, cfg.Runtime) > 0
+	// On a topic: resume the previous task's session, or start fresh with a
+	// handover (sticky.go). What became of a requested resume is said before
+	// the run, so that it stands on the task even if the run is killed.
+	start, onTopic := startOnTopic(&spec, runtime, task)
+	if start.Decision != "" {
+		payload, _ := json.Marshal(start)
+		_ = c.send(TypeEvent, Event{TaskID: task.TaskID, Kind: EventKindSession, Payload: payload})
+	}
 
 	res, err := runtime.Run(runCtx, spec, func(kind string, payload json.RawMessage) {
 		_ = c.send(TypeEvent, Event{TaskID: task.TaskID, Kind: kind, Payload: payload})
@@ -714,6 +729,9 @@ func (c *Client) runTask(ctx context.Context, task AssignTask) {
 	// the control plane may have stopped listening already, and then books
 	// the run's lines itself.
 	c.sendCost(task.TaskID, res)
+	if onTopic {
+		endOnTopic(scratch, res.SessionID)
+	}
 	if runCtx.Err() != nil {
 		return // kill path: the control plane has taken over
 	}
@@ -729,7 +747,8 @@ func (c *Client) runTask(ctx context.Context, task AssignTask) {
 		return
 	}
 	_ = c.send(TypeTaskDone, TaskDone{TaskID: task.TaskID, Status: res.Status,
-		Result: res.Result, Error: res.Error, Memory: res.Memory, SessionID: res.SessionID, Reply: res.Reply})
+		Result: res.Result, Error: res.Error, Memory: res.Memory, SessionID: res.SessionID, Reply: res.Reply,
+		ContextTokens: res.ContextTokens})
 }
 
 // sendCost reports a run's spend, if it measured any.

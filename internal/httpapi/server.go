@@ -526,6 +526,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("PATCH /api/v1/agents/{id}/model", s.agentScoped(manage, s.handleSetModel))
 	mux.Handle("PATCH /api/v1/agents/{id}/effort", s.agentScoped(manage, s.handleSetEffort))
 	mux.Handle("PATCH /api/v1/agents/{id}/max-turns", s.agentScoped(manage, s.handleSetMaxTurns))
+	mux.Handle("PATCH /api/v1/agents/{id}/sticky-sessions", s.agentScoped(manage, s.handleSetSticky))
 	mux.Handle("PATCH /api/v1/agents/{id}/recording-level", s.agentScoped(manage, s.handleSetRecordingLevel))
 	mux.Handle("PATCH /api/v1/agents/{id}/recording-retention", s.agentScoped(manage, s.handleSetRecordingRetention))
 	mux.Handle("PATCH /api/v1/agents/{id}/warm-sandbox", s.agentScoped(manage, s.handleSetWarmSandbox))
