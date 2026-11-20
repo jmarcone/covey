@@ -8,6 +8,7 @@ import { mockFetch, renderWithProviders } from "../test/render";
 import { headline, subscriptionDent } from "./costFigures";
 import { OPERATOR_SOURCE, isOperatorSource, kpiLead, outsideKpis, outsideSplit } from "./outsideFigures";
 import { withinSplit } from "./StackedCostChart";
+import { SubscriptionDentRow } from "./SubscriptionDent";
 
 // #163: the sessions outside covey are not one number. Where the cost page
 // names them, it names its parts: covey's own agents (internal), the covey
@@ -294,9 +295,10 @@ describe("the outside sessions in three parts (#163)", () => {
     const row = await screen.findByRole("region", { name: t("costs.dent.title") });
     const d = subscriptionDent(cells().external)!;
     expect(d.seats[0].outsideParts).toEqual({ operator: PP, projects: PP });
-    // The seat lines show only where there are several seats or one has no figure: the wording is read directly.
-    expect(t("costs.dent.seatLineSplit", { seat: `${SEAT} #0`, real: "$1", pts: "6", covey: "$2", operator: "$0.50", projects: "$0.25",
-      unattributed: "$0", unsplit: "$0" })).toContain("covey operator ≈ $0.50, other projects ≈ $0.25");
+    // The seat lines show only where there are several seats or one has no figure: the same seat twice shows them.
+    const { container } = renderWithProviders(<SubscriptionDentRow d={{ ...d, seats: [d.seats[0], { ...d.seats[0], slot: 1 }] }} filtered={false} />);
+    expect(container.querySelector(`[data-dent-seat="${SEAT} #0"]`)!.textContent)
+      .toContain(`covey operator ≈ ${fmtUSD(PP)}, other projects ≈ ${fmtUSD(PP)}`);
     expect(row.querySelector("[data-dent='operator']")).toBeTruthy();
     // Only the operator on the seat: no other projects in the numbers.
     expect(subscriptionDent(operatorOnly().external)!.seats[0].outsideParts).toEqual({ operator: PP, projects: null });
