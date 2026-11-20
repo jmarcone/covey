@@ -19,9 +19,10 @@ var issueRef = regexp.MustCompile(`#\d+`)
 // in the title is the topic when there is one: a step names its issue
 // however the rest of the title is worded. Otherwise the topic is the title
 // without its first word (the step, with or without a trailing ':'),
-// lower-cased, its whitespace collapsed and its trailing punctuation
-// removed, so that "formula: Cost page headline." and "formula cost page
-// headline" meet.
+// lower-cased, its whitespace collapsed, its trailing punctuation and any
+// word made only of punctuation removed, so that "formula: Cost page
+// headline.", "formula - cost page headline" and "formula cost page headline"
+// meet.
 //
 // A title of fewer than three words has no topic (""): with the step taken
 // off, one word ("go", "hold") says nothing about what it is about, and
@@ -39,14 +40,23 @@ func TopicKey(title string) string {
 
 // NormalizeTopic is an explicit topic as the agent gave it, brought to the
 // form TopicKey produces — lower-cased, whitespace collapsed, trailing
-// punctuation removed — but whole: an explicit topic has no step to drop
+// punctuation and punctuation-only words removed — but whole: an explicit topic has no step to drop
 // ("#17 part 3" stays "#17 part 3").
 func NormalizeTopic(s string) string {
 	return trimTrailingPunct(collapse(s))
 }
 
+// collapse lower-cases s, collapses its whitespace and drops the words made
+// only of punctuation (a dash between step and topic, a lone colon): they
+// carry no topic, and counted as words they would let a two-word title route.
 func collapse(s string) string {
-	return strings.Join(strings.Fields(strings.ToLower(s)), " ")
+	var words []string
+	for _, w := range strings.Fields(strings.ToLower(s)) {
+		if strings.TrimFunc(w, unicode.IsPunct) != "" {
+			words = append(words, w)
+		}
+	}
+	return strings.Join(words, " ")
 }
 
 // trimTrailingPunct removes punctuation from the end of the whole string, and

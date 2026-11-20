@@ -25,8 +25,15 @@ func TestTopicKey(t *testing.T) {
 		{"formula: go", ""},
 		{"", ""},
 		{"   ", ""},
+		// Words made only of punctuation are no words: not counted, not the
+		// step, not part of the topic.
+		{"formula - cost page headline", "cost page headline"},
+		{"formula : cost page headline", "cost page headline"},
+		{"formula — cost page – headline", "cost page headline"},
+		{"go - ahead", ""},
+		{"- go ahead", ""},
 		// A '#' without digits is not an issue reference.
-		{"tag # important things", "# important things"},
+		{"tag # important things", "important things"},
 	}
 	for _, c := range cases {
 		if got := TopicKey(c.title); got != c.want {
@@ -44,6 +51,7 @@ func TestNormalizeTopic(t *testing.T) {
 		{"  #17   Part 3. ", "#17 part 3"},
 		{"Cost page headline", "cost page headline"},
 		{"go", "go"},
+		{"cost - page", "cost page"},
 		{"...", ""},
 		{"", ""},
 	}

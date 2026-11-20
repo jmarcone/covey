@@ -119,7 +119,8 @@ func (f *createTaskPlane) audit(t *testing.T) map[string]any {
 // reaches the control plane, and the audit event names the task it went to.
 func TestCreateTaskRoutedAnswer(t *testing.T) {
 	f := &createTaskPlane{answer: InjectCreateTask{OK: true, TaskID: "0b5c2f1e-0000-4000-8000-000000000045",
-		Agent: "kollegin", Routed: true, State: "blocked", Parked: true, WaitingOn: "parked:feat/cost-insights"}}
+		Agent: "kollegin", Topic: "cost page headline", Routed: true, State: "blocked", Parked: true,
+		WaitingOn: "parked:feat/cost-insights"}}
 	p := f.proxy(t)
 
 	res, _ := p.run(context.Background(), "covey", "create_task", json.RawMessage(
@@ -129,7 +130,8 @@ func TestCreateTaskRoutedAnswer(t *testing.T) {
 	}
 	data, _ := res["data"].(map[string]any)
 	want := map[string]any{"task_id": "0b5c2f1e-0000-4000-8000-000000000045", "agent": "kollegin",
-		"routed": true, "state": "blocked", "woken": false, "parked": true, "waiting_on": "parked:feat/cost-insights"}
+		"routed": true, "state": "blocked", "woken": false, "parked": true, "waiting_on": "parked:feat/cost-insights",
+		"topic": "cost page headline"}
 	if len(data) != len(want) {
 		t.Fatalf("routed answer: got %v, want %v", data, want)
 	}
@@ -152,19 +154,20 @@ func TestCreateTaskRoutedAnswer(t *testing.T) {
 	}
 }
 
-// A task that was created answers as before, and says routed:false.
+// A task that was created answers as before, and says routed:false. A
+// control plane from before #45 sends no topic; the audit keeps the agent's.
 func TestCreateTaskCreatedAnswer(t *testing.T) {
 	f := &createTaskPlane{answer: InjectCreateTask{OK: true, TaskID: "new-task", Agent: "kollegin"}}
 	p := f.proxy(t)
 
 	res, _ := p.run(context.Background(), "covey", "create_task",
-		json.RawMessage(`{"title":"formula cost page headline","agent":"kollegin"}`)).(map[string]any)
+		json.RawMessage(`{"title":"formula cost page headline","agent":"kollegin","topic":"#17 part 3"}`)).(map[string]any)
 	data, _ := res["data"].(map[string]any)
 	if res["status"] != "ok" || len(data) != 3 || data["task_id"] != "new-task" || data["routed"] != false {
 		t.Fatalf("created answer: %v", res)
 	}
 	ev := f.audit(t)
-	if _, ok := ev["routed_task"]; ok || ev["routed"] != false {
-		t.Errorf("a created task names no routed task: %v", ev)
+	if _, ok := ev["routed_task"]; ok || ev["routed"] != false || ev["topic"] != "#17 part 3" {
+		t.Errorf("a created task names no routed task, and the topic falls back to the agent's: %v", ev)
 	}
 }

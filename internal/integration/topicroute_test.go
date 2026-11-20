@@ -3,6 +3,8 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +13,7 @@ import (
 
 	"covey/internal/agents"
 	"covey/internal/backlog"
+	"covey/internal/chat"
 	"covey/internal/daemon"
 )
 
@@ -335,6 +338,9 @@ func TestTopicRoutingExplicitTopic(t *testing.T) {
 	resp := s.orch.CreateAgentTask(ctx, y, own.ID, daemon.RequestCreateTask{
 		Agent: "entwickler", Title: "issue #17: part 3", Topic: "#17 part 3"})
 	created(t, resp)
+	if resp.Topic != "#17 part 3" {
+		t.Fatalf("the answer names the topic the task carries: %+v", resp)
+	}
 	part3 := mustTask(t, s, resp.TaskID)
 	if k := s.topicKeyOf(t, part3.ID); k == nil || *k != "#17 part 3" {
 		t.Fatalf("the explicit topic is stored: %v", k)
@@ -394,15 +400,132 @@ func TestTopicRoutingRunsTheLimitsFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Each with its own body: the same note twice is a repeat, which adds
+	// nothing and counts nothing.
 	for i := 0; i < 10; i++ {
 		routedTo(t, s.orch.CreateAgentTask(ctx, y, own.ID, daemon.RequestCreateTask{
-			Agent: "formelwerk", Title: "amend cost page headline"}), existing)
+			Agent: "formelwerk", Title: "amend cost page headline", Body: fmt.Sprintf("addendum %d", i)}), existing)
 	}
-	resp = s.orch.CreateAgentTask(ctx, y, own.ID, daemon.RequestCreateTask{Agent: "formelwerk", Title: "amend cost page headline"})
+	resp = s.orch.CreateAgentTask(ctx, y, own.ID, daemon.RequestCreateTask{
+		Agent: "formelwerk", Title: "amend cost page headline", Body: "addendum 10"})
 	if resp.OK || !strings.Contains(resp.Error, "limit") {
 		t.Fatalf("routed requests count towards the width of the run: %+v", resp)
 	}
 	if notes := s.notesOf(t, existing.ID); len(notes) != 10 {
 		t.Fatalf("the refused call adds no note: %d notes", len(notes))
+	}
+}
+
+// M1: a conversation task waits for the person it talks to. A routed note
+// lands on it, but does not resume it — whatever its key — or its run would
+// answer the person on a colleague's word, and the person's reply would find
+// nobody waiting.
+func TestTopicRoutingNeverWakesAConversationTask(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	x := s.newSupportAgent("formelwerk")
+	s.ohneLaeufe(x.ID)
+	conv, err := chat.New(s.pool).Direct(ctx, s.orgID, chat.Agent(x.ID), chat.Human(s.adminID), &s.adminID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := s.backlog.CreateIn(ctx, s.orgID, x.ID, "answer cost page headline", "", "chat", 3, &conv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE backlog_tasks SET state = 'in_progress' WHERE id = $1`, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.backlog.Block(ctx, task.ID, "github:example/repo#3", "sess-conv", "waiting"); err != nil {
+		t.Fatal(err)
+	}
+	s.rehire(t, x.ID)
+	y, own := s.caller(t, "rechner")
+
+	resp := s.orch.CreateAgentTask(ctx, y, own.ID, daemon.RequestCreateTask{
+		Agent: "formelwerk", Title: "amend cost page headline", Body: "use the weekly figure"})
+	routedTo(t, resp, task)
+	if resp.Woken || resp.State != backlog.StateBlocked || resp.WaitingOn != "github:example/repo#3" ||
+		!strings.Contains(resp.Notice, "conversation") {
+		t.Fatalf("a conversation task keeps the note and waits for its person: %+v", resp)
+	}
+	if st := s.taskState(task.ID); st != backlog.StateBlocked {
+		t.Fatalf("the conversation task stays blocked: %s", st)
+	}
+	if notes := s.notesOf(t, task.ID); len(notes) != 1 || notes[0].Author != "agent:rechner" {
+		t.Fatalf("the note stands on the conversation task: %+v", notes)
+	}
+}
+
+// The store's half: the note and the wake are decided together behind the
+// row lock. A repeat of the latest note wakes nothing — a recurring run
+// cannot resume a task that parked again on every tick — and a task that
+// left play since the lookup takes no note at all (create_task then creates
+// the task instead).
+func TestRouteNoteRepeatAndTerminal(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	x := s.newSupportAgent("formelwerk")
+	s.ohneLaeufe(x.ID)
+	task := s.blockedOn(t, x.ID, "formula cost page headline", "github:example/repo#2")
+	_, own := s.caller(t, "rechner")
+	keep := []string{"parked:", "approval:", "hire:"}
+
+	r, err := s.backlog.RouteNote(ctx, task.ID, own.ID, "agent:rechner", "amend it", "resume with it", keep, true)
+	if err != nil || !r.Woken || r.Repeat || r.Task.State != backlog.StateOpen ||
+		r.Task.ResumeInput == nil || *r.Task.ResumeInput != "resume with it" {
+		t.Fatalf("the first note resumes the blocked task with its input: %+v %v", r, err)
+	}
+
+	// Parked again on the same pull request, as the next run would leave it.
+	if _, err := s.pool.Exec(ctx, `UPDATE backlog_tasks SET state = 'in_progress' WHERE id = $1`, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.backlog.Block(ctx, task.ID, "github:example/repo#2", "sess-again", "waiting"); err != nil {
+		t.Fatal(err)
+	}
+	r, err = s.backlog.RouteNote(ctx, task.ID, own.ID, "agent:rechner", "amend it", "resume with it", keep, true)
+	if err != nil || r.Woken || !r.Repeat || r.Task.State != backlog.StateBlocked {
+		t.Fatalf("the same note again wakes nothing: %+v %v", r, err)
+	}
+	if notes := s.notesOf(t, task.ID); len(notes) != 1 {
+		t.Fatalf("a repeat writes no note: %+v", notes)
+	}
+	if n, err := s.backlog.CountRouted(ctx, own.ID); err != nil || n != 1 {
+		t.Fatalf("a repeat does not count towards the width: %d %v", n, err)
+	}
+
+	// The same request through create_task: routed, not woken, and said so.
+	s.rehire(t, x.ID)
+	y, yOwn := s.caller(t, "schreiber")
+	if _, err := s.backlog.AddNote(ctx, task.ID, "agent:schreiber", "amend cost page headline\n\nuse the weekly figure"); err != nil {
+		t.Fatal(err)
+	}
+	resp := s.orch.CreateAgentTask(ctx, y, yOwn.ID, daemon.RequestCreateTask{
+		Agent: "formelwerk", Title: "amend cost page headline", Body: "use the weekly figure"})
+	routedTo(t, resp, task)
+	if resp.Woken || resp.State != backlog.StateBlocked || !strings.Contains(resp.Notice, "already") {
+		t.Fatalf("a repeated request is routed, wakes nothing and says so: %+v", resp)
+	}
+	if st := s.taskState(task.ID); st != backlog.StateBlocked {
+		t.Fatalf("the repeat leaves the task blocked: %s", st)
+	}
+
+	// Finished, or archived, since the lookup: nothing is written.
+	before := len(s.notesOf(t, task.ID))
+	if _, err := s.pool.Exec(ctx, `UPDATE backlog_tasks SET state = 'done' WHERE id = $1`, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.backlog.RouteNote(ctx, task.ID, own.ID, "agent:rechner", "late", "late", keep, true); !errors.Is(err, backlog.ErrNotRoutable) {
+		t.Fatalf("a finished task is not routable: %v", err)
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE backlog_tasks SET state = 'blocked', archived_at = now() WHERE id = $1`, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.backlog.RouteNote(ctx, task.ID, own.ID, "agent:rechner", "late", "late", keep, true); !errors.Is(err, backlog.ErrNotRoutable) {
+		t.Fatalf("an archived task is not routable: %v", err)
+	}
+	if got := len(s.notesOf(t, task.ID)); got != before {
+		t.Fatalf("a task out of play takes no note: %d, expected %d", got, before)
 	}
 }

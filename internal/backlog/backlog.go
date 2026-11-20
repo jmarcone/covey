@@ -410,29 +410,40 @@ func (s *Store) OpenWithTitle(ctx context.Context, agentID uuid.UUID, title stri
 // asking run's own task, which is never the target: an agent splitting its
 // own work into a subtask of the same topic would otherwise land on itself.
 //
-// A task from before migration 0153 has no stored key; its key is computed
-// here from its title, with the same rule that writes it (TopicKey), rather
-// than backfilled in SQL — one implementation of the rule, not two.
+// Two steps, so the first one can use idx_backlog_tasks_agent_topic: the
+// stored keys, then — only when none matches — the rows without one. Those
+// are tasks from before migration 0153 and tasks whose title names no topic;
+// their key is computed here from the title, with the same rule that writes
+// it (TopicKey), rather than backfilled in SQL — one implementation of the
+// rule, not two.
 func (s *Store) OpenByTopic(ctx context.Context, orgID, agentID uuid.UUID, topic string, exclude uuid.UUID) (Task, bool, error) {
 	if topic == "" {
 		return Task{}, false, nil
 	}
-	rows, err := s.pool.Query(ctx, "SELECT "+taskCols+`, topic_key FROM backlog_tasks
-		WHERE org_id=$1 AND agent_id=$2 AND archived_at IS NULL
-		  AND state IN ('open','in_progress','blocked') AND id <> $3
-		  AND (topic_key = $4 OR topic_key IS NULL)
-		ORDER BY updated_at DESC`, orgID, agentID, exclude, topic)
+	t, err := scanTask(s.pool.QueryRow(ctx, "SELECT "+taskCols+` FROM backlog_tasks
+		WHERE agent_id=$2 AND topic_key=$4 AND archived_at IS NULL
+		  AND state IN ('open','in_progress','blocked') AND org_id=$1 AND id <> $3
+		ORDER BY updated_at DESC LIMIT 1`, orgID, agentID, exclude, topic))
+	if err == nil {
+		return t, true, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return Task{}, false, err
+	}
+	rows, err := s.pool.Query(ctx, "SELECT "+taskCols+` FROM backlog_tasks
+		WHERE agent_id=$2 AND topic_key IS NULL AND archived_at IS NULL
+		  AND state IN ('open','in_progress','blocked') AND org_id=$1 AND id <> $3
+		ORDER BY updated_at DESC`, orgID, agentID, exclude)
 	if err != nil {
 		return Task{}, false, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var t Task
-		var key *string
-		if err := rows.Scan(append(t.scanDest(), &key)...); err != nil {
+		if err := rows.Scan(t.scanDest()...); err != nil {
 			return Task{}, false, err
 		}
-		if (key != nil && *key == topic) || (key == nil && TopicKey(t.Title) == topic) {
+		if TopicKey(t.Title) == topic {
 			return t, true, nil
 		}
 	}
@@ -1573,19 +1584,6 @@ func (s *Store) AddNote(ctx context.Context, taskID uuid.UUID, author, content s
 	err := s.pool.QueryRow(ctx, `INSERT INTO task_notes (id, task_id, author, content)
 		VALUES ($1,$2,$3,$4) RETURNING id, task_id, author, content, created_at`,
 		uuid.New(), taskID, author, content).
-		Scan(&n.ID, &n.TaskID, &n.Author, &n.Content, &n.CreatedAt)
-	return n, err
-}
-
-// AddRoutedNote is AddNote for an addendum covey/create_task routed onto an
-// existing task (#45), with the task of the run that asked for it. Routing
-// creates no task, so the width limit of that run would never move;
-// CountRouted counts these notes for it.
-func (s *Store) AddRoutedNote(ctx context.Context, taskID, routedFrom uuid.UUID, author, content string) (Note, error) {
-	var n Note
-	err := s.pool.QueryRow(ctx, `INSERT INTO task_notes (id, task_id, author, content, routed_from)
-		VALUES ($1,$2,$3,$4,$5) RETURNING id, task_id, author, content, created_at`,
-		uuid.New(), taskID, author, content, routedFrom).
 		Scan(&n.ID, &n.TaskID, &n.Author, &n.Content, &n.CreatedAt)
 	return n, err
 }

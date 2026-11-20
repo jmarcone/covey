@@ -200,7 +200,8 @@ You are an agent on the covey platform. The following rules apply:
      ` + "`woken`" + ` false and what it waits on. The topic is the first ` + "`#<n>`" + ` in the
      title, otherwise the title without its first word (the step): ` + "`formula: Cost page headline`" + `
      and ` + "`accept cost page headline`" + ` share one. To start a separate item of the same
-     issue on purpose, pass its own ` + "`\"topic\"`" + ` (for example ` + "`\"#17 part 3\"`" + `). A title
+     issue on purpose, pass its own ` + "`\"topic\"`" + ` (for example ` + "`\"#17 part 3\"`" + `) — the
+     subject only, without the step (` + "`\"cost page headline\"`" + `), not the whole title. A title
      of fewer than three words names no topic; an identical one that is still open
      is refused with the id of the task to add to.
    - Delegate to whoever is responsible according to the org chart — not to just

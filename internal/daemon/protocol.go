@@ -560,6 +560,10 @@ type InjectCreateTask struct {
 	// Notice is something the delegating agent should know about a task that
 	// was created all the same — that its colleague is stopped, say (#556).
 	Notice string `json:"notice,omitempty"`
+	// Topic is the topic key the request was matched by and the created task
+	// carries ("" for a title that names none), so the agent can name it
+	// again or tell it apart (#45).
+	Topic string `json:"topic,omitempty"`
 	// Routed says that no task was created: the topic already had an open,
 	// running or blocked task at the target, and the request was added to it
 	// as a note (#45). TaskID is then that task's.

@@ -534,9 +534,15 @@ func (p *actionProxy) createTask(ctx context.Context, params json.RawMessage) an
 	if err != nil {
 		return map[string]string{"status": "error", "error": err.Error()}
 	}
+	// The key the control plane used; one from before #45 sends none, and
+	// the agent's own topic is the best there is then.
+	topic := resp.Topic
+	if topic == "" {
+		topic = in.Topic
+	}
 	auditMap := map[string]any{"action": subject, "params": params,
 		"ok": resp.OK, "created_task": resp.TaskID, "agent": resp.Agent,
-		"routed": resp.Routed, "topic": in.Topic}
+		"routed": resp.Routed, "topic": topic}
 	if resp.Routed {
 		// created_task keeps its name for the readers that count it; a
 		// routed call created nothing, and this names the task it went to.
@@ -556,6 +562,9 @@ func (p *actionProxy) createTask(ctx context.Context, params json.RawMessage) an
 // (#45).
 func createTaskData(resp InjectCreateTask) map[string]any {
 	data := map[string]any{"task_id": resp.TaskID, "agent": resp.Agent, "routed": resp.Routed}
+	if resp.Topic != "" {
+		data["topic"] = resp.Topic
+	}
 	if resp.Routed {
 		data["state"] = resp.State
 		data["woken"] = resp.Woken

@@ -3712,7 +3712,11 @@ func (o *Orchestrator) CreateAgentTask(ctx context.Context, agent agents.Agent, 
 			return fail("duplicate check failed")
 		}
 		if found {
-			return o.routeCreateTask(ctx, agent, taskID, targetAgent, match, topic, title, req)
+			// Not ok: the task left play since the lookup. The request is
+			// created as if there had been no match rather than lost on it.
+			if resp, ok := o.routeCreateTask(ctx, agent, taskID, targetAgent, match, topic, title, req); ok {
+				return resp
+			}
 		}
 	}
 	// Routing finds no task with the same title when that title names no
@@ -3751,7 +3755,7 @@ func (o *Orchestrator) CreateAgentTask(ctx context.Context, agent agents.Agent, 
 		o.EnsureRunning(targetAgent.ID) // delegation wakes the colleague
 	}
 	resp := daemon.InjectCreateTask{RequestID: req.RequestID, OK: true,
-		TaskID: created.ID.String(), Agent: targetAgent.Slug}
+		TaskID: created.ID.String(), Agent: targetAgent.Slug, Topic: topic}
 	if targetAgent.ID != agent.ID && targetAgent.Killed {
 		// Created, as #202 wants — but the delegating agent is told, so that it
 		// can tell "delivered" from "waiting for a person" (#556).
