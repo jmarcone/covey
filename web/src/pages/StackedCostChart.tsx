@@ -999,7 +999,7 @@ function realSpan(t: TFunction, f: CredentialFigures, key = "costs.fig.realSince
 }
 
 /** The tiles of one credential. */
-function CredentialTiles({ f, filtered, narrowed, out, split, seatSplit, full }: {
+function CredentialTiles({ f, filtered, narrowed, out, split, seatSplit, full, answered }: {
   f: CredentialFigures; filtered: boolean; out: OutsideKpis | null;
   /** The same sources in two parts: the covey operator and the other projects (#163). */
   split: OutsideSplit | null;
@@ -1009,6 +1009,8 @@ function CredentialTiles({ f, filtered, narrowed, out, split, seatSplit, full }:
   narrowed: boolean;
   /** Claude Code's figure and covey's price table as two tiles (the toggle); else the one lead tile. */
   full: boolean;
+  /** The page's answer table already shows a subscription seat's price, real cost and multiple (#195): no tile repeats them. */
+  answered?: boolean;
 }) {
   const { t } = useTranslation();
   // With the outside sessions on this seat included, each figure names its
@@ -1019,7 +1021,9 @@ function CredentialTiles({ f, filtered, narrowed, out, split, seatSplit, full }:
   // covey's list price where it reported none; covey's price table is a
   // check under it. The toggle shows the two as tiles of their own.
   const lead = f.reported + (out ? kpiLead(out).lead ?? 0 : 0);
-  const tiles: React.ReactNode[] = full ? [
+  // The full view is asked for: Reported and Recomputed apart stay as tiles.
+  const answeredSeat = answered && !full && isSeat(f);
+  const tiles: React.ReactNode[] = answeredSeat ? [] : full ? [
     <Tile key="rep" label={t("costs.fig.reported")} value={fmtUSD(f.reported + (out?.reported ?? 0))} sub={t("costs.fig.reportedSub")} color={SOURCE_COLOR.reported}
       parts={split ? <SplitParts lines={splitLines(t, { filtered, covey: fmtUSD(f.reported), split, range, money: (k) => outsideMoney(t, k, "reported") })} /> : undefined} />,
     <Tile key="rec" label={t("costs.fig.recomputed")} value={fmtUSD(f.recomputed + (out?.list ?? 0))}
@@ -1034,7 +1038,7 @@ function CredentialTiles({ f, filtered, narrowed, out, split, seatSplit, full }:
   // its money, the usage charges are (below). One that changed basis keeps
   // the real figure of the seat's part, as the server priced it.
   const usageOnly = f.real == null && f.usage != null && f.usage.regimes.length === 1 && f.usage.regimes[0] === "usage";
-  if (isSeat(f) && !usageOnly) {
+  if (isSeat(f) && !usageOnly && !answeredSeat) {
     const r = f.real;
     // Points read under the usage basis: not the seat's, said beside it.
     const seatPart = r && r.usagePoints > 0 ? ` · ${t("costs.basis.realSeatPart", { n: fmtNumber(r.usagePoints, 0) })}` : "";
@@ -1171,10 +1175,11 @@ function CredentialTiles({ f, filtered, narrowed, out, split, seatSplit, full }:
   return <div className="flex flex-wrap gap-3 mb-2">{tiles}</div>;
 }
 
-/** Why there is no multiple, in words. */
-function NoMultiple({ f }: { f: CredentialFigures }) {
+/** Why there is no multiple, in words. answered: the page's answer table says it for the meter's own multiple (#195). */
+function NoMultiple({ f, answered = false }: { f: CredentialFigures; answered?: boolean }) {
   const { t } = useTranslation();
   if (f.everything && f.everything.why !== "usage") {
+    if (answered) return null;
     // The multiple of everything on the meter replaces covey's own. On a
     // seat billed by usage (0151) the usage multiple's rules stand instead.
     const e = f.everything;
@@ -1205,17 +1210,22 @@ function NoMultiple({ f }: { f: CredentialFigures }) {
 }
 
 /** One credential: its tiles, its chart, its agents. */
-function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPeriod, selected, src, split, types, layout, view, sharedScale, asTable, outside, full }: {
+function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPeriod, selected, src, split, types, layout, view, sharedScale, asTable, outside, full, answered }: {
   f: CredentialFigures; data: CostCells; billed: BilledReport | undefined; readings: readonly UsageReading[]; canSetPlan: boolean; bucket: string; fmtPeriod: (p: string) => string;
   selected: Set<string>; src: Record<Source, boolean>; split: Split; types: Set<string>; layout: Layout; view: View; sharedScale: boolean; asTable: boolean;
   /** The full view of covey's price table (the toggle): Reported and Recomputed apart. */
   full: boolean;
   /** The outside sessions, included (null: covey only). */
   outside: OutsideOnChart | null;
+  /** The answer table shows the seat's figures (#195): its tiles leave them out. */
+  answered?: boolean;
 }) {
   const { t } = useTranslation();
   const planLabel = usePlanLabel();
   const filtered = selected.size > 0;
+  // The answer table holds the seat's price, real cost, multiple and the work outside the meter's readings (#195),
+  // unless the full view of covey's price table is asked for.
+  const tableAnswers = !!answered && !full && isSeat(f);
   const inScope = (id: string) => !filtered || selected.has(id);
   const agents = useMemo(() => rankAgents(data.agents), [data.agents]);
   const own = useMemo(() => data.cells.filter((c) => credId(c.secret_key, c.secret_slot) === f.id), [data.cells, f.id]);
@@ -1465,11 +1475,11 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
       {subscription && <PlanPrice f={f} name={name} readings={readings} editable={canSetPlan} />}
       {f.secretKey != null && <CostBasisPanel f={f} name={name} editable={canSetPlan} />}
       <MonthlyMeters f={f} readings={readings} />
-      <CredentialTiles f={f} filtered={filtered || layout === "agents"} narrowed={filtered} out={mineKpis} split={mineSplit} seatSplit={seatSplit} full={full} />
-      <NoMultiple f={f} />
+      <CredentialTiles f={f} filtered={filtered || layout === "agents"} narrowed={filtered} out={mineKpis} split={mineSplit} seatSplit={seatSplit} full={full} answered={answered} />
+      <NoMultiple f={f} answered={tableAnswers} />
       {/* Outside every reading's span: before the meter's first reading
           (no meter data, never a real share) and after its last (pending). */}
-      {f.everything && (["before", "after"] as const).map((k) => {
+      {f.everything && !tableAnswers && (["before", "after"] as const).map((k) => {
         const p = f.everything![k];
         return (p.covey ?? 0) + p.outside >= 0.005 && (
           <p key={k} className="muted text-xs mb-2 mt-0" data-unmetered-note={k}>{t(k === "before" ? "costs.incl.unmeteredBefore" : "costs.incl.unmeteredAfter", {
@@ -1555,8 +1565,9 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
       </p>}
       {filtered && (subscription || f.kind === "api_key") && <p className="muted text-xs mt-1 mb-0">{t("costs.fig.filteredRealNote")}</p>}
 
-      {(f.agents.length > 0 || mine.length > 0) && <AgentTable f={f} agents={agents} subscription={subscription}
-        outside={outside ? mine.map((s) => ({ s, k: sourceKpis(s, outside), style: outside.styles.style(s.source), before: beforeRange(s, outside.real) })) : []}
+      {/* With the answer table the outside sources' rows and the total are its (#195): the agents' own rows stay. */}
+      {(f.agents.length > 0 || (mine.length > 0 && !tableAnswers)) && <AgentTable f={f} agents={agents} subscription={subscription}
+        outside={outside && !tableAnswers ? mine.map((s) => ({ s, k: sourceKpis(s, outside), style: outside.styles.style(s.source), before: beforeRange(s, outside.real) })) : []}
         filtered={filtered} full={full} />}
     </section>
   );
@@ -1741,7 +1752,8 @@ function ColourKey({ split, sources = [], other = [], full = true, list = full }
   );
 }
 
-export function CostExplorer({ data, billed, readings = [], canSetPlan = false, selected, bucket, fmtPeriod, outside = null, full: fullProp, onFull }: {
+export function CostExplorer({ data, billed, readings = [], canSetPlan = false, selected, bucket, fmtPeriod, outside = null, full: fullProp, onFull,
+  off: offProp, onToggleSource, answered }: {
   data: CostCells | undefined; billed?: BilledReport; readings?: readonly UsageReading[]; canSetPlan?: boolean;
   selected: Set<string>; bucket: string; fmtPeriod: (p: string) => string;
   /** The sessions outside covey, included (#120, the default); null: covey only. */
@@ -1750,6 +1762,11 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
    *  held by the page (in its URL); without it the explorer holds it. */
   full?: boolean;
   onFull?: (v: boolean) => void;
+  /** The outside sources switched off: held by the page where its answer table follows the chips (#195); else here. */
+  off?: ReadonlySet<string>;
+  onToggleSource?: (source: string) => void;
+  /** The page's answer table shows the seats' price, real cost and multiple: the tiles under the chart leave them out. */
+  answered?: boolean;
 }) {
   const { t } = useTranslation();
   // One list-price figure leads (#120): the lead series. covey's price
@@ -1771,10 +1788,11 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
   }) : []), [data, billed, bucket, selected, layout, outside]);
   // The outside sources with calls in the range, each a series of its own,
   // on by default; a chip switches one off.
-  const [offSources, setOffSources] = useState<Set<string>>(new Set());
+  const [ownOff, setOwnOff] = useState<Set<string>>(new Set());
+  const offSources = offProp ?? ownOff;
   const listed = useMemo(() => listedSources(outside), [outside]);
   const onChart = useMemo<OutsideOnChart | null>(() => (outside ? outsideOnChart(outside, offSources) : null), [outside, offSources]);
-  const toggleSource = (n: string) => setOffSources((v) => { const x = new Set(v); if (x.has(n)) x.delete(n); else x.add(n); return x; });
+  const toggleSource = onToggleSource ?? ((n: string) => setOwnOff((v) => { const x = new Set(v); if (x.has(n)) x.delete(n); else x.add(n); return x; }));
   // Sources whose seat has no block here (billed per use, or a seat with
   // neither lines nor readings in the range): a block of their own.
   const loose = onChart ? sourcesWithoutSeat(outside, new Set(figures.map((f) => f.id))).filter((x) => onChart.on.has(x.source)) : [];
@@ -1823,8 +1841,8 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
           {listed.map((x) => (
             <Chip key={x.source} on={onChart.on.has(x.source)} color={SOURCE_COLOR.recomputed} {...onChart.styles.style(x.source)}
               onClick={() => toggleSource(x.source)}>
-              {x.source} <span style={{ opacity: 0.7 }}>{beforeRange(x, onChart.real) ? t("costs.incl.beforeRange")
-                : x.list_usd != null ? fmtUSD(x.list_usd) : t("costs.incl.noList")}</span>
+              {x.source} {!answered && <span style={{ opacity: 0.7 }}>{beforeRange(x, onChart.real) ? t("costs.incl.beforeRange")
+                : x.list_usd != null ? fmtUSD(x.list_usd) : t("costs.incl.noList")}</span>}
             </Chip>
           ))}
         </Row>
@@ -1872,7 +1890,7 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
         <div className="muted text-sm" style={{ padding: "40px 0", textAlign: "center" }}>{t("costs.empty")}</div>
       ) : figures.map((f) => (
         <CredentialBlock key={f.id} f={f} data={data!} billed={billed} readings={readings} canSetPlan={canSetPlan} bucket={bucket} fmtPeriod={fmtPeriod} selected={selected}
-          src={shown} split={split} types={types} layout={layout} view={view} sharedScale={sharedScale} asTable={asTable} outside={onChart} full={full} />
+          src={shown} split={split} types={types} layout={layout} view={view} sharedScale={sharedScale} asTable={asTable} outside={onChart} full={full} answered={answered} />
       ))}
       {onChart && loose.length > 0 && (
         <OutsideBlock o={onChart} sources={loose} src={shown} fmtPeriod={fmtPeriod} asTable={asTable} filtered={selected.size > 0} full={full} />

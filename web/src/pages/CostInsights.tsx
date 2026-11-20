@@ -324,8 +324,10 @@ function ModelTable({ rep, figures, agents, outside = null }: {
  *  none), the list price of the credential's lines over the same span, and
  *  the multiple. No chart: two independent scales stretched to the same
  *  height agreed by construction, not by the data. */
-function MeterFigures({ f, readings, outside = null }: {
+function MeterFigures({ f, readings, outside = null, answered = false }: {
   f: CredentialFigures; readings: UsageReading[];
+  /** The page's answer table holds the real cost, the list price, its parts and the multiple (#195): the card keeps the meter's span. */
+  answered?: boolean;
   /** The sessions outside covey, to say the seat's outside part as the covey operator and the other projects (#163). */
   outside?: ExternalUsage | null;
 }) {
@@ -415,11 +417,13 @@ function MeterFigures({ f, readings, outside = null }: {
         from: m.baseline_percent, fromAt: fmtBucket(m.baseline_at, "hour"), to: m.last_percent, toAt: fmtBucket(m.last_at, "hour"),
         pts: m.points, n: m.readings,
       }))}
-      {row(t("costs.fig.realEstimate"), real, SOURCE_COLOR.real, true)}
-      {row(t("costs.insights.meterList"), f.aligned != null ? fmtUSD(f.aligned) : "–", SOURCE_COLOR.recomputed)}
-      {e && outsideRows}
-      {e && within?.shared && within.known && <div className="muted text-xs" data-meter-shared>{t("costs.incl.everythingShared")}</div>}
-      {row(e ? t("costs.incl.everything") : t("costs.fig.multiple"), mult)}
+      {!answered && <>
+        {row(t("costs.fig.realEstimate"), real, SOURCE_COLOR.real, true)}
+        {row(t("costs.insights.meterList"), f.aligned != null ? fmtUSD(f.aligned) : "–", SOURCE_COLOR.recomputed)}
+        {e && outsideRows}
+        {e && within?.shared && within.known && <div className="muted text-xs" data-meter-shared>{t("costs.incl.everythingShared")}</div>}
+        {row(e ? t("costs.incl.everything") : t("costs.fig.multiple"), mult)}
+      </>}
       <p className="muted text-xs mt-1 mb-0">
         {five
           ? t("costs.insights.fiveHour", { pct: five.window_percent, at: fmtBucket(five.fetched_at, "hour") })
@@ -437,8 +441,10 @@ const times = (v: number) => (Number.isFinite(v) ? `${fmtNumber(v, 1)}×` : "∞
  *  whole organisation — the same the tiles show without an agent filter —
  *  while the model table follows `agents`, the page's agent filter (empty:
  *  all agents). */
-export function CostInsights({ days, figures, agents = NO_AGENTS, outside = null }: {
+export function CostInsights({ days, figures, agents = NO_AGENTS, outside = null, answered = false }: {
   days: number; figures: CredentialFigures[]; agents?: ReadonlySet<string>;
+  /** The page's answer table shows the subscription seats' real cost and multiple (#195). */
+  answered?: boolean;
   /** The sessions outside covey, included (#120); null: covey only. */
   outside?: ExternalUsage | null;
 }) {
@@ -483,7 +489,7 @@ export function CostInsights({ days, figures, agents = NO_AGENTS, outside = null
         <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.insights.meterTitle")}{filtered && <OrgWide />}</div>
         <p className="muted text-xs mb-3">{t("costs.insights.meterHint")}</p>
         {metered.length === 0 && monthly.length === 0 && <div className="muted text-sm">{t("costs.insights.noReadings")}</div>}
-        {metered.map((f) => <MeterFigures key={f.id} f={f} readings={rs} outside={outside} />)}
+        {metered.map((f) => <MeterFigures key={f.id} f={f} readings={rs} outside={outside} answered={answered && isSeat(f)} />)}
         {/* A monthly usage limit's meter (0152): its own lines, never in the weekly seat meter's figures. */}
         {monthly.map((f) => (
           <div key={`monthly/${f.id}`} className="mb-4" data-monthly={f.id}>

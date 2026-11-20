@@ -6,8 +6,9 @@ import { readFileSync } from "node:fs";
 import type { CostCells, ExternalMeterStep, ExternalMeterSums, ExternalMeterTotal, ExternalModelCell, ExternalUsage } from "../api";
 import i18n from "../i18n";
 import { fmtCount, fmtNumber, fmtUSD } from "../format";
-import { mockFetch, renderWithProviders } from "../test/render";
-import { credentialFigures, everythingOnMeter, headline, inRange, meterSlack, seatLists } from "./costFigures";
+import { mockFetch, renderWithProviders, openDentRow } from "../test/render";
+import { credentialFigures, everythingOnMeter, headline, inRange, meterSlack, seatLists, subscriptionDent } from "./costFigures";
+import { answerTable } from "./costAnswer";
 import { hostsBehind, listedSources, outsideKpis, outsideModelRows, sourceRealPerPeriod, sourcesWithoutSeat } from "./outsideFigures";
 import { OTHER_SOURCES, SOURCE_SERIES_MAX, externalStamp, outsideKpisBySource, sourceStyles } from "./outsideFigures";
 import { HATCH_ANGLES, sourceSeriesSegs } from "./StackedCostChart";
@@ -154,22 +155,30 @@ const kpi = (label: string) => document.querySelector<HTMLElement>(`[data-kpi="$
 const kpiValue = (label: string) => kpi(label).querySelector("[data-kpi-value]")!.textContent;
 const kpiParts = (label: string) => kpi(label).querySelector("[data-parts]")?.textContent ?? null;
 const t = (k: string, o: Record<string, unknown> = {}) => i18n.t(k, o) as string;
+/** The answer table (#195): a row's cells, its token price and its real share. */
+const answerRow = (key: string) => document.querySelector<HTMLElement>(`[data-answer-row="${key}"]`);
+const rowList = (key: string) => answerRow(key)!.querySelector("[data-answer-list]")!.textContent;
+const rowReal = (key: string) => answerRow(key)!.querySelector("[data-answer-real]")!.textContent;
+const answerReady = () => waitFor(() => expect(document.querySelector("[data-answer-total]")).not.toBeNull());
 
 describe("the sessions outside covey on the cost page, included by default (#120)", () => {
   beforeEach(async () => { await i18n.changeLanguage("en"); });
 
-  it("1: the top tiles include them and name both parts", async () => {
-    serve(cells(), FULL);
-    await waitFor(() => expect(kpiParts("Reported by Claude Code")).not.toBeNull());
-    // covey reported 9, the outside sessions 2.5 + 1 (sylius reported none).
-    expect(kpiValue("Reported by Claude Code")).toBe(fmtUSD(9 + 3.5));
-    // The outside part in three (#163, #166 F1): the covey operator, the other projects on the meter (sylius reported none),
-    // and work, billed per use, on no meter.
-    expect(kpiParts("Reported by Claude Code")).toBe(
-      `covey agents (internal) ${fmtUSD(9)} · covey operator ${fmtUSD(2.5)} · other projects no reported cost · per use ${fmtUSD(1)}`);
-    expect(kpiValue("Recomputed from tokens")).toBe(fmtUSD(10 + 6.5));
-    expect(kpiParts("Recomputed from tokens")).toBe(
-      `covey agents (internal) ${fmtUSD(10)} · covey operator ${fmtUSD(3)} · other projects ${fmtUSD(2)} + ${fmtCount(1000)} tokens with no list price · per use ${fmtUSD(1.5)}`);
+  it("1: the answer table counts them as rows and the collapsed tokens name both parts", async () => {
+    serve(cells());
+    await answerReady();
+    // covey's agents at Claude Code's figure ($9), the operator's reported $2.50 and sylius's $2 at the list (no reported cost, so marked).
+    // work is billed per use, on no meter: a line of its own, not a row.
+    expect(rowList("covey")).toBe(fmtUSD(9));
+    expect(rowList("operator")).toBe(fmtUSD(2.5));
+    expect(rowList(`project:${SY}`)).toBe(`${fmtUSD(2)} (recomputed for sources without a reported cost)`);
+    expect(answerRow(`project:${WORK}`)).toBeNull();
+    expect(document.querySelector("[data-answer-per-use]")!.textContent).toBe(
+      `Not in the table: sessions outside covey billed per use, on no subscription meter (${fmtUSD(1)}).`);
+    // The real shares, as the server split the meter: 4, 1.2 and 0.8 points of 6.
+    expect(rowReal("covey")).toBe(`≈ ${fmtUSD(4 * PP)}`);
+    expect(rowReal("operator")).toBe(`≈ ${fmtUSD(1.2 * PP)}`);
+    expect(rowReal(`project:${SY}`)).toBe(`≈ ${fmtUSD(0.8 * PP)}`);
     // Tokens: covey's 500 + 500 input, 10M cache read, 500k output; outside 4 × 1000 input, 300k cache read, 170k output.
     const coveyIn = 1000 + 10_000_000, outIn = 4000 + 300_000;
     expect(kpiValue(t("costs.inputTokens"))).toBe(fmtCount(coveyIn + outIn));
@@ -177,42 +186,41 @@ describe("the sessions outside covey on the cost page, included by default (#120
       `covey agents (internal) ${fmtCount(coveyIn)} · covey operator ${fmtCount(OP_IN)} · other projects ${fmtCount(1000)} · per use ${fmtCount(outIn - OP_IN - 1000)}`);
     expect(kpiValue(t("costs.outputTokens"))).toBe(fmtCount(500_000 + 170_000));
     expect(kpiValue(t("costs.totalTokens"))).toBe(fmtCount(coveyIn + outIn + 670_000));
+    // The tokens are a collapsed section, not above the table.
+    expect(document.querySelector<HTMLDetailsElement>("details[data-tokens]")!.open).toBe(false);
     // The note names the sources with calls — never one of 0 calls.
     const note = document.querySelector("[data-inclusion-note]")!.textContent!;
     expect(note).toContain(`${OP}, ${WORK}, ${SY}`);
     expect(document.body.textContent).not.toContain(CLAIM);
   });
 
-  it("1: “covey only” gives today's numbers back exactly, and is kept in the URL", async () => {
-    serve(cells(null), FULL);
-    await waitFor(() => expect(kpiValue("Reported by Claude Code")).toBe(fmtUSD(9)));
-    const today = ["Reported by Claude Code", "Recomputed from tokens", t("costs.inputTokens"), t("costs.outputTokens"), t("costs.totalTokens")]
-      .map((l) => kpiValue(l));
+  it("1: “covey only” gives the token figures back exactly, and is kept in the URL", async () => {
+    serve(cells(null));
+    await waitFor(() => expect(kpiValue(t("costs.inputTokens"))).toBe(fmtCount(1000 + 10_000_000)));
+    const today = [t("costs.inputTokens"), t("costs.outputTokens"), t("costs.totalTokens")].map((l) => kpiValue(l));
     cleanup();
-    serve(cells(), "/costs?only=covey&prices=recomputed");
+    serve(cells(), "/costs?only=covey");
     await screen.findByRole("button", { name: "covey only" });
-    await waitFor(() => expect(kpiValue("Reported by Claude Code")).toBe(fmtUSD(9)));
-    expect(["Reported by Claude Code", "Recomputed from tokens", t("costs.inputTokens"), t("costs.outputTokens"), t("costs.totalTokens")]
-      .map((l) => kpiValue(l))).toEqual(today);
+    await waitFor(() => expect(kpiValue(t("costs.inputTokens"))).toBe(fmtCount(1000 + 10_000_000)));
+    expect([t("costs.inputTokens"), t("costs.outputTokens"), t("costs.totalTokens")].map((l) => kpiValue(l))).toEqual(today);
     expect(document.querySelector("[data-parts]")).toBeNull();
     expect(screen.getByRole("button", { name: "covey only" }).getAttribute("aria-pressed")).toBe("true");
     expect(document.querySelector("[data-inclusion-note]")!.textContent).toMatch(/^covey only: the sessions outside covey/);
-    // No outside series, rows or multiple of everything.
+    // No outside series or rows in the chart; the table is the whole dent, as the note says.
     expect(document.querySelector("[data-seg^='out:']")).toBeNull();
     expect(document.querySelector("[data-outside-row]")).toBeNull();
-    expect(screen.queryByRole("group", { name: t("costs.incl.everything") })).toBeNull();
     // A click switches back.
     fireEvent.click(screen.getByRole("button", { name: "covey only" }));
-    await waitFor(() => expect(kpiParts("Reported by Claude Code")).not.toBeNull());
+    await waitFor(() => expect(kpiParts(t("costs.inputTokens"))).not.toBeNull());
   });
 
-  it("1: with agents selected they are the operator and other projects, never agents", async () => {
-    serve(cells(), FULL);
+  it("1: with agents selected they are the operator and other projects, never agents; the table says it is organisation-wide", async () => {
+    serve(cells());
     fireEvent.click(await screen.findByRole("button", { name: /^Coordinator/ }));
-    await waitFor(() => expect(kpiParts("Recomputed from tokens")).toMatch(/^selected agents/));
-    expect(kpiParts("Recomputed from tokens")).toBe(
-      `selected agents (internal) ${fmtUSD(10)} · covey operator ${fmtUSD(3)} · other projects ${fmtUSD(2)} + ${fmtCount(1000)} tokens with no list price · per use ${fmtUSD(1.5)}`);
+    await waitFor(() => expect(kpiParts(t("costs.inputTokens"))).toMatch(/^selected agents/));
     expect(document.querySelector("[data-inclusion-note]")!.textContent).toMatch(/the outside sessions are not agents/);
+    expect(document.querySelector("[data-answer] [data-org-wide]")).toBeTruthy();
+    expect(rowList("covey")).toBe(fmtUSD(9));
   });
 
   it("2: the chart stacks one hatched series per source on the reported and recomputed bars, named in the legend, tooltip and table", async () => {
@@ -305,32 +313,25 @@ describe("the sessions outside covey on the cost page, included by default (#120
     small.external = { ...external(), meter: { ...external().meter, credentials: [{ ...seatTotal(), points: 2 }] } };
     expect(everythingOnMeter(small, SEAT, 0)!.why).toBe("movement");
     serve();
-    const tile = await screen.findByRole("group", { name: "List $ per real $ — everything on this meter" });
-    // ≈ list ÷ real, and at least list ÷ (real + 2 points).
-    expect(tile.textContent).toContain(`≈ ${times(12.75 / (6 * PP))}`);
-    expect(tile.textContent).toContain(`at least ${times(12.75 / (8 * PP))}`);
-    // Labelled apart from the tiles' pairs, which are the range's (L5).
-    expect(tile.textContent).toContain(`within the meter's readings: at token prices ${fmtUSD(12.75)} (covey agents (internal) ${fmtUSD(8.75)} · covey operator ≈ ${fmtUSD(2.22)} · ` +
-      `other projects ≈ ${fmtUSD(1.78)} (recomputed for sources without a reported cost)) over the meter's real cost ≈ ${fmtUSD(6 * PP)}`);
-    expect(tile.textContent).toContain(`at least list ÷ (real + ${fmtUSD(2 * PP)})`);
-    const rec = screen.getAllByRole("group", { name: t("costs.lead.label") }).find((g) => g.closest(`[data-credential="${SEAT}#0"]`))!;
-    expect(rec.querySelector("[data-parts]")!.textContent).toMatch(/^in the range: covey agents \(internal\) /);
+    await answerReady();
+    // ≈ list ÷ real, and at least list ÷ (real + 2 points): the difference row of the answer table.
+    const multiple = document.querySelector("[data-answer-multiple]")!;
+    expect(multiple.textContent).toContain(`≈ ${times(12.75 / (6 * PP))}`);
+    expect(multiple.textContent).toContain(`a floor: at least ${times(12.75 / (8 * PP))}`);
     expect(document.body.textContent).not.toContain("No multiple here");
-    // The split multiples stay in the headline.
+    // The split multiples stay in the drawer's headline.
+    await openDentRow();
     expect(document.querySelector("[data-dent-multiples]")).toBeTruthy();
   });
 
-  it("5: list price after the last reading is in the totals, its real share pending — said next to the multiple", async () => {
+  it("5: list price after the last reading is in the totals, its real share pending — said once, under the table", async () => {
     serve();
-    const note = await waitFor(() => {
-      const n = document.querySelector("[data-unmetered-note='after']");
-      if (!n) throw new Error("no note yet");
-      return n;
-    });
-    expect(note.textContent).toBe(`After the meter's last reading, at token prices: covey agents (internal) ${fmtUSD(0.25)} · outside sessions ${fmtUSD(0.5)}. ` +
-      "It is in the totals above; its real share is pending until the meter is read again, so it is not in the multiple.");
+    await answerReady();
+    expect(document.querySelector("[data-answer-after]")!.textContent).toBe(t("costs.answer.after", { usd: fmtUSD(0.75) }));
     // Nothing before the first reading here (the server sends no such part).
-    expect(document.querySelector("[data-unmetered-note='before']")).toBeNull();
+    expect(document.querySelector("[data-answer-before]")).toBeNull();
+    // The seat's block does not say it again.
+    expect(document.querySelector("[data-unmetered-note]")).toBeNull();
   });
 
   it("figures: kpis, sources per seat, rows per model, real parts per period; sources of 0 calls nowhere", () => {
@@ -402,7 +403,7 @@ describe("the headline: all the work at token prices against the one real cost (
 
   it("leads with the sentence, the floor, the unmetered part and both figures; the split is a collapsed estimate", async () => {
     serve();
-    const row = await screen.findByRole("region", { name: t("costs.dent.title") });
+    const row = await openDentRow();
     expect(row.querySelector("[data-head-sentence]")!.textContent).toBe(
       `All this work on the subscription meters at token prices (as reported by Claude Code): ${fmtUSD(13.5)} = covey agents (internal) ${fmtUSD(9)} ` +
       `+ covey operator ${fmtUSD(2.5)} + other projects ${fmtUSD(2)} (recomputed for sources without a reported cost), ` +
@@ -414,8 +415,6 @@ describe("the headline: all the work at token prices against the one real cost (
     expect(row.querySelector("[data-head-unmetered]")!.textContent).toBe(
       `Of ${fmtUSD(13.5)}, ${fmtUSD(12.75)} lies within the meter's priced readings and is what the multiple divides. ` +
       `The rest has no real cost here: ${fmtUSD(0.75)} after its last reading (real share pending until the meter is read again).`);
-    expect(row.querySelector("[data-head-per-use]")!.textContent).toBe(
-      `Not in this sum: sessions outside covey billed per use, on no subscription meter (${fmtUSD(1)}). The tiles below include them.`);
     // covey's own price table: $15 against $13.50, a check line, not a second figure.
     expect(row.querySelector("[data-price-check]")!.textContent).toBe(
       `covey's own price table gives ${fmtUSD(15)}, ${fmtNumber(11, 0)} % more than Claude Code reported`);
@@ -538,20 +537,13 @@ describe("the #126 review of the cost page", () => {
     const h = headline(data)!;
     expect(h.outsideList).toBeNull();
     serve(data);
-    const row = await screen.findByRole("region", { name: t("costs.dent.title") });
+    const row = await openDentRow();
     expect(row.querySelector("[data-head-sentence]")!.textContent).toContain(`covey operator no list price (${fmtCount(500)} tokens) + other projects no list price (${fmtCount(500)} tokens)`);
-    const tile = await screen.findByRole("group", { name: t("costs.incl.everything") });
-    expect(tile.textContent).toContain(`other projects no list price (${fmtCount(500)} tokens)`);
-    const card = await waitFor(() => {
-      const c = document.querySelector(`[data-meter="${SEAT}#0"]`);
-      if (!c) throw new Error("no meter card yet");
-      return c;
-    });
-    // The outside part in two rows (#163), each with its own tokens.
-    expect(card.textContent).toContain(`${t("costs.incl.meterListOperator")}no list price (${fmtCount(500)} tokens)`);
-    expect(card.textContent).toContain(`${t("costs.incl.meterListProjects")}no list price (${fmtCount(500)} tokens)`);
-    expect(card.textContent).not.toContain(`${t("costs.incl.meterListOperator")}${fmtUSD(0)}`);
-    expect(card.textContent).not.toContain(`${t("costs.incl.meterListProjects")}${fmtUSD(0)}`);
+    // The rows say it too, with the tokens they leave out — never $0.
+    expect(rowList("operator")).toBe(`no list price (${fmtCount(500)} tokens)`);
+    expect(rowList(`project:${SY}`)).toBe(`no list price (${fmtCount(500)} tokens)`);
+    // The meter card no longer repeats them (#195).
+    expect(document.querySelector(`[data-meter="${SEAT}#0"]`)?.textContent ?? "").not.toContain(t("costs.incl.meterListOperator"));
   });
 
   it("M4: a source with calls only before the range but a real part is listed, noted, and has a pattern of its own", async () => {
@@ -570,15 +562,12 @@ describe("the #126 review of the cost page", () => {
     expect(keys).not.toContain(`${st.style("nobody").hatch}|${st.style("nobody").ink}`);
     const h = headline(cells(ext))!;
     expect(h.sources.find((s) => s.source === EARLY)!.before).toBe(true);
-    const { container } = serve(cells(ext));
-    const block = await waitFor(() => {
-      const b = container.querySelector<HTMLElement>(`[data-credential="${SEAT}#0"]`);
-      if (!b?.querySelector(`tr[data-outside-row="${EARLY}"]`)) throw new Error("no row yet");
-      return b;
-    });
-    const row = block.querySelector(`tr[data-outside-row="${EARLY}"]`)!;
-    expect(row.querySelector("[data-before-range]")!.textContent).toBe("calls before the range");
-    expect(row.textContent).toContain(`≈ ${fmtUSD(0.1)}`);
+    serve(cells(ext));
+    // The answer table names it by its real part alone.
+    await answerReady();
+    expect(rowList(`project:${EARLY}`)).toBe("calls before the range");
+    expect(rowReal(`project:${EARLY}`)).toBe(`≈ ${fmtUSD(0.1)}`);
+    await openDentRow();
     expect(document.querySelector(`[data-head-source="${EARLY}"]`)!.textContent).toBe(`${EARLY} (outside covey): calls before the range`);
   });
 
@@ -626,8 +615,8 @@ describe("the #126 review of the cost page", () => {
   it("L2: under an agent filter the overview stays on, labelled, and the multiple of everything stays, org-wide", async () => {
     serve();
     fireEvent.click(await screen.findByRole("button", { name: /^Coordinator/ }));
-    const tile = await screen.findByRole("group", { name: t("costs.incl.everything") });
-    expect(tile.querySelector("[data-org-wide]")).toBeTruthy();
+    await answerReady();
+    expect(document.querySelector("[data-answer] [data-org-wide]")).toBeTruthy();
     expect(screen.getByRole("button", { name: t("costs.outside.show") }).getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(screen.getByRole("button", { name: t("costs.outside.modeCombined") }));
     const combined = screen.getByRole("group", { name: t("costs.outside.combinedTotal") });
@@ -767,5 +756,73 @@ describe("the outside review's minors (#120)", () => {
     }
     // In the dark scheme the outside sessions and the unattributed part differ in lightness too, not by hue alone.
     expect(ratio(token("cost-outside")[1], token("cost-unattributed")[1])).toBeGreaterThanOrEqual(2.5);
+  });
+});
+
+describe("the answer table (#195)", () => {
+  beforeEach(async () => { await i18n.changeLanguage("en"); });
+  const sumOf = (sel: string) => [...document.querySelectorAll(sel)].reduce((a, e) => a + Number((e.textContent ?? "").match(/\$([\d,.]+)/)?.[1].replace(/,/g, "") ?? 0), 0);
+
+  it("its total is the sum of its rows, in both columns, and is the headline's figure", async () => {
+    const data = cells();
+    const h = headline(data)!;
+    const a = answerTable(h, subscriptionDent(data.external)!, data.external!, data.meter ?? [], new Set());
+    expect(a.list).toBeCloseTo(h.list, 9);
+    expect(a.real!).toBeCloseTo(a.rows.reduce((x, r) => x + (r.real ?? 0), 0), 9);
+    expect(a.real!).toBeCloseTo(h.real!, 9);
+    serve(data);
+    await answerReady();
+    expect(sumOf("[data-answer-row] [data-answer-list]")).toBeCloseTo(sumOf("[data-answer-total] [data-answer-list]"), 2);
+    expect(sumOf("[data-answer-row] [data-answer-real]")).toBeCloseTo(sumOf("[data-answer-total] [data-answer-real]"), 1);
+  });
+
+  it("the real cost is the meter's points times the plan's price of a point, and names the points per week across a reset", async () => {
+    const data = cells();
+    const h = headline(data)!;
+    expect(h.real!).toBeCloseTo(h.points! * data.external!.meter.point_rate, 9);
+    serve(data);
+    await answerReady();
+    expect(document.querySelector("[data-answer-total]")!.textContent).toContain(t("costs.answer.totalSub", { pts: "6.0", rate: "$0.4615" }));
+    cleanup();
+    const weeks = cells();
+    weeks.meter![0].segments = [
+      { start_at: "2026-11-17T17:40:00Z", end_at: "2026-11-17T18:40:00Z", from_percent: 10, to_percent: 14, reset: false, points: 4 },
+      { start_at: "2026-11-17T18:40:00Z", end_at: "2026-11-17T19:40:00Z", from_percent: 0, to_percent: 2, reset: true, points: 2 },
+    ];
+    serve(weeks);
+    await answerReady();
+    expect(document.querySelector("[data-answer-total]")!.textContent).toContain(t("costs.answer.totalSubWeeks", { weeks: "4.0 + 2.0", rate: "$0.4615" }));
+  });
+
+  it("switching an outside source off removes its row and updates the total", async () => {
+    serve();
+    await answerReady();
+    expect(answerRow(`project:${SY}`)).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${SY}`) }));
+    await waitFor(() => expect(answerRow(`project:${SY}`)).toBeNull());
+    expect(document.querySelector("[data-answer-total] [data-answer-list]")!.textContent).toBe(fmtUSD(9 + 2.5));
+    expect(sumOf("[data-answer-total] [data-answer-real]")).toBeCloseTo(6 * PP - 0.8 * PP, 1);
+    expect(document.querySelector("[data-answer-hidden]")!.textContent).toContain(SY);
+    expect(document.querySelector("[data-answer-multiple]")!.textContent).toBe("–");
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${SY}`) }));
+    await waitFor(() => expect(answerRow(`project:${SY}`)).not.toBeNull());
+  });
+
+  it("no figure of the table stands on the page a second time", async () => {
+    serve();
+    await answerReady();
+    const table = document.querySelector("[data-answer]")!;
+    const figures = new Set<string>();
+    for (const sel of ["[data-answer-total] [data-answer-list]", "[data-answer-total] [data-answer-real]", "[data-answer-multiple] span",
+      '[data-answer-row="operator"] [data-answer-list]', `[data-answer-row="project:${SY}"] [data-answer-list]`,
+      '[data-answer-row="operator"] [data-answer-real]', `[data-answer-row="project:${SY}"] [data-answer-real]`]) {
+      figures.add(table.querySelector(sel)!.textContent!.replace(/^≈ /, "").replace(/ \(.*$/, "").replace(/ \+ .*$/, ""));
+    }
+    const clone = document.body.cloneNode(true) as HTMLElement;
+    clone.querySelector("[data-answer]")!.remove();
+    // The chart's screen-reader summary is not a figure on the screen.
+    clone.querySelectorAll("[data-desc]").forEach((e) => e.remove());
+    const rest = clone.textContent!;
+    for (const f of figures) expect(rest, f).not.toContain(f);
   });
 });
