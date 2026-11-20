@@ -125,7 +125,6 @@
       "noReadings": "Nessuna lettura del contatore negli ultimi 8 giorni.",
       "window": "In mostra: {{from}} – {{to}}",
       "dayUtc": "Giorni, settimane e mesi iniziano a mezzanotte UTC.",
-      "utcAt": "UTC: {{time}}",
       "noMeter": "Nessuna lettura del contatore in questo tratto: né costo reale né multiplo per esso.",
       "indicatorsCustom": "Il listino prezzi copre gli intervalli rapidi; non viene mostrato per un intervallo personalizzato.",
       "errUnknown": "Impossibile caricare questo intervallo.",

@@ -125,7 +125,6 @@
       "noReadings": "Keine Zählerstände in den letzten 8 Tagen.",
       "window": "Angezeigt: {{from}} – {{to}}",
       "dayUtc": "Tage, Wochen und Monate beginnen um Mitternacht UTC.",
-      "utcAt": "UTC: {{time}}",
       "noMeter": "Kein Zählerstand in diesem Abschnitt: keine echten Kosten und kein Vielfaches dafür.",
       "indicatorsCustom": "Die Preisliste gilt für die Schnellbereiche; für einen eigenen Zeitraum wird sie nicht gezeigt.",
       "errUnknown": "Dieser Zeitraum konnte nicht geladen werden.",

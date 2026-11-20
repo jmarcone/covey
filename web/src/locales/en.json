@@ -125,7 +125,6 @@
       "noReadings": "No meter readings in the last 8 days.",
       "window": "Showing {{from}} – {{to}}",
       "dayUtc": "Days, weeks and months are cut at UTC midnight.",
-      "utcAt": "UTC: {{time}}",
       "noMeter": "No meter reading in this segment: no real cost and no multiple for it.",
       "indicatorsCustom": "The price list covers the quick ranges; it is not shown for a custom range.",
       "errUnknown": "This range could not be loaded.",

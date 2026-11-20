@@ -26,10 +26,14 @@ import { Seg } from "./Seg";
  * text). The range itself lives in the address (?from=&to=&tz=), which
  * Costs owns. */
 
+// The height of a field in the first row: the zone switch and Apply sit in a
+// box this tall, so the three share their middle and the row ends level.
+const INPUT_H = 34;
+
 const iso = (ms: number) => new Date(ms).toISOString();
 
 export function RangePanel({ from, to, tz, onTz, onApply, error: outer, readings, now = Date.now }: {
-  /** The range in force, as instants; null while none is. */
+  /** The range the fields start from, as instants: the one in force, or the one a refused address names; null when there is none. */
   from: number | null;
   to: number | null;
   tz: DisplayTz;
@@ -90,28 +94,32 @@ export function RangePanel({ from, to, tz, onTz, onApply, error: outer, readings
     <form className="card mb-4" onSubmit={submit} aria-label={t("costs.range.title")} data-range-panel noValidate>
       <div style={{ fontWeight: 600, marginBottom: 8 }}>{t("costs.range.title")}</div>
       <div className="flex flex-wrap items-end gap-3">
-        <label className="text-xs" htmlFor={`${uid}-from`} style={{ flex: "1 1 190px" }}>
+        <label className="text-xs" htmlFor={`${uid}-from`} style={{ flex: "1 1 190px", display: "flex", flexDirection: "column", margin: 0 }}>
           <span className="block mb-1">{t("costs.range.from")}</span>
           <input id={`${uid}-from`} type="datetime-local" step={60} required value={fromText}
             aria-invalid={error != null} aria-describedby={error ? errId : undefined} onChange={(e) => setFromText(e.target.value)} />
         </label>
-        <label className="text-xs" htmlFor={`${uid}-to`} style={{ flex: "1 1 190px" }}>
+        <label className="text-xs" htmlFor={`${uid}-to`} style={{ flex: "1 1 190px", display: "flex", flexDirection: "column", margin: 0 }}>
           <span className="block mb-1">{t("costs.range.to")}</span>
           <input id={`${uid}-to`} type="datetime-local" step={60} required value={toText}
             aria-invalid={error != null} aria-describedby={error ? errId : undefined} onChange={(e) => setToText(e.target.value)} />
         </label>
-        <div role="group" aria-labelledby={`${uid}-tz`} className="text-xs">
+        <div role="group" aria-labelledby={`${uid}-tz`} className="text-xs" style={{ display: "flex", flexDirection: "column", margin: 0 }}>
           <span className="block mb-1" id={`${uid}-tz`}>{t("costs.range.tz")}</span>
-          <Seg value={tz} onChange={switchTz} options={[{ v: "utc", label: t("costs.range.tzUtc") }, { v: "local", label: t("costs.range.tzLocal") }]} />
+          <div style={{ display: "flex", alignItems: "center", minHeight: INPUT_H }}>
+            <Seg value={tz} onChange={switchTz} options={[{ v: "utc", label: t("costs.range.tzUtc") }, { v: "local", label: t("costs.range.tzLocal") }]} />
+          </div>
         </div>
-        <button type="submit" className="btn sm primary">{t("costs.range.apply")}</button>
+        <div style={{ display: "flex", alignItems: "center", minHeight: INPUT_H }}>
+          <button type="submit" className="btn sm primary">{t("costs.range.apply")}</button>
+        </div>
       </div>
-      {errorText && <p className="text-xs mt-2 mb-0" role="alert" id={errId} data-range-error={error} style={{ color: "var(--text-danger)" }}>{errorText}</p>}
+      {errorText && <p className="danger-text text-xs mt-2 mb-0" role="alert" id={errId} data-range-error={error}>{errorText}</p>}
 
       <div className="text-xs muted mt-3 mb-1">{t("costs.range.picks")}</div>
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" className="btn sm" onClick={() => { const [f, e] = todayRange(now(), tz); take(f, e); }}>{t("costs.range.today")}</button>
-        <button type="button" className="btn sm" disabled={reset == null} title={reset == null ? t("costs.range.sinceResetNone") : undefined}
+        <button type="button" className="btn sm" disabled={reset == null}
           aria-describedby={reset == null ? `${uid}-noreset` : undefined}
           onClick={() => { if (reset != null) take(reset, Math.ceil(now() / 60_000) * 60_000); }}>{t("costs.range.sinceReset")}</button>
         {reset == null && <span className="muted text-xs" id={`${uid}-noreset`}>{t("costs.range.sinceResetNone")}</span>}
@@ -130,24 +138,27 @@ export function RangePanel({ from, to, tz, onTz, onApply, error: outer, readings
         <legend className="text-xs muted" style={{ padding: 0 }}>{t("costs.range.between")}</legend>
         {choices.length < 2 ? <p className="muted text-xs mt-1 mb-0">{t("costs.range.noReadings")}</p> : (
           <div className="flex flex-wrap items-end gap-2 mt-1">
-            <label className="text-xs" htmlFor={`${uid}-ra`} style={{ flex: "1 1 190px" }}>
-              <span className="block mb-1">{t("costs.range.readingFrom")}</span>
-              <select id={`${uid}-ra`} value={a?.id ?? ""} onChange={(e) => setPickA(e.target.value)}>
-                {choices.map((c) => <option key={c.id} value={c.id}>{label(c)}</option>)}
-              </select>
-            </label>
-            <label className="text-xs" htmlFor={`${uid}-rb`} style={{ flex: "1 1 190px" }}>
-              <span className="block mb-1">{t("costs.range.readingTo")}</span>
-              <select id={`${uid}-rb`} value={b?.id ?? ""} onChange={(e) => setPickB(e.target.value)}>
-                {choices.map((c) => <option key={c.id} value={c.id}>{label(c)}</option>)}
-              </select>
-            </label>
+            {/* The two selects share their row (or each take one) at equal width; the button wraps on its own. */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 8, flex: "1 1 400px" }}>
+              <label className="text-xs" htmlFor={`${uid}-ra`}>
+                <span className="block mb-1">{t("costs.range.readingFrom")}</span>
+                <select id={`${uid}-ra`} value={a?.id ?? ""} onChange={(e) => setPickA(e.target.value)}>
+                  {choices.map((c) => <option key={c.id} value={c.id}>{label(c)}</option>)}
+                </select>
+              </label>
+              <label className="text-xs" htmlFor={`${uid}-rb`}>
+                <span className="block mb-1">{t("costs.range.readingTo")}</span>
+                <select id={`${uid}-rb`} value={b?.id ?? ""} onChange={(e) => setPickB(e.target.value)}>
+                  {choices.map((c) => <option key={c.id} value={c.id}>{label(c)}</option>)}
+                </select>
+              </label>
+            </div>
             <button type="button" className="btn sm" disabled={!a || !b}
               onClick={() => { if (a && b) { const [f, e] = betweenReadings(a.at, b.at); take(f, e); } }}>{t("costs.range.useReadings")}</button>
           </div>
         )}
       </fieldset>
-      {from != null && to != null && (
+      {from != null && to != null && error == null && (
         <p className="muted text-xs mt-3 mb-0" data-range-window>
           {t("costs.range.window", { from: fmtBucket(iso(from), "10min"), to: fmtBucket(iso(to), "10min") })}
         </p>

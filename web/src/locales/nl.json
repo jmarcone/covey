@@ -125,7 +125,6 @@
       "noReadings": "Geen meterstanden in de afgelopen 8 dagen.",
       "window": "Getoond: {{from}} – {{to}}",
       "dayUtc": "Dagen, weken en maanden beginnen om middernacht UTC.",
-      "utcAt": "UTC: {{time}}",
       "noMeter": "Geen meterstand in dit stuk: geen echte kosten en geen veelvoud ervoor.",
       "indicatorsCustom": "De prijslijst geldt voor de snelle periodes; voor een eigen periode wordt hij niet getoond.",
       "errUnknown": "Deze periode kon niet worden geladen.",

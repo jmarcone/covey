@@ -125,7 +125,6 @@
       "noReadings": "最近 8 天没有计量读数。",
       "window": "显示：{{from}} – {{to}}",
       "dayUtc": "日、周、月按 UTC 零点划分。",
-      "utcAt": "UTC：{{time}}",
       "noMeter": "此区段内没有计量读数：不显示实际成本和倍数。",
       "indicatorsCustom": "价目表适用于快捷范围；自定义范围下不显示。",
       "errUnknown": "无法加载此时间范围。",

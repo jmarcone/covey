@@ -140,6 +140,10 @@ describe("Kosten — eigener Zeitraum", () => {
     expect(alert.textContent).toBe("Das Ende muss nach dem Anfang liegen.");
     expect(alert.textContent).not.toMatch(/must be after/); // never the server's words
     expect(field(/^Von/)).toHaveAttribute("aria-invalid", "true");
+    // The fields hold what the address says, so the error points at them.
+    expect(field(/^Von/)).toHaveValue("2026-11-20T17:00");
+    expect(field(/^Bis/)).toHaveValue("2026-11-20T16:00");
+    expect(document.querySelector("[data-range-window]")).toBeNull(); // no range is in force
     expect(document.querySelector("[data-range-refused]")).not.toBeNull();
     expect(m.calls.filter((c) => /\/cost\//.test(c)).every((c) => c.includes("days=8"))).toBe(true);
     expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument(); // the page, not a blank

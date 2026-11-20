@@ -125,7 +125,6 @@
       "noReadings": "Brak odczytów licznika z ostatnich 8 dni.",
       "window": "Pokazano: {{from}} – {{to}}",
       "dayUtc": "Dni, tygodnie i miesiące zaczynają się o północy UTC.",
-      "utcAt": "UTC: {{time}}",
       "noMeter": "Brak odczytu licznika w tym odcinku: nie ma dla niego rzeczywistego kosztu ani mnożnika.",
       "indicatorsCustom": "Cennik obejmuje szybkie zakresy; dla własnego zakresu nie jest pokazywany.",
       "errUnknown": "Nie udało się wczytać tego zakresu.",

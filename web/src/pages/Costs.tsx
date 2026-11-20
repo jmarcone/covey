@@ -192,6 +192,12 @@ export default function Costs({ me }: { me?: Principal }) {
   const customOk = range.from != null && range.to != null && range.error == null;
   // from/to given but not usable: no query is asked, the panel says why.
   const badRange = range.error != null;
+  // The fields show what the address says whenever both values parse, a refused
+  // range too, so the error points at them; only an unparseable one falls back
+  // to the panel's default.
+  const parsed = Number.isFinite(range.from) && Number.isFinite(range.to);
+  const shownFrom = parsed ? range.from : null;
+  const shownTo = parsed ? range.to : null;
   const win: CostWindow = customOk ? customWindow(range.from!, range.to!) : { days };
   const custom = isCustom(win);
   const [panelOpen, setPanelOpen] = useState(false);
@@ -375,7 +381,7 @@ export default function Costs({ me }: { me?: Principal }) {
       </div>
       {(custom || panelOpen || badRange) && (
         // Re-made when the range changes from outside (Back, a pasted link), so the fields hold what the address says.
-        <RangePanel key={`${range.from}-${range.to}-${tz}`} from={customOk ? range.from : null} to={customOk ? range.to : null}
+        <RangePanel key={`${range.from}-${range.to}-${tz}`} from={shownFrom} to={shownTo}
           tz={tz} onTz={setTz} onApply={applyCustom} error={rangeError} readings={helperReadings.data ?? []} />
       )}
       {refused && <p className="muted text-sm" data-range-refused>{t("costs.range.refused")}</p>}
