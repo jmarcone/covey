@@ -163,6 +163,7 @@ export function erschaffeKamera(buehne: HTMLElement, ruhig = false): Steuerung {
   }
 
   function drehen(richtung: 1 | -1): void {
+    gedreht = true;
     drehZiel += (richtung * Math.PI) / 2;
   }
 
@@ -181,6 +182,7 @@ export function erschaffeKamera(buehne: HTMLElement, ruhig = false): Steuerung {
     anfang = anfangsDrehung();
     const warGedreht = drehung !== anfang;
     drehung = drehZiel = anfang;
+    gedreht = false;
     neigung = START_NEIGUNG;
     zoom = 1;
     blick.copy(MITTE);
@@ -197,6 +199,10 @@ export function erschaffeKamera(buehne: HTMLElement, ruhig = false): Steuerung {
      and the building uses the stage the way it uses a wide one. */
   const anfangsDrehung = () => START_DREHUNG + (breite() < hoehe() ? Math.PI / 2 : 0);
   let anfang = START_DREHUNG;
+  /* Somebody turned the view by hand since the last reset. Not derived from
+     `drehZiel === anfang`: a turn can land on the other format's start by
+     coincidence (a quarter on a wide stage is the start of a tall one). */
+  let gedreht = false;
 
   /* The stage changed its size. The camera fits again; and a view that is
      still the start view follows the stage's format (see `anfangsDrehung`),
@@ -204,7 +210,7 @@ export function erschaffeKamera(buehne: HTMLElement, ruhig = false): Steuerung {
   function angepasst(): void {
     const neu = anfangsDrehung();
     if (neu !== anfang) {
-      if (drehZiel === anfang && zoom === 1) drehZiel = neu;
+      if (!gedreht && zoom === 1) drehZiel = neu;
       anfang = neu;
     }
     stellen();
@@ -340,17 +346,21 @@ export function erschaffeKamera(buehne: HTMLElement, ruhig = false): Steuerung {
       if (!blick.equals(vorRad) || (zoom <= 1 && Math.abs(e.deltaX) > Math.abs(e.deltaY))) e.preventDefault();
     };
 
-    /* A double-click moves the clicked spot to the middle. For a building
+    /* A double-click moves the clicked spot to the middle. The spot is where
+       the click ray meets the plane at the start view's height (`MITTE`): that
+       point is on the ray and is the look point, so the clicked pixel is the
+       picture's centre. (Meeting the floor and lifting the point afterwards
+       would leave the spot below the middle.) For a building
        longer than the stage is wide that is the shortest way into a corner —
        panning would take several strokes. */
-    const strahl = new THREE.Raycaster(), boden = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const strahl = new THREE.Raycaster(), boden = new THREE.Plane(new THREE.Vector3(0, 1, 0), -MITTE.y);
     const doppel = (e: MouseEvent) => {
       const r = buehne.getBoundingClientRect();
       strahl.setFromCamera(new THREE.Vector2(
         ((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), kamera);
       const treffer = new THREE.Vector3();
       if (!strahl.ray.intersectPlane(boden, treffer)) return;
-      blick.set(treffer.x, MITTE.y, treffer.z);
+      blick.copy(treffer);
       zaeumen();
       stellen();
     };

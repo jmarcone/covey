@@ -265,4 +265,59 @@ describe("the fit of the camera", () => {
     expect(blickHoehe(t, plan)).toBeCloseTo(BAU_HOEHE / 2, 6);
     loesen();
   });
+
+  it("a double-click puts the clicked pixel in the middle of the picture, at every zoom", () => {
+    const plan = plaene(24)[0];
+    for (const zoom of [2, 4]) {
+      const { buehne, doppelklick } = lebendeBuehne(1280, 560);
+      const s = erschaffeKamera(buehne, true);
+      s.planSetzen(plan);
+      const loesen = s.anbinden(() => {});
+      s.zoomen(zoom);
+      // The spot under (900, 200) at the start view's height, before the click.
+      // It lies on the click ray, so it must end up where the person clicked.
+      const strahl = new THREE.Raycaster();
+      strahl.setFromCamera(new THREE.Vector2((900 / 1280) * 2 - 1, -(200 / 560) * 2 + 1), s.kamera);
+      const punkt = new THREE.Vector3();
+      expect(strahl.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -BAU_HOEHE / 2), punkt)).not.toBeNull();
+      const vorher = punkt.clone().project(s.kamera);
+      expect(Math.abs(vorher.x) + Math.abs(vorher.y)).toBeGreaterThan(0.1); // it was not in the middle already
+      doppelklick(900, 200);
+      const v = punkt.clone().project(s.kamera);
+      expect(v.x).toBeCloseTo(0, 6);
+      expect(v.y).toBeCloseTo(0, 6);
+      loesen();
+    }
+  });
+
+  it("a view somebody turned stays turned over a round trip through the other format", () => {
+    const plan = plaene(24)[0];
+    for (const richtung of [1, -1] as const) {
+      const { buehne, el } = lebendeBuehne(1280, 560);
+      const s = erschaffeKamera(buehne, true);
+      s.planSetzen(plan);
+      s.drehen(richtung); s.tick(10);
+      const gedreht = s.drehung;
+      // Wide → tall → wide, as a tablet turned to portrait and back.
+      for (const [w, h] of [[280, 560], [1280, 560]]) {
+        el.w = w; el.h = h;
+        s.groesse();
+        expect(s.tick(10)).toBe(false);
+        expect(s.drehung).toBe(gedreht);
+      }
+    }
+  });
+
+  it("a reset hands the start view back to the stage's format", () => {
+    const plan = plaene(24)[0];
+    const { buehne, el } = lebendeBuehne(1280, 560);
+    const s = erschaffeKamera(buehne, true);
+    s.planSetzen(plan);
+    s.drehen(1); s.tick(10);
+    s.zurueck();
+    el.w = 280; el.h = 560;
+    s.groesse();
+    faehrt(s); // (the reset itself reports one arrival, too)
+    expect(s.drehung).toBeCloseTo(START_DREHUNG + Math.PI / 2, 9);
+  });
 });
