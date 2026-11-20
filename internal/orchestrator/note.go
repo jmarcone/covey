@@ -100,9 +100,13 @@ func (o *Orchestrator) NoteOnTask(ctx context.Context, agent agents.Agent, taskI
 // request can also reach it without the daemon's check.
 //
 // A task of another organisation and an id that names no task read the same
-// and are recorded as a guard-rail event of the rule "organisation": denied
-// is true and reason says so. A reason with denied false is a failure that
-// is not a refusal (the id is no task id, the store could not be read).
+// and are recorded as a guard-rail event of the rule "organisation" (and
+// shown on the live feed): denied is true and reason says so. A reason with
+// denied false is a failure that is not a refusal (the id is no task id, the
+// store could not be read); the caller fails it and does not deny it, as an
+// infrastructure error is never an authorisation answer. decideAction reads
+// the task and NoteOnTask reads it again before it writes on purpose: the
+// task can move or go in between.
 func (o *Orchestrator) noteTarget(ctx context.Context, agent agents.Agent, taskID uuid.UUID, raw string) (t backlog.Task, target uuid.UUID, denied bool, reason string) {
 	target, err := uuid.Parse(strings.TrimSpace(raw))
 	if err != nil {
@@ -116,6 +120,8 @@ func (o *Orchestrator) noteTarget(ctx context.Context, agent agents.Agent, taskI
 		}
 		_ = o.Obs.Record(ctx, agent.OrgID, agent.ID, &taskID, observability.KindGuardrail,
 			map[string]any{"rule": "organisation", "action": "covey:add_note", "decision": "denied"})
+		o.events.Publish(Event{Type: "guardrail", AgentID: agent.ID.String(), OrgID: agent.OrgID,
+			Data: map[string]string{"action": "covey:add_note", "decision": "denied"}})
 		return t, target, true, "no task " + target.String() + " in this organisation"
 	}
 	return t, target, false, ""
