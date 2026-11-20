@@ -2,7 +2,9 @@ package httpapi
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"runtime/debug"
 	"slices"
 	"sync"
 	"time"
@@ -74,21 +76,7 @@ func (s *Server) handleCostHealth(w http.ResponseWriter, r *http.Request) {
 	c.mu.Unlock()
 
 	if !waiting {
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), costHealthTimeout)
-		run.rep, run.err = s.costHealthReport(ctx, p.OrgID, now)
-		cancel()
-		c.mu.Lock()
-		delete(c.running, p.OrgID)
-		// A failed computation is not kept: the next request runs the
-		// checks again.
-		if run.err == nil {
-			if c.byOrg == nil {
-				c.byOrg = map[uuid.UUID]observability.HealthReport{}
-			}
-			c.byOrg[p.OrgID] = run.rep
-		}
-		c.mu.Unlock()
-		close(run.done)
+		s.runCostHealth(r.Context(), run, p.OrgID, now)
 	}
 	select {
 	case <-run.done:
@@ -105,6 +93,35 @@ func (s *Server) handleCostHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, run.rep)
+}
+
+// runCostHealth makes one computation for the requests waiting on run. It
+// always ends it — also when the checks panic: the run leaves the running
+// map and done closes, or every later request of the organisation would wait
+// on it until its own context ended, with no answer at all. A panic is an
+// error like a database fault: answered 500, logged, and not kept.
+func (s *Server) runCostHealth(parent context.Context, run *costHealthRun, orgID uuid.UUID, now time.Time) {
+	c := &s.costHealth
+	defer func() {
+		if v := recover(); v != nil {
+			run.err = fmt.Errorf("panic: %v\n%s", v, debug.Stack())
+		}
+		c.mu.Lock()
+		delete(c.running, orgID)
+		// A failed computation is not kept: the next request runs the
+		// checks again.
+		if run.err == nil {
+			if c.byOrg == nil {
+				c.byOrg = map[uuid.UUID]observability.HealthReport{}
+			}
+			c.byOrg[orgID] = run.rep
+		}
+		c.mu.Unlock()
+		close(run.done)
+	}()
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), costHealthTimeout)
+	defer cancel()
+	run.rep, run.err = s.costHealthReport(ctx, orgID, now)
 }
 
 // costHealthReport runs the checks, with whether an org-wide admin key is

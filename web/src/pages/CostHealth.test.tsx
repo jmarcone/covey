@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import type { CostHealthCheck, CostHealthReport } from "../api";
 import i18n from "../i18n";
 import { mockFetch, renderWithProviders } from "../test/render";
 import Costs from "./Costs";
-import CostHealthPage, { CostHealthBadge, IncompleteMark, incompleteParts, worstCheck } from "./CostHealth";
+import CostHealthPage, { CostHealthBadge, IncompleteMark, credentialIncomplete, incompleteParts, reasonText, worstCheck } from "./CostHealth";
 
 // Cost health (#178): the badge beside the cost page's headline shows the
 // worst check and its reason and links to /costs/health; a failed check
@@ -123,21 +123,65 @@ describe("the worst check and the incomplete parts", () => {
   });
 
   it("marks the outside part on a failed c1, the multiple on a failed c2 or c3, the token prices on a failed c4 or c5", () => {
-    expect(incompleteParts(report("warn", [missingC6]))).toEqual({ outside: null, multiple: null, tokenPrice: null });
-    expect(incompleteParts(report("fail", [staleC1])).outside?.id).toBe("c1");
+    const ids = (cs: CostHealthCheck[]) => cs.map((c) => c.id);
+    expect(incompleteParts(report("warn", [missingC6]))).toEqual({ outside: [], multiple: [], tokenPrice: [] });
+    expect(ids(incompleteParts(report("fail", [staleC1])).outside)).toEqual(["c1"]);
     // A stale meter only warns: the multiple stays unmarked.
-    expect(incompleteParts(report("warn", [check("c2", "warn", "stale", { reading_minutes: 180 })])).multiple).toBeNull();
-    expect(incompleteParts(report("fail", [check("c2", "fail", "none")])).multiple?.id).toBe("c2");
-    expect(incompleteParts(report("fail", [check("c3", "fail", "drops", { drops: 1, last_drop_at: AT })])).multiple?.id).toBe("c3");
-    expect(incompleteParts(report("fail", [check("c4", "fail", "duplicates", { external_duplicates: 1, agent_duplicates: 0 })])).tokenPrice?.id).toBe("c4");
-    expect(incompleteParts(report("fail", [check("c5", "fail", "unpriced", { unpriced: ["x"] })])).tokenPrice?.id).toBe("c5");
+    expect(incompleteParts(report("warn", [check("c2", "warn", "stale", { reading_minutes: 180 })])).multiple).toEqual([]);
+    expect(ids(incompleteParts(report("fail", [check("c2", "fail", "none")])).multiple)).toEqual(["c2"]);
+    expect(ids(incompleteParts(report("fail", [check("c3", "fail", "drops", { drops: 1, last_drop_at: AT })])).multiple)).toEqual(["c3"]);
+    expect(ids(incompleteParts(report("fail", [check("c4", "fail", "duplicates", { external_duplicates: 1, agent_duplicates: 0 })])).tokenPrice)).toEqual(["c4"]);
+    expect(ids(incompleteParts(report("fail", [check("c5", "fail", "unpriced", { unpriced: ["x"], unpriced_outside: ["x"] })])).tokenPrice)).toEqual(["c5"]);
   });
 
-  it("says incomplete with the reason, linking to the checks", () => {
-    renderWithProviders(<IncompleteMark check={staleC1} part="outside" />, { route: "/costs", path: "/costs" });
+  // Review round 2, finding 17: both token-price checks are kept, and each
+  // counts only where the page holds the calls it concerns.
+  it("keeps both token-price checks, and each only for the side whose calls it concerns", () => {
+    const ids = (cs: CostHealthCheck[]) => cs.map((c) => c.id);
+    const agentsDup = check("c4", "fail", "duplicates", { external_duplicates: 0, agent_duplicates: 2 });
+    const outsideUnpriced = check("c5", "fail", "unpriced", { unpriced: ["x"], unpriced_outside: ["x"] });
+    const both = report("fail", [agentsDup, outsideUnpriced]);
+    expect(ids(incompleteParts(both).tokenPrice)).toEqual(["c4", "c5"]);
+    expect(ids(incompleteParts(both, { agents: false, outside: true }).tokenPrice)).toEqual(["c5"]);
+    expect(ids(incompleteParts(both, { agents: true, outside: false }).tokenPrice)).toEqual(["c4"]);
+    const agentsUnpriced = check("c5", "fail", "unpriced", { unpriced: ["y"], unpriced_agents: ["y"] });
+    expect(ids(incompleteParts(report("fail", [agentsUnpriced]), { agents: true, outside: false }).tokenPrice)).toEqual(["c5"]);
+    expect(ids(incompleteParts(report("fail", [agentsUnpriced]), { agents: false, outside: true }).tokenPrice)).toEqual([]);
+  });
+
+  // Review round 2, finding 14: per credential, by the names the checks give.
+  it("marks a credential's own figures for a reset on its meter, and its outside part for a stopped uploader of its seat", () => {
+    const ids = (cs: CostHealthCheck[]) => cs.map((c) => c.id);
+    const c3 = check("c3", "fail", "drops", { drops: 1, last_drop_at: AT, credentials: ["seat_b #0"] });
+    const rep = report("fail", [staleC1, c3]);
+    expect(ids(credentialIncomplete(rep, "seat_b #0", null).multiple)).toEqual(["c3"]);
+    expect(ids(credentialIncomplete(rep, "claude_code_oauth_token #0", null).multiple)).toEqual([]);
+    // A seat that spent with no reading: c2 names the worst one.
+    const c2 = check("c2", "fail", "none", { credential: "seat_b #0" });
+    expect(ids(credentialIncomplete(report("fail", [c3, c2]), "seat_b #0", null).multiple)).toEqual(["c3", "c2"]);
+    expect(ids(credentialIncomplete(report("fail", [c2]), "claude_code_oauth_token #0", null).multiple)).toEqual([]);
+    // staleC1's host is of the source "operator".
+    expect(ids(credentialIncomplete(rep, "seat_b #0", ["operator"]).outside)).toEqual(["c1"]);
+    expect(ids(credentialIncomplete(rep, "seat_b #0", ["projects"]).outside)).toEqual([]);
+    expect(ids(credentialIncomplete(rep, "seat_b #0", null).outside)).toEqual([]);
+  });
+
+  it("says incomplete with the reason, linking to the checks; nothing without a check", () => {
+    renderWithProviders(<IncompleteMark checks={[staleC1]} part="outside" />, { route: "/costs", path: "/costs" });
     const mark = screen.getByText("incomplete");
     expect(mark.getAttribute("href")).toBe("/costs/health");
     expect(mark.getAttribute("aria-label")).toContain("Incomplete: the sessions outside covey. Uploader fresh: Stopped pushing");
+    cleanup();
+    renderWithProviders(<IncompleteMark checks={[]} part="outside" />, { route: "/costs", path: "/costs" });
+    expect(screen.queryByText("incomplete")).toBeNull();
+  });
+
+  it("names the credentials of a drop, and says when uploads ended longer ago than the page reaches", () => {
+    const tt = i18n.getFixedT("en");
+    expect(reasonText(tt, check("c3", "fail", "drops", { drops: 1, last_drop_at: AT, credentials: ["a #0", "b #1"] })))
+      .toContain("The weekly meter of a #0, b #1 dropped inside one week 1×");
+    expect(reasonText(tt, check("c1", "pass", "gone", { last_push_minutes: 91 * 24 * 60 })))
+      .toMatch(/^No machine has pushed for .+, longer than the longest range the cost page shows/);
   });
 });
 
@@ -159,7 +203,7 @@ describe("/costs/health", () => {
     mockFetch({ "/cost/health": report("fail", [
       check("c1", "info", "quiet", { quiet_hosts: [{ source: "operator", host: "notebook", pushed_at: AT, minutes: 180 }] }),
       check("c2", "warn", "stale", { credential: "claude_code_oauth_token #0", reading_minutes: 150, week_percent: 30, fleet_killed: true }),
-      check("c3", "fail", "early_reset", { drops: 0, early_resets: 1, last_drop_at: AT }),
+      check("c3", "fail", "early_reset", { drops: 0, early_resets: 1, last_drop_at: AT, credentials: ["claude_code_oauth_token #0"] }),
       check("c4", "fail", "duplicates", { external_duplicates: 1, agent_duplicates: 0 }),
       check("c5", "fail", "unpriced", { models: 2, unpriced: ["", "claude-x"] }),
       check("c6", "warn", "unattributed", { unattributed: 1 }),
@@ -172,7 +216,7 @@ describe("/costs/health", () => {
     expect(row("c1")).toContain("No push for a while from operator @ notebook (3 h).");
     expect(row("c2")).toContain("claude_code_oauth_token #0 spent more than 2 h after its last weekly reading (2 h 30 min ago, 30 %). " +
       "The fleet is paused, so no run reads the meter: add one with “Enter a meter reading” at the credential on the cost page.");
-    expect(row("c3")).toContain("The weekly meter started over before its reset time 1×");
+    expect(row("c3")).toContain("The weekly meter of claude_code_oauth_token #0 started over before its reset time 1×");
     expect(row("c4")).toContain("1 call booked more than once: 1 outside, 0 agent lines.");
     expect(row("c5")).toContain("No list price for: (no model name), claude-x.");
     expect(row("c6")).toContain("1 agent line in 7 days names no credential");

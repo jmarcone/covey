@@ -2857,6 +2857,10 @@ export type CostHealthCheck = {
     agent_duplicates?: number;
     models?: number;
     unpriced?: string[];
+    /** c5: the unpriced models covey's agents used, and those outside calls used (a model can be in both). */
+    unpriced_agents?: string[];
+    unpriced_outside?: string[];
+    /** c6: the seats without a real cost; c3: the seats with a drop or an early reset. */
     credentials?: string[];
     unattributed?: number;
     sync_status?: string;

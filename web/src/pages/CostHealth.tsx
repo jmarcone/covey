@@ -36,15 +36,49 @@ export function worstCheck(rep: CostHealthReport | undefined): CostHealthCheck |
 
 export type IncompletePart = "outside" | "multiple" | "tokenPrice";
 
-/** The parts of the cost page a failed check leaves incomplete: a stopped
- *  uploader (c1) the outside sessions, wherever they are counted (the
- *  headline too); a seat that spent with no meter reading (c2) or a reset
- *  nobody recorded (c3) the multiple; a call booked twice (c4, larger) or a
- *  model without a list price (c5, smaller) every figure at token prices —
- *  the tiles, the chart, the model table and the headline's list price. */
-export function incompleteParts(rep: CostHealthReport | undefined): Record<IncompletePart, CostHealthCheck | null> {
-  const failed = (id: string) => rep?.checks.find((c) => c.id === id && c.status === "fail") ?? null;
-  return { outside: failed("c1"), multiple: failed("c3") ?? failed("c2"), tokenPrice: failed("c4") ?? failed("c5") };
+/** Which calls a page's token-price figures hold: covey's agents' lines,
+ *  the outside sessions', or both. */
+export type TokenScope = { agents: boolean; outside: boolean };
+
+const failedCheck = (rep: CostHealthReport | undefined, id: string) =>
+  rep?.checks.find((c) => c.id === id && c.status === "fail") ?? null;
+const only = (...cs: (CostHealthCheck | null | undefined | false)[]) => cs.filter((c): c is CostHealthCheck => !!c);
+
+/** The parts of the cost page a failed check leaves incomplete, each with
+ *  every check that does (none: an empty list): a stopped uploader (c1)
+ *  the outside sessions, wherever they are counted (the headline too); a
+ *  reset nobody recorded (c3) or a seat that spent with no meter reading
+ *  (c2) the multiple; a call booked twice (c4, larger) or a model without a
+ *  list price (c5, smaller) every figure at token prices — the tiles, the
+ *  chart, the model table and the headline's list price. Those two count
+ *  only where the page holds the calls they concern (`tokens`): "covey
+ *  only" is not marked for a model only a laptop used, nor /costs/outside
+ *  for an agent line booked twice. */
+export function incompleteParts(rep: CostHealthReport | undefined, tokens: TokenScope = { agents: true, outside: true }): Record<IncompletePart, CostHealthCheck[]> {
+  const c4 = failedCheck(rep, "c4"), c5 = failedCheck(rep, "c5");
+  const f4 = c4?.facts, f5 = c5?.facts;
+  return {
+    outside: only(failedCheck(rep, "c1")),
+    multiple: only(failedCheck(rep, "c3"), failedCheck(rep, "c2")),
+    tokenPrice: only(
+      (tokens.agents && (f4?.agent_duplicates ?? 0) > 0 || tokens.outside && (f4?.external_duplicates ?? 0) > 0) && c4,
+      (tokens.agents && (f5?.unpriced_agents?.length ?? 0) > 0 || tokens.outside && (f5?.unpriced_outside?.length ?? 0) > 0) && c5),
+  };
+}
+
+/** The checks that leave one credential's own figures short (secret #slot,
+ *  as the server names it): a reset nobody recorded on its meter (c3 names
+ *  the credentials) or no reading where it spent (c2 names the seat) its
+ *  real cost and its multiples; a stopped uploader of a source on its seat
+ *  (c1) the outside part of them — only where the outside sessions are
+ *  included (`sources`: the seat's; null: covey only). */
+export function credentialIncomplete(rep: CostHealthReport | undefined, credential: string, sources: readonly string[] | null):
+  { multiple: CostHealthCheck[]; outside: CostHealthCheck[] } {
+  const c3 = failedCheck(rep, "c3"), c2 = failedCheck(rep, "c2"), c1 = failedCheck(rep, "c1");
+  return {
+    multiple: only(c3?.facts.credentials?.includes(credential) && c3, c2?.facts.credential === credential && c2),
+    outside: only(sources != null && c1?.facts.stale_hosts?.some((h) => sources.includes(h.source)) && c1),
+  };
 }
 
 const ago = (minutes: number | undefined) => (minutes == null ? "–" : fmtDelta(minutes * 60_000));
@@ -62,6 +96,7 @@ export function reasonText(t: TFunction, c: CostHealthCheck): string {
   switch (`${c.id}_${c.reason}`) {
     case "c1_fresh":
     case "c1_all_silent":
+    case "c1_gone":
       return t(key, { ago: ago(f.last_push_minutes) });
     case "c1_stale":
       return t(key, { hosts: hostList(f.stale_hosts), ago: ago(f.last_push_minutes) });
@@ -77,9 +112,9 @@ export function reasonText(t: TFunction, c: CostHealthCheck): string {
         pct: f.week_percent != null ? `${fmtNumber(f.week_percent, 0)} %` : "–",
       });
     case "c3_drops":
-      return t(key, { n: f.drops ?? 0, when: when(f.last_drop_at) });
     case "c3_early_reset":
-      return t(key, { n: f.early_resets ?? 0, when: when(f.last_drop_at) });
+      return t(key, { n: (c.reason === "drops" ? f.drops : f.early_resets) ?? 0, when: when(f.last_drop_at),
+        credentials: (f.credentials ?? []).join(", ") || "–" });
     case "c4_duplicates":
       return t(key, { ...counted((f.external_duplicates ?? 0) + (f.agent_duplicates ?? 0)),
         outside: fmtNumber(f.external_duplicates ?? 0, 0), agents: fmtNumber(f.agent_duplicates ?? 0, 0) });
@@ -149,11 +184,12 @@ export function CostHealthBadge() {
   );
 }
 
-/** "incomplete" beside a part a failed check affects; the reason on hover
- *  and the checks one click away. */
-export function IncompleteMark({ check, part }: { check: CostHealthCheck; part: IncompletePart }) {
+/** "incomplete" beside a part failed checks affect; their reasons on hover
+ *  and the checks one click away. Nothing without a check. */
+export function IncompleteMark({ checks, part }: { checks: readonly CostHealthCheck[]; part: IncompletePart }) {
   const { t } = useTranslation();
-  const reason = `${t(`costs.health.name.${check.id}`)}: ${reasonText(t, check)}`;
+  if (checks.length === 0) return null;
+  const reason = checks.map((c) => `${t(`costs.health.name.${c.id}`)}: ${reasonText(t, c)}`).join(" · ");
   return (
     <Link to={HEALTH_PATH} className="pill err" data-incomplete={part} title={reason}
       aria-label={t(`costs.health.incomplete.${part}`, { reason })} style={{ fontWeight: 400 }}>

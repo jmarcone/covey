@@ -13,6 +13,7 @@ import (
 	"covey/internal/daemon"
 	identbuiltin "covey/internal/identity/builtin"
 	"covey/internal/observability"
+	"covey/internal/secrets"
 )
 
 // Cost health (#178): the checks C1–C8 as read-only queries, each with a
@@ -237,6 +238,19 @@ func TestCostHealthEveryUploaderSilentForAWeekWarns(t *testing.T) {
 	}
 	f.host(t, "operator", "laptop", healthNow.Add(-10*time.Minute), true)
 	expectCheck(t, f.check(t, "c1"), observability.HealthPass, "fresh")
+
+	// Review round 2, finding 19: once the last push is older than the
+	// longest range the cost page shows (90 days), no figure on it holds an
+	// outside call any more: the warning ends on its own.
+	f.host(t, "operator", "laptop", healthNow.Add(-90*24*time.Hour), true)
+	f.host(t, "operator", "alt", healthNow.Add(-91*24*time.Hour), false)
+	expectCheck(t, f.check(t, "c1"), observability.HealthWarn, "all_silent")
+	f.host(t, "operator", "laptop", healthNow.Add(-90*24*time.Hour-time.Minute), true)
+	c = f.check(t, "c1")
+	expectCheck(t, c, observability.HealthPass, "gone")
+	if *c.Facts.LastPushAgo != 90*24*60+1 {
+		t.Errorf("last push %d minutes ago, want %d", *c.Facts.LastPushAgo, 90*24*60+1)
+	}
 }
 
 // The badge turns red once an uploader that sends a watermark has been
@@ -298,6 +312,35 @@ func TestCostHealthFailureIsNotCached(t *testing.T) {
 	}
 	if rep.Status != observability.HealthPass || !rep.CheckedAt.Equal(healthNow) {
 		t.Fatalf("after the fault the report is %s at %v, want a fresh pass at %v", rep.Status, rep.CheckedAt, healthNow)
+	}
+}
+
+// panickingKeys is a secret store whose Keys panics: the checks die
+// halfway, as a bug in one of them would.
+type panickingKeys struct{ secrets.Store }
+
+func (panickingKeys) Keys(context.Context, uuid.UUID) ([]string, error) {
+	panic("cost health test: keys")
+}
+
+// Review round 2, finding 18: a panic inside the checks answers 500 and ends
+// the computation — the next request runs them again rather than wait on a
+// run that never finishes.
+func TestCostHealthPanicEndsTheRun(t *testing.T) {
+	f := newHealthFixture(t)
+	admin := login(t, f.s, "admin@test.local", "admin-passwort")
+	admin.http.Timeout = 10 * time.Second
+	f.s.srv.CostHealthNow = func() time.Time { return healthNow }
+	store := f.s.srv.Secrets
+	f.s.srv.Secrets = panickingKeys{store}
+	admin.expect(http.MethodGet, "/api/v1/cost/health", nil, http.StatusInternalServerError)
+	f.s.srv.Secrets = store
+	var rep observability.HealthReport
+	if err := json.Unmarshal(rawGet(t, admin, "/api/v1/cost/health"), &rep); err != nil {
+		t.Fatal(err)
+	}
+	if rep.Status != observability.HealthPass || !rep.CheckedAt.Equal(healthNow) {
+		t.Fatalf("after the panic the report is %s at %v, want a fresh pass at %v", rep.Status, rep.CheckedAt, healthNow)
 	}
 }
 
@@ -430,6 +473,41 @@ func TestCostHealthMeterFreshAgesByWhenRead(t *testing.T) {
 	if *c.Facts.ReadingAgo != 180 {
 		t.Errorf("reading %d minutes old, want 180", *c.Facts.ReadingAgo)
 	}
+
+	// Review round 2, finding 20: an in-band reading read 30 minutes ago and
+	// received before the one typed in is the latest — by when it was read,
+	// not when it arrived.
+	f.readingFrom(t, ord, "claude_code_oauth_token", "inband", 31, nil, healthNow.Add(-30*time.Minute), healthNow.Add(-30*time.Minute), true, false)
+	c = f.check(t, "c2")
+	expectCheck(t, c, observability.HealthPass, "fresh")
+	if *c.Facts.ReadingAgo != 30 || *c.Facts.WeekPercent != 31 {
+		t.Errorf("reading %d minutes old at %v %%, want 30 at 31", *c.Facts.ReadingAgo, *c.Facts.WeekPercent)
+	}
+}
+
+// Review round 2, finding 13: a seat that only a linked outside source spent
+// on is a seat for C6 as it is for C2 — its outside part is priced by the
+// seat's plan, so without one its real cost is unknown.
+func TestCostHealthSeatSpentOnlyOutside(t *testing.T) {
+	f := newHealthFixture(t)
+	ord := f.s.seat(t, f.rt, daemon.CredSubscription, "claude_code_oauth_token", "sitz", "Work")
+	f.link(t, "operator", "claude_code_oauth_token")
+	f.outsideCall(t, "operator", "a", "claude-opus-5-5", healthNow.Add(-time.Hour))
+	f.reading(t, ord, "claude_code_oauth_token", 5, nil, healthNow.Add(-30*time.Minute), true, false)
+	expectCheck(t, f.check(t, "c2"), observability.HealthPass, "fresh")
+	c := f.check(t, "c6")
+	expectCheck(t, c, observability.HealthWarn, "missing")
+	if !slices.Equal(c.Facts.Credentials, []string{"claude_code_oauth_token #0"}) {
+		t.Errorf("credentials %v, want [claude_code_oauth_token #0]", c.Facts.Credentials)
+	}
+	f.plan(t, "claude_code_oauth_token", healthNow.Add(-30*24*time.Hour))
+	expectCheck(t, f.check(t, "c6"), observability.HealthPass, "set")
+
+	// An unlinked source is billed per use: it spends on no seat.
+	g := newHealthFixture(t)
+	ord = g.s.seat(t, g.rt, daemon.CredSubscription, "claude_code_oauth_token", "sitz", "Work")
+	g.outsideCall(t, "privat", "a", "claude-opus-5-5", healthNow.Add(-time.Hour))
+	expectCheck(t, g.check(t, "c6"), observability.HealthPass, "set")
 }
 
 // C3: inside one week the week percent never drops by more than a lagging
@@ -451,6 +529,42 @@ func TestCostHealthMeterMonotonic(t *testing.T) {
 	expectCheck(t, c, observability.HealthFail, "drops")
 	if *c.Facts.Drops != 1 || !c.Facts.LastDropAt.Equal(at) {
 		t.Errorf("drops %d at %v, want 1 at %v", *c.Facts.Drops, c.Facts.LastDropAt, at)
+	}
+	if !slices.Equal(c.Facts.Credentials, []string{"claude_code_oauth_token #0"}) {
+		t.Errorf("credentials %v, want [claude_code_oauth_token #0]", c.Facts.Credentials)
+	}
+}
+
+// C3 (review round 2, findings 14 and 15): one unrecorded reset is one drop,
+// however many readings follow below the old top; the next drop counts once
+// the figure was back at the top. The facts name the seats with a drop, and
+// only those.
+func TestCostHealthMeterDropIsOnePerRun(t *testing.T) {
+	f := newHealthFixture(t)
+	ord := f.s.seat(t, f.rt, daemon.CredSubscription, "claude_code_oauth_token", "sitz", "Work")
+	other := f.s.seat(t, f.rt, daemon.CredSubscription, "seat_b_token", "sitz-b", "B")
+	resets := healthNow.Add(2 * 24 * time.Hour)
+	for i, pct := range []float64{45, 2, 5, 9} {
+		f.reading(t, ord, "claude_code_oauth_token", pct, &resets, healthNow.Add(time.Duration(i-5)*time.Hour), true, false)
+	}
+	f.reading(t, other, "seat_b_token", 10, &resets, healthNow.Add(-5*time.Hour), true, false)
+	f.reading(t, other, "seat_b_token", 12, &resets, healthNow.Add(-4*time.Hour), true, false)
+	c := f.check(t, "c3")
+	expectCheck(t, c, observability.HealthFail, "drops")
+	if *c.Facts.Drops != 1 || !c.Facts.LastDropAt.Equal(healthNow.Add(-4*time.Hour)) {
+		t.Errorf("drops %d, the last at %v; want 1 at %v", *c.Facts.Drops, c.Facts.LastDropAt, healthNow.Add(-4*time.Hour))
+	}
+	if !slices.Equal(c.Facts.Credentials, []string{"claude_code_oauth_token #0"}) {
+		t.Errorf("credentials %v, want [claude_code_oauth_token #0]", c.Facts.Credentials)
+	}
+
+	// Back above the old top, then down again: a second drop. Seat B drops too.
+	f.reading(t, ord, "claude_code_oauth_token", 50, &resets, healthNow.Add(-50*time.Minute), true, false)
+	f.reading(t, ord, "claude_code_oauth_token", 3, &resets, healthNow.Add(-40*time.Minute), true, false)
+	f.reading(t, other, "seat_b_token", 1, &resets, healthNow.Add(-30*time.Minute), true, false)
+	c = f.check(t, "c3")
+	if *c.Facts.Drops != 3 || !slices.Equal(c.Facts.Credentials, []string{"claude_code_oauth_token #0", "seat_b_token #0"}) {
+		t.Errorf("drops %d on %v, want 3 on both seats", *c.Facts.Drops, c.Facts.Credentials)
 	}
 }
 
@@ -495,6 +609,9 @@ func TestCostHealthMeterResetInMidWeek(t *testing.T) {
 	expectCheck(t, c, observability.HealthFail, "early_reset")
 	if *c.Facts.EarlyResets != 1 || *c.Facts.Drops != 0 || !c.Facts.LastDropAt.Equal(at) {
 		t.Errorf("early resets %d, drops %d at %v; want 1, 0 at %v", *c.Facts.EarlyResets, *c.Facts.Drops, c.Facts.LastDropAt, at)
+	}
+	if !slices.Equal(c.Facts.Credentials, []string{"claude_code_oauth_token #0"}) {
+		t.Errorf("credentials %v, want [claude_code_oauth_token #0]", c.Facts.Credentials)
 	}
 }
 
@@ -545,6 +662,20 @@ func TestCostHealthModelsPriced(t *testing.T) {
 	expectCheck(t, c, observability.HealthFail, "unpriced")
 	if !slices.Equal(c.Facts.Unpriced, []string{"claude-unbepreist-2"}) {
 		t.Errorf("unpriced %v, want [claude-unbepreist-2]", c.Facts.Unpriced)
+	}
+	// Review round 2, finding 17: which side used it, so that "covey only"
+	// is not marked for a model only outside calls used.
+	if len(c.Facts.UnpricedAgents) != 0 || !slices.Equal(c.Facts.UnpricedOutside, []string{"claude-unbepreist-2"}) {
+		t.Errorf("unpriced by agents %v, outside %v; want none and [claude-unbepreist-2]", c.Facts.UnpricedAgents, c.Facts.UnpricedOutside)
+	}
+	f.line(t, "claude-unbepreist-2", ord, "claude_code_oauth_token", "subscription", "", healthNow.Add(-time.Hour))
+	f.line(t, "claude-unbepreist-3", ord, "claude_code_oauth_token", "subscription", "", healthNow.Add(-time.Hour))
+	c = f.check(t, "c5")
+	if !slices.Equal(c.Facts.Unpriced, []string{"claude-unbepreist-2", "claude-unbepreist-3"}) || *c.Facts.Models != 3 ||
+		!slices.Equal(c.Facts.UnpricedAgents, []string{"claude-unbepreist-2", "claude-unbepreist-3"}) ||
+		!slices.Equal(c.Facts.UnpricedOutside, []string{"claude-unbepreist-2"}) {
+		t.Errorf("unpriced %v of %d (agents %v, outside %v); want 2 and 3 of 3, both by agents, 2 outside",
+			c.Facts.Unpriced, *c.Facts.Models, c.Facts.UnpricedAgents, c.Facts.UnpricedOutside)
 	}
 }
 
@@ -665,12 +796,32 @@ func TestCostHealthBillSyncStoppedOrNotLanded(t *testing.T) {
 	f := newHealthFixture(t)
 	f.in.AdminKey = true
 	expectCheck(t, f.check(t, "c7"), observability.HealthWarn, "not_run")
+	// A row without an attempt has not run either (outside review round 2):
+	// "stopped" would say "has not run for –".
+	f.exec(t, `INSERT INTO billing_sync (org_id) VALUES ($1)`, f.s.orgID)
+	expectCheck(t, f.check(t, "c7"), observability.HealthWarn, "not_run")
 
 	if err := f.s.obs.NoteBillingSync(f.ctx, f.s.orgID, observability.BillingSyncAttempt{
 		At: healthNow.Add(-10 * time.Minute), Status: "not_landed"}); err != nil {
 		t.Fatal(err)
 	}
-	// Nothing spent at token prices: nothing to land.
+	// Nothing spent at token prices: nothing to land. Neither did a source
+	// billed per use (review round 2, finding 16): nothing says its machine
+	// called with a key of the organisation whose bill is read.
+	expectCheck(t, f.check(t, "c7"), observability.HealthPass, "ok")
+	f.outsideCall(t, "privat", "x", "claude-opus-5-5", healthNow.Add(-30*time.Hour))
+	expectCheck(t, f.check(t, "c7"), observability.HealthPass, "ok")
+	// Nor did another engine's API key (outside review round 2): Codex's
+	// openai_api_key is on OpenAI's bill, not on the one read here.
+	codex, err := f.s.runtimes.Create(f.ctx, f.s.orgID, "codex", "Codex", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claude := f.rt
+	f.rt = codex.ID
+	openai := f.s.seat(t, codex.ID, daemon.CredAPIKey, "openai_api_key", "sk-openai", "API")
+	f.line(t, "gpt-5.5-codex", openai, "openai_api_key", "api_key", "", healthNow.Add(-30*time.Hour))
+	f.rt = claude
 	expectCheck(t, f.check(t, "c7"), observability.HealthPass, "ok")
 	key := f.s.seat(t, f.rt, daemon.CredAPIKey, "anthropic_api_key", "sk-test", "API")
 	f.line(t, "claude-opus-5-5", key, "anthropic_api_key", "api_key", "", healthNow.Add(-30*time.Hour))

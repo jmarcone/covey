@@ -809,7 +809,7 @@ describe("the incomplete marks of the data checks (#178)", () => {
   });
 
   it("a model without a list price (c5): every figure at token prices — tiles, chart, model table, headline", async () => {
-    serve(cells(), "/costs", report(failed("c5", "unpriced", { models: 2, unpriced: ["claude-sonnet-5-7"] })));
+    serve(cells(), "/costs", report(failed("c5", "unpriced", { models: 2, unpriced: ["claude-sonnet-5-7"], unpriced_agents: ["claude-sonnet-5-7"] })));
     expect(await headlineMarks()).toEqual(["tokenPrice"]);
     expect(parts("[data-kpi-incomplete]")).toEqual(["tokenPrice"]);
     expect(parts("[data-chart-title]")).toEqual(["tokenPrice"]);
@@ -826,22 +826,118 @@ describe("the incomplete marks of the data checks (#178)", () => {
   });
 
   it("“covey only” leaves the outside part out, and its mark with it", async () => {
-    serve(cells(), "/costs?only=covey", report(c1, failed("c5", "unpriced", { unpriced: ["x"] })));
+    serve(cells(), "/costs?only=covey", report(c1, failed("c5", "unpriced", { unpriced: ["x"], unpriced_agents: ["x"] })));
     expect(await headlineMarks()).toEqual(["tokenPrice"]);
     expect(parts("[data-inclusion]")).toEqual([]);
+  });
+
+  // Review round 2, finding 17: a model only outside calls used marks the
+  // token prices where they are included, and not covey's alone.
+  it("a model only outside calls used: marked with the outside sessions included, not under “covey only”", async () => {
+    const outsideOnly = failed("c5", "unpriced", { unpriced: ["x"], unpriced_outside: ["x"] });
+    serve(cells(), "/costs", report(outsideOnly));
+    expect(await headlineMarks()).toEqual(["tokenPrice"]);
+    cleanup();
+    serve(cells(), "/costs?only=covey", report(failed("c3", "drops", { drops: 1, last_drop_at: H19 }), outsideOnly));
+    expect(await headlineMarks()).toEqual(["multiple"]);
+    expect(document.querySelectorAll("[data-incomplete='tokenPrice']").length).toBe(0);
   });
 
   it("/costs/outside: a stopped uploader and an unpriced model mark the page; an agent line booked twice does not", async () => {
     const ext = external();
     const view = { bucket: "hour", since: H18, source: null, sources: ext.sources, models: [], cells: [], meter: ext.meter };
-    mockFetch({ "/api/v1/cost/external-usage": view, "/api/v1/cost/health": report(c1, failed("c5", "unpriced", { unpriced: ["x"] })) });
+    mockFetch({ "/api/v1/cost/external-usage": view, "/api/v1/cost/health": report(c1, failed("c5", "unpriced", { unpriced: ["x"], unpriced_outside: ["x"] })) });
     renderWithProviders(<OutsideCosts />, { route: "/costs/outside?days=1&bucket=hour", path: "/costs/outside" });
     await waitFor(() => expect(parts("[data-outside-incomplete]")).toEqual(["outside", "tokenPrice"]));
     cleanup();
-    mockFetch({ "/api/v1/cost/external-usage": view,
-      "/api/v1/cost/health": report(failed("c4", "duplicates", { external_duplicates: 0, agent_duplicates: 1 })) });
+    mockFetch({ "/api/v1/cost/external-usage": view, "/api/v1/cost/health": report(failed("c4", "duplicates", { external_duplicates: 0, agent_duplicates: 1 }),
+      failed("c5", "unpriced", { unpriced: ["y"], unpriced_agents: ["y"] })) });
     renderWithProviders(<OutsideCosts />, { route: "/costs/outside?days=1&bucket=hour", path: "/costs/outside" });
     await waitFor(() => expect(document.querySelector("[data-outside-meter]")).toBeTruthy());
     expect(document.querySelector("[data-outside-incomplete]")).toBeNull();
+  });
+
+  // Outside review round 2, major 1: /costs/outside divides by the same
+  // meter — its meter-share tile, its meter card and the seat's line carry
+  // the mark of a reset on a seat shown there, and not of one elsewhere.
+  it("/costs/outside: a reset on the seat's meter (c3) marks the meter share, the meter card and the seat; one elsewhere does not", async () => {
+    const ext = external();
+    const call = modelCell(OP, "claude-opus-5-5", 2, 0.5, null, 100);
+    const view = { bucket: "hour", since: H18, source: null, sources: ext.sources, models: [call], cells: [call], meter: ext.meter };
+    const meterParts = () => ({
+      tile: parts("[data-figure='real']"), title: parts("[data-outside-meter-title]"), seat: parts(`[data-seat='${SEAT}#0']`),
+    });
+    mockFetch({ "/api/v1/cost/external-usage": view, "/api/v1/cost/health": report(failed("c3", "drops", { drops: 1, last_drop_at: H19, credentials: [`${SEAT} #0`] })) });
+    renderWithProviders(<OutsideCosts />, { route: "/costs/outside?days=1&bucket=hour", path: "/costs/outside" });
+    await waitFor(() => expect(meterParts()).toEqual({ tile: ["multiple"], title: ["multiple"], seat: ["multiple"] }));
+    expect(document.querySelector("[data-outside-incomplete]")).toBeNull();
+    cleanup();
+    mockFetch({ "/api/v1/cost/external-usage": view, "/api/v1/cost/health": report(failed("c3", "drops", { drops: 1, last_drop_at: H19, credentials: ["seat_b #0"] })) });
+    renderWithProviders(<OutsideCosts />, { route: "/costs/outside?days=1&bucket=hour", path: "/costs/outside" });
+    await waitFor(() => expect(document.querySelector(`[data-seat='${SEAT}#0']`)).toBeTruthy());
+    expect(meterParts()).toEqual({ tile: [], title: [], seat: [] });
+    cleanup();
+    // A seat that spent with no reading (c2 names it): the same three.
+    mockFetch({ "/api/v1/cost/external-usage": view, "/api/v1/cost/health": report(failed("c2", "none", { credential: `${SEAT} #0` })) });
+    renderWithProviders(<OutsideCosts />, { route: "/costs/outside?days=1&bucket=hour", path: "/costs/outside" });
+    await waitFor(() => expect(meterParts()).toEqual({ tile: ["multiple"], title: ["multiple"], seat: ["multiple"] }));
+  });
+
+  // Review round 2, finding 14: a credential's own real cost and multiples
+  // carry the mark of a reset on its meter (c3 names the credentials), and
+  // their outside part the mark of a stopped uploader of a source on its
+  // seat — in its block on /costs and at its meter in the insights.
+  const c3 = (credential: string) => failed("c3", "drops", { drops: 1, last_drop_at: H19, credentials: [credential] });
+  const tileMarks = () => Object.fromEntries([...document.querySelectorAll("[data-credential] [data-tile]")].map((tile) =>
+    [tile.getAttribute("aria-label"), [...tile.querySelectorAll("[data-incomplete]")].map((e) => e.getAttribute("data-incomplete"))]));
+  // Each marked row of the meter: its label and its marks.
+  const meterMarks = () => [...document.querySelectorAll("[data-meter] > div")].flatMap((row) => {
+    const marks = [...row.querySelectorAll("[data-incomplete]")].map((e) => e.getAttribute("data-incomplete"));
+    return marks.length ? [[row.firstElementChild!.textContent, marks]] : [];
+  });
+  const blocks = async () => {
+    await waitFor(() => { if (!document.querySelector("[data-credential] [data-tile]")) throw new Error("no tiles yet"); });
+    await waitFor(() => { if (!document.querySelector("[data-meter]")) throw new Error("no meter yet"); });
+  };
+  const lead = t("costs.lead.label"), real = t("costs.fig.realEstimate"), everything = t("costs.incl.everything");
+
+  it("a reset on a seat's meter (c3): its real cost and its multiple in its block and at its meter", async () => {
+    serve(cells(), "/costs", report(c3(`${SEAT} #0`)));
+    await blocks();
+    await waitFor(() => expect(tileMarks()).toEqual({ [lead]: [], [real]: ["multiple"], [everything]: ["multiple"] }));
+    expect(meterMarks()).toEqual([[real, ["multiple"]], [everything, ["multiple"]]]);
+    // A seat no outside source names: its plain multiple, in the block and at the meter.
+    cleanup();
+    serve(cells(null), "/costs", report(c3(`${SEAT} #0`)));
+    await blocks();
+    const multiple = t("costs.fig.multiple");
+    await waitFor(() => expect(tileMarks()).toEqual({ [lead]: [], [real]: ["multiple"], [multiple]: ["multiple"] }));
+    expect(meterMarks()).toEqual([[real, ["multiple"]], [multiple, ["multiple"]]]);
+  });
+
+  it("a reset on another seat's meter leaves this one's figures unmarked", async () => {
+    serve(cells(), "/costs", report(c3("seat_b #0")));
+    expect(await headlineMarks()).toEqual(["multiple"]);
+    await blocks();
+    expect(document.querySelectorAll("[data-credential] [data-incomplete], [data-meter] [data-incomplete]").length).toBe(0);
+  });
+
+  it("a stopped uploader of a source on the seat (c1): the outside part of its figures while included, and not under “covey only”", async () => {
+    serve(cells(), "/costs", report(c1));
+    await blocks();
+    await waitFor(() => expect(tileMarks()).toEqual({ [lead]: ["outside"], [real]: [], [everything]: ["outside"] }));
+    expect(meterMarks()).toEqual([[t("costs.incl.meterListOperator"), ["outside"]], [t("costs.incl.meterListProjects"), ["outside"]], [everything, ["outside"]]]);
+    cleanup();
+    serve(cells(), "/costs?only=covey", report(c1));
+    await blocks();
+    expect(document.querySelectorAll("[data-credential] [data-incomplete], [data-meter] [data-incomplete]").length).toBe(0);
+  });
+
+  it("a stopped uploader of a source on no seat of the page leaves the seat's figures unmarked", async () => {
+    serve(cells(), "/costs", report(failed("c1", "stale", { last_push_minutes: 80,
+      stale_hosts: [{ source: "elsewhere", host: "laptop", pushed_at: H18, minutes: 80 }] })));
+    expect(await headlineMarks()).toEqual(["outside"]);
+    await blocks();
+    expect(document.querySelectorAll("[data-credential] [data-incomplete], [data-meter] [data-incomplete]").length).toBe(0);
   });
 });

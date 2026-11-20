@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import type { CostCells } from "../api";
@@ -28,8 +28,10 @@ export const OUTSIDE_COLOR = "var(--cost-outside)";
 const pct = (v: number) => `${fmtNumber(v * 100, 1)} %`;
 
 /** A figure with its lines, in the style of the credential tiles. */
-export function FigureTile({ label, value, lines, color, hatched, test }: {
+export function FigureTile({ label, value, lines, color, hatched, test, mark }: {
   label: string; value: string; lines?: (string | false | undefined)[]; color?: string; hatched?: boolean; test?: string;
+  /** A failed data check's mark beside the label (#178): the figure is short. */
+  mark?: ReactNode;
 }) {
   return (
     <div role="group" aria-label={label} data-figure={test}
@@ -37,6 +39,7 @@ export function FigureTile({ label, value, lines, color, hatched, test }: {
       <div className="muted text-xs" style={{ display: "flex", alignItems: "center", gap: 6 }}>
         {color && <Swatch color={color} hatched={hatched} />}
         {label}
+        {mark}
       </div>
       <div data-value style={{ fontSize: 20, fontWeight: 600, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>{value}</div>
       {(lines ?? []).filter(Boolean).map((l, i) => <div key={i} className="muted text-xs" style={{ marginTop: 2 }}>{l}</div>)}
