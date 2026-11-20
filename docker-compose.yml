@@ -52,6 +52,11 @@ x-covey-base: &covey-base
     COVEY_EGRESS_ENFORCE: ${COVEY_EGRESS_ENFORCE:-true}
     COVEY_EGRESS_LISTEN_ADDR: ":8495"
     COVEY_EGRESS_ALLOW: ${COVEY_EGRESS_ALLOW:-}
+    # The address the agents' commits are attributed to (#106). Compose passes
+    # on only what is written down, so without this line a value in the .env
+    # never reaches the container and the identity stays off. The sandbox image
+    # must carry the same change, see docs/en/operations/deployment.md.
+    COVEY_GIT_AUTHOR_EMAIL: ${COVEY_GIT_AUTHOR_EMAIL:-}
     # The second workplace (profile `dev`). Existing agents were put there by
     # the upgrade, because the image from before the split carried exactly what
     # `dev` adds. Whoever still has that old image points this at it instead of

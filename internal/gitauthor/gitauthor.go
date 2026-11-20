@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"regexp"
@@ -83,11 +84,20 @@ func identityFrom(ctx context.Context) (Identity, bool) {
 }
 
 // createCommitPath matches GitHub's "create a commit" endpoint, on github.com
-// and below an Enterprise Server's /api/v3 alike.
-var createCommitPath = regexp.MustCompile(`/repos/[^/]+/[^/]+/git/commits$`)
+// and below an Enterprise Server's /api/v3 alike. Both shapes: a renamed or
+// moved repository answers with a redirect to /repositories/{id}/git/commits,
+// and the client re-sends the original body there.
+var createCommitPath = regexp.MustCompile(`/(repos/[^/]+/[^/]+|repositories/[^/]+)/git/commits$`)
+
+// ErrBodyTooLarge is what a commit-creating request over maxBody gets: it
+// cannot be given an author, and sending it without one would record the
+// token's own account.
+var ErrBodyTooLarge = errors.New("gitauthor: commit body over the cap, refusing to send it without an author")
 
 // maxBody caps what the transport buffers to rewrite. A commit request carries
-// a message and SHAs; anything larger is not one and passes untouched.
+// a message and SHAs, but the message is the agent's and the pack puts no cap
+// on it, so a body above this is refused, not passed on: it would go out
+// without author or committer.
 const maxBody = 1 << 20
 
 // Transport wraps base (nil = http.DefaultTransport). A request that creates a
@@ -112,17 +122,14 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		req.Body.Close()
 		return nil, err
 	}
+	if len(raw) > maxBody {
+		// Fail closed: the body is too big to rewrite, and the request is
+		// one that must not go out without an identity.
+		req.Body.Close()
+		return nil, ErrBodyTooLarge
+	}
 	// RoundTrip must not modify the request it is given.
 	out := req.Clone(req.Context())
-	if len(raw) > maxBody {
-		// Not a commit request: hand on every byte, the prefix read above and
-		// the rest of the body, with the length and GetBody the caller set.
-		out.Body = struct {
-			io.Reader
-			io.Closer
-		}{io.MultiReader(bytes.NewReader(raw), req.Body), req.Body}
-		return t.base.RoundTrip(out)
-	}
 	req.Body.Close()
 	body := withIdentity(raw, id)
 	out.Body = io.NopCloser(bytes.NewReader(body))

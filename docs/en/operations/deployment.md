@@ -480,7 +480,7 @@ Use the account's noreply address, `<id>+<login>@users.noreply.github.com`
 private address stays out of the history.
 
 ```bash
-COVEY_GIT_AUTHOR_EMAIL="358193092+covey-bot@users.noreply.github.com"
+COVEY_GIT_AUTHOR_EMAIL="<id>+<login>@users.noreply.github.com"
 ```
 
 It applies to commits made after the change takes effect; existing history is
@@ -489,6 +489,17 @@ carries the address after the control plane restarts. An agent commits from its
 sandbox, where the daemon (`coveyd`) adds the identity: its commits carry it once
 the sandbox runs an image with this change, so rebuild and roll out the sandbox
 image as well.
+
+Both compose files pass the variable on (`x-covey-base`), so a line in the
+`.env` is enough there; another way of starting covey has to set it in the
+control plane's environment itself.
+
+A commit-creating request the transport cannot rewrite is refused, not sent
+without an author: a body over 1 MiB (the commit message is the agent's and has
+no cap of its own) fails with an error. A redirect to
+`/repositories/{id}/git/commits`, which GitHub sends for a renamed or moved
+repository, is rewritten like the original request. Only the github plugin is
+covered; the GitLab commit action sets no identity.
 
 The address is not checked. A mistyped one makes GitHub refuse every commit an
 agent makes (`422` on `author.email`) until it is corrected, so test it with one

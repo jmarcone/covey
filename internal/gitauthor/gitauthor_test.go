@@ -3,6 +3,7 @@ package gitauthor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -35,7 +36,7 @@ func post(t *testing.T, ctx context.Context, method, path, body string) map[stri
 }
 
 func TestCommitRequestGetsAuthorAndCommitter(t *testing.T) {
-	for _, path := range []string{"/repos/o/r/git/commits", "/api/v3/repos/o/r/git/commits"} {
+	for _, path := range []string{"/repos/o/r/git/commits", "/api/v3/repos/o/r/git/commits", "/repositories/1/git/commits", "/api/v3/repositories/1/git/commits"} {
 		got := post(t, WithIdentity(context.Background(), testID), "POST", path,
 			`{"message":"m","tree":"t","parents":["p"]}`)
 		for _, k := range []string{"author", "committer"} {
@@ -56,6 +57,7 @@ func TestRequestsThatAreNotCommitsPassUntouched(t *testing.T) {
 		{"POST", "/repos/o/r/git/trees"},
 		{"POST", "/repos/o/r/git/commits/abc/comments"},
 		{"GET", "/repos/o/r/git/commits"},
+		{"POST", "/repositories/1/git/commits/abc/comments"},
 	} {
 		got := post(t, ctx, c.method, c.path, `{"message":"m"}`)
 		if _, ok := got["author"]; ok {
@@ -91,11 +93,34 @@ func TestAnAuthorAlreadyThereIsKept(t *testing.T) {
 	}
 }
 
-// A body above maxBody is not buffered to rewrite, and it still arrives whole:
-// the transport promised not to touch it.
-func TestABodyOverTheCapArrivesWhole(t *testing.T) {
-	msg := strings.Repeat("x", 2*maxBody)
-	body := `{"message":"` + msg + `"}`
+// A create-commit body above maxBody cannot be given an author, so it is
+// refused: sent on, it would make GitHub record the token's own account.
+func TestACommitBodyOverTheCapIsRefused(t *testing.T) {
+	body := `{"message":"` + strings.Repeat("x", 2*maxBody) + `"}`
+	for _, path := range []string{"/repos/o/r/git/commits", "/repositories/1/git/commits"} {
+		hit := false
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hit = true }))
+		req, _ := http.NewRequestWithContext(WithIdentity(context.Background(), testID), "POST",
+			srv.URL+path, strings.NewReader(body))
+		resp, err := (&http.Client{Transport: Transport(nil)}).Do(req)
+		srv.Close()
+		if err == nil {
+			resp.Body.Close()
+			t.Fatalf("%s: an over-cap commit body was sent", path)
+		}
+		if !errors.Is(err, ErrBodyTooLarge) {
+			t.Errorf("%s: error = %v, want ErrBodyTooLarge", path, err)
+		}
+		if hit {
+			t.Errorf("%s: the server got a request without an author", path)
+		}
+	}
+}
+
+// The cap only concerns the commit endpoint: another request with a large body
+// (a blob) still arrives whole.
+func TestALargeBodyToAnotherEndpointArrivesWhole(t *testing.T) {
+	body := `{"content":"` + strings.Repeat("x", 2*maxBody) + `"}`
 	var got []byte
 	var length int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -104,7 +129,7 @@ func TestABodyOverTheCapArrivesWhole(t *testing.T) {
 	}))
 	defer srv.Close()
 	req, _ := http.NewRequestWithContext(WithIdentity(context.Background(), testID), "POST",
-		srv.URL+"/repos/o/r/git/commits", strings.NewReader(body))
+		srv.URL+"/repos/o/r/git/blobs", strings.NewReader(body))
 	resp, err := (&http.Client{Transport: Transport(nil)}).Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -112,6 +137,43 @@ func TestABodyOverTheCapArrivesWhole(t *testing.T) {
 	resp.Body.Close()
 	if string(got) != body || length != int64(len(body)) {
 		t.Errorf("server got %d bytes (content length %d), want %d", len(got), length, len(body))
+	}
+}
+
+// A repository that was renamed or moved answers with a redirect to
+// /repositories/{id}/git/commits, and the client re-sends the caller's original
+// body there. The second hop goes through the transport again and must get the
+// identity too (307 and 308 keep method and body).
+func TestARedirectedCommitRequestGetsTheIdentityToo(t *testing.T) {
+	for _, code := range []int{http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+		var got map[string]any
+		var paths []string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			paths = append(paths, r.URL.Path)
+			if r.URL.Path == "/repos/o/old/git/commits" {
+				http.Redirect(w, r, "/repositories/1/git/commits", code)
+				return
+			}
+			b, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(b, &got)
+		}))
+		req, _ := http.NewRequestWithContext(WithIdentity(context.Background(), testID), "POST",
+			srv.URL+"/repos/o/old/git/commits", strings.NewReader(`{"message":"m"}`))
+		resp, err := (&http.Client{Transport: Transport(nil)}).Do(req)
+		srv.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if len(paths) != 2 || paths[1] != "/repositories/1/git/commits" {
+			t.Fatalf("%d: paths = %v, want the redirect followed", code, paths)
+		}
+		for _, k := range []string{"author", "committer"} {
+			who, _ := got[k].(map[string]any)
+			if who["name"] != testID.Name || who["email"] != testID.Email {
+				t.Errorf("%d: after the redirect %s = %v, want %v", code, k, got[k], testID)
+			}
+		}
 	}
 }
 
