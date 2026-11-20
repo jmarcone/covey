@@ -795,7 +795,8 @@
       },
       "noData": "sem dados",
       "none": "Nenhuma rodada de correção neste período.",
-      "error": "Não foi possível carregar as rodadas de correção."
+      "error": "Não foi possível carregar as rodadas de correção.",
+      "offNote": "Por agente. As rodadas de agentes que começam do zero por configuração (motivo \"off\", p. ex. o revisor) ficam de fora aqui: {{n}} neste período. Contam como \"nova\" no A/B abaixo."
     }
   },
   "lang": {

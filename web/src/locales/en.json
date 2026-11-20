@@ -795,7 +795,8 @@
       },
       "noData": "no data",
       "none": "No fix rounds in this window.",
-      "error": "Could not load the fix rounds."
+      "error": "Could not load the fix rounds.",
+      "offNote": "Per agent. Rounds of agents that start fresh by setting (reason \"off\", e.g. the reviewer) are left out here: {{n}} in this window. They count under \"fresh\" in the A/B below."
     }
   },
   "lang": {

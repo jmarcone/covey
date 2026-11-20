@@ -25,7 +25,14 @@ const report: FixRoundReport = {
   to: "2026-11-20T00:00:00Z",
   by_decision: [resumed, empty("fresh"), empty("unknown")],
   by_policy: [],
-  agents: [{ agent_id: "a1", slug: "covey-dev", by_decision: [], by_policy: [{ ...resumed, key: "always" }, empty("conditional")] }],
+  off_excluded: 2,
+  agents: [
+    { agent_id: "a1", slug: "covey-dev", by_decision: [resumed, empty("fresh"), empty("unknown")],
+      by_policy: [{ ...resumed, key: "always" }, empty("conditional")], off_excluded: 0 },
+    // The reviewer: every round off — no decision rows of its own.
+    { agent_id: "r1", slug: "covey-reviewer", by_decision: [empty("sticky_resumed"), empty("fresh"), empty("unknown")],
+      by_policy: [{ ...empty("fresh"), rounds: 2 }], off_excluded: 2 },
+  ],
   rounds_per_pr: [{ agent_id: "a1", slug: "covey-dev", policy: "always", prs: 2, rounds: fig(1.5, 3) }],
   prs: [],
 };
@@ -43,7 +50,12 @@ describe("Fix rounds", () => {
 
   it("shows each figure with n, and no data where n = 0", () => {
     renderWithProviders(<FixRoundsView rep={report} />);
+    // Read per developer; the reviewer (all rounds off) has no decision rows,
+    // and the note says how many rounds were left out.
     const table = document.querySelector("[data-fix-decision]") as HTMLElement;
+    expect(table.querySelectorAll("[data-agent='covey-dev']").length).toBe(3);
+    expect(table.querySelector("[data-agent='covey-reviewer']")).toBeNull();
+    expect(document.querySelector("[data-fix-off]")!.textContent).toContain("2 in this window");
     const row = within(table).getByText("resumed").closest("tr")!;
     expect(row.textContent).toContain("$3.50");
     expect(row.textContent).toContain("n=2");
@@ -62,7 +74,7 @@ describe("Fix rounds", () => {
   });
 
   it("reads the week from the endpoint with an RFC 3339 window", async () => {
-    const { calls } = mockFetch({ "/api/v1/cost/fix-rounds": { ...report, by_decision: [empty("sticky_resumed"), empty("fresh"), empty("unknown")], agents: [], rounds_per_pr: [] } });
+    const { calls } = mockFetch({ "/api/v1/cost/fix-rounds": { ...report, by_decision: [empty("sticky_resumed"), empty("fresh"), empty("unknown")], by_policy: [empty("fresh")], off_excluded: 0, agents: [], rounds_per_pr: [] } });
     renderWithProviders(<FixRounds />);
     expect(await screen.findByText("No fix rounds in this window.")).toBeTruthy();
     await waitFor(() => expect(calls.length).toBe(1));

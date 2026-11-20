@@ -795,7 +795,8 @@
       },
       "noData": "keine Daten",
       "none": "Keine Korrekturrunden in diesem Zeitraum.",
-      "error": "Die Korrekturrunden konnten nicht geladen werden."
+      "error": "Die Korrekturrunden konnten nicht geladen werden.",
+      "offNote": "Je Agent. Runden von Agenten, die per Einstellung frisch starten (Grund \"off\", z. B. der Reviewer), fehlen hier: {{n}} in diesem Zeitraum. Sie zählen unten im A/B unter \"frisch\"."
     }
   },
   "lang": {

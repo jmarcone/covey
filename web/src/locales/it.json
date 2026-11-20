@@ -795,7 +795,8 @@
       },
       "noData": "nessun dato",
       "none": "Nessun giro di correzione in questo periodo.",
-      "error": "Impossibile caricare i giri di correzione."
+      "error": "Impossibile caricare i giri di correzione.",
+      "offNote": "Per agente. I giri degli agenti che ripartono da zero per impostazione (motivo \"off\", ad es. il revisore) sono esclusi qui: {{n}} in questo periodo. Contano come \"nuova\" nell'A/B qui sotto."
     }
   },
   "lang": {

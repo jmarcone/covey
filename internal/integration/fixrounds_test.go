@@ -73,6 +73,27 @@ func TestFixRoundsFromPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// A resumed round that hit the turn limit: its root failed, its
+	// continuation finished it. One round, $4 + $1, the root's decision.
+	chainRoot := task(dev.ID, "PR 42 round 4", "pr:42", now.Add(-50*time.Minute), now.Add(-45*time.Minute), "sticky_resumed", "conditional")
+	chainEnd := task(dev.ID, "PR 42 round 4 (continued)", "pr:42", now.Add(-40*time.Minute), now.Add(-30*time.Minute), "", "conditional")
+	if _, err := s.pool.Exec(ctx, `UPDATE backlog_tasks SET state = 'failed', session_finished_at = NULL WHERE id = $1`, chainRoot); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE backlog_tasks SET origin = 'continuation:' || $2::uuid::text, parent_task_id = $2::uuid
+		WHERE id = $1`, chainEnd, chainRoot); err != nil {
+		t.Fatal(err)
+	}
+	usage(dev.ID, chainRoot, "claude-opus-5-5", 1_000_000, 0, 0, 4)
+	usage(dev.ID, chainEnd, "claude-opus-5-5", 250_000, 0, 0, 1)
+
+	// The other agent's second round on the PR, fresh by setting (reason off):
+	// out of the decision split, under fresh in the policy split.
+	off := task(other.ID, "PR 42 other 2", "pr:42", now.Add(-50*time.Minute), now.Add(-20*time.Minute), "fresh", "fresh")
+	if _, err := s.pool.Exec(ctx, `UPDATE backlog_tasks SET sticky_reason = 'off' WHERE id = $1`, off); err != nil {
+		t.Fatal(err)
+	}
+
 	// Not fix rounds: another agent's first task on the same PR, a title-derived
 	// topic, a round finished before the window.
 	task(other.ID, "PR 42 other", "pr:42", now.Add(-2*time.Hour), now.Add(-time.Hour), "fresh", "fresh")
@@ -94,11 +115,20 @@ func TestFixRoundsFromPostgres(t *testing.T) {
 			fr = g
 		}
 	}
-	if res.Rounds != 1 || fr.Rounds != 1 {
-		t.Fatalf("one resumed and one fresh fix round, got %+v", rep.ByDecision)
+	if res.Rounds != 2 || fr.Rounds != 1 {
+		t.Fatalf("two resumed (one a continuation chain) and one fresh fix round, got %+v", rep.ByDecision)
 	}
-	if res.USD.N != 1 || math.Abs(*res.USD.Mean-5) > 1e-6 {
-		t.Fatalf("resumed $ = %+v, want $5 measured (not the $1000 booked)", res.USD)
+	// $5 each: the plain round measured (not the $1000 booked), the chain over both tasks.
+	if res.USD.N != 2 || math.Abs(*res.USD.Mean-5) > 1e-6 {
+		t.Fatalf("resumed $ = %+v, want $5 per round", res.USD)
+	}
+	if rep.OffExcluded != 1 {
+		t.Fatalf("off rounds left out of the decision split: %d", rep.OffExcluded)
+	}
+	for _, g := range rep.ByPolicy {
+		if g.Key == "fresh" && g.Rounds != 1 {
+			t.Fatalf("the off round stays under the fresh policy: %+v", rep.ByPolicy)
+		}
 	}
 	if math.Abs(*fr.USD.Mean-0.25) > 1e-6 {
 		t.Fatalf("fresh $ = %+v, want the engine's $0.25 for an unknown model", fr.USD)
@@ -110,8 +140,8 @@ func TestFixRoundsFromPostgres(t *testing.T) {
 		t.Fatalf("an unknown first turn is no data: %+v", fr.FirstTurnCacheWrite)
 	}
 
-	// Rounds per PR: pr:42 has three done tasks of fix-dev, one of fix-other;
-	// pr:7 had no done task in the window.
+	// Rounds per PR: pr:42 has four done tasks of fix-dev (the chain is one),
+	// two of fix-other; pr:7 had no done task in the window.
 	got := map[string]int{}
 	for _, p := range rep.PRs {
 		got[p.Slug] += p.Rounds
@@ -119,7 +149,7 @@ func TestFixRoundsFromPostgres(t *testing.T) {
 			t.Fatalf("only pr:42 had a round in the window: %+v", rep.PRs)
 		}
 	}
-	if got["fix-dev"] != 3 || got["fix-other"] != 1 {
+	if got["fix-dev"] != 4 || got["fix-other"] != 2 {
 		t.Fatalf("rounds per PR: %+v", rep.PRs)
 	}
 
@@ -135,7 +165,7 @@ func TestFixRoundsFromPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if len(api.ByDecision) != 3 || api.ByDecision[0].Rounds != 1 {
+	if len(api.ByDecision) != 3 || api.ByDecision[0].Rounds != 2 || api.OffExcluded != 1 {
 		t.Fatalf("api report: %+v", api.ByDecision)
 	}
 	bad := admin.do(http.MethodGet, "/api/v1/cost/fix-rounds?from=yesterday", nil)

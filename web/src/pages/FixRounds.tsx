@@ -83,24 +83,34 @@ const policyLabel = (t: TFunction, p: string) => t(`costs.fixRounds.policy.${p}`
 export function FixRoundsView({ rep }: { rep: FixRoundReport }) {
   const { t } = useTranslation();
   const arms = rep.agents.flatMap((a) => a.by_policy.filter((g) => g.rounds > 0).map((g) => ({ slug: a.slug, id: a.agent_id, g })));
-  const total = rep.by_decision.reduce((s, g) => s + g.rounds, 0);
+  const total = rep.by_policy.reduce((s, g) => s + g.rounds, 0);
+  // Resumed against fresh is read per developer: org-wide it would set one
+  // agent's resumes against another's cold starts. Agents whose rounds are
+  // all "off" (fresh by setting, the reviewer) have no decision to show.
+  const deciders = rep.agents.filter((a) => a.by_decision.some((g) => g.rounds > 0));
   return (
     <>
       <div className="text-sm font-medium mt-2 mb-1">{t("costs.fixRounds.byDecision")}</div>
       {total === 0 && <p className="muted text-xs" data-fix-none>{t("costs.fixRounds.none")}</p>}
-      <div style={{ overflowX: "auto" }}>
-        <table className="text-sm" style={{ borderCollapse: "collapse", width: "100%" }} data-fix-decision>
-          <thead><GroupHead t={t} first={<th style={thl}>{t("costs.fixRounds.colDecision")}</th>} /></thead>
-          <tbody>
-            {rep.by_decision.map((g) => (
-              <tr key={g.key} data-key={g.key}>
-                <td style={td}>{t(`costs.fixRounds.decision.${g.key}`, { defaultValue: g.key })}</td>
-                <GroupCells g={g} />
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <p className="muted text-xs mb-1" data-fix-off>{t("costs.fixRounds.offNote", { n: rep.off_excluded ?? 0 })}</p>
+      {deciders.length > 0 && (
+        <div style={{ overflowX: "auto" }}>
+          <table className="text-sm" style={{ borderCollapse: "collapse", width: "100%" }} data-fix-decision>
+            <thead><GroupHead t={t} first={<><th style={thl}>{t("costs.fixRounds.colAgent")}</th><th style={thl}>{t("costs.fixRounds.colDecision")}</th></>} /></thead>
+            <tbody>
+              {deciders.flatMap((a) =>
+                a.by_decision.map((g) => (
+                  <tr key={`${a.agent_id}:${g.key}`} data-agent={a.slug} data-key={g.key}>
+                    <td style={td} className="mono">{a.slug}</td>
+                    <td style={td}>{t(`costs.fixRounds.decision.${g.key}`, { defaultValue: g.key })}</td>
+                    <GroupCells g={g} />
+                  </tr>
+                )),
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <div className="text-sm font-medium mt-4 mb-1">{t("costs.fixRounds.byPolicy")}</div>
       {arms.length === 0 ? (

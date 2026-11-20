@@ -54,9 +54,18 @@ export type FixRoundGroup = {
 export type FixRoundReport = {
   from: string;
   to: string;
+  /** Org-wide by decision, without the rounds whose reason is "off" (fresh by setting). */
   by_decision: FixRoundGroup[];
   by_policy: FixRoundGroup[];
-  agents: { agent_id: string; slug: string; by_decision: FixRoundGroup[]; by_policy: FixRoundGroup[] }[];
+  /** The rounds left out of by_decision (reason "off"). */
+  off_excluded: number;
+  agents: {
+    agent_id: string;
+    slug: string;
+    by_decision: FixRoundGroup[];
+    by_policy: FixRoundGroup[];
+    off_excluded: number;
+  }[];
   rounds_per_pr: { agent_id: string; slug: string; policy: string; prs: number; rounds: FixFigure }[];
   prs: { agent_id: string; slug: string; pr: number; rounds: number; policy: string }[];
 };

@@ -22,11 +22,18 @@ import (
 //
 // The definitions, pinned by fixrounds_test.go:
 //
-//   - A fix round is a task in state done with an explicit topic (pr:<n> or
-//     issue:<n>) whose session finished (session_finished_at) inside [from, to),
-//     and for which an EARLIER task (created before it, any state) of the same
-//     agent on the same topic exists. The first task on a topic is not a fix
-//     round: there was nothing to resume.
+//   - A fix round is a CHAIN: a task with an explicit topic (pr:<n> or
+//     issue:<n>) and the turn-limit continuations that carry its session on
+//     (origin continuation:<parent>, parent_task_id). A round that hits
+//     max_turns ends failed, and its continuation finishes the work — one
+//     round, not a dropped one and a cheap one. The chain is a round when its
+//     LAST task is done and finished (session_finished_at) inside [from, to),
+//     and an EARLIER task of the same agent on the same topic exists that is
+//     not a continuation (created before the chain's root, any state). The
+//     first task on a topic is not a fix round: there was nothing to resume.
+//   - The dispatch decision, its reason, the policy, the gap, the context and
+//     the first-turn figures are the chain ROOT's: the root's dispatch is the
+//     decision; a continuation resumes its own session by construction.
 //   - First-turn cache write = first_turn_cache_write_5m + first_turn_cache_write_1h
 //     of the first assistant turn of the task's first run, also shown split
 //     by lifetime (a 5-minute write inside a 55-minute window is a full
@@ -38,11 +45,18 @@ import (
 //     and the gap rows of processes without a line) of the tokens × covey's
 //     list price per model, a model the list does not know at the engine's
 //     own figure: the cost module's Measured source (CostCellsFor,
-//     measuredBetween), never the booked cumulative totals. A task without a
-//     single row is left out (its cost is unknown, not $0).
+//     measuredBetween), never the booked cumulative totals — summed over
+//     every task of the chain. A chain without a single row is left out (its
+//     cost is unknown, not $0).
+//   - The split by decision leaves out the rounds whose reason is "off": an
+//     agent whose policy is fresh (the reviewer) is fresh by setting, not by a
+//     decision, and would swamp the fresh side. They stay in the split by
+//     policy (under fresh) and are counted in OffExcluded.
 //   - Rounds per PR = the number of done tasks with topic pr:<n> per agent
 //     (its role is its slug) and pull request, over every pull request with
-//     at least one done task finished inside the window. The pull request's
+//     at least one done task finished inside the window (a continuation
+//     chain is one done task: the rounds before its end failed at the turn
+//     limit). The pull request's
 //     arm is the policy its tasks were dispatched with: one policy, or
 //     "mixed".
 //
@@ -57,6 +71,9 @@ const (
 	FixDecisionFresh   = "fresh"
 	FixUnknown         = "unknown"
 	FixPolicyMixed     = "mixed"
+	// FixReasonOff: fresh because the agent's policy is fresh — a setting,
+	// not a decision; left out of the split by decision.
+	FixReasonOff = "off"
 )
 
 // fixDecisions and fixPolicies are the groups always shown, in this order —
@@ -105,6 +122,8 @@ type FixRoundAgent struct {
 	Slug       string          `json:"slug"`
 	ByDecision []FixRoundGroup `json:"by_decision"`
 	ByPolicy   []FixRoundGroup `json:"by_policy"`
+	// OffExcluded: the agent's rounds left out of ByDecision (reason off).
+	OffExcluded int `json:"off_excluded"`
 }
 
 // PRRounds is one agent's rounds on one pull request.
@@ -130,10 +149,12 @@ type RoundsPerPR struct {
 
 // FixRoundReport is the answer of GET /cost/fix-rounds.
 type FixRoundReport struct {
-	From        time.Time       `json:"from"`
-	To          time.Time       `json:"to"`
-	ByDecision  []FixRoundGroup `json:"by_decision"`
-	ByPolicy    []FixRoundGroup `json:"by_policy"`
+	From       time.Time       `json:"from"`
+	To         time.Time       `json:"to"`
+	ByDecision []FixRoundGroup `json:"by_decision"`
+	ByPolicy   []FixRoundGroup `json:"by_policy"`
+	// OffExcluded: the rounds left out of ByDecision (reason off).
+	OffExcluded int             `json:"off_excluded"`
 	Agents      []FixRoundAgent `json:"agents"`
 	RoundsPerPR []RoundsPerPR   `json:"rounds_per_pr"`
 	PRs         []PRRounds      `json:"prs"`
@@ -146,13 +167,15 @@ type FixRoundUsage struct {
 	EngineUSD float64
 }
 
-// FixRoundRow is one fix round as read from backlog_tasks and model_usage.
+// FixRoundRow is one fix round: its chain's root's dispatch figures, the
+// finish of its last task, and the usage of the whole chain.
 type FixRoundRow struct {
-	TaskID     uuid.UUID
+	TaskID     uuid.UUID // the chain's root
 	AgentID    uuid.UUID
 	Slug       string
 	TopicKey   string
 	Decision   *string // sticky_decision
+	Reason     *string // sticky_reason
 	Policy     *string // sticky_policy (the one applied)
 	FinishedAt time.Time
 
@@ -161,9 +184,101 @@ type FixRoundRow struct {
 	GapS    *int64 // sticky_gap_s
 	Context *int64 // sticky_context
 
-	// Usage is the task's model_usage rows summed per model; empty when the
-	// task left no line.
+	// Usage is the chain's model_usage rows summed per task and model; empty
+	// when no task of the chain left a line.
 	Usage []FixRoundUsage
+}
+
+// ChainTask is one task of a candidate chain as read from backlog_tasks: the
+// chain is named by its last task (EndID), done inside the window.
+type ChainTask struct {
+	EndID    uuid.UUID
+	TaskID   uuid.UUID
+	Parent   *uuid.UUID
+	AgentID  uuid.UUID
+	Slug     string
+	TopicKey string
+	Origin   string
+	State    string
+
+	Decision, Reason, Policy *string
+	FinishedAt               *time.Time
+
+	FirstInput, FirstCacheRead, FirstWrite5m, FirstWrite1h *int64
+	GapS, Context                                          *int64
+
+	// HasEarlier: an earlier task of the agent on the topic exists that is
+	// not a continuation (created before this one). Read on the root.
+	HasEarlier bool
+
+	Usage []FixRoundUsage
+}
+
+// IsContinuation says whether a task carries another one's session on after
+// the turn limit.
+func IsContinuation(origin string) bool { return strings.HasPrefix(origin, "continuation:") }
+
+// ChainRounds folds the chains into fix rounds: the root (the member that is
+// not a continuation of another member) gives the dispatch figures, the end
+// its finish, every member its usage. A chain whose end is not done, or whose
+// root has no earlier task on the topic, is no fix round. Two ends on one
+// root (which the orchestrator never makes) count once, by the later end.
+func ChainRounds(tasks []ChainTask) []FixRoundRow {
+	type chain struct {
+		members []ChainTask
+	}
+	chains := map[uuid.UUID]*chain{}
+	var order []uuid.UUID
+	for _, t := range tasks {
+		c := chains[t.EndID]
+		if c == nil {
+			c = &chain{}
+			chains[t.EndID] = c
+			order = append(order, t.EndID)
+		}
+		c.members = append(c.members, t)
+	}
+	byRoot := map[uuid.UUID]int{}
+	var out []FixRoundRow
+	for _, endID := range order {
+		c := chains[endID]
+		in := map[uuid.UUID]bool{}
+		var end *ChainTask
+		for i := range c.members {
+			in[c.members[i].TaskID] = true
+			if c.members[i].TaskID == endID {
+				end = &c.members[i]
+			}
+		}
+		var root *ChainTask
+		for i := range c.members {
+			m := &c.members[i]
+			if !IsContinuation(m.Origin) || m.Parent == nil || !in[*m.Parent] {
+				root = m
+				break
+			}
+		}
+		if end == nil || root == nil || end.State != "done" || end.FinishedAt == nil || !root.HasEarlier {
+			continue
+		}
+		r := FixRoundRow{TaskID: root.TaskID, AgentID: root.AgentID, Slug: root.Slug, TopicKey: root.TopicKey,
+			Decision: root.Decision, Reason: root.Reason, Policy: root.Policy, FinishedAt: *end.FinishedAt,
+			FirstInput: root.FirstInput, FirstCacheRead: root.FirstCacheRead,
+			FirstWrite5m: root.FirstWrite5m, FirstWrite1h: root.FirstWrite1h,
+			GapS: root.GapS, Context: root.Context}
+		for _, m := range c.members {
+			r.Usage = append(r.Usage, m.Usage...)
+		}
+		if i, dup := byRoot[root.TaskID]; dup {
+			if r.FinishedAt.After(out[i].FinishedAt) {
+				out[i] = r
+			}
+			continue
+		}
+		byRoot[root.TaskID] = len(out)
+		out = append(out, r)
+	}
+	return out
 }
 
 // PRTaskRow is one done task on a pull request (for rounds per PR).
@@ -327,25 +442,32 @@ func SummarizeFixRounds(from, to time.Time, rounds []FixRoundRow, prTasks []PRTa
 	type agentAcc struct {
 		slug               string
 		decision, policies map[string]*groupAcc
+		off                int
 	}
 	agents := map[uuid.UUID]*agentAcc{}
 	for _, r := range rounds {
 		d, p := DecisionKey(r.Decision), PolicyKey(r.Policy)
-		accFor(byDecision, d).add(r)
-		accFor(byPolicy, p).add(r)
+		off := r.Reason != nil && *r.Reason == FixReasonOff
 		a := agents[r.AgentID]
 		if a == nil {
 			a = &agentAcc{slug: r.Slug, decision: map[string]*groupAcc{}, policies: map[string]*groupAcc{}}
 			agents[r.AgentID] = a
 		}
-		accFor(a.decision, d).add(r)
+		accFor(byPolicy, p).add(r)
 		accFor(a.policies, p).add(r)
+		if off {
+			rep.OffExcluded++
+			a.off++
+			continue
+		}
+		accFor(byDecision, d).add(r)
+		accFor(a.decision, d).add(r)
 	}
 	rep.ByDecision = groups(fixDecisions, byDecision)
 	rep.ByPolicy = groups(fixPolicies, byPolicy)
 	for id, a := range agents {
 		rep.Agents = append(rep.Agents, FixRoundAgent{AgentID: id, Slug: a.slug,
-			ByDecision: groups(fixDecisions, a.decision), ByPolicy: groups(fixPolicies, a.policies)})
+			ByDecision: groups(fixDecisions, a.decision), ByPolicy: groups(fixPolicies, a.policies), OffExcluded: a.off})
 	}
 	sort.Slice(rep.Agents, func(i, j int) bool {
 		if rep.Agents[i].Slug != rep.Agents[j].Slug {
@@ -452,42 +574,56 @@ const explicitTopic = `'^(pr|issue):[0-9]+$'`
 // FixRounds reads the fix rounds of an organisation finished in [from, to)
 // and summarizes them (see the definitions at the top of this file).
 func (s *Store) FixRounds(ctx context.Context, orgID uuid.UUID, from, to time.Time) (FixRoundReport, error) {
+	// The candidate chains: every done task with a topic finished in the
+	// window, walked up its continuations to the root (as the gap booking
+	// walks them, costinsights.go). The depth bounds a cycle no one makes.
 	rows, err := s.pool.Query(ctx, `
-		SELECT t.id, t.agent_id, a.slug, t.topic_key, t.sticky_decision, t.sticky_policy, t.session_finished_at,
+		WITH RECURSIVE ends AS (
+			SELECT t.id FROM backlog_tasks t
+			WHERE t.org_id = $1 AND t.state = 'done' AND t.topic_key ~ `+explicitTopic+`
+			  AND t.session_finished_at >= $2 AND t.session_finished_at < $3),
+		chain(end_id, task_id, depth) AS (
+			SELECT id, id, 0 FROM ends
+			UNION
+			SELECT c.end_id, t.parent_task_id, c.depth + 1
+			FROM chain c JOIN backlog_tasks t ON t.id = c.task_id
+			WHERE t.origin LIKE 'continuation:%' AND t.parent_task_id IS NOT NULL AND c.depth < 100)
+		SELECT c.end_id, t.id, t.parent_task_id, t.agent_id, a.slug, COALESCE(t.topic_key, ''), t.origin, t.state,
+			t.sticky_decision, t.sticky_reason, t.sticky_policy, t.session_finished_at,
 			t.first_turn_input, t.first_turn_cache_read, t.first_turn_cache_write_5m, t.first_turn_cache_write_1h,
-			t.sticky_gap_s, t.sticky_context
-		FROM backlog_tasks t JOIN agents a ON a.id = t.agent_id
-		WHERE t.org_id = $1 AND t.state = 'done' AND t.topic_key ~ `+explicitTopic+`
-		  AND t.session_finished_at >= $2 AND t.session_finished_at < $3
-		  AND EXISTS (SELECT 1 FROM backlog_tasks p
-			WHERE p.agent_id = t.agent_id AND p.topic_key = t.topic_key
-			  AND p.id <> t.id AND p.created_at < t.created_at)`, orgID, from, to)
+			t.sticky_gap_s, t.sticky_context,
+			EXISTS (SELECT 1 FROM backlog_tasks p
+				WHERE p.agent_id = t.agent_id AND p.topic_key = t.topic_key
+				  AND p.origin NOT LIKE 'continuation:%' AND p.id <> t.id AND p.created_at < t.created_at)
+		FROM chain c JOIN backlog_tasks t ON t.id = c.task_id JOIN agents a ON a.id = t.agent_id
+		WHERE t.org_id = $1`, orgID, from, to)
 	if err != nil {
 		return FixRoundReport{}, err
 	}
-	var rounds []FixRoundRow
-	idx := map[uuid.UUID]int{}
+	var tasks []ChainTask
+	idx := map[uuid.UUID][]int{}
 	for rows.Next() {
-		var r FixRoundRow
-		if err := rows.Scan(&r.TaskID, &r.AgentID, &r.Slug, &r.TopicKey, &r.Decision, &r.Policy, &r.FinishedAt,
-			&r.FirstInput, &r.FirstCacheRead, &r.FirstWrite5m, &r.FirstWrite1h, &r.GapS, &r.Context); err != nil {
+		var c ChainTask
+		if err := rows.Scan(&c.EndID, &c.TaskID, &c.Parent, &c.AgentID, &c.Slug, &c.TopicKey, &c.Origin, &c.State,
+			&c.Decision, &c.Reason, &c.Policy, &c.FinishedAt,
+			&c.FirstInput, &c.FirstCacheRead, &c.FirstWrite5m, &c.FirstWrite1h, &c.GapS, &c.Context, &c.HasEarlier); err != nil {
 			rows.Close()
 			return FixRoundReport{}, err
 		}
-		idx[r.TaskID] = len(rounds)
-		rounds = append(rounds, r)
+		idx[c.TaskID] = append(idx[c.TaskID], len(tasks))
+		tasks = append(tasks, c)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return FixRoundReport{}, err
 	}
 
-	// The Measured source: every model_usage row of the rounds, whenever it
-	// was filed (a round's first run may start before the window).
-	if len(rounds) > 0 {
-		ids := make([]uuid.UUID, 0, len(rounds))
-		for _, r := range rounds {
-			ids = append(ids, r.TaskID)
+	// The Measured source: every model_usage row of every task of the chains,
+	// whenever it was filed (a round's first run may start before the window).
+	if len(tasks) > 0 {
+		ids := make([]uuid.UUID, 0, len(idx))
+		for id := range idx {
+			ids = append(ids, id)
 		}
 		rows, err = s.pool.Query(ctx, `SELECT task_id, model, SUM(input_tokens), SUM(output_tokens), SUM(cache_read_tokens),
 			SUM(cache_write_5m_tokens), SUM(cache_write_1h_tokens), SUM(web_search_requests), SUM(engine_usd)::float8
@@ -507,8 +643,8 @@ func (s *Store) FixRounds(ctx context.Context, orgID uuid.UUID, from, to time.Ti
 				rows.Close()
 				return FixRoundReport{}, err
 			}
-			if i, ok := idx[id]; ok {
-				rounds[i].Usage = append(rounds[i].Usage, u)
+			for _, i := range idx[id] {
+				tasks[i].Usage = append(tasks[i].Usage, u)
 			}
 		}
 		rows.Close()
@@ -516,6 +652,7 @@ func (s *Store) FixRounds(ctx context.Context, orgID uuid.UUID, from, to time.Ti
 			return FixRoundReport{}, err
 		}
 	}
+	rounds := ChainRounds(tasks)
 
 	rows, err = s.pool.Query(ctx, `
 		SELECT t.agent_id, a.slug, t.topic_key, t.sticky_policy

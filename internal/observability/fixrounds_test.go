@@ -245,3 +245,94 @@ func TestPRNumber(t *testing.T) {
 		}
 	}
 }
+
+// A round that hits the turn limit ends failed and its continuation finishes
+// it: one round, with the root's dispatch figures and the whole chain's cost.
+func TestChainRoundsFoldContinuations(t *testing.T) {
+	dev := uuid.New()
+	root, cont, cont2, single := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	end := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
+	opus := func(input int64) []FixRoundUsage {
+		return []FixRoundUsage{{Model: "claude-opus-5-5", ModelTokens: ModelTokens{Input: input}}}
+	}
+	tasks := []ChainTask{
+		// Chain: root failed at the turn limit → continuation failed → continuation done.
+		{EndID: cont2, TaskID: cont2, Parent: &cont, AgentID: dev, Slug: "covey-dev", TopicKey: "pr:42",
+			Origin: "continuation:" + cont.String(), State: "done", FinishedAt: &end, Policy: fxStr("always"),
+			FirstCacheRead: fxI64(999_999), Usage: opus(250_000)}, // $1; its own first turn is a resume of itself
+		{EndID: cont2, TaskID: cont, Parent: &root, AgentID: dev, Slug: "covey-dev", TopicKey: "pr:42",
+			Origin: "continuation:" + root.String(), State: "failed", Policy: fxStr("always"), Usage: opus(500_000)}, // $2
+		{EndID: cont2, TaskID: root, AgentID: dev, Slug: "covey-dev", TopicKey: "pr:42", Origin: "agent:lead",
+			State: "failed", Decision: fxStr("fresh"), Reason: fxStr("window"), Policy: fxStr("conditional"),
+			FirstCacheRead: fxI64(0), FirstWrite5m: fxI64(40_000), FirstWrite1h: fxI64(0), GapS: fxI64(4_000),
+			HasEarlier: true, Usage: opus(1_000_000)}, // $4
+		// A done task without an earlier one on its topic: no fix round.
+		{EndID: single, TaskID: single, AgentID: dev, Slug: "covey-dev", TopicKey: "pr:43", Origin: "manual",
+			State: "done", FinishedAt: &end, Decision: fxStr("fresh"), Reason: fxStr("no_previous")},
+	}
+	rounds := ChainRounds(tasks)
+	if len(rounds) != 1 {
+		t.Fatalf("one chain is one round: %+v", rounds)
+	}
+	r := rounds[0]
+	if r.TaskID != root || *r.Decision != "fresh" || *r.Reason != "window" || *r.Policy != "conditional" {
+		t.Fatalf("the dispatch figures are the root's: %+v", r)
+	}
+	if *r.FirstCacheRead != 0 || *r.FirstWrite5m != 40_000 || *r.GapS != 4_000 || !r.FinishedAt.Equal(end) {
+		t.Fatalf("first turn and gap from the root, finish from the end: %+v", r)
+	}
+	if usd, ok := MeasuredUSD(r.Usage); !ok || !near(usd, 7) {
+		t.Fatalf("$ over the whole chain = %v, want 7", usd)
+	}
+	rep := SummarizeFixRounds(time.Time{}, time.Time{}, rounds, nil)
+	f := fxGroup(t, rep.ByDecision, "fresh")
+	if f.Rounds != 1 {
+		t.Fatalf("one fresh round: %+v", rep.ByDecision)
+	}
+	fxMean(t, f.USD, 7, 1)
+	fxMean(t, f.FirstTurnCacheWrite, 40_000, 1)
+
+	// The end not done (the chain still failed): no round.
+	tasks[0].State = "failed"
+	if got := ChainRounds(tasks); len(got) != 0 {
+		t.Fatalf("a chain that did not finish is no round: %+v", got)
+	}
+}
+
+// An agent whose policy is fresh is fresh by setting (reason off): left out of
+// the split by decision, kept under fresh in the split by policy, counted.
+func TestFixRoundsLeaveOffOutOfTheDecision(t *testing.T) {
+	dev, rev := uuid.New(), uuid.New()
+	rounds := []FixRoundRow{
+		{AgentID: dev, Slug: "covey-dev", Decision: fxStr("fresh"), Reason: fxStr("window"), Policy: fxStr("conditional")},
+		{AgentID: dev, Slug: "covey-dev", Decision: fxStr("sticky_resumed"), Policy: fxStr("conditional")},
+		{AgentID: rev, Slug: "covey-reviewer", Decision: fxStr("fresh"), Reason: fxStr("off"), Policy: fxStr("fresh")},
+		{AgentID: rev, Slug: "covey-reviewer", Decision: fxStr("fresh"), Reason: fxStr("off"), Policy: fxStr("fresh")},
+	}
+	rep := SummarizeFixRounds(time.Time{}, time.Time{}, rounds, nil)
+	if fxGroup(t, rep.ByDecision, "fresh").Rounds != 1 || fxGroup(t, rep.ByDecision, "sticky_resumed").Rounds != 1 {
+		t.Fatalf("off rounds stay out of the decision split: %+v", rep.ByDecision)
+	}
+	if rep.OffExcluded != 2 {
+		t.Fatalf("off_excluded = %d", rep.OffExcluded)
+	}
+	if fxGroup(t, rep.ByPolicy, "fresh").Rounds != 2 {
+		t.Fatalf("off rounds stay in the policy split: %+v", rep.ByPolicy)
+	}
+	for _, a := range rep.Agents {
+		total := 0
+		for _, g := range a.ByDecision {
+			total += g.Rounds
+		}
+		switch a.Slug {
+		case "covey-dev":
+			if total != 2 || a.OffExcluded != 0 {
+				t.Fatalf("dev: %+v", a)
+			}
+		case "covey-reviewer":
+			if total != 0 || a.OffExcluded != 2 {
+				t.Fatalf("reviewer: %+v", a)
+			}
+		}
+	}
+}

@@ -795,7 +795,8 @@
       },
       "noData": "aucune donnée",
       "none": "Aucun tour de correction dans cette période.",
-      "error": "Impossible de charger les tours de correction."
+      "error": "Impossible de charger les tours de correction.",
+      "offNote": "Par agent. Les tours des agents qui repartent à neuf par réglage (motif « off », p. ex. le relecteur) sont exclus ici : {{n}} dans cette période. Ils comptent sous « neuve » dans l'A/B ci-dessous."
     }
   },
   "lang": {

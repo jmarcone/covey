@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { patch, type Agent, type StickyPolicy } from "../../api";
@@ -26,13 +26,22 @@ export function StickySessions({ agent, editable, row }: { agent: Agent; editabl
   const { t } = useTranslation();
   const qc = useQueryClient();
   const cur = stickyOf(agent);
+  // A refused change must not stay on screen as if it were set: the select
+  // shows what is saved (or what is being saved), and a failed save remounts
+  // the number fields with the saved values.
+  const [epoch, setEpoch] = useState(0);
   const save = useMutation({
     mutationFn: (body: StickyBody) => patch(`/agents/${agent.id}/sticky`, body),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["agent", agent.id] });
-      qc.invalidateQueries({ queryKey: ["agents"] });
-    },
+    // Pending until the agent is read again, so the select never falls back
+    // to the old value between the answer and the refetch.
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: ["agent", agent.id] }),
+        qc.invalidateQueries({ queryKey: ["agents"] }),
+      ]),
+    onError: () => setEpoch((e) => e + 1),
   });
+  const shownPolicy = save.isPending && save.variables ? save.variables.policy : cur.policy;
   const change = (part: Partial<StickyBody>) => {
     const next = { ...cur, ...part };
     if (next.policy !== cur.policy || next.window_minutes !== cur.window_minutes || next.context_cap !== cur.context_cap) {
@@ -48,9 +57,8 @@ export function StickySessions({ agent, editable, row }: { agent: Agent; editabl
       <span className="text-sm">{t("agent.settings.sticky")}</span>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <select
-          key={`sticky:${cur.policy}`}
           aria-label={t("agent.settings.sticky")}
-          defaultValue={cur.policy}
+          value={shownPolicy}
           disabled={disabled}
           onChange={(e) => change({ policy: e.target.value as StickyPolicy })}
         >
@@ -62,7 +70,7 @@ export function StickySessions({ agent, editable, row }: { agent: Agent; editabl
         </select>
         <label className="text-xs muted" style={label}>
           <input
-            key={`stickyWindow:${cur.window_minutes}`}
+            key={`stickyWindow:${cur.window_minutes}:${epoch}`}
             type="number"
             min={1}
             max={10080}
@@ -82,7 +90,7 @@ export function StickySessions({ agent, editable, row }: { agent: Agent; editabl
         </label>
         <label className="text-xs muted" style={label}>
           <input
-            key={`stickyCap:${cur.context_cap}`}
+            key={`stickyCap:${cur.context_cap}:${epoch}`}
             type="number"
             min={1}
             step={1000}

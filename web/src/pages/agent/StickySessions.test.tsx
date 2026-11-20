@@ -63,6 +63,15 @@ describe("StickySessions", () => {
     expect(input.value).toBe("55");
   });
 
+  it("shows the saved policy again when the server refuses the change", async () => {
+    mockFetch({}); // the PATCH is answered 404
+    renderWithProviders(<StickySessions agent={agent({ sticky_policy: "conditional" })} editable row={{}} />);
+    const select = screen.getByLabelText("Sticky sessions") as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "always" } });
+    await waitFor(() => expect(document.querySelector("[data-sticky]")!.textContent).not.toContain("the reviewer should stay fresh"));
+    expect((screen.getByLabelText("Sticky sessions") as HTMLSelectElement).value).toBe("conditional");
+  });
+
   it("is read-only without the right to edit", () => {
     mockFetch({});
     renderWithProviders(<StickySessions agent={agent({ sticky_policy: "conditional" })} editable={false} row={{}} />);

@@ -795,7 +795,8 @@
       },
       "noData": "geen gegevens",
       "none": "Geen correctierondes in deze periode.",
-      "error": "De correctierondes konden niet worden geladen."
+      "error": "De correctierondes konden niet worden geladen.",
+      "offNote": "Per agent. Rondes van agents die door hun instelling fris starten (reden \"off\", bv. de reviewer) zijn hier weggelaten: {{n}} in deze periode. Ze tellen onder \"fris\" in de A/B hieronder."
     }
   },
   "lang": {

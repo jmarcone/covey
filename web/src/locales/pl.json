@@ -795,7 +795,8 @@
       },
       "noData": "brak danych",
       "none": "Brak rund poprawek w tym okresie.",
-      "error": "Nie udało się wczytać rund poprawek."
+      "error": "Nie udało się wczytać rund poprawek.",
+      "offNote": "Na agenta. Rundy agentów, którzy z ustawienia zaczynają od nowa (powód \"off\", np. recenzent), są tu pominięte: {{n}} w tym okresie. Liczą się jako \"nowa\" w A/B poniżej."
     }
   },
   "lang": {

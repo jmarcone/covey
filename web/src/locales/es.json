@@ -795,7 +795,8 @@
       },
       "noData": "sin datos",
       "none": "No hay rondas de corrección en este período.",
-      "error": "No se pudieron cargar las rondas de corrección."
+      "error": "No se pudieron cargar las rondas de corrección.",
+      "offNote": "Por agente. Las rondas de agentes que empiezan de cero por configuración (motivo \"off\", p. ej. el revisor) no se incluyen aquí: {{n}} en este período. Cuentan como \"nueva\" en el A/B de abajo."
     }
   },
   "lang": {
