@@ -18,7 +18,7 @@ State checked: `main` at `b978e2a` (2026-11-20). Where the code breaks a rule, t
 | **Credential** | The secret value a run went out on: a subscription token (a *seat*) or an API key. Every cost row is keyed on it (`secret_key`, `secret_slot`), not on the runtime, so its history survives a reorder. | `model_usage`, `usage_readings`, `credential_*` tables |
 | **Reported price** | The dollar figure Claude Code writes on each result line (`costUSD`), one line's own share at a time. | `model_usage.engine_usd` (0142/0144); `external_usage.reported_usd` (0150) |
 | **List price** (recomputed) | The tokens of a call priced with covey's table: input, output, cache read, cache write 5 min, cache write 1 h, web searches at $0.01. Thinking tokens are output. | `ListPrice`, `internal/observability/listprice.go:30` |
-| **Lead price** | The figure the page leads with: per call, the reported price where there is one, else the list price. A call with neither is *unpriced*, never $0. | `leadUSD`, `internal/observability/external.go` (comment at the `ExternalCell` type) |
+| **Lead price** | The figure the page leads with: per call, the reported price where there is one, else the list price. A call with neither is *unpriced*, never $0. | the comment "The lead price (#120 …)", `internal/observability/external.go:667`. covey's lines always carry Claude Code's figure (`model_usage.engine_usd`), so their lead price is it; an outside call carries one only sometimes (`reported_usd`). |
 | **Booked cost** | What covey filed per run in `cost_entries` for budgets and guard rails. An accounting record, not a price. | `cost_entries` (0144, 0147) |
 | **Meter** | The provider's own usage gauge for a subscription seat: percent of the weekly allowance used, in whole percents, account-wide. | `usage_readings` (0142/0145) |
 | **Plan price** | What a seat costs per month or year, in its currency, with its exchange rate, valid from a date. | `credential_plans` (0145) |
@@ -46,8 +46,11 @@ Token prices are never real cost. That covers the reported price, the recomputed
   - A point read while the basis was *usage* belongs to the usage charges, not the plan.
 - **Points.** Code: `meterQueryTemplate`, `stacked.go:643`. Readings are taken per credential, reading source and window.
   - Stale and unsupported readings are dropped.
-  - A reading from a week that is already over is dropped.
-  - A new week starts when the reset time moves forward by more than an hour. Where no reset time is given, a new week starts when the previous reset time has passed, or when the meter drops by more than one point.
+  - A late reading is dropped: one whose reset time lies more than an hour before the latest reset time any earlier reading gave. A run of late readings is dropped as a whole.
+  - A new week starts:
+    - where a reading and the one before it both carry a reset time, when the reset time moved forward by more than an hour (a manual reading may differ from the provider's last reset by up to an hour, `internal/httpapi/costinsights.go:306`);
+    - where only the reading before carries one, when that reset time has passed (not while it is still ahead);
+    - where the reading before carries none, when the meter dropped by more than one point. A drop of one is a lagging reading.
   - Within a week a step adds the rise of the running maximum, so a lagging reading adds 0.
   - The first reading of a new week counts in full, because the meter started at 0. The first reading of a credential ever is the baseline and counts 0.
   - Only the `seven_day` all-models window is priced. The 5-hour and per-model windows count the same work again.
@@ -139,7 +142,7 @@ Token prices are never real cost. That covers the reported price, the recomputed
 **Rule.** Every split adds up to the figure it splits. What nobody can be given stays visible as a part of its own and is never folded into covey.
 
 **How covey computes it.** Each identity below is pinned by a test.
-- **Every step:** covey + outside + unattributed + unsplit = R. Test: `internal/observability/external_test.go:499`.
+- **Every step:** covey + outside + unattributed + unsplit = R. Test: `internal/observability/external_test.go:498`.
 - **Agents:** covey's agents add up to covey's part (test at `external_test.go:324`).
 - **Sources:** the sources add up to the outside part (`SourceParts`).
 - **Seat sums:** `RealUSD` = `CoveyRealUSD` + `ExternalRealUSD` + `UnattributedRealUSD` + `UnsplitRealUSD` (`ExternalMeterSums`, `external.go`).
@@ -210,7 +213,7 @@ The page shows unattributed and not split in the collapsed section *How the real
 
 ### `POST /api/v1/cost/external-usage`
 
-Who may call it: an `org_admin` or security seat (browser session or API key).
+Who may call it: `POST` and `DELETE` need an `org_admin` or security seat (browser session or API key); `GET` is open to any role (`internal/httpapi/server.go:754-757`).
 - **Limits.** At most 2 MiB and 5,000 rows per request. Unknown fields are refused, so no transcript text can ride along.
 - **Body.**
   - `source`: 1 to 64 characters.
@@ -218,7 +221,7 @@ Who may call it: an `org_admin` or security seat (browser session or API key).
     - absent: the stored link is unchanged;
     - `null`: the link is removed;
     - `{"secret_key", "secret_slot"}`: the link is set.
-  - `rows[]`: each row has `host`, `session_id`, `message_id`, `ts`, `model`, the five token counts, an optional `origin` (`main`, `subagent` or `workflow`) and an optional `reported_usd`.
+  - `rows[]`: each row has `host`, `session_id`, `message_id`, `ts`, `model`, the five token counts, an optional `origin` (`main`, `subagent` or `workflow`) and an optional `reported_usd`, a non-negative amount below 10<sup>7</sup>.
   - `reported_through`: an object from host to time.
 - **Row rules.**
   - Every count is required and must be between 0 and 10<sup>9</sup>.
@@ -236,8 +239,8 @@ Who may call it: an `org_admin` or security seat (browser session or API key).
   - A source may have at most 100 active hosts.
 - **Response (`ExternalUploadResult`).** `source`, `received`, `inserted`, `updated`, `unchanged` (the last three add up to `received`), `meter_credential`, and `hosts[]` with each machine's `host`, `reported_through`, `first_reported_at` and `pushed_at`, as stored after the upload.
 - **Other methods.**
-  - `DELETE ?source=` removes a source's rows, its meter link and its hosts' watermarks.
-  - `GET ?days=&bucket=&source=` returns the calls per bucket, source, origin and model (`ExternalUsageByModel`).
+  - `DELETE ?source=` (`org_admin` or security) removes a source's rows, its meter link and its hosts' watermarks.
+  - `GET ?days=&bucket=&source=` (any role) returns the calls per bucket, source, origin and model (`ExternalUsageByModel`).
 
 How to run the uploader is in [`docs/en/operations/usage-push.md`](../docs/en/operations/usage-push.md).
 
@@ -300,29 +303,62 @@ At `hour` and `10hour`, `hourly_from` is where the hourly rows of the bill begin
 
 ## Reconciling a figure: SQL, API, page
 
-Before a figure goes into a report, it is reproduced three ways: by a query over the raw rows, from the API's JSON, and from what the page shows. The three must agree, or the difference is explained. The queries below were checked against hand-computed rows.
+Before a figure goes into a report, it is reproduced three ways: by a query over the raw rows, from the API's JSON, and from what the page shows. The three must agree, or the difference is explained.
 
-**Meter points of one seat** over [`:since`, `:until`). This is a simpler form of `meterQueryTemplate`. It agrees with it when every reading names its reset time and the seat has a reading before the range or the range starts at a reset. Multiply by the price per point of R1. The range is ±1 point per row.
+**Meter points of one seat** over [`:since`, `:until`), per week. This is `meterQueryTemplate` (`stacked.go:643`) narrowed to one seat, one source and the `seven_day` window, with the same rules as R1: the 8-day look-back, the drop of a late reading, the three ways a new week starts and the running maximum. A reading more than 8 days before `:since` is not read, so when the seat has no reading in those 8 days the first one in the range is the baseline and counts 0, as on the page. Multiply by the price per point of R1. The range is ±1 point per week.
 
 ```sql
-WITH r AS (
-  SELECT fetched_at, week_percent AS pct,
-         date_trunc('hour', resets_at + interval '30 minutes') AS week
+WITH r0 AS (
+  SELECT id, fetched_at, week_percent AS pct, resets_at,
+         MAX(resets_at) OVER (ORDER BY fetched_at, id
+           ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS seen_resets
   FROM usage_readings
   WHERE org_id = :org AND secret_key = :key AND secret_slot = :slot
     AND source = :source AND window_kind = 'seven_day'
     AND supported AND NOT stale AND week_percent IS NOT NULL
-    AND fetched_at < :until
-), w AS (
-  SELECT week,
-         MAX(pct) FILTER (WHERE fetched_at >= :since) AS top_in,
-         COALESCE(MAX(pct) FILTER (WHERE fetched_at < :since), 0) AS top_before
-  FROM r GROUP BY week HAVING bool_or(fetched_at >= :since)
+    AND fetched_at >= :since::timestamptz - interval '8 days'
+), r AS (
+  SELECT * FROM r0
+  WHERE resets_at IS NULL OR seen_resets IS NULL OR resets_at >= seen_resets - interval '1 hour'
+), l AS (
+  SELECT r.*, LAG(pct) OVER w AS prev_pct, LAG(resets_at) OVER w AS prev_resets
+  FROM r WINDOW w AS (ORDER BY fetched_at, id)
+), f AS (
+  SELECT l.*, CASE
+    WHEN prev_pct IS NULL THEN 0
+    WHEN resets_at IS NOT NULL AND prev_resets IS NOT NULL
+      THEN (resets_at > prev_resets + interval '1 hour')::int
+    WHEN prev_resets IS NOT NULL THEN (prev_resets <= fetched_at)::int
+    WHEN pct < prev_pct - 1 THEN 1
+    ELSE 0 END AS reset
+  FROM l
+), m AS (
+  SELECT f.*, MAX(pct) OVER (PARTITION BY week ORDER BY fetched_at, id) AS top
+  FROM (SELECT f.*, SUM(reset) OVER (ORDER BY fetched_at, id) AS week FROM f) f
+), s AS (
+  SELECT fetched_at, week, CASE
+    WHEN prev_pct IS NULL THEN 0
+    WHEN reset = 1 THEN top
+    ELSE top - LAG(top) OVER (ORDER BY fetched_at, id) END AS points
+  FROM m
 )
-SELECT week, GREATEST(top_in - top_before, 0) AS points,
-       GREATEST(top_in - top_before - 1, 0) AS low, top_in - top_before + 1 AS high
-FROM w ORDER BY week;
+SELECT week, MIN(fetched_at) AS first_at, SUM(points) AS points,
+       GREATEST(SUM(points) - 1, 0) AS low, SUM(points) + 1 AS high
+FROM s WHERE fetched_at >= :since AND fetched_at < :until
+GROUP BY week ORDER BY week;
 ```
+
+Checked on a scratch table against the code's query and against hand-computed values, seven seats, all three equal:
+
+| Seat | Readings | Points |
+|---|---|---|
+| A | manual, 20 % (reset 10:10), 25 % (10:10), 30 % (10:40), range from the second | 10 (a cut by the rounded reset hour would give 5 + 30 = 35) |
+| B | 40 %, a new week at 3 %, a late reading 45 % of the old week, 6 % | 6 (the late reading dropped) |
+| C | one reading 9 days before the range, then 10 %, 14 % | 4 (10 % is the baseline) |
+| D | 30 %, 32 %, a stale 90 %, 31 %, 33 %, 40 % after `:until` | 3 |
+| E | no reset times: 6 %, 9 %, 8 %, 2 %, 4 % | 3 + 4 = 7 (a drop of 1 is lag, a drop of 6 a new week) |
+| F | 50 % with a reset that has passed, then 3 %, 5 % without | 5 |
+| G | 50 % with a reset still ahead, then 49 %, 2 % without | 0 + 2 = 2 |
 
 **List and reported price of covey's lines** on one credential in a span (a step's L<sub>cov</sub>). A model the table does not know comes out with an empty list and its reported figure. The prices are those of `listprice.go`.
 
@@ -347,10 +383,10 @@ FROM m LEFT JOIN prices p ON p.id = m.priced_as
 GROUP BY 1 ORDER BY 1;
 ```
 
-**The bill of one API key per UTC day.** This uses daily rows only, so it is complete for days the daily re-read has covered. The page picks the freshest width per day (`chosenRows`).
+**The bill of one API key per UTC day.** This reads daily rows only, so it is complete for days the daily re-read has covered. The page reads hourly rows for the last two days, where only they exist (`billedHourlyReach`, `billing.go:852`), and for a day on which one API key maps to several credentials (`chosenRows`, `billing.go:405`); for those days compare against the hourly rows summed per UTC day.
 
 ```sql
-SELECT bucket_start::date AS day, SUM(amount_cents) / 100 AS billed_usd,
+SELECT (bucket_start AT TIME ZONE 'UTC')::date AS day, SUM(amount_cents) / 100 AS billed_usd,
        SUM(list_amount_cents) / 100 AS billed_list_usd, MAX(data_refreshed_at) AS complete_to
 FROM billed_cost
 WHERE org_id = :org AND bucket_width = '1d' AND api_key_id = :api_key_id
