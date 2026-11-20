@@ -89,9 +89,10 @@ Token prices are never real cost. That covers the reported price, the recomputed
   - Floor = floor list ÷ (R + slack).
   - The floor list leaves out lines that began before the range, and outside calls from before the range in the first step's span (`floorCovExcludedBy`, `external.go:1730`).
   - Slack = 2 points × (1 + number of resets) per seat (`meterSlack`, `costFigures.ts:913`).
-    - Steps read under the usage basis are left out, both from the resets counted and from the test for list.
+    - Steps read under the usage basis are left out of the resets counted.
     - A seat whose every step was read under the usage basis has no slack.
-    - A seat with no points, no list and no reset in the range has no slack either.
+    - Otherwise a seat gets slack when it has points, a reset, or list in the range. "List in the range" is either of two tests: list on one of its steps not read under the usage basis, or list anywhere in the seat's range (`seatHasList`, `costFigures.ts:1019`: covey's or the outside range list above 0). That range list includes list before the first reading, after the last one, at unpriced steps and at usage-basis steps (`seatLists`). So a seat whose only list lies outside its readings still gets 2 points of slack.
+    - A seat with none of these (no points, no reset, no list in the range) has no slack.
     - A point is priced at the dearest plan price the server gave a step of that seat. Without one, it uses the plan valid now (else the seat's latest plan), else the whole meter's dearest price (`slackRate`, `costFigures.ts:896`).
   - Code: `headline` (`costFigures.ts:1595`) and `everythingOnMeter` (`costFigures.ts:1025`).
 - **When there is no multiple.** The page says which of these applies, checked in this order:
@@ -138,7 +139,9 @@ Token prices are never real cost. That covers the reported price, the recomputed
    - A covey line spread over several spans counts at its whole list when it began inside the stretch (not in a reset step). Otherwise it does not count.
 4. **Unattributed points.**
    - With k known: U<sub>c</sub> = max(0, P<sub>c</sub> − S<sub>c</sub> − k·L<sub>c</sub>). Here L<sub>c</sub> counts every spread line that ran in the chunk at its whole list (`chunkListHigh`, `external.go:2548`), so U<sub>c</sub> is at most the true unattributed points.
-   - A chunk with no list at all: U<sub>c</sub> = P<sub>c</sub>, because the meter moved and nobody reported a call.
+   - A chunk with no list at all: U<sub>c</sub> = P<sub>c</sub>, because the meter moved and nobody reported a call (`noCall`, `external.go:2212`). Two exceptions:
+     - No list, but covey bookings without a line that carry a booked cost, and no unpriced outside call: the chunk is incomplete, U<sub>c</sub> = 0, and its share is 0, so the whole movement is covey's (`split`, `external.go:2204`).
+     - No list, covey bookings without a line, *and* unpriced outside calls: whose use moved the meter is unknown. The chunk is not split at all (`unknown`, `external.go:2208`; see R4 *Not split*).
    - No k, or the chunk is incomplete (covey bookings without a line, or unpriced outside calls): U<sub>c</sub> = 0. The chunk's whole movement is then split by the priced list share in step 5, including movement nobody's calls explain. See R4 and [#196](https://github.com/jmarcone/covey/issues/196).
 5. **Split each step of a chunk.**
    - R<sub>un</sub> = R × U<sub>c</sub> ÷ P<sub>c</sub>.
@@ -172,7 +175,10 @@ Token prices are never real cost. That covers the reported price, the recomputed
 
 What each of the rest means:
 - *Unattributed*: movement nobody's calls explain, beyond what the rate k accounts for (R3 step 4). In a complete chunk it goes to nobody. An incomplete chunk has none; see below.
-- *Not split*: movement in steps the outside sessions had not reported yet, or whose outside calls were *all* unpriced (`outside_unpriced`).
+- *Not split*: movement in steps of three kinds:
+  - steps the outside sessions had not reported yet;
+  - steps whose outside calls were *all* unpriced (`outside_unpriced`);
+  - steps of a chunk with no list that holds both covey bookings without a line and unpriced outside calls (`unknown()`, `external.go:2809`). These are counted with the `outside_unpriced` readings (`OutsideUnpricedRealUSD`), never covey's.
 - *Unpriced*: points with no plan price, or tokens of a model the table does not know. They are counted and named, never $0.
 - *Before / after the readings*: list with no metered real cost.
 
@@ -181,7 +187,7 @@ The page shows unattributed and not split in the collapsed section *How the real
 **Incomplete chunks: what the code does.** A chunk is incomplete when it holds outside calls with no price next to priced ones, or covey bookings without a line (`meterChunk.incomplete`, `external.go:2199`).
 - It has no unattributed part: U<sub>c</sub> = 0 (`chunkUnattributed`, `external.go:2519`).
 - Its whole movement is split by the *priced* list share. That includes the unpriced calls' movement and any movement nobody's calls explain. So covey's part takes covey's list share of both. Covey bookings without a line work the other way: covey's unlisted use goes partly to the outside part.
-- The only signal is the count `IncompleteChunks` (`external.go:750`). The page shows it as one line under the split (`costs.dent.incompleteNote`): the parts "are approximate and may hold use that is not theirs". The parts' ranges (R3 step 6) do not cover the folded movement.
+- The only signal is the count `IncompleteChunks` (`external.go:750`). It is counted per split chunk in the range: a chunk is counted when it is split and its last step is not before the range's start (`external.go:2907`). Incomplete chunks wholly before the range, and the not-split chunks of R4 *Not split*, are not in it. The page shows it as one line under the split (`costs.dent.incompleteNote`): the parts "are approximate and may hold use that is not theirs". The parts' ranges (R3 step 6) do not cover the folded movement.
 - Example (hand-computed, then run through `splitSeat`). The plan is $200 a month, so a point is $0.4615. An earlier chunk set k = 14 ÷ 12 points per $. This chunk is 10 points, R = $4.62, with covey list $2 and outside priced list $1.
   - Complete: U<sub>c</sub> = 10 − 2 − 3.5 = 4.5 points. That is $2.08 unattributed, covey $1.69, outside $0.85.
   - Add **one** unpriced outside call, of any size. Unattributed becomes $0, covey $3.08, outside $1.54.
