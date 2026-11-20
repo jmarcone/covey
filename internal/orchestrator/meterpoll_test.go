@@ -110,7 +110,8 @@ func (f *fakeMeterStore) UpsertExternalUsage(_ context.Context, org uuid.UUID, s
 }
 
 // fakeMeterRunner answers every call with out and err, and keeps the tokens
-// and, where clock is set, the instant of each call.
+// and, where clock is set, the instant of each call. took, where set, runs
+// inside each call: a test moves its clock there, for a call that takes time.
 type fakeMeterRunner struct {
 	mu     sync.Mutex
 	out    []byte
@@ -118,6 +119,7 @@ type fakeMeterRunner struct {
 	tokens []string
 	clock  func() time.Time
 	at     []time.Time
+	took   func()
 }
 
 func (r *fakeMeterRunner) Run(_ context.Context, token string) ([]byte, error) {
@@ -126,6 +128,9 @@ func (r *fakeMeterRunner) Run(_ context.Context, token string) ([]byte, error) {
 	r.tokens = append(r.tokens, token)
 	if r.clock != nil {
 		r.at = append(r.at, r.clock())
+	}
+	if r.took != nil {
+		r.took()
 	}
 	return r.out, r.err
 }
@@ -185,11 +190,18 @@ func newMeterPollRig(t *testing.T, value string, out []byte, runErr error) *mete
 // The call is booked before its reading is filed: the split waits on the
 // poll source's watermark, and must never see a reading whose call is not on
 // the books. The booking is one row per model under the seat's own poll
-// source, linked to the seat, from the poll's host, with the host's
-// watermark at the call.
+// source, linked to the seat, from the poll's host. A call takes time: its
+// rows are dated at its start, when its tokens were spent, while the host's
+// watermark and the readings carry the instant it returned.
 func TestMeterPollBooksThenFiles(t *testing.T) {
 	r := newMeterPollRig(t, " "+meterPollToken+"\n", meterPollFull, nil)
+	start := r.now
+	r.runner.took = func() { r.now = r.now.Add(40 * time.Second) }
 	r.o.PollMeters(context.Background())
+	returned := start.Add(40 * time.Second)
+	if r.now != returned {
+		t.Fatalf("the clock is at %v, want the call to have taken 40s", r.now)
+	}
 
 	want := []string{"advance", "due 10m0s 1h0m0s", "book", "file"}
 	if !reflect.DeepEqual(r.store.ops, want) {
@@ -207,8 +219,8 @@ func TestMeterPollBooksThenFiles(t *testing.T) {
 		*up.link.Credential != (observability.MeterCredential{SecretKey: "claude_code_oauth_token", SecretSlot: 2}) {
 		t.Errorf("link = %+v", up.link)
 	}
-	if !reflect.DeepEqual(up.reported, map[string]time.Time{observability.MeterPollHost: r.now}) || !up.now.Equal(r.now) {
-		t.Errorf("reported = %v, now = %v", up.reported, up.now)
+	if !reflect.DeepEqual(up.reported, map[string]time.Time{observability.MeterPollHost: returned}) || !up.now.Equal(returned) {
+		t.Errorf("reported = %v, now = %v, want both at the call's return %v", up.reported, up.now, returned)
 	}
 	if len(up.rows) != 2 {
 		t.Fatalf("%d rows, want one per model: %+v", len(up.rows), up.rows)
@@ -219,20 +231,20 @@ func TestMeterPollBooksThenFiles(t *testing.T) {
 	}
 	if haiku.Host != observability.MeterPollHost || haiku.SessionID != "s2" ||
 		haiku.MessageID != "s2/claude-haiku-4-5-20251001" || sonnet.MessageID != "s2/claude-sonnet-5-5" ||
-		haiku.TS == nil || !haiku.TS.Equal(r.now) {
-		t.Errorf("haiku row = %+v", haiku)
+		haiku.TS == nil || !haiku.TS.Equal(start) || sonnet.TS == nil || !sonnet.TS.Equal(start) {
+		t.Errorf("haiku row = %+v, sonnet ts %v, want both dated at the call's start %v", haiku, sonnet.TS, start)
 	}
 	if *haiku.Input != 3 || *haiku.Output != 5 || *haiku.CacheRead != 12000 || *haiku.CacheWrite5m != 9800 ||
 		*haiku.CacheWrite1h != 0 || haiku.ReportedUSD == nil || *haiku.ReportedUSD != 0.0123 {
 		t.Errorf("haiku figures = in %d out %d cr %d w5 %d w1 %d usd %v", *haiku.Input, *haiku.Output,
 			*haiku.CacheRead, *haiku.CacheWrite5m, *haiku.CacheWrite1h, haiku.ReportedUSD)
 	}
-	if err := observability.ValidateExternalRows(up.rows, r.now); err != nil {
+	if err := observability.ValidateExternalRows(up.rows, up.now); err != nil {
 		t.Errorf("the booking would be refused: %v", err)
 	}
 	f := r.store.filed[0]
-	if f.org != r.cand.OrgID || f.cred != r.cand.Credential || f.payload != meterPollEvent || !f.at.Equal(r.now) {
-		t.Errorf("filed %+v, want the reading at the booking's instant %v", f, r.now)
+	if f.org != r.cand.OrgID || f.cred != r.cand.Credential || f.payload != meterPollEvent || !f.at.Equal(returned) {
+		t.Errorf("filed %+v, want the reading at the call's return %v, the watermark's instant", f, returned)
 	}
 	if strings.Contains(r.log.String(), meterPollToken) {
 		t.Errorf("the token reached the log: %s", r.log.String())
@@ -491,9 +503,9 @@ func meterPollGaps(r *meterPollRig, d time.Duration) []time.Duration {
 	return gaps
 }
 
-// A seat whose tries file no reading is tried less and less often: the wait
-// doubles from ten minutes with each such try in a row, up to six hours, and
-// stays there. A call that fails and a call without a rate_limit_event count
+// A seat whose tries file no reading is tried less and less often: after the
+// first such try the wait stays at ten minutes, every further one in a row
+// doubles it, up to six hours, and there it stays. A call that fails and a call without a rate_limit_event count
 // alike; the warning for a reason is said once.
 func TestMeterPollBacksOff(t *testing.T) {
 	want := []time.Duration{10 * time.Minute, 20 * time.Minute, 40 * time.Minute, 80 * time.Minute,

@@ -166,28 +166,34 @@ windows are shown and never priced, because they count the same work again.
   engine's subscription is never handed to the CLI. A seat is polled only when
   an outside source is linked to it (the poll's own source does not count): a
   seat no outside source names has no outside work to split, and stays all
-  covey's. Of those, a seat is polled when no supported reading of it (in band
-  or polled; one entered by hand does not count) arrived in the last 10 minutes
-  and either such a source pushed within the last hour or the organisation's
-  fleet is paused — the fleet switch is off, or the organisation has agents and
-  every one of them is killed. Each control-plane process tries one seat at most
-  once in 10 minutes; each try in a row that files no reading (the call failed,
-  or printed no `rate_limit_event`) doubles that wait, up to 6 hours, and a try
-  that files one starts it over. The readings are filed as `usage_cmd`, beside
-  the `/usage` answers. The call moves the meter it reads, so it is booked as
-  outside usage of a source of its own, `meter poll: <secret>#<slot>` (shortened
-  with a hash where the secret's name is long), linked to the seat, and takes
-  its share of the step like any other session; a call whose cost the CLI did
-  not report is not booked, and its reading is not filed either. Uploads under a
-  source beginning with `meter poll` are refused. The poll needs the `claude`
+  covey's. Of those, a seat is polled when no supported reading of it (in band,
+  polled, or from `/usage`; one entered by hand does not count) arrived in the
+  last 10 minutes and either such a source pushed within the last hour or the
+  organisation's fleet is paused — the fleet switch is off, or the organisation
+  has hired agents and every one of them is killed (a draft agent does not
+  count). Each control-plane process tries one seat at most once in 10 minutes;
+  after the first try in a row that files no reading (the call failed, or
+  printed no `rate_limit_event`) the wait stays at 10 minutes, every further
+  miss in a row doubles it, up to 6 hours, and a try that files one starts it
+  over. The readings are the same `rate_limit_event` a run streams, at the same
+  precision, and are filed as in-band readings: they continue the seat's
+  in-band series, the one the page already reads for a seat covey runs on. The
+  call moves the meter it reads, so it is booked as outside usage of a source of
+  its own, `meter poll: <secret>#<slot>` (shortened with a hash where the
+  secret's name is long), linked to the seat and dated at the call's start, and
+  takes its share of the step like any other session; a call whose cost the CLI
+  did not report is not booked, and its reading is not filed either. Such a
+  call, and one that failed after reaching the model, still moved the meter:
+  its few hundred Haiku tokens go unbooked and fall to the other users of the
+  step whose reading holds them. Uploads under a source beginning with `meter
+  poll` are refused; a source of such a name uploaded before that, from a host
+  other than covey's own, stays an outside source like any other. The poll needs the `claude`
   CLI on the control plane's machine: `COVEY_METER_POLL` is `auto` (the
   default: `claude` from `PATH`; the container image has none, so there the
   poll is off and the log says so once at start), `off` (also `false`, `no`,
   `0`), or the binary's path, checked once at start. With the poll off, the
   watermarks of poll sources booked earlier still move up every minute, so they
-  never hold a seat's later readings back. The page still reads one reading
-  source per seat, the one with the most readings, so polled readings count
-  where they outnumber the in-band ones.
+  never hold a seat's later readings back.
 - **A point's worth.** A plan's price is spread over the weeks of its period (a
   month is 52/12 weeks, a year 52), and one point of the weekly meter is a
   hundredth of that: $200 a month is $46.15 a week, $0.46 a point. Each reading

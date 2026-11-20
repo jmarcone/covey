@@ -31,9 +31,16 @@ import (
 //
 // What it files:
 //
-//   - the event's windows as readings, source usage_cmd, in exactly the
-//     shape of the in-band rows (one row per window, five-hour windows in
-//     window_percent, the weekly ones in week_percent);
+//   - the event's windows as readings, source inband, through the in-band
+//     insert itself (one row per window, five-hour windows in window_percent,
+//     the weekly ones in week_percent). The poll reads the same
+//     rate_limit_event a run streams, at the same precision, so its readings
+//     continue the in-band series of the seat rather than start one of their
+//     own: the split reads one source per seat, the one with the most
+//     readings, and a seat covey also runs on has its in-band series picked.
+//     Filed as usage_cmd (the `claude -p /usage` prose, whole percents,
+//     possibly stale) they would lose that count to the in-band readings and
+//     never close a step;
 //   - the call's own tokens as outside usage of a source of its own,
 //     MeterPollSourceFor(seat), linked to the seat it read. The poll moves the
 //     meter it reads; booked like this it takes its share of the step like
@@ -46,7 +53,11 @@ import (
 // under; one source per seat, since a source links to one meter.
 const MeterPollSource = "meter poll"
 
-// MeterPollHost is the host the poll's calls are booked from.
+// MeterPollHost is the host the poll's calls are booked from. A source is
+// the poll's own only where both hold: its name is one of the poll's
+// (IsMeterPollSource) and the host is this one. A source of such a name
+// uploaded before the upload guard existed has another host, and is an
+// outside source like any other.
 const MeterPollHost = "covey"
 
 // MeterPollSourceFor is the source the poll of one seat books its calls
@@ -66,7 +77,8 @@ func MeterPollSourceFor(secretKey string, slot int) string {
 	return string(head[:externalMaxSource-utf8.RuneCountInString(tail)]) + tail
 }
 
-// IsMeterPollSource says whether a source name is one of the poll's.
+// IsMeterPollSource says whether a source name is one of the poll's. The
+// name alone does not make a source covey's own; see MeterPollHost.
 func IsMeterPollSource(source string) bool {
 	return source == MeterPollSource || strings.HasPrefix(source, MeterPollSource+":")
 }
@@ -90,9 +102,14 @@ type MeterPollCandidate struct {
 // and a colon. starts_with, not LIKE, so nothing in the prefix is a pattern.
 const meterPollSourceSQL = `(%[1]s = $%[2]d OR starts_with(%[1]s, $%[2]d || ':'))`
 
+// meterPollHostSQL says whether a host of a source is the poll's own: the
+// source (column %[1]s) has a poll name (prefix in $%[2]d) and the host
+// (column %[3]s) is MeterPollHost (in $%[4]d).
+const meterPollHostSQL = `(` + meterPollSourceSQL + ` AND %[3]s = $%[4]d)`
+
 // meterPollDue finds the due seats: $1 now, $2 the subscription kind, $3 and
 // $4 now less fresh and less active, $5 MeterPollSource, $6 the Claude Code
-// engine.
+// engine, $7 MeterPollHost.
 //
 // A place is a credential in play: a subscription of a Claude Code runtime,
 // not paused by hand and not in a cooldown at now. Another engine's
@@ -104,13 +121,16 @@ const meterPollSourceSQL = `(%[1]s = $%[2]d OR starts_with(%[1]s, $%[2]d || ':')
 //
 // A seat is due only when an outside source (one that is not the poll's) is
 // linked to it: a seat no outside source names has no outside work to split,
-// and the poll's own link would subject it to watermarks it was free of. Of
-// those, a seat is due without a supported, fresh reading (in band or the
-// poll's own; one entered by hand does not count) received within fresh, and
-// when either such a source had a host push within active (outside), or its
-// organisation's fleet is paused (paused): the fleet switch is off, or the
-// organisation has agents and all of them are killed. The poll's own sources
-// never make a seat due: otherwise each poll would call for the next.
+// and the poll's own link would subject it to watermarks it was free of. A
+// source of a poll name counts as outside when it has a host other than
+// MeterPollHost. Of those, a seat is due without a supported, fresh reading
+// (in band, which the poll's own are, or from /usage; one entered by hand
+// does not count) received within fresh, and when either such a source had a
+// host push within active (outside), or its organisation's fleet is paused
+// (paused): the fleet switch is off, or the organisation has hired agents and
+// all of them are killed. A draft agent, not hired yet, runs nothing either
+// way and is left out of that test. The poll's own hosts never make a seat
+// due: otherwise each poll would call for the next.
 var meterPollDue = `
 WITH place AS (
 	SELECT r.org_id, rc.secret_key, rc.secret_slot, rc.runtime_id, rc.ord, rc.kind,
@@ -123,14 +143,17 @@ seat AS (
 	SELECT p.org_id, p.secret_key, p.secret_slot, p.runtime_id, p.ord, p.kind,
 		EXISTS (SELECT 1 FROM external_usage_meters m
 			WHERE m.org_id = p.org_id AND m.secret_key = p.secret_key AND m.secret_slot = p.secret_slot
-			  AND NOT ` + fmt.Sprintf(meterPollSourceSQL, "m.source", 5) + `) AS linked,
+			  AND (NOT ` + fmt.Sprintf(meterPollSourceSQL, "m.source", 5) + `
+			    OR EXISTS (SELECT 1 FROM external_usage_hosts h
+					WHERE h.org_id = m.org_id AND h.source = m.source AND h.host <> $7))) AS linked,
 		EXISTS (SELECT 1 FROM external_usage_meters m
 			JOIN external_usage_hosts h ON h.org_id = m.org_id AND h.source = m.source
 			WHERE m.org_id = p.org_id AND m.secret_key = p.secret_key AND m.secret_slot = p.secret_slot
-			  AND NOT ` + fmt.Sprintf(meterPollSourceSQL, "m.source", 5) + `
+			  AND NOT ` + fmt.Sprintf(meterPollHostSQL, "m.source", 5, "h.host", 7) + `
 			  AND h.pushed_at > $4) AS outside,
-		o.fleet_killed OR (EXISTS (SELECT 1 FROM agents a WHERE a.org_id = p.org_id)
-			AND NOT EXISTS (SELECT 1 FROM agents a WHERE a.org_id = p.org_id AND NOT a.killed)) AS paused
+		o.fleet_killed OR (EXISTS (SELECT 1 FROM agents a WHERE a.org_id = p.org_id AND a.hired_at IS NOT NULL)
+			AND NOT EXISTS (SELECT 1 FROM agents a
+				WHERE a.org_id = p.org_id AND a.hired_at IS NOT NULL AND NOT a.killed)) AS paused
 	FROM place p JOIN organizations o ON o.id = p.org_id
 	WHERE p.n = 1
 	  AND NOT EXISTS (SELECT 1 FROM usage_readings u
@@ -144,16 +167,16 @@ ORDER BY org_id, secret_key, secret_slot`
 
 // MeterPollDue returns the Claude Code subscription seats to poll at now: an
 // outside source (not one of the poll's own) linked to the seat, no
-// supported, fresh reading (inband or usage_cmd) received within fresh, and
-// either such a source's host pushed within active, or the organisation's
-// fleet paused.
+// supported, fresh reading (inband, the poll's own among them, or usage_cmd)
+// received within fresh, and either such a source's host pushed within
+// active, or the organisation's fleet paused.
 //
 // One query across every organisation, each seat once (meterPollDue), in
 // order of organisation, secret_key and slot. Every time is measured from
 // now, never from the database's clock.
 func (s *Store) MeterPollDue(ctx context.Context, now time.Time, fresh, active time.Duration) ([]MeterPollCandidate, error) {
 	rows, err := s.pool.Query(ctx, meterPollDue, now, daemon.CredSubscription, now.Add(-fresh), now.Add(-active),
-		MeterPollSource, daemon.EngineClaudeCode)
+		MeterPollSource, daemon.EngineClaudeCode, MeterPollHost)
 	if err != nil {
 		return nil, err
 	}
@@ -180,19 +203,29 @@ func (s *Store) MeterPollDue(ctx context.Context, now time.Time, fresh, active t
 }
 
 // AddPolledReadings files a rate_limit_event the poll read as readings of
-// cred, source usage_cmd — the in-band insert with the poll's source. at is
-// the call's instant on the control plane's clock, the one its booking and
-// watermark carry, and becomes the readings' fetched_at and received_at.
+// cred, source inband — the in-band insert as a run's line takes it, so the
+// readings extend the seat's in-band series. at is the instant the call
+// returned on the control plane's clock, the one its watermark carries, and
+// becomes the readings' fetched_at and received_at.
 func (s *Store) AddPolledReadings(ctx context.Context, orgID uuid.UUID, cred CredentialRef, payload json.RawMessage, at time.Time) error {
 	at = at.UTC()
-	return s.addEventReadings(ctx, orgID, cred, payload, SourceUsageCmd, &at)
+	return s.addEventReadings(ctx, orgID, cred, payload, &at)
 }
 
-// AdvanceMeterPollMarks moves the watermark of every poll source's host up
-// to now. covey books each poll before it files the reading, so its source
-// has always reported through the present; without this, a poll source that
-// went quiet would hold every later reading of its seat back from the split
-// for as long as its host counts as active.
+// AdvanceMeterPollMarks moves the watermark of the poll's own hosts (a poll
+// source's MeterPollHost) up to now. covey books a poll before it files the
+// reading, so every call that filed one is on the books; without this, a poll
+// source that went quiet would hold every later reading of its seat back from
+// the split for as long as its host counts as active.
+//
+// Not every call is booked: one that ran but whose cost could not be
+// (no result line, the booking refused, the context cancelled) moved the
+// meter all the same. Its few hundred Haiku tokens go unbooked and fall to
+// the other users of the step whose reading holds them. The watermark does
+// not wait for such a call: nothing would ever book it.
+//
+// Another host of a source with a poll name (one uploaded before uploads into
+// such names were refused) is an uploader's, and keeps its own watermark.
 //
 // The watermark only moves up (GREATEST), and a host without one gets its
 // first here, dated now like a push would (the table's CHECK keeps the two
@@ -202,7 +235,7 @@ func (s *Store) AdvanceMeterPollMarks(ctx context.Context, now time.Time) error 
 	_, err := s.pool.Exec(ctx, `UPDATE external_usage_hosts SET
 			reported_through = GREATEST(reported_through, $1),
 			first_reported_at = COALESCE(first_reported_at, $1)
-		WHERE `+fmt.Sprintf(meterPollSourceSQL, "source", 2)+`
-		  AND (reported_through IS NULL OR reported_through < $1)`, now.UTC(), MeterPollSource)
+		WHERE `+fmt.Sprintf(meterPollHostSQL, "source", 2, "host", 3)+`
+		  AND (reported_through IS NULL OR reported_through < $1)`, now.UTC(), MeterPollSource, MeterPollHost)
 	return err
 }

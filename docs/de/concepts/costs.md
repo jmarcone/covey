@@ -182,31 +182,39 @@ bewertet, weil sie dieselbe Arbeit noch einmal zählen.
   ist (die eigene Quelle der Abfrage zählt nicht): Ein Zugang, den keine Quelle
   von außen nennt, hat keine fremde Arbeit, die aufzuteilen wäre, und bleibt
   ganz coveys. Von diesen wird ein Zugang abgefragt, wenn in den letzten 10
-  Minuten keine gültige Ablesung von ihm kam (aus dem Lauf oder abgefragt; eine
-  von Hand eingetragene zählt nicht) und entweder eine solche Quelle in der
-  letzten Stunde gemeldet hat oder die Flotte der Organisation pausiert ist –
-  der Flottenschalter ist aus, oder die Organisation hat Agenten und jeder davon
-  ist gestoppt. Jeder Prozess der Steuerebene versucht einen Zugang höchstens
-  einmal in 10 Minuten; jeder Versuch in Folge, der keine Ablesung ablegt (der
-  Aufruf schlug fehl oder gab kein `rate_limit_event` aus), verdoppelt diese
-  Wartezeit bis höchstens 6 Stunden, und ein Versuch, der eine ablegt, setzt sie
-  zurück. Die Ablesungen werden als `usage_cmd` abgelegt, neben den Antworten
-  auf `/usage`. Der Aufruf bewegt den Zähler, den er liest; deshalb wird er als
-  Nutzung von außen unter einer eigenen Quelle gebucht, `meter poll:
-  <secret>#<slot>` (bei langen Namen des Secrets mit einem Hash gekürzt),
-  verknüpft mit dem Zugang, und trägt seinen Anteil am Schritt wie jede andere
-  Sitzung; ein Aufruf, dessen Kosten die CLI nicht gemeldet hat, wird nicht
-  gebucht, und seine Ablesung wird auch nicht abgelegt. Uploads unter einer
-  Quelle, die mit `meter poll` beginnt, werden abgelehnt. Die Abfrage braucht
+  Minuten keine gültige Ablesung von ihm kam (aus dem Lauf, abgefragt oder von
+  `/usage`; eine von Hand eingetragene zählt nicht) und entweder eine solche
+  Quelle in der letzten Stunde gemeldet hat oder die Flotte der Organisation
+  pausiert ist – der Flottenschalter ist aus, oder die Organisation hat
+  eingestellte Agenten und jeder davon ist gestoppt (ein Agent im Entwurf zählt
+  nicht). Jeder Prozess der Steuerebene versucht einen Zugang höchstens einmal
+  in 10 Minuten; nach dem ersten Versuch in Folge, der keine Ablesung ablegt
+  (der Aufruf schlug fehl oder gab kein `rate_limit_event` aus), bleibt die
+  Wartezeit bei 10 Minuten, jeder weitere Fehlversuch in Folge verdoppelt sie
+  bis höchstens 6 Stunden, und ein Versuch, der eine ablegt, setzt sie zurück.
+  Die Ablesungen sind dasselbe `rate_limit_event`, das ein Lauf streamt, mit
+  derselben Genauigkeit, und werden als Ablesungen aus dem Lauf abgelegt: Sie
+  setzen die Reihe aus dem Lauf fort, die die Seite für einen Zugang, auf dem
+  covey arbeitet, ohnehin liest. Der Aufruf bewegt den Zähler, den er liest;
+  deshalb wird er als Nutzung von außen unter einer eigenen Quelle gebucht,
+  `meter poll: <secret>#<slot>` (bei langen Namen des Secrets mit einem Hash
+  gekürzt), verknüpft mit dem Zugang und auf den Beginn des Aufrufs datiert,
+  und trägt seinen Anteil am Schritt wie jede andere Sitzung; ein Aufruf,
+  dessen Kosten die CLI nicht gemeldet hat, wird nicht gebucht, und seine
+  Ablesung wird auch nicht abgelegt. Ein solcher Aufruf, und einer, der erst
+  nach dem Modell fehlschlug, hat den Zähler trotzdem bewegt: Seine paar
+  hundert Haiku-Tokens bleiben ungebucht und fallen den übrigen Nutzern des
+  Schritts zu, dessen Ablesung sie enthält. Uploads unter einer Quelle, die mit
+  `meter poll` beginnt, werden abgelehnt; eine Quelle dieses Namens, die vorher
+  von einem anderen Host als coveys eigenem hochgeladen wurde, bleibt eine
+  Quelle von außen wie jede andere. Die Abfrage braucht
   die `claude`-CLI auf der Maschine der Steuerebene: `COVEY_METER_POLL` ist
   `auto` (die Vorgabe: `claude` aus dem `PATH`; das Container-Image hat keine,
   dort ist die Abfrage aus, und das Log sagt das einmal beim Start), `off`
   (auch `false`, `no`, `0`) oder der Pfad zum Programm, der einmal beim Start
   geprüft wird. Ist die Abfrage aus, rücken die Wasserstände früher gebuchter
   Abfragequellen trotzdem jede Minute vor, damit sie spätere Ablesungen eines
-  Zugangs nie zurückhalten. Die Seite liest weiter eine Ablesequelle je Zugang,
-  die mit den meisten Ablesungen; abgefragte Ablesungen zählen also dort, wo sie
-  die aus dem Lauf überwiegen.
+  Zugangs nie zurückhalten.
 - **Was ein Punkt wert ist.** Der Preis eines Tarifs wird auf die Wochen seines
   Zeitraums verteilt (ein Monat sind 52/12 Wochen, ein Jahr 52), und ein Punkt des
   Wochenzählers ist ein Hundertstel davon: 200 $ im Monat sind 46,15 $ die Woche,

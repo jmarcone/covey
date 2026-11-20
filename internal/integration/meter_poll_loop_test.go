@@ -50,7 +50,7 @@ func (r *meterPollLoopRunner) calls() int {
 // #153 end to end: a subscription seat no run reads, an outside source linked
 // to it that pushed a moment ago. One round of PollMeters reads the seat
 // through the runner, books the call under "meter poll: <secret>#<slot>"
-// linked to the seat, and files the event's windows as usage_cmd readings. A
+// linked to the seat, and files the event's windows as in-band readings. A
 // second round right after reads nothing: the seat has a fresh reading, and
 // this process tried it a moment ago.
 func TestMeterPollLoopReadsAnIdleSeat(t *testing.T) {
@@ -86,19 +86,19 @@ func TestMeterPollLoopReadsAnIdleSeat(t *testing.T) {
 		t.Helper()
 		var n int
 		if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM usage_readings
-			WHERE org_id = $1 AND secret_key = $2 AND secret_slot = $3 AND source = 'usage_cmd'`,
+			WHERE org_id = $1 AND secret_key = $2 AND secret_slot = $3 AND source = 'inband'`,
 			s.orgID, key, slot).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
 		return n
 	}
 	if n := readings(); n == 0 {
-		t.Fatal("no usage_cmd reading was filed")
+		t.Fatal("no in-band reading was filed")
 	}
 	var week float64
 	var supported bool
 	if err := s.pool.QueryRow(ctx, `SELECT week_percent, supported FROM usage_readings
-		WHERE org_id = $1 AND secret_key = $2 AND secret_slot = $3 AND source = 'usage_cmd' AND window_kind = 'seven_day'`,
+		WHERE org_id = $1 AND secret_key = $2 AND secret_slot = $3 AND source = 'inband' AND window_kind = 'seven_day'`,
 		s.orgID, key, slot).Scan(&week, &supported); err != nil {
 		t.Fatalf("the weekly window was not filed: %v", err)
 	}

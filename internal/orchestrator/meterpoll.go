@@ -34,7 +34,8 @@ import (
 //
 // The order is fixed: the call is BOOKED first, under a source of its own
 // ("meter poll: <secret>#<slot>", linked to the seat it read), and the reading
-// is filed after. The split waits on each linked source's watermark; filed the
+// is filed after, as an in-band reading (it is the same rate_limit_event a run
+// streams). The split waits on each linked source's watermark; filed the
 // other way round, a reading could be split before the call that moved the
 // meter is on the books.
 //
@@ -63,8 +64,10 @@ const (
 	meterPollActive = time.Hour
 	// meterPollRetry: this process tries one seat at most once in this time,
 	// whatever came of the last try — a call that fails is not repeated every
-	// minute. Each further try in a row that files no reading doubles the
-	// wait, up to meterPollMaxWait; a try that files one starts over.
+	// minute. After the first try in a row that files no reading the wait
+	// stays at this; every further miss in a row doubles it, up to
+	// meterPollMaxWait (10, 10, 20, 40 … minutes); a try that files one
+	// starts over.
 	meterPollRetry = 10 * time.Minute
 	// meterPollMaxWait caps that wait: a seat that never yields a reading (a
 	// revoked token, a CLI that prints no rate_limit_event) is still tried
@@ -291,6 +294,11 @@ func (o *Orchestrator) pollMeter(ctx context.Context, st meterPollStore, c obser
 		return
 	}
 
+	// Both instants on this clock, so nothing is dated by another one: t0,
+	// when the call starts, dates its booking, the time its tokens were
+	// spent; at, when it has returned, dates its readings and its source's
+	// watermark, which has to cover the booking.
+	t0 := o.meterPollClock()
 	out, err := o.MeterPoll.Run(ctx, value)
 	if err != nil {
 		o.Log.Warn("meter poll: call failed", "org", c.OrgID, "runtime", cred.RuntimeID, "ord", cred.Ord,
@@ -298,14 +306,15 @@ func (o *Orchestrator) pollMeter(ctx context.Context, st meterPollStore, c obser
 		return
 	}
 	events, usage := parseMeterPoll(out)
-	// The call's own instant on this clock: its booking, its watermark and
-	// its readings all carry it, so none of them is dated by another clock.
 	at := o.meterPollClock()
 
 	// No result line, or one without modelUsage: what the call cost is not
 	// known, so it cannot be booked, and a reading of a movement the books do
-	// not hold would be split as if the poll had cost nothing.
-	rows := usage.rows(at)
+	// not hold would be split as if the poll had cost nothing. The call has
+	// moved the meter all the same: from here on (and on a call that failed
+	// after it reached the model) its few hundred Haiku tokens go unbooked and
+	// fall to the other users of the step whose reading holds them.
+	rows := usage.rows(t0)
 	if len(rows) == 0 {
 		skip("no_result")
 		return
@@ -315,7 +324,7 @@ func (o *Orchestrator) pollMeter(ctx context.Context, st meterPollStore, c obser
 		Credential: &observability.MeterCredential{SecretKey: cred.SecretKey, SecretSlot: cred.SecretSlot}}
 	if _, err := st.UpsertExternalUsage(ctx, c.OrgID, source,
 		link, rows, map[string]time.Time{observability.MeterPollHost: at}, at); err != nil {
-		// Not booked, not filed, for the same reason.
+		// Not booked, not filed, for the same reason, and unbooked as above.
 		o.Log.Warn("meter poll: call not booked", "org", c.OrgID, "runtime", cred.RuntimeID, "ord", cred.Ord,
 			"err", meterPollScrub(err, source, cred.SecretKey))
 		return
@@ -443,7 +452,8 @@ func meterPollInt(raw json.RawMessage) int64 {
 }
 
 // rows books the call as outside usage: one row per model, from the poll's
-// host, under the result's session (a fresh id when it named none).
+// host, under the result's session (a fresh id when it named none), dated at
+// (the call's start).
 func (u *meterPollUsage) rows(at time.Time) []observability.ExternalRow {
 	if u == nil || len(u.Models) == 0 {
 		return nil
