@@ -1349,10 +1349,15 @@ export function meterPoints(rs: readonly UsageReading[], cov: MeterCoverage, per
   let part = -1, lastSeg = -1, lastStart = NaN;
   // The page only has the readings from the range's start, the server judges
   // "late" with a mark that reaches 8 days further back. So a late reading at
-  // the start has no earlier reading here to show it. Within one server
-  // segment the kept readings' resets_at never differ by more than an hour (or
-  // the server would have begun a new week), so one that lies more than an
-  // hour before the latest of its segment's drawn readings is late too.
+  // the start has no earlier reading here to show it. This takes it that,
+  // within one server segment, a reading's resets_at does not drift: no current
+  // source does (the /usage parse is absolute; a reading entered by hand must
+  // repeat the last reset). So a reading whose resets_at lies more than an hour
+  // before the latest of its segment's drawn readings is taken for late and
+  // dropped. That is not the server's rule: it compares each reading with the
+  // previous one (stacked.go:664-665) and with the running maximum (:656), so a
+  // source that drifted by under an hour a step could lose a reading here that
+  // the server keeps (pinned in MeterLine.test.tsx).
   const seen = usableReadings(rs, cov.secret_key, cov.secret_slot, cov.source, cov.window_kind)
     .map((r) => {
       const at = Date.parse(r.fetched_at);

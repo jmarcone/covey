@@ -861,6 +861,10 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
                     </g>
                   );
                 })}
+                {/* A period without a bar says why (no list price, bill incomplete): its note stays over the slot, as before the meter line. */}
+                {notes?.get(i) && (
+                  <text x={padL + i * slot + slot / 2} y={padT - 6} textAnchor="middle" fontSize={9.5} fill="var(--cost-real)" data-note>{notes.get(i)}</text>
+                )}
               </g>
             );
           })}
@@ -1741,6 +1745,8 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, scroll
       {subscription && bucket === "hour" && showReal && (rate.mixed || pointPrice != null) && <p className="muted text-xs mt-1 mb-0" data-hour-note>
         {rate.mixed ? t("costs.fig.hourRealNoteMixed") : t("costs.fig.hourRealNote", { usd: fmtUSD(pointPrice ?? 0) })}
       </p>}
+      {/* Only where the line is drawn: not in the per-agent layout, not in the table. */}
+      {meterLine && layout === "combined" && !asTable && <p className="muted text-xs mt-1 mb-0" data-meter-note>{t("costs.fig.meterNote")}</p>}
       {/* The comparison was asked for but is not drawn here: say why. An agent filter has its own note below. */}
       {billWhole >= 0.005 && <p className="muted text-xs mt-1 mb-0" data-billed-whole-days>
         {t("costs.fig.billedWholeDays", { usd: fmtUSD(billWhole) })}</p>}

@@ -234,6 +234,25 @@ describe("weekly meter line", () => {
     expect(container.querySelector("[data-meter-line]")).toBeNull();
     expect(container.querySelector("[data-meter-axis]")).toBeNull();
   });
+
+  it("explains the line in a sentence of its own, only where the line is drawn", () => {
+    const rs = [reading(iso(18, 18, 5), 9), reading(iso(18, 18, 50), 10)];
+    const { container } = chart(cellsOf([iso(18, 18)], [seg(iso(18, 18, 5), iso(18, 18, 50))]), rs, "hour");
+    const sentence = i18n.t("costs.fig.meterNote");
+    expect(sentence).not.toBe("costs.fig.meterNote");
+    expect(container.querySelector("[data-meter-note]")!.textContent).toBe(sentence);
+    // the hour note no longer carries it
+    expect(i18n.t("costs.fig.hourRealNote", { usd: "$1" })).not.toContain(sentence);
+    expect(i18n.t("costs.fig.hourRealNoteMixed")).not.toContain(sentence);
+    fireEvent.click(screen.getByRole("button", { name: "Show as table" }));
+    expect(container.querySelector("[data-meter-note]")).toBeNull();
+    expect(container.textContent).not.toContain(sentence);
+    fireEvent.click(screen.getByRole("button", { name: "Show as table" }));
+    expect(container.querySelector("[data-meter-note]")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Per agent" }));
+    expect(container.querySelector("[data-meter-note]")).toBeNull();
+    expect(container.textContent).not.toContain(sentence);
+  });
 });
 
 // Design review round 1 of #119.
@@ -451,6 +470,18 @@ describe("meterPoints", () => {
     const kept = [reading(iso(18, 10, 5), 1, { resets_at: "2026-11-25T09:00:00Z" }), reading(iso(18, 10, 20), 2, { resets_at: "2026-11-25T09:35:00Z" }),
       reading(iso(18, 10, 30), 3, { resets_at: null })];
     expect(meterPoints(kept, cov([seg(iso(18, 9, 35), iso(18, 10, 30))]), [iso(18, 10)], "hour").map((p) => p.pct)).toEqual([1, 2, 3]);
+  });
+
+  it("pins today's rule where resets_at drifts inside one segment: judged against the segment's latest, not the previous reading", () => {
+    // The server compares each reading with the previous one and the running maximum, so it keeps all three here; this
+    // drops the first, 100 minutes before the latest. No current source drifts (the /usage parse is absolute, a reading
+    // entered by hand repeats the last reset), so this is an assumption, written down.
+    const rs = [
+      reading(iso(18, 10, 0), 1, { resets_at: "2026-11-25T09:00:00Z" }),
+      reading(iso(18, 10, 10), 2, { resets_at: "2026-11-25T09:50:00Z" }),
+      reading(iso(18, 10, 20), 3, { resets_at: "2026-11-25T10:40:00Z" }),
+    ];
+    expect(meterPoints(rs, cov([seg(iso(18, 10, 0), iso(18, 10, 20))]), [iso(18, 10)], "hour").map((p) => p.pct)).toEqual([2, 3]);
   });
 
   it("marks a new week after a gap as such without drawing a fall", () => {

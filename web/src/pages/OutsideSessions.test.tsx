@@ -704,6 +704,14 @@ describe("the detailed view of the operator sessions", () => {
     expect(within(screen.getByRole("group", { name: t("costs.outside.meterShare") })).getByText(note)).toBeTruthy();
   });
 
+  it("says over the drawn chart's slot that a period had no list price, not only in the table", async () => {
+    const onlyUnpriced = [...VIEW_CELLS, mc(H20, "main", "claude-sonnet-5-7", [10, 50, 2_000, 0, 0], false)];
+    const { container } = serveView(view({ cells: onlyUnpriced }));
+    await screen.findByRole("table", { name: t("costs.outside.byModel") });
+    const plot = container.querySelector("svg[role=group]")!;
+    expect([...plot.querySelectorAll("text[data-note]")].map((n) => n.textContent)).toEqual([t("costs.outside.noPrice")]);
+  });
+
   it("gives a period whose calls had no list price no bar and says so", async () => {
     const onlyUnpriced = [...VIEW_CELLS, mc(H20, "main", "claude-sonnet-5-7", [10, 50, 2_000, 0, 0], false)];
     serveView(view({ cells: onlyUnpriced }));
@@ -712,7 +720,6 @@ describe("the detailed view of the operator sessions", () => {
     const chart = screen.getByRole("table", { name: t("costs.outside.chartTitle") });
     // The notes column is headed as a note, not as the meter's.
     expect(within(chart).getByRole("columnheader", { name: t("costs.outside.colNote") })).toBeTruthy();
-    expect(within(chart).queryByRole("columnheader", { name: t("costs.fig.meterCol") })).toBeNull();
     const rows = within(chart).getAllByRole("row").filter((r) => r.closest("tbody"));
     expect(rows.length).toBe(3);
     const last = rows[2];

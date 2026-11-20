@@ -731,6 +731,9 @@ describe("the outside review's minors (#120)", () => {
     expect(note.textContent).toMatch(/^The bill is kept per hour from .* on: bars before it are missing or incomplete\.$/);
     const h18 = container.querySelector(`[data-credential="${KEY}#0"] [data-period="${H18}"]`)!;
     expect(h18.getAttribute("aria-label")).toContain(t("costs.fig.billedBeforeHourly"));
+    // and the drawn chart says it over the slot, not only the table and the label
+    const plot = container.querySelector(`[data-credential="${KEY}#0"] svg[role=group]`)!;
+    expect([...plot.querySelectorAll("text[data-note]")].map((n) => n.textContent)).toEqual([t("costs.fig.billedBeforeHourly")]);
     expect(container.querySelector(`[data-credential="${KEY}#0"] [data-period="${H19}"]`)!.getAttribute("aria-label"))
       .not.toContain(t("costs.fig.billedBeforeHourly"));
     // the notes' column of the table is headed "Note", not left blank
