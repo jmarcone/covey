@@ -336,8 +336,6 @@ func createChild(ctx context.Context, q querier, parentID uuid.UUID, spec ChildS
 		conversationID = parent.ConversationID
 		chatAnswer = parent.ChatAnswer
 		saidInCall = parent.SaidInCall
-	}
-	if continuation {
 		// The same work carried on: the parent's topic, whatever the title
 		// says, and the prompt its session was started with (#130) — a
 		// resume is read from the cache only under a byte-identical prefix.

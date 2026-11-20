@@ -499,7 +499,7 @@ func (o *Orchestrator) postedReview(ctx context.Context, orgID uuid.UUID, repo, 
 		  AND r.kind='action' AND r.created_at > $5
 		  AND r.payload->>'action' = ANY($2)
 		  AND r.payload->'params'->>'pr_number' = $3
-		  AND lower(r.payload->'params'->>'repo') = $6
+		  AND lower(btrim(r.payload->'params'->>'repo', ' /')) = $6
 		  AND COALESCE(r.payload->>'ok','') = 'true'
 		  AND r.payload->'params'->>'body' ~ $4
 		ORDER BY r.id DESC LIMIT 1`, orgID, reviewActions, number, `(^|\n)## Review round`, since, repo).Scan(&body)

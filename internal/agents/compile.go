@@ -53,7 +53,8 @@ const CoveyActionsDoc = `The platform's own actions — your board, your memory,
    handover to somebody without your context. On a topic that already has a task in play
    there, it adds to that task instead (point 6).
    A topic "pr:<owner>/<repo>#<n>" or "issue:<owner>/<repo>#<n>" names a pull request or issue:
-   a developer's next round on the same one continues its session. Any other topic only routes.
+   a developer's next round on the same one continues its session. Exactly that form: no spaces,
+   one owner/repo, the number after #. Any other topic only routes.
    list_tasks {"scope":"own|created|all","state":"open" or ["open","blocked"],"archived":false,"limit":50} —
    your own tasks and the ones you created, with state, column and the start of the result
    (all parameters optional). get_task {"id":"<full id or its first 8 characters>"} — one of

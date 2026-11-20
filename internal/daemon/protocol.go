@@ -134,7 +134,7 @@ type AssignTask struct {
 	ResumeInput     string `json:"resume_input,omitempty"`
 	// WorkDirKey names the run's working directory under ~/scratch when the
 	// task belongs to a topic its agent keeps a session on (#130):
-	// "topic-<agent>-<pr|issue>-<n>". Every task of the topic uses it, so a
+	// "topic-<agent id>-<pr|issue>-<n>-<hash of the key>". Every task of the topic uses it, so a
 	// session started by one is found by the next. Empty = the task's own
 	// directory, as before.
 	WorkDirKey string `json:"work_dir_key,omitempty"`
