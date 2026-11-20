@@ -2,7 +2,7 @@ import { Fragment, useEffect, useId, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import type { AnswerCovers } from "./costAnswer";
+import { answersSeat, type AnswerCovers } from "./costAnswer";
 import { api, type BilledReport, type CellAgent, type CostCell, type CostCells, type ExternalSource, type ExternalUsage, type UsageReading } from "../api";
 import { fmtBucket, fmtClockUTC, fmtCount, fmtCountAxis, fmtNumber, fmtUSD, fmtUSDAxis, fmtUSDBelow, fmtUSDFixed } from "../format";
 import { SOURCES, SOURCE_COLOR, SPLIT_COLOR, SPLIT_HATCH, sourceHint, sourceLabel, type Source } from "./costSources";
@@ -1226,7 +1226,8 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
   const filtered = selected.size > 0;
   // The answer table holds the seat's price, real cost, multiple and the work outside the meter's readings (#195),
   // unless the full view of covey's price table is asked for.
-  const tableAnswers = !!answered?.seats.has(f.id) && !full && isSeat(f);
+  // The table is org-wide: under an agent filter the tiles are the selection's figures, which the table does not hold.
+  const tableAnswers = answersSeat(answered, f.id) && !full && isSeat(f) && !filtered;
   const inScope = (id: string) => !filtered || selected.has(id);
   const agents = useMemo(() => rankAgents(data.agents), [data.agents]);
   const own = useMemo(() => data.cells.filter((c) => credId(c.secret_key, c.secret_slot) === f.id), [data.cells, f.id]);

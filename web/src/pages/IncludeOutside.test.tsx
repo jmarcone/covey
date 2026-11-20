@@ -976,3 +976,140 @@ describe("the answer table, review round 1 (#204)", () => {
     await waitFor(() => expect(document.getElementById(how.getAttribute("aria-controls")!)).not.toBeNull());
   });
 });
+
+/** Two seats: the operator and the claim-only folder on SEAT (split), sylius on seat_b, whose one step was not split. covey's
+ *  agent has work on seat_b too where `coveyOnB`. Each seat's real cost is its own steps' (6 and 3 points). */
+function twoSeats(coveyOnB = false): CostCells {
+  const e = external();
+  const a = e.meter.credentials[0];
+  const opPart = { source: OP, list_usd: 3, real_usd: 2 * PP };
+  a.sources = [CLAIM, OP].sort();
+  a.source_parts = [{ source: CLAIM, list_usd: 0, real_usd: 0 }, opPart];
+  const b = otherSeat("seat_b", {
+    sources: [SY], points: 3, step_count: 1, real_usd: 3 * PP, unsplit_real_usd: 3 * PP, unsplit_steps: 1, split_steps: 0,
+    source_parts: [{ source: SY, list_usd: 2, real_usd: 0 }], plan_rates: [], hours_with_reading: 1,
+  });
+  e.meter.credentials.push(b);
+  Object.assign(e.meter, { real_usd: 9 * PP, points: 9, step_count: 3, unsplit_real_usd: 3 * PP, unsplit_steps: 1,
+    source_parts: [...a.source_parts!, ...b.source_parts!] });
+  e.sources = e.sources.map((s) => (s.source === SY ? { ...s, meter_credential: { secret_key: "seat_b", secret_slot: 0 } } : s));
+  const st = steps()[0];
+  e.meter.steps.push({ ...st, secret_key: "seat_b", at: "2026-11-17T19:40:00Z", from: "2026-11-17T18:40:00Z", points: 3, real_usd: 3 * PP, split: false,
+    covey_list_usd: coveyOnB ? 2 : 0, external_list_usd: 2, covey_real_usd: 0, external_real_usd: 0, unsplit_real_usd: 3 * PP, source_parts: undefined });
+  const data = cells(e);
+  data.meter = [...(data.meter ?? []), { ...data.meter![0], secret_key: "seat_b", points: 3, points_low: 2, points_high: 4 }];
+  data.plans = [...data.plans!, { ...data.plans![0], secret_key: "seat_b" }];
+  data.subscription = [...data.subscription!, { ...data.subscription![0], secret_key: "seat_b", points: 3, usd: 3 * PP }];
+  if (coveyOnB) data.cells.push({ ...data.cells[0], secret_key: "seat_b", reported_usd: 2, measured: { output: 2 }, engine_usd: 2 });
+  return data;
+}
+
+describe("the answer table, review round 2 (#204)", () => {
+  beforeEach(async () => { await i18n.changeLanguage("en"); });
+  const tableOf = (data: CostCells) => answerTable(headline(data)!, subscriptionDent(data.external)!, data.external!, data.meter ?? [], new Set());
+  const dollars = (s: string | null | undefined) => Number((s ?? "").match(/\$([\d,.]+)/)?.[1].replace(/,/g, ""));
+
+  it("11: a source on a seat with no split step reads – and “not split yet”, not ≈ $0.00, though another seat is split", async () => {
+    const data = twoSeats();
+    const a = tableOf(data);
+    const sy = a.rows.find((r) => r.source === SY)!;
+    expect(sy.real).toBeNull();
+    expect(sy.notSplit).toBe(true);
+    // The operator's source sits on the split seat only: its figure stands, whole.
+    const op = a.rows.find((r) => r.kind === "operator")!;
+    expect(op.real).toBeCloseTo(2 * PP, 9);
+    expect(op.notSplit || op.partlySplit).toBe(false);
+    serve(data);
+    await answerReady();
+    expect(rowReal(`project:${SY}`)).toContain("–");
+    expect(rowReal(`project:${SY}`)).toContain(t("costs.answer.notSplit"));
+    expect(rowReal(`project:${SY}`)).not.toContain("$0.00");
+    expect(rowReal("operator")).toBe(`≈ ${fmtUSD(2 * PP)}`);
+    // covey has no work on seat_b: its row is whole.
+    expect(answerRow("covey")!.querySelector("[data-answer-partly]")).toBeNull();
+  });
+
+  it("11: covey's row says it is partly not split where covey worked on a seat with no split step", async () => {
+    const data = twoSeats(true);
+    const covey = tableOf(data).rows.find((r) => r.kind === "covey")!;
+    expect(covey.partlySplit).toBe(true);
+    expect(covey.real).not.toBeNull();
+    serve(data);
+    await answerReady();
+    expect(answerRow("covey")!.querySelector("[data-answer-partly]")!.textContent).toBe(t("costs.answer.partlyNotSplit"));
+    expect(answerRow(`project:${SY}`)!.querySelector("[data-answer-partly]")).toBeNull();
+  });
+
+  it("12: the multiple is the figure above the Difference row over the Total's real cost, and the sentence names it", async () => {
+    const data = cells();
+    const a = tableOf(data);
+    expect(a.metered / a.real!).toBeCloseTo(a.multiple!, 9);
+    expect(a.metered).toBeLessThan(a.list);
+    serve(data);
+    await answerReady();
+    const numerator = dollars(document.querySelector("[data-answer-multiple-from]")!.textContent);
+    const total = dollars(document.querySelector("[data-answer-total] [data-answer-real]")!.textContent);
+    const shown = Number(document.querySelector("[data-answer-multiple]")!.textContent!.match(/≈ ([\d.]+)×/)![1]);
+    expect(numerator).toBeCloseTo(a.metered, 2);
+    expect(numerator / total).toBeCloseTo(shown, 0);
+    expect(Math.abs(numerator / total - shown)).toBeLessThan(0.1);
+    // The sentence does not pair the Total list with the multiple.
+    const sentence = document.querySelector("[data-answer-sentence]")!.textContent!;
+    expect(sentence).toContain(`${fmtUSD(a.metered)} of it within the meter's readings is ≈ ${times(a.multiple!)}`);
+  });
+
+  it("13: with incomplete chunks the table says its parts may hold use that is not theirs; without, it does not", async () => {
+    serve(cells(patched({ incomplete_chunks: 1 })));
+    await answerReady();
+    expect(document.querySelector("[data-answer-incomplete]")!.textContent).toBe(t("costs.dent.incompleteNote", { n: "1" }));
+    // The drawer is closed: the note is the table's own.
+    expect(document.querySelector("[data-answer-drawer]")).toBeNull();
+    cleanup();
+    serve(cells(patched({ incomplete_chunks: 0 })));
+    await answerReady();
+    expect(document.querySelector("[data-answer-incomplete]")).toBeNull();
+  });
+
+  it("14: with agents selected the seat shows the selection's lead and share of the real cost, not the table's", async () => {
+    const data = cells();
+    data.agents.push({ id: "a2", label: "Reviewer", reported_usd: 3, measured_usd: 3 });
+    data.cells.push({ ...data.cells[0], agent_id: "a2", reported_usd: 3, measured: { output: 3 }, engine_usd: 3 });
+    serve(data);
+    await answerReady();
+    expect(document.querySelectorAll(`[data-credential^="${SEAT}"] [data-tile]`).length).toBe(0);
+    fireEvent.click(await screen.findByRole("button", { name: /^Coordinator/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Reviewer/ }));
+    await waitFor(() => expect(document.querySelectorAll(`[data-credential^="${SEAT}"] [data-tile]`).length).toBeGreaterThan(0));
+    const tiles = [...document.querySelectorAll(`[data-credential^="${SEAT}"] [data-tile]`)].map((x) => x.textContent!);
+    // The selection's lead: the two agents' list on the seat; and its share of the real cost.
+    expect(tiles.some((x) => x.includes(fmtUSD(16.5)) && x.includes(`selected agents (internal) ${fmtUSD(12)}`))).toBe(true);
+    expect(tiles.some((x) => x.includes("share of real"))).toBe(true);
+    // The table stays organisation-wide.
+    expect(document.querySelector("[data-answer] [data-org-wide]")).toBeTruthy();
+  });
+
+  it("14: with two seats each keeps its own real cost and multiple on its card and tiles; the table adds them up", async () => {
+    serve(twoSeats(true));
+    await answerReady();
+    await waitFor(() => expect(document.querySelectorAll("[data-meter]").length).toBe(2));
+    for (const m of document.querySelectorAll("[data-meter]")) expect(m.textContent).toContain(t("costs.fig.realEstimate"));
+    expect(document.querySelectorAll(`[data-credential^="${SEAT}"] [data-tile]`).length).toBeGreaterThan(0);
+  });
+
+  it("14: parts that add up to more than the meter show a signed row, so the real column still adds up", async () => {
+    // The sources' parts carry 1 point's worth more than the outside part the server split.
+    const e = patched({ source_parts: [{ source: CLAIM, list_usd: 0, real_usd: 0 }, { source: OP, list_usd: 3, real_usd: 1.2 * PP + PP }, { source: SY, list_usd: 2, real_usd: 0.8 * PP }] });
+    e.meter.credentials[0].source_parts = e.meter.source_parts;
+    const data = cells(e);
+    const a = tableOf(data);
+    const over = a.rows.find((r) => r.kind === "outsideRest")!;
+    expect(over.real!).toBeCloseTo(-PP, 9);
+    expect(a.rows.reduce((x, r) => x + (r.real ?? 0), 0)).toBeCloseTo(a.real!, 9);
+    serve(data);
+    await answerReady();
+    expect(rowReal("outsideRest")).toBe(`≈ ${fmtUSD(-PP)}`);
+    expect(answerRow("outsideRest")!.textContent).toContain(t("costs.answer.rowOutsideOver"));
+    const val = (sel: string) => [...document.querySelectorAll(sel)].reduce((x, el) => x + (el.textContent!.includes("-") ? -1 : 1) * dollars(el.textContent), 0);
+    expect(val("[data-answer-row] [data-answer-real]")).toBeCloseTo(val("[data-answer-total] [data-answer-real]"), 1);
+  });
+});

@@ -35,7 +35,8 @@ function label(t: TFunction, r: AnswerRow): { name: string; from: string } {
     case "project": return { name: t("costs.answer.rowProject", { source: r.source }), from: t("costs.answer.fromProject") };
     case "unsplit": return { name: t("costs.answer.rowUnsplit"), from: t("costs.answer.fromUnsplit") };
     case "unattributed": return { name: t("costs.answer.rowUnattributed"), from: t("costs.answer.fromUnattributed") };
-    default: return { name: t("costs.answer.rowOutsideRest"), from: t("costs.answer.fromOutsideRest") };
+    default: return r.real != null && r.real < 0 ? { name: t("costs.answer.rowOutsideOver"), from: t("costs.answer.fromOutsideOver") }
+      : { name: t("costs.answer.rowOutsideRest"), from: t("costs.answer.fromOutsideRest") };
   }
 }
 
@@ -60,7 +61,7 @@ export function CostAnswer({ a, h, filtered, drawer }: {
     : a.weeks ? t("costs.answer.totalSubWeeks", { weeks: a.weeks.map(pts).join(" + "), rate: rateText })
     : t("costs.answer.totalSub", { pts: pts(a.points), rate: rateText });
   const noReal = t(h.why === "usage" ? "costs.answer.noRealUsage" : "costs.answer.noReal");
-  const sentenceArgs = { list: fmtUSD(a.list), real: a.real != null ? fmtUSD(a.real) : "", pts: a.points != null ? pts(a.points) : "" };
+  const sentenceArgs = { list: fmtUSD(a.list), metered: fmtUSD(a.metered), real: a.real != null ? fmtUSD(a.real) : "", pts: a.points != null ? pts(a.points) : "" };
   const sentence = a.real == null ? t("costs.answer.sentenceNoReal", { list: fmtUSD(a.list), why: noReal })
     : a.multiple != null ? t(a.points != null ? "costs.answer.sentence" : "costs.answer.sentenceNoPoints", { ...sentenceArgs, x: times(a.multiple) })
     : t(a.points != null && !hidden ? "costs.answer.sentenceNoMultiple" : "costs.answer.sentenceNoMultipleNoPoints", sentenceArgs);
@@ -80,6 +81,9 @@ export function CostAnswer({ a, h, filtered, drawer }: {
   const perUse = a.perUse && a.perUse.calls > 0 ? t("costs.answer.perUse", { list: outsideMoney(t, a.perUse, "lead") }) : null;
   // covey's own work on credentials the table does not cover (an API key, a seat with no weekly reading): at token prices.
   const elsewhere = h.coveyElsewhere >= 0.005 ? t("costs.answer.elsewhere", { usd: fmtUSD(h.coveyElsewhere) }) : null;
+  // spec/30 R4: the parts of a chunk with unpriced outside calls or unbooked covey work are approximate. They are rows now,
+  // so the caveat stands under them; it has nothing to qualify where every part row has no figure.
+  const incomplete = a.incompleteChunks > 0 && a.rows.some((r) => !remainder(r) && r.real != null);
   const check = hidden ? undefined : priceTableLine(t, h.list, h.table);
   return (
     <section className="card mb-4" aria-label={t("costs.answer.title")} data-answer>
@@ -108,6 +112,7 @@ export function CostAnswer({ a, h, filtered, drawer }: {
                   <td style={{ ...num, paddingRight: 0 }} data-answer-real>
                     {r.real != null ? `≈ ${fmtUSD(r.real)}` : "–"}
                     {r.notSplit && <div className="muted text-xs" style={{ fontWeight: 400, whiteSpace: "normal" }}>{t("costs.answer.notSplit")}</div>}
+                    {r.partlySplit && <div className="muted text-xs" style={{ fontWeight: 400, whiteSpace: "normal" }} data-answer-partly>{t("costs.answer.partlyNotSplit")}</div>}
                   </td>
                 </tr>
               );
@@ -120,7 +125,9 @@ export function CostAnswer({ a, h, filtered, drawer }: {
             </tr>
             <tr style={{ borderTop: "1px solid var(--border)" }} data-answer-difference>
               <th scope="row" style={{ ...cell, textAlign: "left", fontWeight: 600 }}>{t("costs.answer.rowDifference")}</th>
-              <td className="muted" style={cell}>{t("costs.answer.fromDifference")}</td>
+              <td className="muted" style={cell} data-answer-multiple-from>
+                {a.multiple != null ? t("costs.answer.fromDifferenceOf", { metered: fmtUSD(a.metered) }) : t("costs.answer.fromDifference")}
+              </td>
               <td style={num} />
               <td style={{ ...num, paddingRight: 0 }} data-answer-multiple>
                 {a.multiple != null ? (
@@ -137,6 +144,7 @@ export function CostAnswer({ a, h, filtered, drawer }: {
       <p className="text-sm mt-3 mb-1" style={{ fontWeight: 600 }} data-answer-sentence>{sentence}</p>
       {a.multiple == null && a.real != null && <p className="muted text-xs mb-1" data-answer-no-multiple>{noMultiple}</p>}
       {hidden && <p className="muted text-xs mb-1" data-answer-hidden>{t("costs.answer.hidden", { sources: a.hidden.join(", "), count: a.hidden.length })}</p>}
+      {incomplete && <p className="muted text-xs mb-1" data-answer-incomplete>{t("costs.dent.incompleteNote", { n: fmtNumber(a.incompleteChunks, 0) })}</p>}
       {before && <p className="muted text-xs mb-1" data-answer-before>{before}</p>}
       {unpriced && <p className="muted text-xs mb-1" data-answer-unpriced>{unpriced}</p>}
       {usage && <p className="text-sm mb-1" data-answer-usage>{usage}</p>}
