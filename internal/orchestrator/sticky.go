@@ -143,7 +143,8 @@ func (o *Orchestrator) planSticky(ctx context.Context, agent agents.Agent, task 
 		return plan
 	}
 	// A task dispatched again after its run was lost (a requeue) keeps the
-	// decision it was dispatched with the first time — and its directory.
+	// policy it was dispatched with the first time; the decision is made
+	// again (a requeue that now finds a round in play turns busy).
 	policy := effectiveStickyPolicy(agent.StickyPolicy, topic)
 	if state.Policy != "" {
 		policy = state.Policy

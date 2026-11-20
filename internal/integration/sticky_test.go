@@ -738,7 +738,7 @@ func TestStickyBusyRoundContinuation(t *testing.T) {
 	s := newStack(t)
 	ctx := context.Background()
 	dev := s.stickyAgent("busy-cont-dev", agents.StickyAlways)
-	first, _ := s.runTopic(dev, "Round 1", "pr:6", "")
+	s.runTopic(dev, "Round 1", "pr:6", "")
 	s.setStickyAtRest(dev.ID, agents.StickyFresh)
 	blocked, err := s.backlog.CreateWithTopic(ctx, s.orgID, dev.ID, "Round 2",
 		"[mock:block key=ext:pr-6 question=which?]", "manual", 3, "pr:6")
@@ -787,7 +787,16 @@ func TestStickyBusyRoundContinuation(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, "round 2 done", 30*time.Second, func() bool { return s.taskState(blocked.ID) == backlog.StateDone })
-	_ = first
+	// Round 2 finished last; it ran fresh-policy, recorded no session, so
+	// round 5 starts fresh from its handover and never resumes round 1's
+	// older session.
+	r5, v5 := s.runTopic(dev, "Round 5", "pr:6", "")
+	if v5.Resume != "" {
+		t.Fatalf("round 5 must not resume an older session, resumed %q", v5.Resume)
+	}
+	if d, r := s.decision(r5.ID); d != backlog.DecisionFresh || r != backlog.ReasonNoSession {
+		t.Fatalf("round 5: %s/%s", d, r)
+	}
 }
 
 // A turn-limit continuation of a task without a topic resumes in the
