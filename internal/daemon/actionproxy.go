@@ -541,12 +541,13 @@ func (p *actionProxy) createTask(ctx context.Context, params json.RawMessage) an
 		topic = in.Topic
 	}
 	auditMap := map[string]any{"action": subject, "params": params,
-		"ok": resp.OK, "created_task": resp.TaskID, "agent": resp.Agent,
-		"routed": resp.Routed, "topic": topic}
+		"ok": resp.OK, "agent": resp.Agent, "routed": resp.Routed, "topic": topic}
 	if resp.Routed {
-		// created_task keeps its name for the readers that count it; a
-		// routed call created nothing, and this names the task it went to.
+		// A routed call created nothing: a reader that counts created_task
+		// as delegations must not count it.
 		auditMap["routed_task"] = resp.TaskID
+	} else {
+		auditMap["created_task"] = resp.TaskID
 	}
 	audit, _ := json.Marshal(auditMap)
 	_ = p.client.send(TypeEvent, Event{TaskID: p.taskID, Kind: "action", Payload: audit})

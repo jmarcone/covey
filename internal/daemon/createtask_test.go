@@ -148,9 +148,10 @@ func TestCreateTaskRoutedAnswer(t *testing.T) {
 	}
 
 	ev := f.audit(t)
+	_, created := ev["created_task"]
 	if ev["routed"] != true || ev["routed_task"] != "0b5c2f1e-0000-4000-8000-000000000045" ||
-		ev["created_task"] != "0b5c2f1e-0000-4000-8000-000000000045" || ev["topic"] != "cost page headline" {
-		t.Errorf("the audit event has to name the routed task: %v", ev)
+		created || ev["topic"] != "cost page headline" {
+		t.Errorf("the audit event names the routed task, and no created one: %v", ev)
 	}
 }
 
@@ -167,7 +168,7 @@ func TestCreateTaskCreatedAnswer(t *testing.T) {
 		t.Fatalf("created answer: %v", res)
 	}
 	ev := f.audit(t)
-	if _, ok := ev["routed_task"]; ok || ev["routed"] != false || ev["topic"] != "#17 part 3" {
+	if _, ok := ev["routed_task"]; ok || ev["routed"] != false || ev["topic"] != "#17 part 3" || ev["created_task"] != "new-task" {
 		t.Errorf("a created task names no routed task, and the topic falls back to the agent's: %v", ev)
 	}
 }

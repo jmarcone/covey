@@ -446,7 +446,7 @@ func TestTopicRoutingNeverWakesAConversationTask(t *testing.T) {
 		Agent: "formelwerk", Title: "amend cost page headline", Body: "use the weekly figure"})
 	routedTo(t, resp, task)
 	if resp.Woken || resp.State != backlog.StateBlocked || resp.WaitingOn != "github:example/repo#3" ||
-		!strings.Contains(resp.Notice, "conversation") {
+		!strings.Contains(resp.Notice, "person") {
 		t.Fatalf("a conversation task keeps the note and waits for its person: %+v", resp)
 	}
 	if st := s.taskState(task.ID); st != backlog.StateBlocked {
@@ -481,7 +481,7 @@ func TestTopicRoutingNeverWakesAChannelTask(t *testing.T) {
 	resp := s.orch.CreateAgentTask(ctx, y, own.ID, daemon.RequestCreateTask{
 		Agent: "formelwerk", Title: "reply: message from Ada Example", Body: "tell her it ships Friday"})
 	routedTo(t, resp, task)
-	if resp.Woken || resp.State != backlog.StateBlocked || !strings.Contains(resp.Notice, "conversation") {
+	if resp.Woken || resp.State != backlog.StateBlocked || !strings.Contains(resp.Notice, "person") {
 		t.Fatalf("a channel task keeps the note and waits for its person: %+v", resp)
 	}
 	if st := s.taskState(task.ID); st != backlog.StateBlocked {
@@ -503,7 +503,7 @@ func TestRouteNoteRepeatAndTerminal(t *testing.T) {
 	_, own := s.caller(t, "rechner")
 	keep := []string{"parked:", "approval:", "hire:"}
 
-	r, err := s.backlog.RouteNote(ctx, task.ID, own.ID, "agent:rechner", "amend it", "resume with it", keep, true)
+	r, err := s.backlog.RouteNote(ctx, task.ID, own.ID, "agent:rechner", "amend it", "resume with it", keep)
 	if err != nil || !r.Woken || r.Repeat || r.Task.State != backlog.StateOpen ||
 		r.Task.ResumeInput == nil || *r.Task.ResumeInput != "resume with it" {
 		t.Fatalf("the first note resumes the blocked task with its input: %+v %v", r, err)
@@ -516,7 +516,7 @@ func TestRouteNoteRepeatAndTerminal(t *testing.T) {
 	if _, err := s.backlog.Block(ctx, task.ID, "github:example/repo#2", "sess-again", "waiting"); err != nil {
 		t.Fatal(err)
 	}
-	r, err = s.backlog.RouteNote(ctx, task.ID, own.ID, "agent:rechner", "amend it", "resume with it", keep, true)
+	r, err = s.backlog.RouteNote(ctx, task.ID, own.ID, "agent:rechner", "amend it", "resume with it", keep)
 	if err != nil || r.Woken || !r.Repeat || r.Task.State != backlog.StateBlocked {
 		t.Fatalf("the same note again wakes nothing: %+v %v", r, err)
 	}
@@ -530,7 +530,7 @@ func TestRouteNoteRepeatAndTerminal(t *testing.T) {
 	if _, err := s.backlog.AddNote(ctx, task.ID, "user:admin", "looked at it"); err != nil {
 		t.Fatal(err)
 	}
-	r, err = s.backlog.RouteNote(ctx, task.ID, own.ID, "agent:rechner", "amend it", "resume with it", keep, true)
+	r, err = s.backlog.RouteNote(ctx, task.ID, own.ID, "agent:rechner", "amend it", "resume with it", keep)
 	if err != nil || r.Woken || !r.Repeat {
 		t.Fatalf("the same note after another's is still a repeat: %+v %v", r, err)
 	}
@@ -556,13 +556,13 @@ func TestRouteNoteRepeatAndTerminal(t *testing.T) {
 	if _, err := s.pool.Exec(ctx, `UPDATE backlog_tasks SET state = 'done' WHERE id = $1`, task.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.backlog.RouteNote(ctx, task.ID, own.ID, "agent:rechner", "late", "late", keep, true); !errors.Is(err, backlog.ErrNotRoutable) {
+	if _, err := s.backlog.RouteNote(ctx, task.ID, own.ID, "agent:rechner", "late", "late", keep); !errors.Is(err, backlog.ErrNotRoutable) {
 		t.Fatalf("a finished task is not routable: %v", err)
 	}
 	if _, err := s.pool.Exec(ctx, `UPDATE backlog_tasks SET state = 'blocked', archived_at = now() WHERE id = $1`, task.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.backlog.RouteNote(ctx, task.ID, own.ID, "agent:rechner", "late", "late", keep, true); !errors.Is(err, backlog.ErrNotRoutable) {
+	if _, err := s.backlog.RouteNote(ctx, task.ID, own.ID, "agent:rechner", "late", "late", keep); !errors.Is(err, backlog.ErrNotRoutable) {
 		t.Fatalf("an archived task is not routable: %v", err)
 	}
 	if got := len(s.notesOf(t, task.ID)); got != before {
