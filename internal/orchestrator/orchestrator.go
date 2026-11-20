@@ -2748,7 +2748,9 @@ func (o *Orchestrator) processTask(ctx context.Context, agent agents.Agent, link
 	}
 	// What follows depends on the task; what stands so far is the agent's
 	// (#130: a resumed session starts fresh once this has changed).
-	basis := promptBasis(compiled)
+	// The model and effort count too: the prompt cache is per model, and a
+	// resume under another one writes the whole context again.
+	basis := promptBasis(agent.Model + "|" + agent.Effort + "|" + compiled)
 	if stopped != "" {
 		compiled += "\n\n" + stopped
 	}
@@ -3240,7 +3242,7 @@ func (o *Orchestrator) handleDaemonMessage(ctx context.Context, agent agents.Age
 		}
 		// What the next task on the topic resumes (#130): written before the
 		// task turns done, so a done task never lacks it.
-		if state == backlog.StateDone && d.Status == "done" {
+		if state == backlog.StateDone {
 			if err := o.Backlog.RecordSessionEnd(ctx, taskID, d.SessionID, s.lastContext(taskID), credentialKey(s)); err != nil {
 				o.Log.Warn("sticky: session end not recorded", "task", taskID, "err", err)
 			}

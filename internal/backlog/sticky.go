@@ -104,13 +104,16 @@ func (s *Store) LastOnTopic(ctx context.Context, orgID, agentID uuid.UUID, topic
 }
 
 // OpenSessionOnTopic says whether another task of the agent on the topic is
-// still in play (in progress, or blocked waiting to resume its session). A new
+// still in play: in progress, blocked waiting to resume its session, or
+// queued to resume one (an answered block, a turn-limit continuation). A new
 // round must not resume an older session beside it: the open one holds the
 // newer work, and the two would write into one topic directory at once.
 func (s *Store) OpenSessionOnTopic(ctx context.Context, orgID, agentID uuid.UUID, topic string, exclude uuid.UUID) (bool, error) {
 	var open bool
 	err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM backlog_tasks
-		WHERE org_id=$1 AND agent_id=$2 AND topic_key=$3 AND id<>$4 AND state IN ('in_progress','blocked'))`,
+		WHERE org_id=$1 AND agent_id=$2 AND topic_key=$3 AND id<>$4
+		  AND (state IN ('in_progress','blocked')
+		       OR (state='open' AND (resume_input IS NOT NULL OR origin LIKE 'continuation:%'))))`,
 		orgID, agentID, topic, exclude).Scan(&open)
 	return open, err
 }
@@ -179,8 +182,13 @@ const (
 
 // RecordSticky writes the dispatch decision onto the task.
 func (s *Store) RecordSticky(ctx context.Context, id uuid.UUID, d StickyDecision) error {
+	// The first-turn figures go with the decision: a task dispatched again
+	// (a requeue after a lost sandbox) is measured by the run the new
+	// decision starts, not by the lost one.
 	_, err := s.pool.Exec(ctx, `UPDATE backlog_tasks SET sticky_decision=$2, sticky_reason=NULLIF($3,''),
-		sticky_policy=NULLIF($4,''), sticky_from=$5, sticky_gap_s=$6, sticky_context=$7 WHERE id=$1`,
+		sticky_policy=NULLIF($4,''), sticky_from=$5, sticky_gap_s=$6, sticky_context=$7,
+		first_turn_input=NULL, first_turn_cache_read=NULL, first_turn_cache_write_5m=NULL,
+		first_turn_cache_write_1h=NULL WHERE id=$1`,
 		id, d.Decision, d.Reason, d.Policy, d.From, d.GapS, d.Context)
 	return err
 }

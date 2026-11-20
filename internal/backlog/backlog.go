@@ -327,11 +327,12 @@ func (s *Store) CreateChild(ctx context.Context, parentID uuid.UUID, spec ChildS
 	row := s.pool.QueryRow(ctx, `INSERT INTO backlog_tasks
 		(id, org_id, agent_id, title, body, origin, priority, parent_task_id,
 		 runtime_session_id, resume_input, stage_id, conversation_id, chat_answer, said_in_call, topic_key,
-		 session_prompt, session_memory, sticky_policy)
+		 session_prompt, session_memory, session_basis, sticky_policy)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8, NULLIF($9,''), NULLIF($10,''),
 			(SELECT id FROM agent_stages WHERE agent_id=$3 ORDER BY position, created_at LIMIT 1), $11, $12, $13, NULLIF($14,''),
 			(SELECT session_prompt FROM backlog_tasks WHERE id=$8 AND $15::boolean),
 			(SELECT session_memory FROM backlog_tasks WHERE id=$8 AND $15::boolean),
+			(SELECT session_basis FROM backlog_tasks WHERE id=$8 AND $15::boolean),
 			(SELECT sticky_policy FROM backlog_tasks WHERE id=$8 AND $15::boolean))
 		RETURNING `+taskCols,
 		uuid.New(), parent.OrgID, agentID, spec.Title, spec.Body, spec.Origin, spec.Priority,

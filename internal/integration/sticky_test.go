@@ -448,9 +448,14 @@ func TestStickyContinuation(t *testing.T) {
 		t.Fatalf("continuation: resume %q dir %q", vc.Resume, vc.WorkDir)
 	}
 	var parentPrompt, childPrompt string
-	if err := s.pool.QueryRow(ctx, `SELECT p.session_prompt, c.session_prompt FROM backlog_tasks p, backlog_tasks c
-		WHERE p.id=$1 AND c.id=$2`, task.ID, child.ID).Scan(&parentPrompt, &childPrompt); err != nil || parentPrompt != childPrompt {
+	var parentBasis, childBasis *string
+	if err := s.pool.QueryRow(ctx, `SELECT p.session_prompt, c.session_prompt, p.session_basis, c.session_basis
+		FROM backlog_tasks p, backlog_tasks c WHERE p.id=$1 AND c.id=$2`, task.ID, child.ID).Scan(
+		&parentPrompt, &childPrompt, &parentBasis, &childBasis); err != nil || parentPrompt != childPrompt {
 		t.Fatalf("the continuation carries its session's prompt (%v)", err)
+	}
+	if parentBasis == nil || childBasis == nil || *parentBasis != *childBasis {
+		t.Fatalf("the continuation carries its session's basis, or a later config change goes unnoticed: %v / %v", parentBasis, childBasis)
 	}
 	// The next round resumes that same session, under the same prompt bytes.
 	n, vn := s.runTopic(dev, "Next round", "pr:21", "")
