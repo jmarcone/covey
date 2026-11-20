@@ -148,21 +148,21 @@ func TestResumeDirFallsBackToTheTaskDir(t *testing.T) {
 	home := t.TempDir()
 	topicDir := mustTopicDir(home, "topic-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-pr-1")
 	taskDir := scratchDir(home, "22222222-2222-2222-2222-222222222222")
-	if got := resumeDir(Mock{}, home, topicDir, taskDir, ""); got != topicDir {
+	if got := runDirFor(Mock{}, home, "", topicDir, taskDir); got != topicDir {
 		t.Fatalf("no resume: topic dir, got %q", got)
 	}
 	if _, err := (Mock{}).Run(context.Background(), RunSpec{TaskID: "t", HomeDir: home, WorkDir: taskDir,
 		ResumeSessionID: "old"}, func(string, json.RawMessage) {}); err != nil {
 		t.Fatal(err)
 	}
-	if got := resumeDir(Mock{}, home, topicDir, taskDir, "old"); got != taskDir {
+	if got := runDirFor(Mock{}, home, "old", topicDir, taskDir); got != taskDir {
 		t.Fatalf("the session lies in the task dir: got %q", got)
 	}
 	if _, err := (Mock{}).Run(context.Background(), RunSpec{TaskID: "t", HomeDir: home, WorkDir: topicDir,
 		ResumeSessionID: "old"}, func(string, json.RawMessage) {}); err != nil {
 		t.Fatal(err)
 	}
-	if got := resumeDir(Mock{}, home, topicDir, taskDir, "old"); got != topicDir {
+	if got := runDirFor(Mock{}, home, "old", topicDir, taskDir); got != topicDir {
 		t.Fatalf("in both: the topic dir wins, got %q", got)
 	}
 }
@@ -197,5 +197,27 @@ func TestApplyStickyNotIntoASweptDir(t *testing.T) {
 	spec = RunSpec{HomeDir: home, WorkDir: dir, SystemPrompt: "pinned"}
 	if out := applySticky(Mock{}, &spec, task, dir, true); out.Decision != "sticky_resumed" {
 		t.Fatalf("an existing dir with the session resumes: %+v", out)
+	}
+}
+
+// A continuation's session lies in its chain's first task's directory: the
+// run goes there, unless the topic's directory holds it.
+func TestRunDirForTheChainRoot(t *testing.T) {
+	home := t.TempDir()
+	topicDir := mustTopicDir(home, "topic-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-pr-3")
+	rootDir := scratchDir(home, "33333333-3333-3333-3333-333333333333")
+	own := taskScratchPath(home, "44444444-4444-4444-4444-444444444444")
+	if got := runDirFor(Mock{}, home, "", "", rootDir, own); got != rootDir {
+		t.Fatalf("no resume, no topic: the root's dir first, got %q", got)
+	}
+	if got := runDirFor(Mock{}, home, "s", topicDir, rootDir, own); got != topicDir {
+		t.Fatalf("no candidate holds it: the topic dir, got %q", got)
+	}
+	if _, err := (Mock{}).Run(context.Background(), RunSpec{TaskID: "r", HomeDir: home, WorkDir: rootDir,
+		ResumeSessionID: "s"}, func(string, json.RawMessage) {}); err != nil {
+		t.Fatal(err)
+	}
+	if got := runDirFor(Mock{}, home, "s", topicDir, rootDir, own); got != rootDir {
+		t.Fatalf("the session lies in the root's dir: got %q", got)
 	}
 }

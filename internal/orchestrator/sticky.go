@@ -301,6 +301,10 @@ func (o *Orchestrator) applyStickyPlan(ctx context.Context, agent agents.Agent, 
 		if err := o.Backlog.SetSessionPrompt(ctx, taskID, plan.record.prompt, plan.record.memory, plan.record.basis); err != nil {
 			o.Log.Warn("sticky: session prompt not recorded", "task", taskID, "err", err)
 		}
+	} else if plan.decision.Decision != "" {
+		if err := o.Backlog.ClearSessionPrompt(ctx, taskID); err != nil {
+			o.Log.Warn("sticky: stale session prompt not cleared", "task", taskID, "err", err)
+		}
 	}
 	s.stickyFallback = plan.fallback
 }

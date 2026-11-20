@@ -94,10 +94,6 @@ func (s *Store) LastOnTopic(ctx context.Context, orgID, agentID uuid.UUID, topic
 		FROM backlog_tasks
 		WHERE org_id=$1 AND agent_id=$2 AND topic_key=$3 AND state='done'
 		  AND session_finished_at IS NOT NULL AND id<>$4
-		  -- A busy round ran beside the topic's session, not in it.
-		  AND COALESCE(sticky_reason,'') <> 'busy'
-		  AND NOT EXISTS (SELECT 1 FROM backlog_tasks r WHERE r.id = backlog_tasks.parent_task_id
-		    AND backlog_tasks.origin LIKE 'continuation:%' AND r.sticky_reason = 'busy')
 		ORDER BY session_finished_at DESC, id DESC LIMIT 1`, orgID, agentID, topic, exclude).Scan(
 		&p.TaskID, &p.SessionID, &p.FinishedAt, &p.ContextTokens, &p.Credential, &p.Prompt,
 		&p.Memory, &p.Basis, &p.Result, &p.Decision)
@@ -143,6 +139,15 @@ func (s *Store) ClaimSession(ctx context.Context, predecessor, successor uuid.UU
 		return false, err
 	}
 	return tag.RowsAffected() == 1, nil
+}
+
+// ClearSessionPrompt forgets a prompt recorded by an earlier dispatch of the
+// task: dispatched again as a busy or fresh-policy round, its session starts
+// in its own directory, and a recorded prompt would send its resumes to the
+// topic's.
+func (s *Store) ClearSessionPrompt(ctx context.Context, id uuid.UUID) error {
+	_, err := s.pool.Exec(ctx, "UPDATE backlog_tasks SET session_prompt=NULL, session_memory=NULL, session_basis=NULL WHERE id=$1", id)
+	return err
 }
 
 // SetSessionPrompt records the prompt the task's session runs under, and the

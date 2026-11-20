@@ -112,25 +112,26 @@ func appendedSystemPrompt(spec RunSpec) string {
 // HasSession: seven-code keeps its sessions under the home, whatever the cwd.
 func (s *SevenCode) HasSession(spec RunSpec, id string) bool { return sevencodeHasSession(spec, id) }
 
-// resumeDir picks the working directory of a topic task: the topic's, unless
-// the task resumes its own session and that session lies in the task's own
-// directory instead — it was started there by a daemon that predates topic
-// directories, or when the topic's could not be made. --resume finds a
-// transcript only under the directory it was written in, and a resume that
-// finds nothing fails the task.
-func resumeDir(rt Runtime, home, topicDir, taskDir, resumeID string) string {
-	if resumeID == "" || taskDir == "" {
-		return topicDir
+// runDirFor picks a run's working directory among the candidates, in order:
+// the topic's directory, the continuation chain's first task's, the task's
+// own ("" = not a candidate). A run that resumes a session goes to the first
+// candidate that holds it — --resume finds a transcript only under the
+// directory it was written in, and a resume that finds nothing fails the
+// task. Otherwise, and when none holds it, the first candidate there is.
+func runDirFor(rt Runtime, home, resumeID string, dirs ...string) string {
+	if holder, ok := rt.(SessionHolder); ok && resumeID != "" {
+		for _, d := range dirs {
+			if d != "" && holder.HasSession(RunSpec{HomeDir: home, WorkDir: d}, resumeID) {
+				return d
+			}
+		}
 	}
-	holder, ok := rt.(SessionHolder)
-	if !ok {
-		return topicDir
+	for _, d := range dirs {
+		if d != "" {
+			return d
+		}
 	}
-	if !holder.HasSession(RunSpec{HomeDir: home, WorkDir: topicDir}, resumeID) &&
-		holder.HasSession(RunSpec{HomeDir: home, WorkDir: taskDir}, resumeID) {
-		return taskDir
-	}
-	return topicDir
+	return ""
 }
 
 // taskScratchPath is where scratchDir would put the task's own directory,

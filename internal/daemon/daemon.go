@@ -667,27 +667,25 @@ func (c *Client) runTask(ctx context.Context, task AssignTask) {
 	// directory instead of its own (#130): the next task on the topic finds
 	// the session there, and the directory's name in the prompt stays the
 	// same. The task's own directory is made only when it is used.
-	scratch := ""
-	topicDirExisted := false
+	//
+	// A resume runs where its session lies: the topic's directory, the
+	// directory of its continuation chain's first task (ScratchOf), or its
+	// own — the first of them that holds the session, in that order.
+	topicDir, topicDirExisted := "", false
 	if task.WorkDirKey != "" {
-		if dir, existed := topicScratchDir(c.homeDir, task.WorkDirKey); dir != "" {
-			scratch, topicDirExisted = dir, existed
-			if own := taskScratchPath(c.homeDir, task.TaskID); resumeDir(runtime, c.homeDir, dir, own, task.ResumeSessionID) == own {
-				scratch = ""
-			}
-		}
+		topicDir, topicDirExisted = topicScratchDir(c.homeDir, task.WorkDirKey)
 	}
-	// A continuation resumes in the directory its chain's first task
-	// started the session in, unless the session lies in its own.
-	if scratch == "" && task.ScratchOf != "" && task.ScratchOf != task.TaskID {
-		if of := taskScratchPath(c.homeDir, task.ScratchOf); of != "" {
-			if own := taskScratchPath(c.homeDir, task.TaskID); resumeDir(runtime, c.homeDir, of, own, task.ResumeSessionID) == of {
-				scratch = scratchDir(c.homeDir, task.ScratchOf)
-			}
-		}
+	rootDir := ""
+	if task.ScratchOf != "" && task.ScratchOf != task.TaskID {
+		rootDir = taskScratchPath(c.homeDir, task.ScratchOf)
 	}
-	if scratch == "" {
+	own := taskScratchPath(c.homeDir, task.TaskID)
+	scratch := runDirFor(runtime, c.homeDir, task.ResumeSessionID, topicDir, rootDir, own)
+	switch {
+	case scratch == "" || scratch == own:
 		scratch = scratchDir(c.homeDir, task.TaskID)
+	case scratch == rootDir:
+		scratch = scratchDir(c.homeDir, task.ScratchOf)
 	}
 	if n, err := sweepScratch(c.homeDir, time.Now(), scratch); err != nil {
 		c.log.Warn("scratch directories of past tasks not all removed", "removed", n, "err", err)

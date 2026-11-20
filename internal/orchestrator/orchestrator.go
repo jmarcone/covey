@@ -2816,10 +2816,13 @@ func (o *Orchestrator) processTask(ctx context.Context, agent agents.Agent, link
 		assign.ResumeInput = *task.ResumeInput
 		// A turn-limit continuation is a task of its own with a directory of
 		// its own, while the session it resumes was written in its chain's
-		// first task's: the run goes there (a topic's sessions live in the
-		// topic's directory and need no help).
-		if plan.workDirKey == "" && strings.HasPrefix(task.Origin, originContinuation+":") {
-			if root, err := o.Backlog.ChainRoot(ctx, taskID); err == nil && root != taskID {
+		// first task's: the run goes there.
+		// The daemon tries the topic's directory first and falls back to it.
+		if strings.HasPrefix(task.Origin, originContinuation+":") {
+			root, err := o.Backlog.ChainRoot(ctx, taskID)
+			if err != nil {
+				o.Log.Warn("continuation's first task not found — resuming in its own directory", "task", taskID, "err", err)
+			} else if root != taskID {
 				assign.ScratchOf = root.String()
 			}
 		}

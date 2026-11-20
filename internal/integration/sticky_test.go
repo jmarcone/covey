@@ -367,13 +367,12 @@ func TestStickyCredentialAndBusy(t *testing.T) {
 		t.Fatalf("busy: %s/%s", d, r)
 	}
 
-	// The busy round B is no predecessor (it ran beside the session); A is.
 	// A session that ran on another credential.
-	if _, err := s.pool.Exec(ctx, `UPDATE backlog_tasks SET session_credential='secret:someone-else:0' WHERE id=$1`, a.ID); err != nil {
+	if _, err := s.pool.Exec(ctx, `UPDATE backlog_tasks SET session_credential='secret:someone-else:0' WHERE id=$1`, b.ID); err != nil {
 		t.Fatal(err)
 	}
 	pred, ok, err := s.backlog.LastOnTopic(ctx, s.orgID, dev.ID, "issue:5", uuid.New())
-	if err != nil || !ok || pred.TaskID != a.ID || pred.Credential != "secret:someone-else:0" {
+	if err != nil || !ok || pred.TaskID != b.ID || pred.Credential != "secret:someone-else:0" {
 		t.Fatalf("LastOnTopic: %+v %v %v", pred, ok, err)
 	}
 	// LastOnTopic never crosses organisations, whatever the caller passes.
@@ -767,10 +766,17 @@ func TestStickyBusyRoundContinuation(t *testing.T) {
 	if vc.Resume != mockSessionID(busy.ID) || !strings.HasSuffix(vc.WorkDir, "/scratch/"+busy.ID.String()) {
 		t.Fatalf("the busy round's continuation resumes in the busy round's directory: resume %q dir %q", vc.Resume, vc.WorkDir)
 	}
-	pred, ok, err := s.backlog.LastOnTopic(ctx, s.orgID, dev.ID, "pr:6", uuid.New())
-	if err != nil || !ok || pred.TaskID != first.ID {
-		t.Fatalf("the busy chain is no predecessor; want round 1, got %v (%v %v)", pred.TaskID, ok, err)
+	// The busy chain is the newest finished work on the topic: the next round
+	// starts fresh from its handover rather than resume round 1's session,
+	// which never saw that work.
+	n, vn := s.runTopic(dev, "Round 4", "pr:6", "")
+	if vn.Resume != "" || !strings.Contains(vn.Prompt, "## Handover (pr:6)") {
+		t.Fatalf("round 4 after a busy chain: fresh with its handover, resumed %q", vn.Resume)
 	}
+	if d, r := s.decision(n.ID); d != backlog.DecisionFresh || (r != backlog.ReasonNoSession && r != backlog.ReasonBusy) {
+		t.Fatalf("round 4: %s/%s", d, r)
+	}
+	_ = first
 }
 
 // A turn-limit continuation of a task without a topic resumes in the
