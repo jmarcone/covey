@@ -493,6 +493,13 @@ type RequestCreateTask struct {
 	Title     string `json:"title"`
 	Body      string `json:"body"`
 	Priority  int    `json:"priority,omitempty"`
+	// Topic is the topic the agent names for the task (#45); empty means the
+	// one its title names (backlog.TopicKey). A request on a topic that
+	// already has an open, running or blocked task at the target is routed
+	// onto that task as a note instead of creating a second one, so an agent
+	// that starts a separate item of the same issue on purpose names its own
+	// topic ("#17 part 3").
+	Topic string `json:"topic,omitempty"`
 	// ApprovalID is the approval the daemon's guard-rail check consumed for
 	// this request, if a rule required one. The control plane checks the rule
 	// again itself and accepts the request only with that approval (#703).
@@ -548,11 +555,29 @@ type InjectCreateTask struct {
 	RequestID string `json:"request_id"`
 	OK        bool   `json:"ok"`
 	Error     string `json:"error,omitempty"`
-	TaskID    string `json:"task_id,omitempty"` // the created task
+	TaskID    string `json:"task_id,omitempty"` // the created task, or the one the request was routed onto
 	Agent     string `json:"agent,omitempty"`   // resolved target agent (slug)
 	// Notice is something the delegating agent should know about a task that
 	// was created all the same — that its colleague is stopped, say (#556).
 	Notice string `json:"notice,omitempty"`
+	// Routed says that no task was created: the topic already had an open,
+	// running or blocked task at the target, and the request was added to it
+	// as a note (#45). TaskID is then that task's.
+	Routed bool `json:"routed,omitempty"`
+	// State is the routed-onto task's state after the note: open when the
+	// note resumed it, otherwise the state it was in.
+	State string `json:"state,omitempty"`
+	// Woken says that the note resumed a blocked task, as a person's reply
+	// does.
+	Woken bool `json:"woken,omitempty"`
+	// Parked says that the task is parked on purpose (a correlation key under
+	// "parked:"): the note waits on it until somebody releases the topic.
+	Parked bool `json:"parked,omitempty"`
+	// WaitingOn is the correlation key a blocked task that was not woken
+	// waits on.
+	WaitingOn string `json:"waiting_on,omitempty"`
+	// Reason is why the task is blocked, where the platform knows it.
+	Reason string `json:"reason,omitempty"`
 }
 
 // RequestMessage/InjectMessage are the meta action covey/message (#537): the

@@ -503,6 +503,7 @@ func (p *actionProxy) createTask(ctx context.Context, params json.RawMessage) an
 		Body     string `json:"body"`
 		Agent    string `json:"agent"`
 		Priority int    `json:"priority"`
+		Topic    string `json:"topic"`
 	}
 	if err := json.Unmarshal(params, &in); err != nil || strings.TrimSpace(in.Title) == "" {
 		return map[string]string{"status": "error", "error": "title missing"}
@@ -528,22 +529,50 @@ func (p *actionProxy) createTask(ctx context.Context, params json.RawMessage) an
 
 	resp, err := p.client.createTask(ctx, RequestCreateTask{
 		TaskID: p.taskID, Agent: in.Agent, Title: in.Title, Body: in.Body, Priority: in.Priority,
-		ApprovalID: dec.ApprovalID,
+		Topic: in.Topic, ApprovalID: dec.ApprovalID,
 	})
 	if err != nil {
 		return map[string]string{"status": "error", "error": err.Error()}
 	}
-	audit, _ := json.Marshal(map[string]any{"action": subject, "params": params,
-		"ok": resp.OK, "created_task": resp.TaskID, "agent": resp.Agent})
+	auditMap := map[string]any{"action": subject, "params": params,
+		"ok": resp.OK, "created_task": resp.TaskID, "agent": resp.Agent,
+		"routed": resp.Routed, "topic": in.Topic}
+	if resp.Routed {
+		// created_task keeps its name for the readers that count it; a
+		// routed call created nothing, and this names the task it went to.
+		auditMap["routed_task"] = resp.TaskID
+	}
+	audit, _ := json.Marshal(auditMap)
 	_ = p.client.send(TypeEvent, Event{TaskID: p.taskID, Kind: "action", Payload: audit})
 	if !resp.OK {
 		return map[string]string{"status": "error", "error": resp.Error}
 	}
-	data := map[string]string{"task_id": resp.TaskID, "agent": resp.Agent}
+	return map[string]any{"status": "ok", "data": createTaskData(resp)}
+}
+
+// createTaskData is the answer an agent reads from covey/create_task.
+// "routed" is always there, so an agent can tell a new task from an addendum
+// to an existing one without knowing which fields the other case leaves out
+// (#45).
+func createTaskData(resp InjectCreateTask) map[string]any {
+	data := map[string]any{"task_id": resp.TaskID, "agent": resp.Agent, "routed": resp.Routed}
+	if resp.Routed {
+		data["state"] = resp.State
+		data["woken"] = resp.Woken
+		if resp.Parked {
+			data["parked"] = true
+		}
+		if resp.WaitingOn != "" {
+			data["waiting_on"] = resp.WaitingOn
+		}
+		if resp.Reason != "" {
+			data["reason"] = resp.Reason
+		}
+	}
 	if resp.Notice != "" {
 		data["notice"] = resp.Notice
 	}
-	return map[string]any{"status": "ok", "data": data}
+	return data
 }
 
 // noteOnTask is covey/add_note with the task_id of another task: a note on a

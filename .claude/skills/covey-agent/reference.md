@@ -167,9 +167,10 @@ Four of them need care when designing:
 - **`create_task`** is the way out of assignments that are too big: close the partial result off,
   file the rest as a task — instead of carrying on to the turn limit. It runs through the
   guard rails (`covey:create_task`, on delegation
-  `covey:create_task:foreign`), so it can return `denied`/`pending`. The platform refuses
-  duplicates of the same title, chains that are too deep and too many tasks per run — the
-  playbook should not run into that in the first place.
+  `covey:create_task:foreign`), so it can return `denied`/`pending`. The platform adds a request
+  on a topic that already has an open task at the target to that task as a note (#45), and
+  refuses chains that are too deep and too many tasks per run — the playbook should not run
+  into that in the first place.
 - **`message`** is how an agent reaches a person without stopping: "the target branch
   is missing on the project page, I am touching nothing until you say which". Write it into
   the playbook wherever the agent would otherwise guess or bury a question in its result.

@@ -3600,9 +3600,15 @@ const (
 //     station: how often has THIS agent extended THIS chain.
 //   - Length (maxAgentTaskChain) — the backstop under it, for a relay across
 //     many stations.
-//   - Width (maxAgentTasksPerRun) — a run spins off a limited amount.
-//   - Duplicates — if an open task with the same title already exists at the
-//     target agent, no second one is created. That is exactly where loops fail
+//   - Width (maxAgentTasksPerRun) — a run spins off a limited amount, the
+//     requests it routed onto existing tasks counted with the ones it created.
+//   - Duplicates — one topic, one open task (#45). A request whose topic
+//     (backlog.TopicKey of the title, or the "topic" the agent names) already
+//     has an open, running or blocked task at the target agent creates no
+//     second task: it is added to that task as a note, and a blocked one is
+//     resumed with it unless it waits on a decision (routeCreateTask). A title
+//     with no topic falls back to the old check: an identical title open at
+//     the target is refused, naming the task. That is exactly where loops fail
 //     in which every run creates the same task again.
 //
 // The delegation stays within the organization: the target agent is resolved by
@@ -3683,15 +3689,42 @@ func (o *Orchestrator) CreateAgentTask(ctx context.Context, agent agents.Agent, 
 	if err != nil {
 		return fail("subtasks cannot be counted")
 	}
-	if children >= maxAgentTasksPerRun {
-		return fail(fmt.Sprintf("this run has already created %d tasks — that is the limit", children))
+	// A routed request creates no child, so it is counted by its note: without
+	// it two parked tasks could wake each other with notes for ever, each run
+	// staying under every limit.
+	routed, err := o.Backlog.CountRouted(ctx, taskID)
+	if err != nil {
+		return fail("subtasks cannot be counted")
 	}
-	dup, err := o.Backlog.OpenWithTitle(ctx, targetAgent.ID, title)
+	if children+routed >= maxAgentTasksPerRun {
+		return fail(fmt.Sprintf("this run has already created %d tasks (%d of them added to existing tasks as notes) — "+
+			"that is the limit", children+routed, routed))
+	}
+
+	topic := backlog.TopicKey(title)
+	if strings.TrimSpace(req.Topic) != "" {
+		topic = backlog.NormalizeTopic(req.Topic)
+	}
+	if topic != "" {
+		match, found, err := o.Backlog.OpenByTopic(ctx, agent.OrgID, targetAgent.ID, topic, taskID)
+		if err != nil {
+			o.Log.Warn("create_task: the topic could not be looked up", "task", taskID, "err", err)
+			return fail("duplicate check failed")
+		}
+		if found {
+			return o.routeCreateTask(ctx, agent, taskID, targetAgent, match, topic, title, req)
+		}
+	}
+	// Routing finds no task with the same title when that title names no
+	// topic, and it skips the asking run's own task; an identical title open
+	// at the target is still the loop this check has always stopped.
+	dupID, dup, err := o.Backlog.OpenWithTitle(ctx, targetAgent.ID, title)
 	if err != nil {
 		return fail("duplicate check failed")
 	}
 	if dup {
-		return fail(fmt.Sprintf("there is already an open task %q at %s — no second one created", title, targetAgent.Slug))
+		return fail(fmt.Sprintf("there is already an open task %q at %s (%s) — no second one created; "+
+			"add to it with covey/add_note", title, targetAgent.Slug, dupID))
 	}
 
 	created, err := o.Backlog.CreateChild(ctx, taskID, backlog.ChildSpec{
@@ -3700,6 +3733,7 @@ func (o *Orchestrator) CreateAgentTask(ctx context.Context, agent agents.Agent, 
 		Body:     req.Body,
 		Origin:   originAgentTask + ":" + agent.Slug,
 		Priority: req.Priority,
+		Topic:    req.Topic,
 	})
 	if err != nil {
 		return fail(err.Error())

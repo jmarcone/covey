@@ -227,12 +227,14 @@ func (s *Store) create(ctx context.Context, orgID, agentID uuid.UUID, title, bod
 	if priority == 0 {
 		priority = 5
 	}
-	// A new task lands in the agent's first stage (if one is defined).
-	row := s.pool.QueryRow(ctx, `INSERT INTO backlog_tasks (id, org_id, agent_id, title, body, origin, priority, stage_id, conversation_id, chat_answer, said_in_call)
+	// A new task lands in the agent's first stage (if one is defined). Its
+	// topic key is written with it, so that an agent's covey/create_task can
+	// route onto a task a person, a webhook or a chat made (#45).
+	row := s.pool.QueryRow(ctx, `INSERT INTO backlog_tasks (id, org_id, agent_id, title, body, origin, priority, stage_id, conversation_id, chat_answer, said_in_call, topic_key)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,
-			(SELECT id FROM agent_stages WHERE agent_id=$3 ORDER BY position, created_at LIMIT 1), $8, $9, $10)
+			(SELECT id FROM agent_stages WHERE agent_id=$3 ORDER BY position, created_at LIMIT 1), $8, $9, $10, NULLIF($11,''))
 		RETURNING `+taskCols,
-		uuid.New(), orgID, agentID, title, body, origin, priority, conversationID, chatAnswer, saidInCall)
+		uuid.New(), orgID, agentID, title, body, origin, priority, conversationID, chatAnswer, saidInCall, TopicKey(title))
 	t, err := scanTask(row)
 	if err != nil {
 		return t, err
@@ -256,6 +258,9 @@ type ChildSpec struct {
 	Priority    int
 	SessionID   string
 	ResumeInput string
+	// Topic is the topic the creator named for the task (covey/create_task's
+	// "topic"); empty means the one its title names (TopicKey).
+	Topic string
 }
 
 // CreateChild creates a task that hangs off an originating task. It inherits
@@ -283,14 +288,18 @@ func (s *Store) CreateChild(ctx context.Context, parentID uuid.UUID, spec ChildS
 		chatAnswer = parent.ChatAnswer
 		saidInCall = parent.SaidInCall
 	}
+	topic := TopicKey(spec.Title)
+	if strings.TrimSpace(spec.Topic) != "" {
+		topic = NormalizeTopic(spec.Topic)
+	}
 	row := s.pool.QueryRow(ctx, `INSERT INTO backlog_tasks
 		(id, org_id, agent_id, title, body, origin, priority, parent_task_id,
-		 runtime_session_id, resume_input, stage_id, conversation_id, chat_answer, said_in_call)
+		 runtime_session_id, resume_input, stage_id, conversation_id, chat_answer, said_in_call, topic_key)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8, NULLIF($9,''), NULLIF($10,''),
-			(SELECT id FROM agent_stages WHERE agent_id=$3 ORDER BY position, created_at LIMIT 1), $11, $12, $13)
+			(SELECT id FROM agent_stages WHERE agent_id=$3 ORDER BY position, created_at LIMIT 1), $11, $12, $13, NULLIF($14,''))
 		RETURNING `+taskCols,
 		uuid.New(), parent.OrgID, agentID, spec.Title, spec.Body, spec.Origin, spec.Priority,
-		parentID, spec.SessionID, spec.ResumeInput, conversationID, chatAnswer, saidInCall)
+		parentID, spec.SessionID, spec.ResumeInput, conversationID, chatAnswer, saidInCall, topic)
 	t, err := scanTask(row)
 	if err != nil {
 		return t, err
@@ -375,16 +384,59 @@ func (s *Store) CountChildren(ctx context.Context, parentID uuid.UUID) (int, err
 	return n, err
 }
 
-// OpenWithTitle says whether the agent already has a non-terminal task with
-// this title. The duplicate protection for self-created tasks: an agent that
-// creates the same task anew on every run would otherwise build itself a queue
-// that never empties.
-func (s *Store) OpenWithTitle(ctx context.Context, agentID uuid.UUID, title string) (bool, error) {
-	var exists bool
-	err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM backlog_tasks
-		WHERE agent_id=$1 AND title=$2 AND state NOT IN ('done','failed','cancelled'))`,
-		agentID, title).Scan(&exists)
-	return exists, err
+// OpenWithTitle finds a non-terminal task of the agent with this title and
+// answers its id. The duplicate protection for self-created tasks: an agent
+// that creates the same task anew on every run would otherwise build itself a
+// queue that never empties. The id goes back to the agent with the refusal,
+// so that it can add to that task instead (covey/add_note).
+func (s *Store) OpenWithTitle(ctx context.Context, agentID uuid.UUID, title string) (uuid.UUID, bool, error) {
+	var id uuid.UUID
+	err := s.pool.QueryRow(ctx, `SELECT id FROM backlog_tasks
+		WHERE agent_id=$1 AND title=$2 AND state NOT IN ('done','failed','cancelled')
+		ORDER BY updated_at DESC LIMIT 1`,
+		agentID, title).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, false, nil
+	}
+	if err != nil {
+		return uuid.Nil, false, err
+	}
+	return id, true, nil
+}
+
+// OpenByTopic finds the agent's task on a topic that is still open, running
+// or blocked (#45) — the one covey/create_task routes an addendum onto instead
+// of creating a second task. Several: the one updated last. exclude is the
+// asking run's own task, which is never the target: an agent splitting its
+// own work into a subtask of the same topic would otherwise land on itself.
+//
+// A task from before migration 0153 has no stored key; its key is computed
+// here from its title, with the same rule that writes it (TopicKey), rather
+// than backfilled in SQL — one implementation of the rule, not two.
+func (s *Store) OpenByTopic(ctx context.Context, orgID, agentID uuid.UUID, topic string, exclude uuid.UUID) (Task, bool, error) {
+	if topic == "" {
+		return Task{}, false, nil
+	}
+	rows, err := s.pool.Query(ctx, "SELECT "+taskCols+`, topic_key FROM backlog_tasks
+		WHERE org_id=$1 AND agent_id=$2 AND archived_at IS NULL
+		  AND state IN ('open','in_progress','blocked') AND id <> $3
+		  AND (topic_key = $4 OR topic_key IS NULL)
+		ORDER BY updated_at DESC`, orgID, agentID, exclude, topic)
+	if err != nil {
+		return Task{}, false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var t Task
+		var key *string
+		if err := rows.Scan(append(t.scanDest(), &key)...); err != nil {
+			return Task{}, false, err
+		}
+		if (key != nil && *key == topic) || (key == nil && TopicKey(t.Title) == topic) {
+			return t, true, nil
+		}
+	}
+	return Task{}, false, rows.Err()
 }
 
 // InProgressTitles are the titles of an agent's tasks in progress, the one
@@ -1522,6 +1574,28 @@ func (s *Store) AddNote(ctx context.Context, taskID uuid.UUID, author, content s
 		VALUES ($1,$2,$3,$4) RETURNING id, task_id, author, content, created_at`,
 		uuid.New(), taskID, author, content).
 		Scan(&n.ID, &n.TaskID, &n.Author, &n.Content, &n.CreatedAt)
+	return n, err
+}
+
+// AddRoutedNote is AddNote for an addendum covey/create_task routed onto an
+// existing task (#45), with the task of the run that asked for it. Routing
+// creates no task, so the width limit of that run would never move;
+// CountRouted counts these notes for it.
+func (s *Store) AddRoutedNote(ctx context.Context, taskID, routedFrom uuid.UUID, author, content string) (Note, error) {
+	var n Note
+	err := s.pool.QueryRow(ctx, `INSERT INTO task_notes (id, task_id, author, content, routed_from)
+		VALUES ($1,$2,$3,$4,$5) RETURNING id, task_id, author, content, created_at`,
+		uuid.New(), taskID, author, content, routedFrom).
+		Scan(&n.ID, &n.TaskID, &n.Author, &n.Content, &n.CreatedAt)
+	return n, err
+}
+
+// CountRouted counts the notes a task's run routed onto other tasks instead
+// of creating them — the other half of its width (CountChildren).
+func (s *Store) CountRouted(ctx context.Context, fromTask uuid.UUID) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx,
+		"SELECT COUNT(*) FROM task_notes WHERE routed_from=$1", fromTask).Scan(&n)
 	return n, err
 }
 
