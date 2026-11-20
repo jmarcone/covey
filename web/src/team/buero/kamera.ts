@@ -34,13 +34,19 @@ export type Steuerung = {
    *  cutaway follows the new view. */
   tick(rohSekunden: number): boolean;
   readonly drehung: number;
+  /** A turn is under way (or a reset waits to be reported): the next frame
+   *  has to follow, and the one after it. */
+  readonly faehrt: boolean;
   anbinden(onKarteZu: () => void): () => void;
-  groesse(): void;
+  /** Reads the stage's size — once, here, and not in the frame — and fits the
+   *  camera to it. Called at the start and whenever the stage is resized. */
+  messen(): { b: number; h: number };
 };
 
 /** Creates the camera for `buehne`. `ruhig` (prefers-reduced-motion) makes a
- *  turn snap instead of travel. */
-export function erschaffeKamera(buehne: HTMLElement, ruhig = false): Steuerung {
+ *  turn snap instead of travel. `bewegt` is told after every change of the
+ *  view, so the stage can draw it — and otherwise does not have to draw. */
+export function erschaffeKamera(buehne: HTMLElement, ruhig = false, bewegt?: () => void): Steuerung {
   const kamera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1000, 1000);
   let plan: Pick<Plan, "breite" | "hoehe"> = { breite: 1000, hoehe: 1000 };
   let drehung = START_DREHUNG, neigung = START_NEIGUNG, zoom = 1;
@@ -55,8 +61,18 @@ export function erschaffeKamera(buehne: HTMLElement, ruhig = false): Steuerung {
      only by way of a rotation. */
   const blick = new THREE.Vector3(0, 0, 0);
 
-  const breite = () => Math.max(1, buehne.clientWidth);
-  const hoehe = () => Math.max(1, buehne.clientHeight);
+  /* The stage's size is read when it is measured (`messen`), not whenever the
+     camera needs it: `stellen` runs in the frame while a turn travels, and a
+     layout read there makes the browser lay the page out again every frame. */
+  let b = Math.max(1, buehne.clientWidth), h = Math.max(1, buehne.clientHeight);
+  const breite = () => b;
+  const hoehe = () => h;
+  function messen(): { b: number; h: number } {
+    b = Math.max(1, buehne.clientWidth);
+    h = Math.max(1, buehne.clientHeight);
+    stellen();
+    return { b, h };
+  }
 
   /* How large the building stands on the stage must not hang on a guessed
    * number. Eight colleagues make a different house than a hundred and
@@ -100,6 +116,7 @@ export function erschaffeKamera(buehne: HTMLElement, ruhig = false): Steuerung {
     kamera.lookAt(blick);
     kamera.updateProjectionMatrix();
     kamera.updateMatrixWorld(true);
+    bewegt?.();
   }
 
   /* Panning means moving the look target along the axes that lie horizontal
@@ -146,6 +163,7 @@ export function erschaffeKamera(buehne: HTMLElement, ruhig = false): Steuerung {
 
   function drehen(richtung: 1 | -1): void {
     drehZiel += (richtung * Math.PI) / 2;
+    bewegt?.();
   }
 
   function zentrieren(p: Punkt, zoomAuf: number): void {
@@ -359,8 +377,9 @@ export function erschaffeKamera(buehne: HTMLElement, ruhig = false): Steuerung {
     zurueck,
     tick,
     get drehung() { return drehung; },
+    get faehrt() { return drehung !== drehZiel || zurueckGedreht; },
     anbinden,
-    groesse: stellen,
+    messen,
   };
 }
 
@@ -383,15 +402,23 @@ export function erschaffeMaler(buehne: HTMLElement): THREE.WebGLRenderer | null 
      switch; the office is the only three.js user in the app. */
   THREE.ColorManagement.enabled = false;
   maler.outputColorSpace = THREE.SRGBColorSpace;
-  maler.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+  /* A pixel ratio of 2 is four times the fragments of 1; at 1.5 the picture
+     is still sharp on a dense screen, and the page can breathe. */
+  maler.setPixelRatio(Math.min(1.5, window.devicePixelRatio || 1));
+  /* The shadows come from furniture and walls that stand still — the people
+     are an overlay, not part of the scene. So the shadow map is drawn when the
+     house is built (`maler.shadowMap.needsUpdate`, see Buero's `bauen`) and not
+     in every frame, and the cheapest filter is enough to read it. */
   maler.shadowMap.enabled = true;
-  maler.shadowMap.type = THREE.PCFSoftShadowMap;
+  maler.shadowMap.autoUpdate = false;
+  maler.shadowMap.type = THREE.BasicShadowMap;
   buehne.prepend(maler.domElement);
   return maler;
 }
 
-/** On resize: the canvas follows the stage. The camera's extent is
- *  `Steuerung.groesse`, called beside this — the renderer does not own it. */
-export function groesse(maler: THREE.WebGLRenderer, _kamera: THREE.Camera, buehne: HTMLElement): void {
-  maler.setSize(Math.max(1, buehne.clientWidth), Math.max(1, buehne.clientHeight), false);
+/** On resize: the canvas follows the stage, at the size `Steuerung.messen`
+ *  has just read. The camera's extent is fitted there too — the renderer does
+ *  not own it. */
+export function groesse(maler: THREE.WebGLRenderer, mass: { b: number; h: number }): void {
+  maler.setSize(mass.b, mass.h, false);
 }
