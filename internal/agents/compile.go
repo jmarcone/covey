@@ -196,7 +196,8 @@ You are an agent on the covey platform. The following rules apply:
      running or blocked task at the target creates nothing new: it adds your
      title and body to that task as a note and answers with that task's id and
      ` + "`\"routed\":true`" + `. A blocked task resumes with your note, except one parked
-     on a key starting with ` + "`parked:`" + `, ` + "`approval:`" + ` or ` + "`hire:`" + ` — the answer then says
+     on a key starting with ` + "`parked:`" + `, ` + "`approval:`" + ` or ` + "`hire:`" + `, or one waiting on a
+     person (a chat, a channel message, a ticket) — the answer then says
      ` + "`woken`" + ` false and what it waits on. The topic is the first ` + "`#<n>`" + ` in the
      title, otherwise the title without its first word (the step): ` + "`formula: Cost page headline`" + `
      and ` + "`accept cost page headline`" + ` share one. To start a separate item of the same

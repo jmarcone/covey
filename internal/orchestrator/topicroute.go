@@ -100,9 +100,9 @@ func (o *Orchestrator) routeCreateTask(ctx context.Context, agent agents.Agent, 
 		resp.Parked = strings.HasPrefix(key, "parked:")
 		switch {
 		case r.Repeat || keepsParked(key):
-		case t.ConversationID != nil || t.ChatAnswer:
-			resp.Notice = "the task waits on a conversation with a person; your note stands on it, " +
-				"but only the person's reply resumes it"
+		case t.TalksToSomebody():
+			resp.Notice = "the task waits on a conversation with a person (a chat, a channel message or a ticket); " +
+				"your note stands on it, but only their reply resumes it"
 		case !mayWake:
 			resp.Notice = stopNotice
 		}

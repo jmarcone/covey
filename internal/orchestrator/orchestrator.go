@@ -3705,18 +3705,21 @@ func (o *Orchestrator) CreateAgentTask(ctx context.Context, agent agents.Agent, 
 	if strings.TrimSpace(req.Topic) != "" {
 		topic = backlog.NormalizeTopic(req.Topic)
 	}
-	if topic != "" {
+	// Twice at most: when the task found has left play since the lookup (not
+	// ok), an older task of the same topic may still be open, and the
+	// request belongs there rather than beside it. Past the second try the
+	// request is created as if there had been no match, not lost.
+	for try := 0; topic != "" && try < 2; try++ {
 		match, found, err := o.Backlog.OpenByTopic(ctx, agent.OrgID, targetAgent.ID, topic, taskID)
 		if err != nil {
 			o.Log.Warn("create_task: the topic could not be looked up", "task", taskID, "err", err)
 			return fail("duplicate check failed")
 		}
-		if found {
-			// Not ok: the task left play since the lookup. The request is
-			// created as if there had been no match rather than lost on it.
-			if resp, ok := o.routeCreateTask(ctx, agent, taskID, targetAgent, match, topic, title, req); ok {
-				return resp
-			}
+		if !found {
+			break
+		}
+		if resp, ok := o.routeCreateTask(ctx, agent, taskID, targetAgent, match, topic, title, req); ok {
+			return resp
 		}
 	}
 	// Routing finds no task with the same title when that title names no

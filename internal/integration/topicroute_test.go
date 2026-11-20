@@ -457,6 +457,38 @@ func TestTopicRoutingNeverWakesAConversationTask(t *testing.T) {
 	}
 }
 
+// A task a channel opened (a Teams message, a ticket) waits on the person at
+// the other end just as a chat task does; a colleague's note does not resume
+// it in their place, whatever key it parked on.
+func TestTopicRoutingNeverWakesAChannelTask(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	x := s.newSupportAgent("formelwerk")
+	s.ohneLaeufe(x.ID)
+	task, err := s.backlog.Create(ctx, s.orgID, x.ID, "Teams message from Ada Example", "", "webhook:teamsapp", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE backlog_tasks SET state = 'in_progress' WHERE id = $1`, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.backlog.Block(ctx, task.ID, "teamsapp:conversation:c-1", "sess-teams", "waiting"); err != nil {
+		t.Fatal(err)
+	}
+	s.rehire(t, x.ID)
+	y, own := s.caller(t, "rechner")
+
+	resp := s.orch.CreateAgentTask(ctx, y, own.ID, daemon.RequestCreateTask{
+		Agent: "formelwerk", Title: "reply: message from Ada Example", Body: "tell her it ships Friday"})
+	routedTo(t, resp, task)
+	if resp.Woken || resp.State != backlog.StateBlocked || !strings.Contains(resp.Notice, "conversation") {
+		t.Fatalf("a channel task keeps the note and waits for its person: %+v", resp)
+	}
+	if st := s.taskState(task.ID); st != backlog.StateBlocked {
+		t.Fatalf("the channel task stays blocked: %s", st)
+	}
+}
+
 // The store's half: the note and the wake are decided together behind the
 // row lock. A repeat of the latest note wakes nothing — a recurring run
 // cannot resume a task that parked again on every tick — and a task that
@@ -493,6 +525,14 @@ func TestRouteNoteRepeatAndTerminal(t *testing.T) {
 	}
 	if n, err := s.backlog.CountRouted(ctx, own.ID); err != nil || n != 1 {
 		t.Fatalf("a repeat does not count towards the width: %d %v", n, err)
+	}
+	// A note of somebody else in between does not make the same words new.
+	if _, err := s.backlog.AddNote(ctx, task.ID, "user:admin", "looked at it"); err != nil {
+		t.Fatal(err)
+	}
+	r, err = s.backlog.RouteNote(ctx, task.ID, own.ID, "agent:rechner", "amend it", "resume with it", keep, true)
+	if err != nil || r.Woken || !r.Repeat {
+		t.Fatalf("the same note after another's is still a repeat: %+v %v", r, err)
 	}
 
 	// The same request through create_task: routed, not woken, and said so.

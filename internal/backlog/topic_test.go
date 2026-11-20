@@ -28,6 +28,8 @@ func TestTopicKey(t *testing.T) {
 		// Words made only of punctuation are no words: not counted, not the
 		// step, not part of the topic.
 		{"formula - cost page headline", "cost page headline"},
+		{"formula → cost page headline", "cost page headline"},
+		{"formula | cost", ""},
 		{"formula : cost page headline", "cost page headline"},
 		{"formula — cost page – headline", "cost page headline"},
 		{"go - ahead", ""},

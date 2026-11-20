@@ -27,6 +27,12 @@ var issueRef = regexp.MustCompile(`#\d+`)
 // A title of fewer than three words has no topic (""): with the step taken
 // off, one word ("go", "hold") says nothing about what it is about, and
 // routing on it would join unrelated work.
+//
+// The key is stored with the task when it is created (backlog_tasks.topic_key)
+// and not computed again. A change to this rule therefore leaves the keys of
+// existing tasks as the old rule made them, and they stop meeting requests
+// keyed by the new one: a change here comes with a migration that rewrites
+// the stored keys of the tasks still in play.
 func TopicKey(title string) string {
 	if ref := issueRef.FindString(title); ref != "" {
 		return ref
@@ -40,8 +46,8 @@ func TopicKey(title string) string {
 
 // NormalizeTopic is an explicit topic as the agent gave it, brought to the
 // form TopicKey produces — lower-cased, whitespace collapsed, trailing
-// punctuation and punctuation-only words removed — but whole: an explicit topic has no step to drop
-// ("#17 part 3" stays "#17 part 3").
+// punctuation and punctuation-only words removed — but whole: an explicit
+// topic has no step to drop ("#17 part 3" stays "#17 part 3").
 func NormalizeTopic(s string) string {
 	return trimTrailingPunct(collapse(s))
 }
@@ -52,12 +58,16 @@ func NormalizeTopic(s string) string {
 func collapse(s string) string {
 	var words []string
 	for _, w := range strings.Fields(strings.ToLower(s)) {
-		if strings.TrimFunc(w, unicode.IsPunct) != "" {
+		if strings.TrimFunc(w, punctOrSymbol) != "" {
 			words = append(words, w)
 		}
 	}
 	return strings.Join(words, " ")
 }
+
+// punctOrSymbol: a mark that names nothing on its own — punctuation, or a
+// symbol such as "|" or "→" between the step and the topic.
+func punctOrSymbol(r rune) bool { return unicode.IsPunct(r) || unicode.IsSymbol(r) }
 
 // trimTrailingPunct removes punctuation from the end of the whole string, and
 // the space a removed mark leaves ("go ahead ." → "go ahead").
