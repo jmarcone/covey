@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import Costs from "./Costs";
 import OutsideCosts from "./OutsideCosts";
 import { readFileSync } from "node:fs";
@@ -727,6 +727,11 @@ describe("the outside review's minors (#120)", () => {
     expect(h18.getAttribute("aria-label")).toContain(t("costs.fig.billedBeforeHourly"));
     expect(container.querySelector(`[data-credential="${KEY}#0"] [data-period="${H19}"]`)!.getAttribute("aria-label"))
       .not.toContain(t("costs.fig.billedBeforeHourly"));
+    // the notes' column of the table is headed "Note", not left blank
+    fireEvent.click(screen.getAllByRole("button", { name: "Show as table" })[0]);
+    const table = container.querySelector<HTMLElement>(`[data-credential="${KEY}#0"] table`)!;
+    expect(within(table).getByRole("columnheader", { name: t("costs.outside.colNote") })).toBeTruthy();
+    expect(within(table).getAllByText(t("costs.fig.billedBeforeHourly"))).toHaveLength(1);
   });
 
   it("the detailed view shows the meter of a seat with a dent although the range has no outside call", async () => {

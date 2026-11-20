@@ -438,6 +438,21 @@ describe("meterPoints", () => {
     expect(usableReadings(old, SEAT, 0, "usage_cmd", "seven_day")).toHaveLength(1);
   });
 
+  it("drops a late reading at the range's start that the server's mark dropped, though the page has no earlier reading to show it", () => {
+    // since 10:00. Before it: 09:00 39 % (old week) and 09:35 1 % (new week), not on the page. In it: 10:05 39 % with the
+    // old week's resets_at (a lagging second daemon) and 10:20 2 %. The server's segment is 09:35-10:20.
+    const rs = [
+      reading(iso(18, 10, 5), 39, { resets_at: "2026-11-18T12:00:00Z" }),
+      reading(iso(18, 10, 20), 2, { resets_at: "2026-11-25T09:35:00Z" }),
+    ];
+    const ps = meterPoints(rs, cov([seg(iso(18, 9, 35), iso(18, 10, 20), { reset: true })]), [iso(18, 10)], "hour");
+    expect(ps.map((p) => p.pct)).toEqual([2]);
+    // a reading without resets_at, or within the hour of the latest one, stays
+    const kept = [reading(iso(18, 10, 5), 1, { resets_at: "2026-11-25T09:00:00Z" }), reading(iso(18, 10, 20), 2, { resets_at: "2026-11-25T09:35:00Z" }),
+      reading(iso(18, 10, 30), 3, { resets_at: null })];
+    expect(meterPoints(kept, cov([seg(iso(18, 9, 35), iso(18, 10, 30))]), [iso(18, 10)], "hour").map((p) => p.pct)).toEqual([1, 2, 3]);
+  });
+
   it("marks a new week after a gap as such without drawing a fall", () => {
     const segs = [seg(iso(18, 1, 50), iso(18, 1, 50)), seg(iso(18, 9, 10), iso(18, 9, 10), { reset: true })];
     const ps = meterPoints([reading(iso(18, 1, 50), 39), reading(iso(18, 9, 10), 1)], cov(segs), [iso(18, 1), iso(18, 9)], "hour");
@@ -564,16 +579,20 @@ describe("weekly meter: names, the $ axis and the tooltip in the scrolled view",
 describe("weekly meter: the scroll to the newest period", () => {
   beforeEach(() => { void i18n.changeLanguage("en"); });
   const bar = (v: number): Bar[] => [{ key: "x", label: "x", color: "red", segs: [{ key: "x", label: "x", color: "red", value: v }] }];
-  const periodsOf = (n: number, step = 3600_000) => Array.from({ length: n }, (_, i) => new Date(Date.UTC(2026, 10, 18) + i * step).toISOString());
+  const periodsOf = (hours: number[]) => hours.map((h) => new Date(Date.UTC(2026, 10, 18) + h * 3600_000).toISOString());
   const pt = (slot: number) => ({ at: "a", pct: 10, slot, frac: 0.5, part: 0, reset: false, newWeek: false });
-  function Harness({ first }: { first: number }) {
-    const [n, setN] = useState(first);
-    const ps = periodsOf(n);
+  /** The hours of the periods are the test's to change: the chart gets what the caller says, like a refetch. */
+  function Harness({ first, scrollKey = "1:hour" }: { first: number[]; scrollKey?: string }) {
+    const [hours, setHours] = useState(first);
+    const [key, setKey] = useState(scrollKey);
+    const ps = periodsOf(hours);
     return (
       <>
-        <button onClick={() => setN(n + 1)}>more</button>
-        <button onClick={() => setN(first + 30)}>range</button>
-        <BarChart title="t" periods={ps} groups={ps.map(() => bar(1))} fmtPeriod={(p) => p} fmtValue={fmtUSD} fmtAxis={fmtUSDAxis}
+        <button onClick={() => setHours([...hours, hours.at(-1)! + 1])}>more</button>
+        <button onClick={() => setHours(hours.slice(1))}>drop first</button>
+        <button onClick={() => { setHours(Array.from({ length: first.length + 30 }, (_, i) => i)); setKey("7:hour"); }}>range</button>
+        <button onClick={() => setKey("1:10min")}>bucket</button>
+        <BarChart title="t" periods={ps} groups={ps.map(() => bar(1))} fmtPeriod={(p) => p} fmtValue={fmtUSD} fmtAxis={fmtUSDAxis} scrollKey={key}
           meter={{ points: [pt(0)], label: "m", name: "n", fmtAt: (x) => x }} />
       </>
     );
@@ -591,10 +610,12 @@ describe("weekly meter: the scroll to the newest period", () => {
   }
   const scrollerOf = (c: HTMLElement) => c.querySelector("svg[role=group]")!.parentElement!.parentElement as HTMLElement;
 
+  const dense = (n: number) => Array.from({ length: n }, (_, i) => i);
+
   it("follows a new period when the view is at the end, and stays where a user who scrolled back is", () => {
     const restore = measured();
     try {
-      const { container } = renderWithProviders(<Harness first={10} />);
+      const { container } = renderWithProviders(<Harness first={dense(10)} />);
       const sc = scrollerOf(container);
       expect(sc.scrollLeft).toBe(10 * 120 + 64);
       // at the end: a new period scrolls on
@@ -604,9 +625,39 @@ describe("weekly meter: the scroll to the newest period", () => {
       sc.scrollLeft = 200;
       fireEvent.click(screen.getByRole("button", { name: "more" }));
       expect(sc.scrollLeft).toBe(200);
-      // a change of range (many periods at once) goes to the end again
+      // a change of range (the key, with many periods) goes to the end again
       fireEvent.click(screen.getByRole("button", { name: "range" }));
       expect(sc.scrollLeft).toBe(40 * 120 + 64);
+    } finally {
+      restore();
+    }
+  });
+
+  it("goes to the end when the caller's key changes, even with as many periods as before", () => {
+    const restore = measured();
+    try {
+      const { container } = renderWithProviders(<Harness first={dense(10)} />);
+      const sc = scrollerOf(container);
+      sc.scrollLeft = 200;
+      // the same ten periods, another bucket: only the key says so
+      fireEvent.click(screen.getByRole("button", { name: "bucket" }));
+      expect(sc.scrollLeft).toBe(10 * 120 + 64);
+    } finally {
+      restore();
+    }
+  });
+
+  it("keeps a scrolled-back view on a refetch of sparse periods, which a gap at the start or the end does not change", () => {
+    const restore = measured();
+    try {
+      // hours 0, 1 and 8 to 20: the distance of the first two periods is not the bucket's width
+      const { container } = renderWithProviders(<Harness first={[0, 1, ...Array.from({ length: 13 }, (_, i) => 8 + i)]} />);
+      const sc = scrollerOf(container);
+      sc.scrollLeft = 200;
+      fireEvent.click(screen.getByRole("button", { name: "drop first" }));
+      expect(sc.scrollLeft).toBe(200);
+      fireEvent.click(screen.getByRole("button", { name: "more" }));
+      expect(sc.scrollLeft).toBe(200);
     } finally {
       restore();
     }

@@ -1207,9 +1207,21 @@ export function meterPoints(rs: readonly UsageReading[], cov: MeterCoverage, per
   const slots = new Map(periods.map((p, i) => [Date.parse(p), i]));
   const out: MeterPoint[] = [];
   let part = -1, lastSeg = -1, lastStart = NaN;
-  for (const r of usableReadings(rs, cov.secret_key, cov.secret_slot, cov.source, cov.window_kind)) {
-    const at = Date.parse(r.fetched_at);
-    const seg = segs.findIndex(([a, b]) => at >= a && at <= b);
+  // The page only has the readings from the range's start, the server judges
+  // "late" with a mark that reaches 8 days further back. So a late reading at
+  // the start has no earlier reading here to show it. Within one server
+  // segment the kept readings' resets_at never differ by more than an hour (or
+  // the server would have begun a new week), so one that lies more than an
+  // hour before the latest of its segment's drawn readings is late too.
+  const seen = usableReadings(rs, cov.secret_key, cov.secret_slot, cov.source, cov.window_kind)
+    .map((r) => {
+      const at = Date.parse(r.fetched_at);
+      return { r, at, resets: r.resets_at ? Date.parse(r.resets_at) : NaN, seg: segs.findIndex(([a, b]) => at >= a && at <= b) };
+    });
+  const latest = new Map<number, number>();
+  for (const x of seen) if (x.seg >= 0 && !Number.isNaN(x.resets)) latest.set(x.seg, Math.max(latest.get(x.seg) ?? -Infinity, x.resets));
+  for (const { r, at, seg, resets } of seen) {
+    if (!Number.isNaN(resets) && resets < (latest.get(seg) ?? -Infinity) - 3600_000) continue;
     const start = bucketStart(at, bucket);
     const slot = slots.get(start);
     if (seg < 0 || slot == null) continue;

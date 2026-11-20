@@ -331,6 +331,9 @@ function MeterFigures({ f, readings }: { f: CredentialFigures; readings: UsageRe
   const source = t(`costs.insights.source_${m.source}`, { defaultValue: m.source });
   const own = readings.filter((x) => x.secret_key === m.secret_key && x.secret_slot === m.secret_slot);
   const sameWindow = own.filter((x) => x.source === m.source && (x.window_kind === "seven_day" || x.window_kind === ""));
+  // Only a count: it holds the readings of the range, so a late one at the
+  // range's start, whose week the server judged with an earlier mark, is not
+  // counted here (the chart's line drops it per segment, in meterPoints).
   const dropped = sameWindow.length - usableReadings(own, m.secret_key, m.secret_slot, m.source).length;
   const five = own.filter((x) => x.supported && !x.stale && x.window_percent != null).at(-1);
 

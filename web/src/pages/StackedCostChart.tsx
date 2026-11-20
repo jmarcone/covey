@@ -567,7 +567,7 @@ type NotesProps =
 /** Groups of bars over the periods. Every period is focusable: focus or hover
  *  opens its details, Enter/Space (or a tap) pins them, Escape closes them.
  *  "Show as table" renders the same numbers as a table. */
-export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis, height = 280, max, notes, notesLabel, meter, showX = true, asTable, wide }: NotesProps & {
+export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis, height = 280, max, notes, notesLabel, meter, scrollKey, showX = true, asTable, wide }: NotesProps & {
   title: string;
   periods: string[];
   groups: Bar[][];
@@ -583,6 +583,9 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
    *  name for the details and the table ("Weekly meter") and how a reading's
    *  time reads. */
   meter?: { points: readonly MeterPoint[]; label: string; name: string; fmtAt: (iso: string) => string };
+  /** What the chart shows, as the caller knows it (the range and the bucket):
+   *  when it changes, a chart with the meter's axis scrolls to its newest period. */
+  scrollKey?: string;
   showX?: boolean;
   asTable?: boolean;
   /** Wider bars, for a value printed above each: the label spills over less. */
@@ -633,22 +636,22 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
   }, [meter]);
   // A chart with the meter's axis scrolls with its newest period in view: the
   // axis sticks to the right edge and would otherwise hide the last bar.
-  // It scrolls there on the first draw, when the range or the bucket changes
-  // (the number of periods jumps by more than the one a refetch adds), and
-  // when the view was already at the end; a user who scrolled back to an
-  // older period stays there when a new one arrives.
+  // It scrolls there on the first draw, when the caller's `scrollKey` (the
+  // range and the bucket) changes, and when the view was already at the end;
+  // a user who scrolled back to an older period stays there when a refetch
+  // adds or drops one. The periods are sparse (only those with data), so the
+  // chart cannot tell a new range from a refetch by their count or spacing.
   const hasMeter = meter != null, newest = periods.at(-1);
-  const drawn = useRef<{ width: number; n: number; step: number } | null>(null);
+  const drawn = useRef<{ width: number; key: string | undefined } | null>(null);
   useEffect(() => {
     const el = scroller.current;
     if (!hasMeter || !el) { drawn.current = null; return; }
     const before = drawn.current;
-    const step = periods.length > 1 ? Date.parse(periods[1]) - Date.parse(periods[0]) : 0;
     const atEnd = before != null && el.scrollLeft + el.clientWidth >= before.width - 2;
-    if (before == null || atEnd || Math.abs(periods.length - before.n) > 1 || step !== before.step) el.scrollLeft = el.scrollWidth;
-    drawn.current = { width: el.scrollWidth, n: periods.length, step };
+    if (before == null || atEnd || scrollKey !== before.key) el.scrollLeft = el.scrollWidth;
+    drawn.current = { width: el.scrollWidth, key: scrollKey };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasMeter, periods.length, newest]);
+  }, [hasMeter, periods.length, newest, scrollKey]);
   // A window or orientation change re-places a pinned or open tooltip, as a scroll does.
   const isOpen = (pinned ?? hover) != null;
   useEffect(() => {
@@ -1310,8 +1313,8 @@ function NoMultiple({ f }: { f: CredentialFigures }) {
 }
 
 /** One credential: its tiles, its chart, its agents. */
-function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPeriod, selected, src, split, types, layout, view, sharedScale, asTable, outside, full }: {
-  f: CredentialFigures; data: CostCells; billed: BilledReport | undefined; readings: readonly UsageReading[]; canSetPlan: boolean; bucket: string; fmtPeriod: (p: string) => string;
+function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, scrollKey, fmtPeriod, selected, src, split, types, layout, view, sharedScale, asTable, outside, full }: {
+  f: CredentialFigures; data: CostCells; billed: BilledReport | undefined; readings: readonly UsageReading[]; canSetPlan: boolean; bucket: string; scrollKey?: string; fmtPeriod: (p: string) => string;
   selected: Set<string>; src: Record<Source, boolean>; split: Split; types: Set<string>; layout: Layout; view: View; sharedScale: boolean; asTable: boolean;
   /** The full view of covey's price table (the toggle): Reported and Recomputed apart. */
   full: boolean;
@@ -1604,7 +1607,7 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
           )}
           <BarChart title={`${t("costs.chartCost")} · ${name}`} periods={periods} groups={combined} fmtPeriod={fmtPeriod}
             fmtValue={fmtUSD} fmtAxis={fmtUSDAxis} notes={notes} notesLabel={t("costs.outside.colNote")} asTable={asTable} wide={vs}
-            meter={meterProp} />
+            meter={meterProp} scrollKey={scrollKey} />
         </>
       ) : (
         <div style={{ display: "grid", gap: 6 }}>
@@ -1853,9 +1856,11 @@ function ColourKey({ split, sources = [], other = [], full = true, list = full }
   );
 }
 
-export function CostExplorer({ data, billed, readings = [], canSetPlan = false, selected, bucket, fmtPeriod, outside = null, full: fullProp, onFull }: {
+export function CostExplorer({ data, billed, readings = [], canSetPlan = false, selected, bucket, scrollKey, fmtPeriod, outside = null, full: fullProp, onFull }: {
   data: CostCells | undefined; billed?: BilledReport; readings?: readonly UsageReading[]; canSetPlan?: boolean;
   selected: Set<string>; bucket: string; fmtPeriod: (p: string) => string;
+  /** The chart's view, range and bucket: where it changes, a chart with the meter scrolls to its newest period. */
+  scrollKey?: string;
   /** The sessions outside covey, included (#120, the default); null: covey only. */
   outside?: ExternalUsage | null;
   /** The full view of covey's price table (Reported and Recomputed apart),
@@ -1983,7 +1988,7 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
       {figures.length === 0 && loose.length === 0 ? (
         <div className="muted text-sm" style={{ padding: "40px 0", textAlign: "center" }}>{t("costs.empty")}</div>
       ) : figures.map((f) => (
-        <CredentialBlock key={f.id} f={f} data={data!} billed={billed} readings={readings} canSetPlan={canSetPlan} bucket={bucket} fmtPeriod={fmtPeriod} selected={selected}
+        <CredentialBlock key={f.id} f={f} data={data!} billed={billed} readings={readings} canSetPlan={canSetPlan} bucket={bucket} scrollKey={scrollKey} fmtPeriod={fmtPeriod} selected={selected}
           src={shown} split={split} types={types} layout={layout} view={view} sharedScale={sharedScale} asTable={asTable} outside={onChart} full={full} />
       ))}
       {onChart && loose.length > 0 && (
