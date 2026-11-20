@@ -255,13 +255,13 @@ body.drawer-open .drawer,body.drawer-open .scrim{display:block}
 <a class="badge b-ok" href="#"><i>✓</i>Numbers checked</a>
 <a class="badge b-warn warn" href="#"><i><span>!</span></i>Check · meter reading stale</a>
 <a class="badge b-fail fail" href="#"><i>×</i>Check failed · uploader silent</a></div>
-<div class="alert warn a-warn"><span>▲</span><span><b>The weekly meter was last read 20 h ago.</b> Figures that read it are marked “as of Mon 23 Nov 13:28 UTC”. <a href="#">See the checks</a></span></div>
+<div class="alert warn a-warn"><span>▲</span><span><b>The weekly meter was last read 20 h ago.</b> Figures that read it are marked “as of Mon 23 Nov 13:28 UTC”; the fleet is paused, so nothing was missed. <a href="#">See the checks</a></span></div>
 <div class="alert fail a-fail"><span>■</span><span><b>The operator's usage uploader has been silent for 20 h.</b> Token price and what is built from outside usage are incomplete: each figure it touches shows “≥” or the chip “incomplete”. Real cost is not affected. <a href="#">See the checks</a></span></div>
 
 <section class="card band" aria-labelledby="q1">
 <div class="q" id="q1">What did it really cost? <button class="info" aria-label="How is Real cost computed?">i</button></div>
 <div class="big"><span>$51.35</span></div>
-<div class="sub">Real cost · range $50.89 – $51.81<span class="st chip"> as of Mon 23 Nov 13:28 UTC</span></div>
+<div class="sub">Real cost · range $49.43 – $53.28<span class="st chip"> as of Mon 23 Nov 13:28 UTC</span></div>
 <p class="sub" style="margin:10px 0 0;max-width:720px;color:var(--text-primary)">What the work used of your plans and bills. Your flat plan pays its share of this week's meter; the other two accounts are billed per token. The token price below is for comparison only.</p>
 <div class="split" role="img" aria-label="Real cost parts: flat seat $10.15, pay-per-token seat $9.40, API key $31.80"><span class="real" style="--c:var(--cost-real);flex:10.15"></span><span style="background:var(--cost-billed);flex:9.4"></span><span style="background:var(--cost-billed);flex:31.8"></span></div>
 <div class="legend"><span><span class="sw real" style="--c:var(--cost-real)"></span>Flat seat $10.15<span class="st chip">as of Mon 23 Nov 13:28</span></span><span><span class="sw" style="--c:var(--cost-billed)"></span>Pay-per-token seat $9.40</span><span><span class="sw" style="--c:var(--cost-billed)"></span>API key $31.80</span></div>
@@ -270,7 +270,7 @@ body.drawer-open .drawer,body.drawer-open .scrim{display:block}
   <div class="v"><span class="r">≥ </span>$420.44<span class="r chip">incomplete</span></div>
   <div class="sub xs">all work at list price</div></div>
  <div class="fig"><div class="l">Flat seat multiple, at least <button class="info" aria-label="How is the flat seat multiple computed?">i</button></div>
-  <div class="v">≥ 33.3×</div>
+  <div class="v">≥ 31.9×</div>
   <div class="sub xs"><span class="nr">≈ 34.8× · </span><span class="r">estimate hidden while token price is incomplete · </span>flat seat only<span class="st chip">as of Mon 23 Nov 13:28</span></div></div>
 </div>
 </section>
@@ -280,17 +280,17 @@ body.drawer-open .drawer,body.drawer-open .scrim{display:block}
 <div class="gauge" role="img" aria-label="Weekly meter 22 percent, forecast 38 to 41 percent at the reset, stop level 85 percent"><div class="trk"></div><div class="fill" style="width:22%"></div><div class="fc" style="left:22%;width:19%"></div><div class="stop" style="left:85%"></div></div>
 <div class="gl"><span style="left:0;transform:none">0 %</span><span style="left:22%">now 22 %<span class="st chip" style="position:static;transform:none">as of Mon 23 Nov 13:28</span></span><span style="left:85%;transform:translateX(-100%);padding-right:6px">stop 85 %</span></div>
 <div class="legend xs" style="margin-top:4px"><span><span class="sw" style="--c:var(--cost-meter)"></span>used now</span><span>┆┆┆ forecast to the reset</span><span>▏stop level</span></div>
-<p class="sub" style="margin:8px 0 0;color:var(--text-primary)">At this pace the meter reaches <b style="font-weight:500">38–41 %</b> when the week resets on Fri 27 Nov 16:00 UTC, below the stop level. Nothing to do.<span class="st chip">as of Mon 23 Nov 13:28</span></p>
+<p class="sub" style="margin:8px 0 0;color:var(--text-primary)">At this pace the meter reaches <b style="font-weight:500">38–41 %</b> when the week resets on Fri 27 Nov 16:00 UTC, below the stop level. Nothing to do.</p>
 </section>
 
 <div class="grid">
 <a class="card tile" href="#"><span class="go">→</span><span class="t">Accounts</span><span class="qq">What did each account cost, and how?</span><span class="hv num">API key 62 % <small>of real cost</small></span><span class="hs">3 accounts · one flat seat, two billed per token<span class="st chip">as of Mon 13:28</span></span></a>
 <a class="card tile" href="#"><span class="go">→</span><span class="t">Who</span><span class="qq">Who spent it?</span><span class="hv num">$247.10 <small>token price · covey agents</small></span><span class="hs">59 % · operator outside covey 36 %<span class="r chip">incomplete</span></span></a>
 <a class="card tile" href="#"><span class="go">→</span><span class="t">Work</span><span class="qq">What does a merged PR cost?</span><span class="hv num"><span class="r">≥ </span>$28.46 <small>token price per merged PR</small></span><span class="hs">all work · 14 merged PRs · $21.16 linked<span class="r chip">incomplete</span></span></a>
-<a class="card tile" href="#"><span class="go">→</span><span class="t">Lanes</span><span class="qq">Which way of working merges PRs cheapest and cleanest?</span><span class="hv num">2 of 3 lanes compared</span><span class="hs">operator lane: 2 PRs, too few<span class="r chip">incomplete</span></span></a>
-<a class="card tile" href="#"><span class="go">→</span><span class="t">Models</span><span class="qq">Which model gives the most for the money?</span><span class="hv num"><span class="r">≥ </span>$0.10 <small>token price per delivered run</small></span><span class="hs">Opus $3.14 · Sonnet $0.48<span class="r chip">incomplete</span></span></a>
+<a class="card tile" href="#"><span class="go">→</span><span class="t">Lanes</span><span class="qq">Which way of working merges cheapest and cleanest?</span><span class="hv num">2 of 3 lanes compared</span><span class="hs">operator lane: 2 PRs, too few<span class="r chip">incomplete</span></span></a>
+<a class="card tile" href="#"><span class="go">→</span><span class="t">Models</span><span class="qq">Which model gives the most for the money?</span><span class="hv num">$0.05 <small>token price per delivered run</small></span><span class="hs">covey's runs · Opus $1.95 · Sonnet $0.24</span></a>
 <a class="card tile" href="#"><span class="go">→</span><span class="t">Over time</span><span class="qq">When was the work done?</span><span class="hv num"><span class="r">≥ </span>$142.00 <small>token price · Sun 22 Nov</small></span><span class="hs">busiest day · 33.8 % of token price<span class="r chip">incomplete</span></span></a>
-<a class="card tile" href="#"><span class="go">→</span><span class="t">Waste</span><span class="qq">Where is money lost?</span><span class="hv num">$30.15 <small>token price lost</small></span><span class="hs">7.2 % of token price<span class="r chip">incomplete</span> · failed, killed, duplicate</span></a>
+<a class="card tile" href="#"><span class="go">→</span><span class="t">Waste</span><span class="qq">Where is money lost?</span><span class="hv num">$30.15 <small>token price lost</small></span><span class="hs">7.2 % of token price · failed, killed, duplicate</span></a>
 <a class="card tile" href="#"><span class="go">→</span><span class="t">Health</span><span class="qq">Can I trust these numbers?</span><span class="hv num"><span class="nr nst">7 pass · 1 info</span><span class="r">1 failed · 6 pass · 1 info</span><span class="st">1 warning · 6 pass · 1 info</span></span><span class="hs"><span class="nr nst">checked 09:27 UTC</span><span class="r">C1 Uploader fresh</span><span class="st">C2 Meter fresh</span></span></a>
 <a class="card tile" href="#"><span class="go">→</span><span class="t">Report</span><span class="qq">What can I share?</span><span class="hv num">Totals only, one page</span><span class="hs">no agent, project or task names<span class="r st"> · with a banner</span></span></a>
 </div>
@@ -298,7 +298,7 @@ body.drawer-open .drawer,body.drawer-open .scrim{display:block}
 <h4>In one sentence</h4><p>Real cost is the money the work actually used: your share of the flat plan, plus what was billed per token.</p>
 <h4>With this page's numbers</h4><div class="calc">Flat seat: 22 points × $0.4615 = $10.15<br>Pay-per-token seat: usage charges $9.40<br>API key: Anthropic's bill $31.80<br><b style="font-weight:500">Total $51.35</b></div>
 <h4>Where “22 points” and “$0.4615” come from</h4><p>The plan shows how much of this week's allowance is used, in whole percent points. One point costs the plan's weekly price ÷ 100: $200 a month × 12 ÷ 52 weeks ÷ 100.</p>
-<h4>Why a range</h4><p>The meter moves in whole points, so the true value is within one point either side of the flat seat's $10.15: $50.89 – $51.81 in all.</p>
+<h4>Why a range</h4><p>The meters move in whole points and lag by a point, so the true value is within two points either side of the flat seat's $10.15 ($9.23 – $11.08) and within one point of the pay-per-token seat's limit either side of its $9.40 ($8.40 – $10.40): $49.43 – $53.28 in all.</p>
 <h4>What it does not include</h4><p>The plan's unused allowance. It is not spent money, only capacity.</p></div><div class="scrim"></div></main></div><script>var h=location.hash;if(h.includes('dark'))document.documentElement.dataset.theme='dark';
 if(h.includes('drawer'))document.body.classList.add('drawer-open');
 if(h.includes('red')||h.includes('stale'))document.body.classList.add(h.includes('red')?'s-red':'s-stale');</script></body></html>
