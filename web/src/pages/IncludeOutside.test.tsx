@@ -3,7 +3,7 @@ import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import Costs from "./Costs";
 import OutsideCosts from "./OutsideCosts";
 import { readFileSync } from "node:fs";
-import type { CostCells, ExternalMeterStep, ExternalMeterSums, ExternalMeterTotal, ExternalModelCell, ExternalUsage } from "../api";
+import type { CostCells, CostHealthCheck, CostHealthReport, ExternalMeterStep, ExternalMeterSums, ExternalMeterTotal, ExternalModelCell, ExternalUsage } from "../api";
 import i18n from "../i18n";
 import { fmtCount, fmtNumber, fmtUSD } from "../format";
 import { mockFetch, renderWithProviders } from "../test/render";
@@ -127,9 +127,10 @@ const modelCell = (source: string, model: string, calls: number, list: number | 
   unpriced_tokens: list == null ? output + 13 : 0, unpriced_calls: list == null ? calls : 0,
 });
 
-function serve(data: CostCells = cells(), route = "/costs") {
+function serve(data: CostCells = cells(), route = "/costs", health?: CostHealthReport) {
   const ext = data.external;
   mockFetch({
+    ...(health ? { "/api/v1/cost/health": health } : {}),
     "/api/v1/cost/cells": data,
     "/api/v1/cost/billed": { bucket: "hour", points: [], sync: { configured: false, last_attempt_at: null, last_success_at: null,
       last_daily_at: null, data_refreshed_at: null, last_status: "", last_error: "" } },
@@ -767,5 +768,80 @@ describe("the outside review's minors (#120)", () => {
     }
     // In the dark scheme the outside sessions and the unattributed part differ in lightness too, not by hue alone.
     expect(ratio(token("cost-outside")[1], token("cost-unattributed")[1])).toBeGreaterThanOrEqual(2.5);
+  });
+});
+
+// #178: a failed data check marks every figure it leaves incomplete, and
+// only those — where the figure is, never instead of it.
+describe("the incomplete marks of the data checks (#178)", () => {
+  beforeEach(async () => { await i18n.changeLanguage("en"); });
+
+  const failed = (id: string, reason: string, facts: CostHealthCheck["facts"] = {}): CostHealthCheck =>
+    ({ id, status: "fail", reason, facts, checked_at: H19 });
+  const report = (...checks: CostHealthCheck[]): CostHealthReport => ({ status: "fail", checked_at: H19, checks });
+  const c1 = failed("c1", "stale", { last_push_minutes: 80,
+    stale_hosts: [{ source: OP, host: "laptop", pushed_at: H18, minutes: 80 }] });
+  const parts = (scope: string) => [...document.querySelectorAll(`${scope} [data-incomplete]`)].map((e) => e.getAttribute("data-incomplete"));
+  const headlineMarks = async () => {
+    const row = await screen.findByRole("region", { name: t("costs.dent.title") });
+    return waitFor(() => {
+      const marks = [...row.querySelectorAll("[data-headline-incomplete] [data-incomplete]")].map((e) => e.getAttribute("data-incomplete"));
+      if (marks.length === 0) throw new Error("no marks yet");
+      return marks;
+    });
+  };
+
+  it("a stopped uploader (c1): the outside part in the headline, beside the inclusion chip and on the outside sessions", async () => {
+    serve(cells(), "/costs", report(c1));
+    expect(await headlineMarks()).toEqual(["outside"]);
+    expect(parts("[data-inclusion]")).toEqual(["outside"]);
+    expect(parts("[data-outside]")).toEqual(["outside"]);
+    expect(document.querySelectorAll("[data-incomplete='tokenPrice'], [data-incomplete='multiple']").length).toBe(0);
+  });
+
+  it("a reset nobody recorded (c3) or a seat with no reading (c2): the multiple in the headline", async () => {
+    serve(cells(), "/costs", report(failed("c3", "drops", { drops: 1, early_resets: 0, last_drop_at: H19 })));
+    expect(await headlineMarks()).toEqual(["multiple"]);
+    cleanup();
+    serve(cells(), "/costs", report(failed("c2", "none", { credential: `${SEAT} #0` })));
+    expect(await headlineMarks()).toEqual(["multiple"]);
+    expect(document.querySelectorAll("[data-incomplete='outside'], [data-incomplete='tokenPrice']").length).toBe(0);
+  });
+
+  it("a model without a list price (c5): every figure at token prices — tiles, chart, model table, headline", async () => {
+    serve(cells(), "/costs", report(failed("c5", "unpriced", { models: 2, unpriced: ["claude-sonnet-5-7"] })));
+    expect(await headlineMarks()).toEqual(["tokenPrice"]);
+    expect(parts("[data-kpi-incomplete]")).toEqual(["tokenPrice"]);
+    expect(parts("[data-chart-title]")).toEqual(["tokenPrice"]);
+    await waitFor(() => expect(parts("[data-models-title]")).toEqual(["tokenPrice"]));
+    expect(document.querySelectorAll("[data-incomplete='outside'], [data-incomplete='multiple']").length).toBe(0);
+  });
+
+  it("a call booked twice (c4): the same figures, and every mark at once when several checks fail", async () => {
+    serve(cells(), "/costs", report(c1, failed("c3", "drops", { drops: 1, last_drop_at: H19 }),
+      failed("c4", "duplicates", { external_duplicates: 0, agent_duplicates: 2 })));
+    expect(await headlineMarks()).toEqual(["multiple", "outside", "tokenPrice"]);
+    expect(parts("[data-kpi-incomplete]")).toEqual(["tokenPrice"]);
+    expect(parts("[data-chart-title]")).toEqual(["tokenPrice"]);
+  });
+
+  it("“covey only” leaves the outside part out, and its mark with it", async () => {
+    serve(cells(), "/costs?only=covey", report(c1, failed("c5", "unpriced", { unpriced: ["x"] })));
+    expect(await headlineMarks()).toEqual(["tokenPrice"]);
+    expect(parts("[data-inclusion]")).toEqual([]);
+  });
+
+  it("/costs/outside: a stopped uploader and an unpriced model mark the page; an agent line booked twice does not", async () => {
+    const ext = external();
+    const view = { bucket: "hour", since: H18, source: null, sources: ext.sources, models: [], cells: [], meter: ext.meter };
+    mockFetch({ "/api/v1/cost/external-usage": view, "/api/v1/cost/health": report(c1, failed("c5", "unpriced", { unpriced: ["x"] })) });
+    renderWithProviders(<OutsideCosts />, { route: "/costs/outside?days=1&bucket=hour", path: "/costs/outside" });
+    await waitFor(() => expect(parts("[data-outside-incomplete]")).toEqual(["outside", "tokenPrice"]));
+    cleanup();
+    mockFetch({ "/api/v1/cost/external-usage": view,
+      "/api/v1/cost/health": report(failed("c4", "duplicates", { external_duplicates: 0, agent_duplicates: 1 })) });
+    renderWithProviders(<OutsideCosts />, { route: "/costs/outside?days=1&bucket=hour", path: "/costs/outside" });
+    await waitFor(() => expect(document.querySelector("[data-outside-meter]")).toBeTruthy());
+    expect(document.querySelector("[data-outside-incomplete]")).toBeNull();
   });
 });

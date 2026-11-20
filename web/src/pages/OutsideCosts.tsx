@@ -33,6 +33,7 @@ import {
   type SplitRow,
 } from "./outsideFigures";
 import { meterPriced } from "./costFigures";
+import { IncompleteMark, incompleteParts, useCostHealth } from "./CostHealth";
 
 /* The detailed view of the Claude Code sessions outside covey (#120, the
  * human's second comment): like an agent's cost view — list price over time
@@ -192,6 +193,13 @@ export default function OutsideCosts() {
     unsplitOf(data?.meter.steps ?? [], new Set([`${c.secret_key}#${c.secret_slot}`]));
   const unpricedModels = (data?.models ?? []).filter((m) => !m.priced).map((m) => m.model);
   const fmtPeriod = (p: string) => fmtBucket(p, bucket);
+  // The data checks (#178) that make these figures incomplete: a stopped
+  // uploader, and of the token-price checks those that concern outside calls
+  // (a model without a list price, an outside call booked twice).
+  const health = useCostHealth();
+  const incomplete = incompleteParts(health.data);
+  const tokenPrice = incomplete.tokenPrice?.id === "c5" || (incomplete.tokenPrice?.facts.external_duplicates ?? 0) > 0
+    ? incomplete.tokenPrice : null;
 
   return (
     <div>
@@ -199,6 +207,10 @@ export default function OutsideCosts() {
       <div className="flex items-baseline gap-3 mb-1">
         <h1 className="text-[22px]" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><Swatch color={OUTSIDE_COLOR} /> {t("costs.outside.series")}</h1>
         <span className="muted">{source ?? t("costs.outside.sourceAll")}</span>
+        {(incomplete.outside || tokenPrice) && <span data-outside-incomplete style={{ display: "inline-flex", gap: 6 }}>
+          {incomplete.outside && <IncompleteMark check={incomplete.outside} part="outside" />}
+          {tokenPrice && <IncompleteMark check={tokenPrice} part="tokenPrice" />}
+        </span>}
       </div>
       <p className="muted text-sm mb-4" style={{ maxWidth: 680 }}>{t("costs.outside.pageHint")}</p>
 

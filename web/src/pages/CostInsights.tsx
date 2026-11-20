@@ -437,10 +437,12 @@ const times = (v: number) => (Number.isFinite(v) ? `${fmtNumber(v, 1)}×` : "∞
  *  whole organisation — the same the tiles show without an agent filter —
  *  while the model table follows `agents`, the page's agent filter (empty:
  *  all agents). */
-export function CostInsights({ days, figures, agents = NO_AGENTS, outside = null }: {
+export function CostInsights({ days, figures, agents = NO_AGENTS, outside = null, incomplete }: {
   days: number; figures: CredentialFigures[]; agents?: ReadonlySet<string>;
   /** The sessions outside covey, included (#120); null: covey only. */
   outside?: ExternalUsage | null;
+  /** A failed data check's mark on the model table's token prices (#178). */
+  incomplete?: ReactNode;
 }) {
   const { t } = useTranslation();
   const models = useQuery({
@@ -475,7 +477,9 @@ export function CostInsights({ days, figures, agents = NO_AGENTS, outside = null
   return (
     <div className="grid gap-4 mt-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(420px, 100%), 1fr))" }}>
       <div className="card" style={{ gridColumn: "1 / -1" }}>
-        <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.insights.modelsTitle")}</div>
+        <div style={{ fontWeight: 600, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }} data-models-title>
+          {t("costs.insights.modelsTitle")}{incomplete}
+        </div>
         <p className="muted text-xs mb-3">{t("costs.insights.modelsHint")}</p>
         {models.data ? <ModelTable rep={models.data} figures={figures} agents={agents} outside={outsideRows} /> : <div className="muted text-sm">…</div>}
       </div>

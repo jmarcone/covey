@@ -404,7 +404,11 @@ export default function Costs({ me }: { me?: Principal }) {
 
       {/* The headline: what the subscription really paid, and for whom. */}
       {dent && <SubscriptionDentRow d={dent} filtered={selected.size > 0} h={head}
-        incomplete={incomplete.multiple && <IncompleteMark check={incomplete.multiple} part="multiple" />}
+        incomplete={(incomplete.multiple || (incomplete.outside && !coveyOnly) || incomplete.tokenPrice) && <>
+          {incomplete.multiple && <IncompleteMark check={incomplete.multiple} part="multiple" />}
+          {incomplete.outside && !coveyOnly && <IncompleteMark check={incomplete.outside} part="outside" />}
+          {incomplete.tokenPrice && <IncompleteMark check={incomplete.tokenPrice} part="tokenPrice" />}
+        </>}
         sourceParts={(cells.data?.external?.meter.source_parts ?? []).flatMap((p) => {
           const s = sourcesListed.find((x) => x.source === p.source);
           return s ? [{ ...p, before: beforeRange(s, realParts) }] : [];
@@ -417,7 +421,9 @@ export default function Costs({ me }: { me?: Principal }) {
           One list-price figure leads (#120): Claude Code's price of each
           call, covey's list price where it reported none (marked), and
           covey's price table under it only where it differs; the toggle
-          shows the two apart. */}
+          shows the two apart. A failed check of the token prices (#178:
+          a call booked twice, a model without a list price) marks them. */}
+      {incomplete.tokenPrice && <div className="mb-2" data-kpi-incomplete><IncompleteMark check={incomplete.tokenPrice} part="tokenPrice" /></div>}
       <div className="flex flex-wrap gap-3 mb-4">
         {fullPrices ? <>
           <Kpi label={t("costs.fig.reported")} value={fmtUSD(totals.reported + (outside?.reported ?? 0))} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.reported}
@@ -442,7 +448,12 @@ export default function Costs({ me }: { me?: Principal }) {
       {/* Chart */}
       <div className="card mb-4">
         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-          <div style={{ fontWeight: 600 }}>{metric === "cost" ? t("costs.chartCost") : t("costs.chartTokens")}</div>
+          <div style={{ fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 6 }} data-chart-title>
+            {metric === "cost" ? t("costs.chartCost") : t("costs.chartTokens")}
+            {/* A missing list price leaves the token counts whole; a call booked twice does not. */}
+            {incomplete.tokenPrice && (metric === "cost" || incomplete.tokenPrice.id === "c4") &&
+              <IncompleteMark check={incomplete.tokenPrice} part="tokenPrice" />}
+          </div>
           <Seg
             value={metric}
             onChange={setMetric}
@@ -487,7 +498,8 @@ export default function Costs({ me }: { me?: Principal }) {
       {/* Cost insights: per model as Claude Code reported it, and the
           subscription meter per credential. The model lines follow the agent
           filter; what is per credential stays org-wide and says so. */}
-      <CostInsights days={days} figures={orgFigures} agents={selected} outside={included} />
+      <CostInsights days={days} figures={orgFigures} agents={selected} outside={included}
+        incomplete={incomplete.tokenPrice && <IncompleteMark check={incomplete.tokenPrice} part="tokenPrice" />} />
     </div>
   );
 }
