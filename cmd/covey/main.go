@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -1412,6 +1413,12 @@ func runServe(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	}
 
 	wsURL := strings.Replace(cfg.PublicURL, "http", "ws", 1) + "/api/daemon/ws"
+	// The meter poll runs the claude CLI of this machine; the distroless
+	// image has none, and the poll is then off, said once here.
+	meterPoll, meterPollNote := orchestrator.MeterPollFor(cfg.MeterPoll, exec.LookPath)
+	if meterPollNote != "" {
+		log.Info(meterPollNote)
+	}
 	orch := orchestrator.New(orchestrator.Options{
 		Platform: platform,
 		Pool:     pool, Registry: registry, Backlog: backlogStore, Obs: obs,
@@ -1442,6 +1449,7 @@ func runServe(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		Blobs:            blobs,
 		RuntimeTools:     cfg.RuntimeTools,
 		Notify:           notifyStore,
+		MeterPoll:        meterPoll,
 		Log:              log,
 	})
 	// A sandbox that dies is reported by the runner instead of being inferred

@@ -155,10 +155,39 @@ windows are shown and never priced, because they count the same work again.
   when an agent wakes on it (the answer is kept for five minutes), and reads
   Claude Code's own `rate_limit_event` while a run streams. Where both have read
   a credential the page uses the one with more readings and never adds them. While
-  no agent runs, no reading arrives: work after the last reading is named apart
-  (*after its last reading, real share pending until the meter is read again*).
-  The meter belongs to the *account*, so another person or machine on it moves it
-  too.
+  no agent runs and covey does not poll the seat (below), no reading arrives: work
+  after the last reading is named apart (*after its last reading, real share
+  pending until the meter is read again*). The meter belongs to the *account*, so
+  another person or machine on it moves it too.
+- **covey's own poll.** Where no run reads a subscription seat that outside
+  work shares, covey reads it itself: one Haiku turn through the `claude` CLI on
+  the seat's token, which prints the same `rate_limit_event`. Only Claude Code
+  seats holding a Claude OAuth token (`sk-ant-oat…`) are polled; another
+  engine's subscription is never handed to the CLI. A seat is polled only when
+  an outside source is linked to it (the poll's own source does not count): a
+  seat no outside source names has no outside work to split, and stays all
+  covey's. Of those, a seat is polled when no supported reading of it (in band
+  or polled; one entered by hand does not count) arrived in the last 10 minutes
+  and either such a source pushed within the last hour or the organisation's
+  fleet is paused — the fleet switch is off, or the organisation has agents and
+  every one of them is killed. Each control-plane process tries one seat at most
+  once in 10 minutes; each try in a row that files no reading (the call failed,
+  or printed no `rate_limit_event`) doubles that wait, up to 6 hours, and a try
+  that files one starts it over. The readings are filed as `usage_cmd`, beside
+  the `/usage` answers. The call moves the meter it reads, so it is booked as
+  outside usage of a source of its own, `meter poll: <secret>#<slot>` (shortened
+  with a hash where the secret's name is long), linked to the seat, and takes
+  its share of the step like any other session; a call whose cost the CLI did
+  not report is not booked, and its reading is not filed either. Uploads under a
+  source beginning with `meter poll` are refused. The poll needs the `claude`
+  CLI on the control plane's machine: `COVEY_METER_POLL` is `auto` (the
+  default: `claude` from `PATH`; the container image has none, so there the
+  poll is off and the log says so once at start), `off` (also `false`, `no`,
+  `0`), or the binary's path, checked once at start. With the poll off, the
+  watermarks of poll sources booked earlier still move up every minute, so they
+  never hold a seat's later readings back. The page still reads one reading
+  source per seat, the one with the most readings, so polled readings count
+  where they outnumber the in-band ones.
 - **A point's worth.** A plan's price is spread over the weeks of its period (a
   month is 52/12 weeks, a year 52), and one point of the weekly meter is a
   hundredth of that: $200 a month is $46.15 a week, $0.46 a point. Each reading
@@ -336,7 +365,9 @@ an organisation admin or the security role sees it as editable.
   credential blocks never add across credentials.
 - **Outside sessions arrive by push.** covey reads none itself. A source that
   has not reported through a meter reading leaves that reading unsplit, and a
-  paused fleet reads no meter, so its movement waits until the next reading.
+  paused fleet reads no meter itself, so where covey's own poll does not read
+  the seat (no `claude` CLI, or no outside source linked) its movement waits
+  until the next reading.
 - **The mapping of keys to credentials and the reconciliation have no screen.**
   Both are API only; the page shows the bill's result in the *Billed* tile.
 - **Readings for Claude Code only.** Other engines have no meter reading, so no

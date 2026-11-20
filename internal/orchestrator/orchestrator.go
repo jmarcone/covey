@@ -74,8 +74,13 @@ type Options struct {
 	// BillingClient builds the Usage and Cost Analytics client for an admin
 	// key (billing.go). nil = the Anthropic API; tests point it at a fake.
 	BillingClient func(key string) *billing.Client
-	Identity      identity.Provider
-	Memory        *memory.Store
+	// MeterPoll reads the subscription meter of seats no run reads, by one
+	// model call each (meterpoll.go, #153). nil = the poll is off, which is
+	// the state of an image without the claude CLI and of a test stack; the
+	// watermarks of poll sources booked earlier still move.
+	MeterPoll MeterPollRunner
+	Identity  identity.Provider
+	Memory    *memory.Store
 	// Skills are the agents' skills (library + agent-owned). nil = feature
 	// switched off; runs then get no skills materialized.
 	Skills *skills.Store
@@ -244,6 +249,10 @@ type Orchestrator struct {
 	// centrally and briefly cached, because the provider's endpoint has a rate
 	// limit of its own (usage.go).
 	usage *usageCache
+
+	// meterPoll is the meter poll's memory in this process: which seat was
+	// tried when, and what was already warned about (meterpoll.go).
+	meterPoll meterPollState
 }
 
 func New(opts Options) *Orchestrator {
@@ -533,6 +542,7 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	o.nebenlaeufig(func() { o.homeJanitorLoop(ctx) })
 	o.nebenlaeufig(func() { o.credentialLoop(ctx) })
 	o.nebenlaeufig(func() { o.billingLoop(ctx) })
+	o.nebenlaeufig(func() { o.meterPollLoop(ctx) })
 	ticker := time.NewTicker(o.TickInterval)
 	defer ticker.Stop()
 	o.tick(ctx)

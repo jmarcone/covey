@@ -32,6 +32,7 @@ func TestFromEnvWithoutAnyVariable(t *testing.T) {
 		{"EgressIsolation", c.EgressIsolation, "proxy"},
 		{"EgressProxyAddr", c.EgressProxyAddr, ":8888"},
 		{"DreamAt", c.DreamAt, "03:00"},
+		{"MeterPoll", c.MeterPoll, "auto"},
 		{"MarketplaceURL", c.MarketplaceURL, DefaultMarketplaceURL},
 		{"EmbeddingProvider", c.EmbeddingProvider, "builtin"},
 	} {
