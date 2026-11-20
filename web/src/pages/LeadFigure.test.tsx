@@ -217,8 +217,6 @@ describe("the lead figure per source (#120)", () => {
     expect(rowList(`project:${SY}`)).toBe(`${fmtUSD(2)} + ${fmtCount(1000)} tokens with no list price (${MARK.slice(1, -1)})`);
     expect(answerRow(`project:${WORK}`)).toBeNull();
     expect(document.querySelector("[data-answer-per-use]")!.textContent).toContain(`(${fmtUSD(1)})`);
-    // The rows add up to the total.
-    expect(9 + 3.5 + 2).toBe(14.5);
     // covey's price table: $15 against $14.50 — $0.50 apart, silent.
     expect(document.querySelector("[data-answer] [data-price-check]")).toBeNull();
     // Not two figures: no tile above the table.

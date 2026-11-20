@@ -173,9 +173,11 @@ function operatorOnly(): CostCells {
   seat.sources = [OP];
   seat.source_parts = seat.source_parts?.filter((p) => p.source === OP);
   ext.meter.source_parts = ext.meter.source_parts?.filter((p) => p.source === OP);
-  // The other projects' real share is gone with them, from the seat and the meter.
+  // The other projects' real share is gone with them, from the seat and the meter: it is unattributed now, so the parts still add up to the real cost.
   seat.external_real_usd = PP;
   ext.meter.external_real_usd = PP;
+  seat.unattributed_real_usd = PP;
+  ext.meter.unattributed_real_usd = PP;
   return data;
 }
 
@@ -199,7 +201,7 @@ describe("the outside sessions in three parts (#163)", () => {
     serve(operatorOnly());
     await answerReady();
     // The server's real shares are not all of the meter here: the remainder has a row of its own, with no token price.
-    expect(rowKeys()).toEqual(["covey", "operator", "rest"]);
+    expect(rowKeys()).toEqual(["covey", "operator", "unattributed"]);
     expect(answerTotal()).toBe(fmtUSD(9 + 3.5));
     // Nor anywhere else the parts are named.
     const row = await openDentRow();

@@ -228,6 +228,9 @@ function ExpensiveRuns({ runs }: { runs: RunCost[] }) {
   );
 }
 
+/** No outside source switched off: the chips are gone in "covey only", and so is what they switched off. */
+const NO_SOURCES: ReadonlySet<string> = new Set();
+
 export default function Costs({ me }: { me?: Principal }) {
   const { t } = useTranslation();
 
@@ -328,8 +331,8 @@ export default function Costs({ me }: { me?: Principal }) {
   const dent = useMemo(() => subscriptionDent(cells.data?.external), [cells.data]);
   const head = useMemo(() => headline(cells.data), [cells.data]);
   // The answer table (#195): the headline's and the dent's figures as rows.
-  const answer = useMemo(() => (head && dent && cells.data?.external ? answerTable(head, dent, cells.data.external, cells.data.meter ?? [], offSources) : null),
-    [head, dent, cells.data, offSources]);
+  const answer = useMemo(() => (head && dent && cells.data?.external ? answerTable(head, dent, cells.data.external, cells.data.meter ?? [], coveyOnly ? NO_SOURCES : offSources) : null),
+    [head, dent, cells.data, offSources, coveyOnly]);
   const ppt = useMemo(() => payPerTokenHeadline(cells.data, orgFigures, BUCKET_MS[bucket] ?? BUCKET_MS.day, new Date()),
     [cells.data, orgFigures, bucket]);
 
@@ -416,6 +419,12 @@ export default function Costs({ me }: { me?: Principal }) {
             })} />} />
       )}
 
+      {/* Pay per token (0152): an API key's bill, usage charges and the
+          monthly meter — its own headline, never added to the seats'. Where
+          the money is per token this is the answer, so it stays directly
+          under the answer table (#195). */}
+      {ppt && <PayPerTokenRow h={ppt} filtered={selected.size > 0} />}
+
       {/* Without a subscription meter there is no answer table: the lead
           figure stands as a tile, as before. One list-price figure leads
           (#120); the toggle shows covey's price table apart. */}
@@ -446,7 +455,7 @@ export default function Costs({ me }: { me?: Principal }) {
         </div>
         {metric === "cost" ? (
           <CostExplorer data={cells.data} billed={billed.data} readings={readings.data ?? []} canSetPlan={canSetPlan(me?.Role ?? "")} selected={selected} bucket={bucket} fmtPeriod={fmtPeriod}
-            outside={included} full={fullPrices} onFull={setFullPrices} off={offSources} onToggleSource={toggleSource} answered={answer != null} />
+            outside={included} full={fullPrices} onFull={setFullPrices} off={offSources} onToggleSource={toggleSource} answered={answer?.covers} />
         ) : (
           <TokenExplorer data={cells.data} selected={selected} fmtPeriod={fmtPeriod} outside={included} />
         )}
@@ -454,10 +463,6 @@ export default function Costs({ me }: { me?: Principal }) {
 
       {/* The sessions outside covey (#120): apart or combined, never folded in unannounced. */}
       <OutsideOverview data={cells.data} selected={selected} days={days} bucket={bucket} fmtPeriod={fmtPeriod} />
-
-      {/* Pay per token (0152): an API key's bill, usage charges and the
-          monthly meter — its own headline, never added to the seats'. */}
-      {ppt && <PayPerTokenRow h={ppt} filtered={selected.size > 0} />}
 
       {/* The token counts: collapsed, they answer another question (#195). */}
       <details className="card mb-4" data-tokens>
@@ -498,7 +503,7 @@ export default function Costs({ me }: { me?: Principal }) {
       {/* Cost insights: per model as Claude Code reported it, and the
           subscription meter per credential. The model lines follow the agent
           filter; what is per credential stays org-wide and says so. */}
-      <CostInsights days={days} figures={orgFigures} agents={selected} outside={included} answered={answer != null} />
+      <CostInsights days={days} figures={orgFigures} agents={selected} outside={included} answered={answer?.covers} />
     </div>
   );
 }

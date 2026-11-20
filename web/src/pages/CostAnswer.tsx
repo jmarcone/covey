@@ -5,6 +5,7 @@ import { fmtCount, fmtNumber, fmtUSD, fmtUSDFixed } from "../format";
 import type { Headline } from "./costFigures";
 import type { AnswerRow, AnswerTable } from "./costAnswer";
 import { OrgWide, outsideMoney, priceTableLine } from "./StackedCostChart";
+import { usageList } from "./CostBasis";
 
 /* The answer table (#195): the first thing on the Costs page. One row per
  * consumer of the subscription, what it comes to at token prices and its
@@ -24,12 +25,17 @@ function listCell(t: TFunction, r: AnswerRow): string {
   return r.recomputed ? t("costs.lead.part", { usd }) : usd;
 }
 
+/** The rows for the rest of the real cost: they hold no work of their own, so no token price. */
+const remainder = (r: AnswerRow) => r.kind === "unsplit" || r.kind === "unattributed" || r.kind === "outsideRest";
+
 function label(t: TFunction, r: AnswerRow): { name: string; from: string } {
   switch (r.kind) {
     case "covey": return { name: t("costs.answer.rowCovey"), from: t("costs.answer.fromCovey") };
     case "operator": return { name: t("costs.answer.rowOperator"), from: t("costs.answer.fromOperator") };
     case "project": return { name: t("costs.answer.rowProject", { source: r.source }), from: t("costs.answer.fromProject") };
-    default: return { name: t("costs.answer.rowRest"), from: t("costs.answer.fromRest") };
+    case "unsplit": return { name: t("costs.answer.rowUnsplit"), from: t("costs.answer.fromUnsplit") };
+    case "unattributed": return { name: t("costs.answer.rowUnattributed"), from: t("costs.answer.fromUnattributed") };
+    default: return { name: t("costs.answer.rowOutsideRest"), from: t("costs.answer.fromOutsideRest") };
   }
 }
 
@@ -64,9 +70,16 @@ export function CostAnswer({ a, h, filtered, drawer }: {
     : a.why === "list" ? t("costs.answer.noMultipleList")
     : "–";
   // Work the table's multiple does not divide, and the per-use sessions on no meter: one small line each.
+  const unpriced = !hidden && h.unpriced >= 0.005 ? t("costs.answer.unpriced", { usd: fmtUSD(h.unpriced) }) : null;
+  // Time on the usage basis (0151): in the list, not in the multiple or the real cost; its money is the usage charges.
+  const usage = !hidden && h.usageSeats.length > 0 ? t("costs.dent.head.usageOut", { seats: h.usageSeats.join(", "), n: pts(h.usagePoints), list: fmtUSD(h.usage) }) : null;
+  const usageCharges = !hidden && h.usageSeats.length > 0
+    ? (h.usageCharges ? t("costs.dent.head.usageCharges", { list: usageList(t, h.usageCharges) }) : t("costs.dent.head.usageNoCharge")) : null;
   const after = !hidden && h.after >= 0.005 ? t("costs.answer.after", { usd: fmtUSD(h.after) }) : null;
   const before = !hidden && h.before >= 0.005 ? t("costs.answer.before", { usd: fmtUSD(h.before) }) : null;
-  const perUse = h.perUse && h.perUse.calls > 0 ? t("costs.answer.perUse", { list: outsideMoney(t, h.perUse, "lead") }) : null;
+  const perUse = a.perUse && a.perUse.calls > 0 ? t("costs.answer.perUse", { list: outsideMoney(t, a.perUse, "lead") }) : null;
+  // covey's own work on credentials the table does not cover (an API key, a seat with no weekly reading): at token prices.
+  const elsewhere = h.coveyElsewhere >= 0.005 ? t("costs.answer.elsewhere", { usd: fmtUSD(h.coveyElsewhere) }) : null;
   const check = hidden ? undefined : priceTableLine(t, h.list, h.table);
   return (
     <section className="card mb-4" aria-label={t("costs.answer.title")} data-answer>
@@ -91,8 +104,11 @@ export function CostAnswer({ a, h, filtered, drawer }: {
                 <tr key={r.key} style={{ borderTop: "1px solid var(--border)" }} data-answer-row={r.key}>
                   <th scope="row" style={{ ...cell, textAlign: "left", fontWeight: 600 }}>{l.name}</th>
                   <td className="muted" style={cell}>{l.from}</td>
-                  <td style={num} data-answer-list>{r.kind === "rest" ? "" : listCell(t, r)}</td>
-                  <td style={{ ...num, paddingRight: 0 }} data-answer-real>{r.real != null ? `≈ ${fmtUSD(r.real)}` : "–"}</td>
+                  <td style={num} data-answer-list>{remainder(r) ? "" : listCell(t, r)}</td>
+                  <td style={{ ...num, paddingRight: 0 }} data-answer-real>
+                    {r.real != null ? `≈ ${fmtUSD(r.real)}` : "–"}
+                    {r.notSplit && <div className="muted text-xs" style={{ fontWeight: 400, whiteSpace: "normal" }}>{t("costs.answer.notSplit")}</div>}
+                  </td>
                 </tr>
               );
             })}
@@ -122,12 +138,16 @@ export function CostAnswer({ a, h, filtered, drawer }: {
       {a.multiple == null && a.real != null && <p className="muted text-xs mb-1" data-answer-no-multiple>{noMultiple}</p>}
       {hidden && <p className="muted text-xs mb-1" data-answer-hidden>{t("costs.answer.hidden", { sources: a.hidden.join(", "), count: a.hidden.length })}</p>}
       {before && <p className="muted text-xs mb-1" data-answer-before>{before}</p>}
+      {unpriced && <p className="muted text-xs mb-1" data-answer-unpriced>{unpriced}</p>}
+      {usage && <p className="text-sm mb-1" data-answer-usage>{usage}</p>}
+      {usageCharges && <p className="muted text-xs mb-1" data-answer-usage-charges>{usageCharges}</p>}
       {after && <p className="muted text-xs mb-1" data-answer-after>{after}</p>}
       {perUse && <p className="muted text-xs mb-1" data-answer-per-use>{perUse}</p>}
+      {elsewhere && <p className="muted text-xs mb-1" data-answer-elsewhere>{elsewhere}</p>}
       {check && <p className="muted text-xs mb-1" data-price-check>{check}</p>}
       {drawer != null && (
         <div className="mt-2">
-          <button type="button" className="text-sm" aria-expanded={open} aria-controls={drawerId} data-answer-how
+          <button type="button" className="text-sm" aria-expanded={open} aria-controls={open ? drawerId : undefined} data-answer-how
             onClick={() => setOpen((v) => !v)}
             style={{ background: "none", border: "none", padding: 0, color: "var(--text-accent)", cursor: "pointer", textDecoration: "underline" }}>
             {t("costs.answer.how")}

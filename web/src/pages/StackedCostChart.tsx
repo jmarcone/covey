@@ -2,6 +2,7 @@ import { Fragment, useEffect, useId, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
+import type { AnswerCovers } from "./costAnswer";
 import { api, type BilledReport, type CellAgent, type CostCell, type CostCells, type ExternalSource, type ExternalUsage, type UsageReading } from "../api";
 import { fmtBucket, fmtClockUTC, fmtCount, fmtCountAxis, fmtNumber, fmtUSD, fmtUSDAxis, fmtUSDBelow, fmtUSDFixed } from "../format";
 import { SOURCES, SOURCE_COLOR, SPLIT_COLOR, SPLIT_HATCH, sourceHint, sourceLabel, type Source } from "./costSources";
@@ -1217,15 +1218,15 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
   full: boolean;
   /** The outside sessions, included (null: covey only). */
   outside: OutsideOnChart | null;
-  /** The answer table shows the seat's figures (#195): its tiles leave them out. */
-  answered?: boolean;
+  /** What the page's answer table covers (#195): a seat of its meter has its figures there, its tiles leave them out. */
+  answered?: AnswerCovers;
 }) {
   const { t } = useTranslation();
   const planLabel = usePlanLabel();
   const filtered = selected.size > 0;
   // The answer table holds the seat's price, real cost, multiple and the work outside the meter's readings (#195),
   // unless the full view of covey's price table is asked for.
-  const tableAnswers = !!answered && !full && isSeat(f);
+  const tableAnswers = !!answered?.seats.has(f.id) && !full && isSeat(f);
   const inScope = (id: string) => !filtered || selected.has(id);
   const agents = useMemo(() => rankAgents(data.agents), [data.agents]);
   const own = useMemo(() => data.cells.filter((c) => credId(c.secret_key, c.secret_slot) === f.id), [data.cells, f.id]);
@@ -1475,7 +1476,7 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
       {subscription && <PlanPrice f={f} name={name} readings={readings} editable={canSetPlan} />}
       {f.secretKey != null && <CostBasisPanel f={f} name={name} editable={canSetPlan} />}
       <MonthlyMeters f={f} readings={readings} />
-      <CredentialTiles f={f} filtered={filtered || layout === "agents"} narrowed={filtered} out={mineKpis} split={mineSplit} seatSplit={seatSplit} full={full} answered={answered} />
+      <CredentialTiles f={f} filtered={filtered || layout === "agents"} narrowed={filtered} out={mineKpis} split={mineSplit} seatSplit={seatSplit} full={full} answered={tableAnswers} />
       <NoMultiple f={f} answered={tableAnswers} />
       {/* Outside every reading's span: before the meter's first reading
           (no meter data, never a real share) and after its last (pending). */}
@@ -1568,7 +1569,7 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
       {/* With the answer table the outside sources' rows and the total are its (#195): the agents' own rows stay. */}
       {(f.agents.length > 0 || (mine.length > 0 && !tableAnswers)) && <AgentTable f={f} agents={agents} subscription={subscription}
         outside={outside && !tableAnswers ? mine.map((s) => ({ s, k: sourceKpis(s, outside), style: outside.styles.style(s.source), before: beforeRange(s, outside.real) })) : []}
-        filtered={filtered} full={full} />}
+        filtered={filtered} full={full} answered={tableAnswers} />}
     </section>
   );
 }
@@ -1584,13 +1585,15 @@ export function OutsideMark() {
   );
 }
 
-function AgentTable({ f, agents, subscription, outside, filtered, full }: {
+function AgentTable({ f, agents, subscription, outside, filtered, full, answered = false }: {
   f: CredentialFigures; agents: CellAgent[]; subscription: boolean;
   /** The outside sources on this seat, included: a row each and a total with them. */
   outside: { s: ExternalSource; k: OutsideKpis; style: { hatch: number; ink?: string }; before: boolean }[];
   filtered: boolean;
   /** Reported and Recomputed columns with their gap (the toggle); else one lead column and the check where it differs. */
   full: boolean;
+  /** The answer table holds covey's share of the split (#195): the caption leaves it out. */
+  answered?: boolean;
 }) {
   const { t } = useTranslation();
   // Included, the shares are of the seat's whole list price, agents and
@@ -1625,7 +1628,7 @@ function AgentTable({ f, agents, subscription, outside, filtered, full }: {
         <caption className="muted text-xs" style={{ textAlign: "left", paddingBottom: 4 }}>
           {t("costs.fig.agentsTitle")}
           {subscription && f.real?.priced && f.meter && <span data-span> · {realSpan(t, f, "costs.fig.shareOfRealSpan")}</span>}
-          {subscription && f.real?.priced && f.split && <span data-split-share> · {t("costs.split.agentsShare", { usd: fmtUSD(f.split.covey_real_usd) })}</span>}
+          {subscription && !answered && f.real?.priced && f.split && <span data-split-share> · {t("costs.split.agentsShare", { usd: fmtUSD(f.split.covey_real_usd) })}</span>}
           {subscription && f.real?.priced && f.outsideUnreported && <span data-split-share> · {t("costs.split.agentsUpTo")}</span>}
         </caption>
         <thead>
@@ -1765,8 +1768,8 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
   /** The outside sources switched off: held by the page where its answer table follows the chips (#195); else here. */
   off?: ReadonlySet<string>;
   onToggleSource?: (source: string) => void;
-  /** The page's answer table shows the seats' price, real cost and multiple: the tiles under the chart leave them out. */
-  answered?: boolean;
+  /** What the page's answer table covers (#195): the seats of its meter and the sources it has a row for. Their tiles and chip prices leave the figures out. */
+  answered?: AnswerCovers;
 }) {
   const { t } = useTranslation();
   // One list-price figure leads (#120): the lead series. covey's price
@@ -1841,7 +1844,7 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
           {listed.map((x) => (
             <Chip key={x.source} on={onChart.on.has(x.source)} color={SOURCE_COLOR.recomputed} {...onChart.styles.style(x.source)}
               onClick={() => toggleSource(x.source)}>
-              {x.source} {!answered && <span style={{ opacity: 0.7 }}>{beforeRange(x, onChart.real) ? t("costs.incl.beforeRange")
+              {x.source} {!answered?.sources.has(x.source) && <span style={{ opacity: 0.7 }}>{beforeRange(x, onChart.real) ? t("costs.incl.beforeRange")
                 : x.list_usd != null ? fmtUSD(x.list_usd) : t("costs.incl.noList")}</span>}
             </Chip>
           ))}

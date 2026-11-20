@@ -8,6 +8,7 @@ import { DEFAULT_SOURCES, SOURCES, SOURCE_INFO, isPerModel, modelFigure, sourceH
 import { isSeat, perCredentialTotals, scopeFigure, type SourceTotal } from "./costFigures";
 import { MonthlyMeters, usageList } from "./CostBasis";
 import { Chip } from "./StackedCostChart";
+import type { AnswerCovers } from "./costAnswer";
 import { usableReadings, type CredentialFigures } from "./costFigures";
 import { OrgWide, OutsideMark, SOURCE_COLOR, Swatch, useUsageReadings } from "./StackedCostChart";
 import { externalStamp, kpiLead, listedSources, outsideModelRows, outsideSplit, seatSources, sourceStyles, type OutsideModelRow, type SourceStyles } from "./outsideFigures";
@@ -441,10 +442,10 @@ const times = (v: number) => (Number.isFinite(v) ? `${fmtNumber(v, 1)}×` : "∞
  *  whole organisation — the same the tiles show without an agent filter —
  *  while the model table follows `agents`, the page's agent filter (empty:
  *  all agents). */
-export function CostInsights({ days, figures, agents = NO_AGENTS, outside = null, answered = false }: {
+export function CostInsights({ days, figures, agents = NO_AGENTS, outside = null, answered }: {
   days: number; figures: CredentialFigures[]; agents?: ReadonlySet<string>;
-  /** The page's answer table shows the subscription seats' real cost and multiple (#195). */
-  answered?: boolean;
+  /** What the page's answer table covers (#195): the seats of its meter have their real cost and multiple there. */
+  answered?: AnswerCovers;
   /** The sessions outside covey, included (#120); null: covey only. */
   outside?: ExternalUsage | null;
 }) {
@@ -489,7 +490,7 @@ export function CostInsights({ days, figures, agents = NO_AGENTS, outside = null
         <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.insights.meterTitle")}{filtered && <OrgWide />}</div>
         <p className="muted text-xs mb-3">{t("costs.insights.meterHint")}</p>
         {metered.length === 0 && monthly.length === 0 && <div className="muted text-sm">{t("costs.insights.noReadings")}</div>}
-        {metered.map((f) => <MeterFigures key={f.id} f={f} readings={rs} outside={outside} answered={answered && isSeat(f)} />)}
+        {metered.map((f) => <MeterFigures key={f.id} f={f} readings={rs} outside={outside} answered={answered?.seats.has(f.id) === true && isSeat(f)} />)}
         {/* A monthly usage limit's meter (0152): its own lines, never in the weekly seat meter's figures. */}
         {monthly.map((f) => (
           <div key={`monthly/${f.id}`} className="mb-4" data-monthly={f.id}>
