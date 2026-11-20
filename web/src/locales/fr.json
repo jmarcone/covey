@@ -761,6 +761,41 @@
       "byCharges": "frais d'utilisation",
       "hint": "Les prix des tokens portent sur les périodes couvertes par l'argent réel : la fenêtre de facturation d'une clé API et les périodes des frais d'utilisation comptés (périodes limites au prorata du temps). À part du compteur d'abonnement, jamais ajouté à celui-ci.",
       "rates": "En USD uniquement aux taux saisis par une personne : {{rates}}."
+    },
+    "fixRounds": {
+      "title": "Tours de correction (sessions persistantes)",
+      "hint": "Tâches de développement sur une pull request ou une issue sur laquelle le même agent a déjà travaillé, terminées dans la période. Chaque chiffre indique n, le nombre de tâches concernées ; chiffres du premier tour seulement là où il a été enregistré. $ est le prix catalogue mesuré des exécutions de la tâche.",
+      "byDecision": "Par décision de répartition",
+      "byPolicy": "A/B par politique, par agent",
+      "perPR": "Tours par pull request",
+      "colDecision": "Décision",
+      "colPolicy": "Politique",
+      "colAgent": "Agent",
+      "colRounds": "Tours",
+      "colUsd": "$ par tour",
+      "colWrite": "Écriture cache 1er tour",
+      "colWrite5m": "dont 5 min",
+      "colWrite1h": "dont 1 h",
+      "colRead": "Lecture cache 1er tour",
+      "colGap": "Minutes depuis la dernière exécution",
+      "colContext": "Contexte à la reprise",
+      "colPRs": "PR",
+      "colPerPR": "Tours par PR",
+      "decision": {
+        "sticky_resumed": "reprise",
+        "fresh": "neuve",
+        "unknown": "inconnue"
+      },
+      "policy": {
+        "always": "toujours",
+        "conditional": "conditionnelle",
+        "fresh": "neuve",
+        "mixed": "mixte",
+        "unknown": "inconnue"
+      },
+      "noData": "aucune donnée",
+      "none": "Aucun tour de correction dans cette période.",
+      "error": "Impossible de charger les tours de correction."
     }
   },
   "lang": {
@@ -1439,6 +1474,16 @@
       "maxTurns": "Tours maximum par exécution",
       "maxTurnsPlaceholder": "0 = par défaut (30)",
       "maxTurnsHint": "Garde-fou anti-emballement : interrompt une exécution après n tours. Prenez une valeur plus élevée pour les tâches avec copies de dépôt.",
+      "sticky": "Sessions persistantes",
+      "stickyHint": "Les tours de correction d'un développeur sur la même pull request reprennent la session précédente au lieu de repartir à froid ; le relecteur doit rester neuf. La fenêtre et le plafond s'appliquent à la reprise conditionnelle.",
+      "stickyWindow": "fenêtre (minutes)",
+      "stickyCap": "plafond de contexte (tokens)",
+      "stickyPolicy": {
+        "fresh": "neuve — toujours une nouvelle session",
+        "conditional": "conditionnelle — dans la fenêtre et sous le plafond",
+        "always": "toujours — quel que soit l'écart ou la taille",
+        "ab": "A/B selon le numéro de PR — impair toujours, pair conditionnelle"
+      },
       "recordingLevel": "Profondeur d'enregistrement",
       "recordingInherit": "Hériter du plancher de l'organisation",
       "recordingMinimal": "minimale (cycle de vie et portes seulement)",

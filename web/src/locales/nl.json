@@ -761,6 +761,41 @@
       "byCharges": "gebruikskosten",
       "hint": "De tokenprijzen gelden over de periodes die het echte geld dekt: het rekeningvenster van een API-sleutel en de periodes van de getelde gebruikskosten (grensperiodes naar rato van de tijd). Los van de abonnementsteller en er nooit bij opgeteld.",
       "rates": "In USD alleen tegen de koersen die iemand heeft ingevoerd: {{rates}}."
+    },
+    "fixRounds": {
+      "title": "Correctierondes (sessies voortzetten)",
+      "hint": "Ontwikkeltaken op een pull request of issue waaraan dezelfde agent al werkte, afgerond in de periode. Elk cijfer toont n, het aantal taken erachter; cijfers van de eerste beurt alleen waar die is vastgelegd. $ is de gemeten catalogusprijs van de runs van de taak.",
+      "byDecision": "Naar dispatchbeslissing",
+      "byPolicy": "A/B naar beleid, per agent",
+      "perPR": "Rondes per pull request",
+      "colDecision": "Beslissing",
+      "colPolicy": "Beleid",
+      "colAgent": "Agent",
+      "colRounds": "Rondes",
+      "colUsd": "$ per ronde",
+      "colWrite": "Cache-schrijven 1e beurt",
+      "colWrite5m": "waarvan 5 min",
+      "colWrite1h": "waarvan 1 u",
+      "colRead": "Cache-lezen 1e beurt",
+      "colGap": "Minuten sinds laatste run",
+      "colContext": "Context bij voortzetten",
+      "colPRs": "PR's",
+      "colPerPR": "Rondes per PR",
+      "decision": {
+        "sticky_resumed": "voortgezet",
+        "fresh": "fris",
+        "unknown": "onbekend"
+      },
+      "policy": {
+        "always": "altijd",
+        "conditional": "voorwaardelijk",
+        "fresh": "fris",
+        "mixed": "gemengd",
+        "unknown": "onbekend"
+      },
+      "noData": "geen gegevens",
+      "none": "Geen correctierondes in deze periode.",
+      "error": "De correctierondes konden niet worden geladen."
     }
   },
   "lang": {
@@ -1439,6 +1474,16 @@
       "maxTurns": "Maximaal aantal beurten per run",
       "maxTurnsPlaceholder": "0 = standaard (30)",
       "maxTurnsHint": "Op-hol-slaan-beveiliging: breekt een run na n beurten af. Neem een hogere waarde voor taken met repo-werkkopieën.",
+      "sticky": "Sessies voortzetten",
+      "stickyHint": "Correctierondes van een ontwikkelaar op dezelfde pull request zetten de vorige sessie voort in plaats van koud te starten; de reviewer blijft beter fris. Venster en limiet gelden voor voorwaardelijk voortzetten.",
+      "stickyWindow": "venster (minuten)",
+      "stickyCap": "contextlimiet (tokens)",
+      "stickyPolicy": {
+        "fresh": "fris — altijd een nieuwe sessie",
+        "conditional": "voorwaardelijk — binnen het venster en onder de limiet",
+        "always": "altijd — ongeacht tussentijd en omvang",
+        "ab": "A/B op PR-nummer — oneven altijd, even voorwaardelijk"
+      },
       "recordingLevel": "Opnamediepte",
       "recordingInherit": "Ondergrens van de organisatie overnemen",
       "recordingMinimal": "minimaal (alleen levenscyclus en poorten)",

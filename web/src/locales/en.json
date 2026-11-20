@@ -761,6 +761,41 @@
       "byCharges": "usage charges",
       "hint": "The token prices are over the spans the real money covers: an API key's bill window, and the spans the counted usage charges cover (boundary periods pro rata by time). This is apart from the subscription meter and never added to it.",
       "rates": "In USD only at the rates a person entered: {{rates}}."
+    },
+    "fixRounds": {
+      "title": "Fix rounds (sticky sessions)",
+      "hint": "Developer tasks on a pull request or issue the same agent worked on before, finished in the window. Every figure shows n, the number of tasks behind it; first-turn figures only where the first turn was recorded. $ is the measured list price of the task's runs.",
+      "byDecision": "By dispatch decision",
+      "byPolicy": "A/B by policy, per agent",
+      "perPR": "Rounds per pull request",
+      "colDecision": "Decision",
+      "colPolicy": "Policy",
+      "colAgent": "Agent",
+      "colRounds": "Rounds",
+      "colUsd": "$ per round",
+      "colWrite": "1st-turn cache write",
+      "colWrite5m": "of it 5 min",
+      "colWrite1h": "of it 1 h",
+      "colRead": "1st-turn cache read",
+      "colGap": "Minutes since last run",
+      "colContext": "Context at resume",
+      "colPRs": "PRs",
+      "colPerPR": "Rounds per PR",
+      "decision": {
+        "sticky_resumed": "resumed",
+        "fresh": "fresh",
+        "unknown": "unknown"
+      },
+      "policy": {
+        "always": "always",
+        "conditional": "conditional",
+        "fresh": "fresh",
+        "mixed": "mixed",
+        "unknown": "unknown"
+      },
+      "noData": "no data",
+      "none": "No fix rounds in this window.",
+      "error": "Could not load the fix rounds."
     }
   },
   "lang": {
@@ -1439,6 +1474,16 @@
       "maxTurns": "Max turns per run",
       "maxTurnsPlaceholder": "0 = default (30)",
       "maxTurnsHint": "Runaway guard: aborts a run after n turns. Use a higher value for tasks with repo checkouts.",
+      "sticky": "Sticky sessions",
+      "stickyHint": "Developer fix rounds on the same pull request resume the previous session instead of starting cold; the reviewer should stay fresh. Window and cap apply to conditional resumes.",
+      "stickyWindow": "window (minutes)",
+      "stickyCap": "context cap (tokens)",
+      "stickyPolicy": {
+        "fresh": "fresh — always a new session",
+        "conditional": "conditional — inside the window and under the cap",
+        "always": "always — resume whatever the gap and size",
+        "ab": "A/B by PR number — odd always, even conditional"
+      },
       "recordingLevel": "Recording depth",
       "recordingInherit": "Inherit org floor",
       "recordingMinimal": "minimal (lifecycle & gates only)",

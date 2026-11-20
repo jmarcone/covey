@@ -18,6 +18,7 @@ import { rollAgentName } from "../../names";
 
 import { AgentEgress } from "./AgentEgress";
 import { AgentSecrets } from "./AgentSecrets";
+import { StickySessions } from "./StickySessions";
 import { Config } from "./Config";
 import { Heartbeats } from "./Heartbeats";
 import { WebhookTrigger } from "./Webhook";
@@ -385,7 +386,7 @@ function AgentSettingsGeneral({ agent, editable }: { agent: Agent; editable: boo
           <span className="muted text-xs">{t("agent.settings.effortHint")}</span>
         </div>
       )}
-      <div style={{ ...row, borderBottom: "none" }}>
+      <div style={row}>
         <span className="text-sm">{t("agent.settings.maxTurns")}</span>
         <input
           key={`turns:${agent.max_turns}`}
@@ -403,6 +404,9 @@ function AgentSettingsGeneral({ agent, editable }: { agent: Agent; editable: boo
         />
         <span className="muted text-xs">{t("agent.settings.maxTurnsHint")}</span>
       </div>
+      {/* Sticky sessions (#130): beside how long a run may go, whether the
+          next run on the same topic continues it. */}
+      <StickySessions agent={agent} editable={editable} row={{ ...row, borderBottom: "none" }} />
     </div>
     {/* The voices it writes in, per occasion (#471) — beside how it thinks,
         before where it works. */}

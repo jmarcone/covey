@@ -761,6 +761,41 @@
       "byCharges": "用量费用",
       "hint": "token 价格按实际花费覆盖的时段计算: API 密钥的账单窗口，以及已计入的用量费用所覆盖的时段（边界时段按时间比例）。与订阅计量分开，从不相加。",
       "rates": "仅按人工录入的汇率换算为美元: {{rates}}。"
+    },
+    "fixRounds": {
+      "title": "修复轮次（会话延续）",
+      "hint": "在同一智能体之前处理过的拉取请求或议题上的开发任务，且在该时间段内完成。每个数字都显示 n，即其背后的任务数；首轮数据仅在有记录时显示。$ 为该任务各次运行的实测标价。",
+      "byDecision": "按调度决策",
+      "byPolicy": "按策略 A/B（每个智能体）",
+      "perPR": "每个拉取请求的轮次",
+      "colDecision": "决策",
+      "colPolicy": "策略",
+      "colAgent": "智能体",
+      "colRounds": "轮次",
+      "colUsd": "每轮 $",
+      "colWrite": "首轮缓存写入",
+      "colWrite5m": "其中 5 分钟",
+      "colWrite1h": "其中 1 小时",
+      "colRead": "首轮缓存读取",
+      "colGap": "距上次运行的分钟数",
+      "colContext": "恢复时的上下文",
+      "colPRs": "PR 数",
+      "colPerPR": "每个 PR 的轮次",
+      "decision": {
+        "sticky_resumed": "已恢复",
+        "fresh": "全新",
+        "unknown": "未知"
+      },
+      "policy": {
+        "always": "始终",
+        "conditional": "有条件",
+        "fresh": "全新",
+        "mixed": "混合",
+        "unknown": "未知"
+      },
+      "noData": "无数据",
+      "none": "此时间段内没有修复轮次。",
+      "error": "无法加载修复轮次。"
     }
   },
   "lang": {
@@ -1439,6 +1474,16 @@
       "maxTurns": "每次运行的最大轮数",
       "maxTurnsPlaceholder": "0 = 默认（30）",
       "maxTurnsHint": "防跑飞的保险：n 轮之后中止运行。涉及仓库检出的任务请设得高一些。",
+      "sticky": "会话延续",
+      "stickyHint": "开发者在同一拉取请求上的修复轮次会恢复上一个会话，而不是冷启动；评审者应保持全新会话。窗口和上限适用于有条件恢复。",
+      "stickyWindow": "窗口（分钟）",
+      "stickyCap": "上下文上限（令牌）",
+      "stickyPolicy": {
+        "fresh": "全新 — 始终新会话",
+        "conditional": "有条件 — 在窗口内且低于上限",
+        "always": "始终 — 无论间隔和大小",
+        "ab": "按 PR 编号 A/B — 奇数始终，偶数有条件"
+      },
       "recordingLevel": "记录深度",
       "recordingInherit": "继承组织下限",
       "recordingMinimal": "最少（仅生命周期与关卡）",

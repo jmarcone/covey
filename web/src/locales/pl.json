@@ -761,6 +761,41 @@
       "byCharges": "opłaty za użycie",
       "hint": "Ceny tokenów dotyczą przedziałów, które pokrywają prawdziwe pieniądze: okna rachunku klucza API i przedziałów policzonych opłat za użycie (okresy brzegowe proporcjonalnie do czasu). Osobno od licznika subskrypcji i nigdy do niego nie dodawane.",
       "rates": "W USD tylko po kursach wpisanych przez osobę: {{rates}}."
+    },
+    "fixRounds": {
+      "title": "Rundy poprawek (kontynuowanie sesji)",
+      "hint": "Zadania programistów w pull requeście lub issue, nad którym ten sam agent już pracował, zakończone w okresie. Każda liczba pokazuje n, liczbę zadań za nią; wartości pierwszej tury tylko tam, gdzie ją zarejestrowano. $ to zmierzona cena katalogowa przebiegów zadania.",
+      "byDecision": "Wg decyzji przydziału",
+      "byPolicy": "A/B wg zasady, na agenta",
+      "perPR": "Rundy na pull request",
+      "colDecision": "Decyzja",
+      "colPolicy": "Zasada",
+      "colAgent": "Agent",
+      "colRounds": "Rundy",
+      "colUsd": "$ na rundę",
+      "colWrite": "Zapis cache 1. tury",
+      "colWrite5m": "w tym 5 min",
+      "colWrite1h": "w tym 1 h",
+      "colRead": "Odczyt cache 1. tury",
+      "colGap": "Minuty od ostatniego przebiegu",
+      "colContext": "Kontekst przy wznowieniu",
+      "colPRs": "PR-y",
+      "colPerPR": "Rundy na PR",
+      "decision": {
+        "sticky_resumed": "wznowiona",
+        "fresh": "nowa",
+        "unknown": "nieznana"
+      },
+      "policy": {
+        "always": "zawsze",
+        "conditional": "warunkowo",
+        "fresh": "nowa",
+        "mixed": "mieszana",
+        "unknown": "nieznana"
+      },
+      "noData": "brak danych",
+      "none": "Brak rund poprawek w tym okresie.",
+      "error": "Nie udało się wczytać rund poprawek."
     }
   },
   "lang": {
@@ -1439,6 +1474,16 @@
       "maxTurns": "Maksimum tur na przebieg",
       "maxTurnsPlaceholder": "0 = domyślnie (30)",
       "maxTurnsHint": "Zabezpieczenie przed rozbieganiem: przerywa przebieg po n turach. Dla zadań z kopiami repozytoriów ustaw więcej.",
+      "sticky": "Kontynuowanie sesji",
+      "stickyHint": "Rundy poprawek programisty w tym samym pull requeście wznawiają poprzednią sesję zamiast startować od zera; recenzent powinien zaczynać od nowa. Okno i limit dotyczą wznawiania warunkowego.",
+      "stickyWindow": "okno (minuty)",
+      "stickyCap": "limit kontekstu (tokeny)",
+      "stickyPolicy": {
+        "fresh": "nowa — zawsze nowa sesja",
+        "conditional": "warunkowo — w oknie i poniżej limitu",
+        "always": "zawsze — niezależnie od przerwy i rozmiaru",
+        "ab": "A/B wg numeru PR — nieparzyste zawsze, parzyste warunkowo"
+      },
       "recordingLevel": "Głębokość nagrywania",
       "recordingInherit": "Dziedzicz minimum organizacji",
       "recordingMinimal": "minimalna (tylko cykl życia i bramki)",
