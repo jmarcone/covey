@@ -172,6 +172,13 @@ export function SubscriptionDentRow({ d, filtered, h = null, sourceParts = [] }:
     : t("costs.dent.partSub", { pct: pctOf(p.share), list: fmtUSD(p.list), x: atLeast(p.multiple) });
   const tg = d.together;
   const un = d.unattributed;
+  // A part no split step backs has no figure (its real cost is 0 because
+  // nothing was split, not because it cost nothing): "–", the reason, and the
+  // part's work at token prices where the headline has it (#164).
+  const notSplit = (tokenPrice: number | null | undefined) => [
+    tokenPrice != null && tokenPrice >= 0.005 ? t("costs.dent.partTokenPrice", { list: fmtUSD(tokenPrice) }) : null,
+    t("costs.dent.partNotSplit"),
+  ].filter(Boolean).join(" · ");
   // The unattributed part's two halves: beyond the rate (at least) — only
   // where some seat has a rate to measure it by, else that there is none
   // yet — and the chunks that moved with no call (≈).
@@ -198,7 +205,7 @@ export function SubscriptionDentRow({ d, filtered, h = null, sourceParts = [] }:
   // F2); where they carry more than the outside part, the one card stands.
   const sourced = outsideParts.reduce((a, o) => a + o.real, 0), gap = d.outside.real - sourced;
   if (outsideParts.length > 0 && gap >= 0.005) outsideParts.push({ key: "rest", real: gap });
-  const splitCards = outsideParts.length > 0 && gap > -0.005;
+  const splitCards = d.outside.split && outsideParts.length > 0 && gap > -0.005;
   const seat = (s: SubscriptionDent["seats"][number]) => `${s.key} #${s.slot}`;
   // The unsplit readings by why: the outside sessions had not reported them,
   // or their outside calls all had no price. n is the number as shown.
@@ -243,15 +250,19 @@ export function SubscriptionDentRow({ d, filtered, h = null, sourceParts = [] }:
           <Part test="outside" label={t("costs.dent.outside")} value="–" sub={t("costs.dent.noPart")} color={SPLIT_COLOR.outside} hatch={SPLIT_HATCH.outside} />
           <Part test="unattributed" label={t("costs.dent.unattributed")} value="–" sub={t("costs.dent.noPart")} color={SPLIT_COLOR.unattributed} hatch={SPLIT_HATCH.unattributed} />
         </> : <>
-          <Part test="covey" label={t("costs.dent.covey")} value={`≈ ${fmtUSD(d.covey.real)}`} sub={part(d.covey)} color={SPLIT_COLOR.covey} />
+          {d.covey.split
+            ? <Part test="covey" label={t("costs.dent.covey")} value={`≈ ${fmtUSD(d.covey.real)}`} sub={part(d.covey)} color={SPLIT_COLOR.covey} />
+            : <Part test="covey" label={t("costs.dent.covey")} value="–" sub={notSplit(h?.coveyList)} color={SPLIT_COLOR.covey} />}
           {/* The outside part in two (#163), from the server's real share per source: the covey operator and the other
               projects, the latter with each project as its hover. Without per-source parts, the one outside part. */}
           {splitCards ? outsideParts.map((o) => (
             <Part key={o.key} test={o.key} label={t(o.key === "operator" ? "costs.dent.operator" : o.key === "projects" ? "costs.dent.projects" : "costs.dent.outsideRest")} value={`≈ ${fmtUSD(o.real)}`}
               sub={t("costs.dent.partSubSource", { pct: pctOf(d.real! > 0 ? o.real / d.real! : null) })}
               title={o.title} color={SPLIT_COLOR.outside} hatch={SPLIT_HATCH.outside} />
-          )) : (
+          )) : d.outside.split ? (
             <Part test="outside" label={t("costs.dent.outside")} value={`≈ ${fmtUSD(d.outside.real)}`} sub={part(d.outside)} color={SPLIT_COLOR.outside} hatch={SPLIT_HATCH.outside} />
+          ) : (
+            <Part test="outside" label={t("costs.dent.outside")} value="–" sub={notSplit(h?.outsideList)} color={SPLIT_COLOR.outside} hatch={SPLIT_HATCH.outside} />
           )}
           <Part test="unattributed" label={t("costs.dent.unattributed")} value={`≈ ${fmtUSD(un.real)}`}
             sub={d.points != null
@@ -268,7 +279,7 @@ export function SubscriptionDentRow({ d, filtered, h = null, sourceParts = [] }:
       {/* The plain sentence: what the subscription paid — the whole dent —
           and, of it, what the attributed movement paid for how much
           list-price work, by whom. */}
-      {d.real != null && tg.real > 0 && (
+      {d.real != null && tg.real > 0 && d.outside.split && (
         <p className="text-sm mb-1" data-dent-sentence>
           {un.real >= 0.005
             ? t("costs.dent.sentenceAttributed", { dent: fmtUSD(d.real), real: fmtUSD(tg.real), list: fmtUSD(tg.list), covey: fmtUSD(d.covey.list), outside: fmtUSD(d.outside.list) })
@@ -296,6 +307,7 @@ export function SubscriptionDentRow({ d, filtered, h = null, sourceParts = [] }:
             : d.noMultiple === "split"
             ? t(d.unsplit.steps === 0 && un.steps > 0 ? "costs.dent.noMultipleSplitNoCall"
               : unpricedSteps > 0 && notReported === 0 ? "costs.dent.noMultipleSplitUnpriced" : "costs.dent.noMultipleSplit")
+            : !d.outside.split ? t("costs.dent.noMultipleOutside")
             : t("costs.dent.noMultipleMovement", { pts: pts(tg.points) })}
         </p>
       )}
