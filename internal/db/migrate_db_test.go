@@ -226,6 +226,99 @@ func TestMigrateUpAfterTheRowIsMovedToMainsNumber(t *testing.T) {
 	}
 }
 
+// What a pre-guard main binary leaves after a branch build: 0085_a was skipped
+// by version, because 0085_rte held its number, and 0087_rte ran again. Both
+// rows exist, so an UPDATE of the 0085 row to 87 would collide on the primary
+// key; the row is the stale one and goes. After the delete 0085_a runs, and
+// 0087_rte — recorded under its own number — does not run again.
+func TestMigrateUpAfterTheStaleRowOfARecordedMigrationIsDeleted(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	recordApplied(t, pool, 84, "0084_base")
+	recordApplied(t, pool, 85, "0085_rte")
+	recordApplied(t, pool, 86, "0086_b")
+	recordApplied(t, pool, 87, "0087_rte")
+	fsys := fstest.MapFS{
+		"0084_base.up.sql": {Data: []byte("CREATE TABLE base_probe (id INT)")},
+		"0085_a.up.sql":    {Data: []byte("CREATE TABLE a_probe (id INT)")},
+		"0086_b.up.sql":    {Data: []byte("CREATE TABLE b_probe (id INT)")},
+		"0087_rte.up.sql":  {Data: []byte("CREATE TABLE rte_probe (id INT)")},
+	}
+
+	n, err := MigrateUp(ctx, pool, fsys)
+	var mm *NameMismatchError
+	if !errors.As(err, &mm) || n != 0 {
+		t.Fatalf("MigrateUp returned %d, %v, expected a refusal", n, err)
+	}
+	if len(mm.Mismatches) != 1 {
+		t.Fatalf("%d mismatches, expected one: %v", len(mm.Mismatches), err)
+	}
+	m := mm.Mismatches[0]
+	if m.RecordedAs != "0087_rte" || !strings.Contains(m.String(), "already recorded as 0087_rte") {
+		t.Errorf("the mismatch does not say where the migration is recorded: %q (RecordedAs %q)", m.String(), m.RecordedAs)
+	}
+	const want = "DELETE FROM schema_migrations WHERE version=85"
+	if m.Statement() != want {
+		t.Fatalf("statement = %q, expected %q", m.Statement(), want)
+	}
+
+	if _, err := pool.Exec(ctx, m.Statement()); err != nil {
+		t.Fatal(err)
+	}
+	n, err = MigrateUp(ctx, pool, fsys)
+	if err != nil {
+		t.Fatalf("MigrateUp after the stale row was deleted: %v", err)
+	}
+	if n != 1 || !tableExists(t, pool, "a_probe") {
+		t.Errorf("applied = %d, a_probe exists = %v: 0085_a did not run", n, tableExists(t, pool, "a_probe"))
+	}
+	if tableExists(t, pool, "rte_probe") {
+		t.Error("0087_rte ran again")
+	}
+}
+
+// One orphan row, two files with its name after the number: nothing says which
+// of them the database ran. Moving the row to either would make the other one
+// run on its own number, by file order and not because it is the same
+// migration. Every candidate is named, no statement is printed, and the start is
+// refused.
+func TestMigrateUpRefusesARowThatFitsSeveralFiles(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	recordApplied(t, pool, 85, "0085_idx")
+	fsys := fstest.MapFS{
+		"0087_idx.up.sql": {Data: []byte("CREATE TABLE idx87_probe (id INT)")},
+		"0090_idx.up.sql": {Data: []byte("CREATE TABLE idx90_probe (id INT)")},
+	}
+
+	n, err := MigrateUp(ctx, pool, fsys)
+	var mm *NameMismatchError
+	if !errors.As(err, &mm) || n != 0 {
+		t.Fatalf("MigrateUp returned %d, %v, expected a refusal", n, err)
+	}
+	if len(mm.Mismatches) != 1 {
+		t.Fatalf("%d mismatches, expected one for the one row: %v", len(mm.Mismatches), err)
+	}
+	m := mm.Mismatches[0]
+	if !m.Ambiguous() || !slices.Equal(m.Candidates, []string{"0087_idx", "0090_idx"}) {
+		t.Errorf("candidates = %v, expected both files", m.Candidates)
+	}
+	if m.Statement() != "" {
+		t.Errorf("statement = %q, expected none for an ambiguous row", m.Statement())
+	}
+	for _, want := range []string{"ambiguous: check which one the database ran", "0085_idx", "0087_idx", "0090_idx"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error does not say %q: %v", want, err)
+		}
+	}
+	if tableExists(t, pool, "idx87_probe") || tableExists(t, pool, "idx90_probe") {
+		t.Error("a migration ran although the run was refused")
+	}
+	if _, err := Pending(ctx, pool, fsys); !errors.As(err, &mm) {
+		t.Errorf("Pending returned %v, expected a *NameMismatchError", err)
+	}
+}
+
 // Two mismatches are both reported at once, in file order, so that fixing the
 // first does not reveal the second only at the next start.
 func TestNameMismatchErrorListsEveryMismatch(t *testing.T) {

@@ -111,7 +111,7 @@ func (d *doctor) check(ctx context.Context, pool *pgxpool.Pool) {
 	case migrationsRefused:
 		// `covey serve` would not start either, so "start it once" is no advice.
 		d.add(Finding{What: "the rest",
-			Detail: "answerable once the migration numbering is fixed in the source and the migrations have run"})
+			Detail: "answerable once rows and files agree (see the migrations finding) and the migrations have run"})
 		d.checkEgress(ctx)
 		return
 	case migrationsPending:
@@ -144,18 +144,35 @@ const (
 // where the numbers settle it. The reader is an operator: for a binary that is
 // an unmerged branch the numbering is fixed in the source, and for a database
 // that ran a branch build it is one row, recorded by hand — never rewritten by
-// the doctor, which reads and changes nothing.
+// the doctor, which reads and changes nothing. "By hand:" is only written
+// where a statement follows; a mismatch with none is a line of prose, and a
+// colon must not point at it.
 func mismatchRemedy(ms []db.NameMismatch) string {
 	var steps []string
+	var statements bool
 	for _, m := range ms {
-		if st := m.Statement(); st != "" {
+		switch st := m.Statement(); {
+		case st != "" && m.RecordedAs != "":
+			statements = true
+			steps = append(steps, fmt.Sprintf("version %d is already recorded as %s, so the stale row goes: %s;", m.AppliedVersion, m.RecordedAs, st))
+		case st != "":
+			statements = true
 			steps = append(steps, st+";")
-			continue
+		case m.Ambiguous():
+			steps = append(steps, fmt.Sprintf("version %d (%s): ambiguous: check which one the database ran, %s — no statement is printed for a row that fits more than one file",
+				m.AppliedVersion, m.Applied, strings.Join(m.Candidates, " or ")))
+		default:
+			steps = append(steps, fmt.Sprintf("version %d: the database has %s, this binary %s — if the database ran a branch build, that row belongs under the number main gave the migration; if this binary is the branch, its migration is renumbered in the source; a migration main never got is a developer's decision",
+				m.Version, m.Applied, m.File))
 		}
-		steps = append(steps, fmt.Sprintf("version %d: the database has %s, this binary %s — if the database ran a branch build, that row belongs under the number main gave the migration; if this binary is the branch, its migration is renumbered in the source; a migration main never got is a developer's decision",
-			m.Version, m.Applied, m.File))
 	}
-	return "`covey serve` refuses to start until rows and files agree. If this binary is an unmerged branch, renumber its migration in the source (CLAUDE.md). If the database ran a branch build whose numbering main changed: take a backup, check that the SQL of the two files is the same (git diff of the branch's file against main's), then record the row under main's number by hand: " + strings.Join(steps, " ")
+	lead := "`covey serve` refuses to start until rows and files agree. If this binary is an unmerged branch, renumber its migration in the source (CLAUDE.md). If the database ran a branch build whose numbering main changed: take a backup, check that the SQL of the two files is the same (git diff of the branch's file against main's)"
+	if statements {
+		lead += ", then record the row under main's number by hand: "
+	} else {
+		lead += ". "
+	}
+	return lead + strings.Join(steps, " ")
 }
 
 // checkMigrations says what a restart is about to do to the database — the one
