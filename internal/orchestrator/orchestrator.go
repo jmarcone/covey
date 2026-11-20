@@ -4062,6 +4062,23 @@ func (o *Orchestrator) brokerTarget(ctx context.Context, agent agents.Agent, req
 // (guard rail) or pending (approval gate, spec/06). An already granted, unused
 // approval is consumed.
 func (o *Orchestrator) decideAction(ctx context.Context, agent agents.Agent, taskID uuid.UUID, req daemon.RequestApproval) daemon.ApprovalDecision {
+	// A note on another task is held to the agent's organisation before
+	// anything else: the rails below can put an approval in front of a person,
+	// and a note on a task of another organisation, or on an id that does not
+	// exist, would only fail afterwards — the request would still tell them the
+	// id was tried. An id that is no task id, or a task the store cannot read,
+	// is refused the same way (fail closed). A note on the running task carries
+	// no task_id.
+	if req.Action == "covey:add_note" {
+		var in struct {
+			TaskID string `json:"task_id"`
+		}
+		if json.Unmarshal(req.Params, &in) == nil && strings.TrimSpace(in.TaskID) != "" {
+			if _, _, _, reason := o.noteTarget(ctx, agent, taskID, in.TaskID); reason != "" {
+				return daemon.ApprovalDecision{RequestID: req.RequestID, Status: "denied", Reason: reason}
+			}
+		}
+	}
 	// Per-agent tool assignment (fail-closed as soon as an allowlist exists):
 	// the subject is system:tool. Without an assignment for the system this does
 	// not apply — built-ins/manifests stay untouched.

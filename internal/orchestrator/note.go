@@ -63,24 +63,18 @@ func (o *Orchestrator) NoteOnTask(ctx context.Context, agent agents.Agent, taskI
 	if text == "" {
 		return fail("content is missing")
 	}
-	target, err := uuid.Parse(strings.TrimSpace(req.Target))
-	if err != nil {
-		return fail("task_id is not a task id")
-	}
-	t, err := o.Backlog.Get(ctx, target)
-	if err != nil || t.OrgID != agent.OrgID {
-		if err != nil && !errors.Is(err, backlog.ErrNotFound) {
-			o.Log.Warn("add_note: the task could not be read", "task", target, "err", err)
-			return fail("the task could not be read")
-		}
-		_ = o.Obs.Record(ctx, agent.OrgID, agent.ID, &taskID, observability.KindGuardrail,
-			map[string]any{"rule": "organisation", "action": "covey:add_note", "decision": "denied"})
-		return deny("no task " + target.String() + " in this organisation")
+	t, target, denied, reason := o.noteTarget(ctx, agent, taskID, req.Target)
+	switch {
+	case denied:
+		return deny(reason)
+	case reason != "":
+		return fail(reason)
 	}
 	if reason := o.enforceRails(ctx, agent, taskID, "covey:add_note", req.ApprovalID); reason != "" {
 		return deny(reason)
 	}
 
+	var err error
 	resp := daemon.InjectNote{RequestID: req.RequestID, OK: true}
 	if req.Answer {
 		resp.Woken, resp.Reason, err = o.answerTask(ctx, agent, taskID, t, text)
@@ -97,6 +91,34 @@ func (o *Orchestrator) NoteOnTask(ctx context.Context, agent agents.Agent, taskI
 		map[string]any{"status": "note", "scope": "task", "task_id": target.String(), "woken": resp.Woken})
 	o.publishTask(target, agents.Agent{ID: t.AgentID, OrgID: t.OrgID})
 	return resp
+}
+
+// noteTarget resolves the task a note names and holds it to the agent's
+// organisation. It is the one place that check lives: decideAction asks it
+// before the guard rails, so a person is not asked to approve a note that
+// cannot land, and NoteOnTask asks it again before it writes, since the
+// request can also reach it without the daemon's check.
+//
+// A task of another organisation and an id that names no task read the same
+// and are recorded as a guard-rail event of the rule "organisation": denied
+// is true and reason says so. A reason with denied false is a failure that
+// is not a refusal (the id is no task id, the store could not be read).
+func (o *Orchestrator) noteTarget(ctx context.Context, agent agents.Agent, taskID uuid.UUID, raw string) (t backlog.Task, target uuid.UUID, denied bool, reason string) {
+	target, err := uuid.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return t, target, false, "task_id is not a task id"
+	}
+	t, err = o.Backlog.Get(ctx, target)
+	if err != nil || t.OrgID != agent.OrgID {
+		if err != nil && !errors.Is(err, backlog.ErrNotFound) {
+			o.Log.Warn("add_note: the task could not be read", "task", target, "err", err)
+			return t, target, false, "the task could not be read"
+		}
+		_ = o.Obs.Record(ctx, agent.OrgID, agent.ID, &taskID, observability.KindGuardrail,
+			map[string]any{"rule": "organisation", "action": "covey:add_note", "decision": "denied"})
+		return t, target, true, "no task " + target.String() + " in this organisation"
+	}
+	return t, target, false, ""
 }
 
 // answerTask writes an agent's answer onto a colleague's task and resumes
