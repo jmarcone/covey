@@ -151,7 +151,11 @@ func (s *Server) handleBilled(w http.ResponseWriter, r *http.Request) {
 // handleReconcile: per UTC day × mapped credential × model, what Claude Code
 // reported, covey's list of the same tokens, and what Anthropic billed the
 // mapped API key; token diffs per type, the residual and whether the day is
-// complete. ?days= as on the other cost endpoints.
+// complete. ?days= or ?from=&to= as on the other cost endpoints — but the days
+// are whole: a window asked for as [from, to) is read from the UTC midnight
+// before from to the one after to, model_usage and cost_entries included, and
+// the answer's `until` says where. A figure here can therefore cover more than
+// the page's range does.
 func (s *Server) handleReconcile(w http.ResponseWriter, r *http.Request) {
 	p := principalFrom(r)
 	_, since, until, err := costRange(r, time.Now())

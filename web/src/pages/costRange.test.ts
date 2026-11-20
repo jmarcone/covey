@@ -61,6 +61,16 @@ describe("the range in the address", () => {
     // an offset is an instant too
     expect(q("from=2026-11-20T17:00:00%2B01:00&to=2026-11-20T17:45:00%2B01:00")).toBeNull();
   });
+
+  it("takes only what the server reads the same way: to the minute, a real day", () => {
+    const q = (from: string, to = "2026-11-20T16:45:00Z") => readRange(new URLSearchParams({ from, to }), NOW).error;
+    expect(q("2026-11-20T16:00Z")).toBe("range_time"); // Go's RFC 3339 wants seconds
+    expect(q("2026-11-20T16:00:30Z")).toBe("range_time"); // the page would floor it to 16:00
+    expect(q("2026-11-20T16:00:00.5Z")).toBe("range_time");
+    expect(q("2026-02-30T16:00:00Z")).toBe("range_time"); // JS and Go disagree on a day that does not exist
+    expect(q("2026-11-20T24:00:00Z")).toBe("range_time");
+    expect(q("2026-11-20T16:00:00Z")).toBeNull();
+  });
 });
 
 describe("validRange", () => {

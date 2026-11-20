@@ -185,8 +185,14 @@ export default function Costs({ me }: { me?: Principal }) {
   const range = useMemo(() => readRange(params, Date.now()), [params]);
   const tz = range.tz;
   // One clock for every label of the page (the tiles, the axis, the tables).
+  // Set in the render, for this pass's labels, and again in the effect: under
+  // StrictMode the simulated unmount runs the cleanup after the first commit,
+  // and a child that re-renders on its own query would read UTC from then on.
   setDisplayTz(tz);
-  useEffect(() => () => setDisplayTz("utc"), []);
+  useEffect(() => {
+    setDisplayTz(tz);
+    return () => setDisplayTz("utc");
+  }, [tz]);
   const dp = Number(params.get("days"));
   const days = RANGES.some((r) => r.v === dp) ? dp : 1;
   const customOk = range.from != null && range.to != null && range.error == null;
@@ -201,7 +207,16 @@ export default function Costs({ me }: { me?: Principal }) {
   const win: CostWindow = customOk ? customWindow(range.from!, range.to!) : { days };
   const custom = isCustom(win);
   const [panelOpen, setPanelOpen] = useState(false);
-  const [bucketPick, setBucketPick] = useState<string | null>(null);
+  // The bucket the reader chose belongs to the range it was chosen in: a range
+  // that changes from the address (Back, Forward, a pasted link) starts over at
+  // its own default, as a click on a range does. A pick the range does not
+  // allow (10 minutes over more than 2 days) is dropped too: the server would
+  // quietly cut the window to fit it.
+  const wq = windowQuery(win);
+  const [pick, setPick] = useState<{ wq: string; bucket: string } | null>(null);
+  const bucketPick = pick != null && pick.wq === wq
+    && !bucketOptions(t, win.days).find((o) => o.v === pick.bucket)?.disabled ? pick.bucket : null;
+  const setBucketPick = (b: string | null) => setPick(b == null ? null : { wq, bucket: b });
   const bucket = bucketPick ?? (custom ? bucketForSpan(range.to! - range.from!) : RANGES.find((r) => r.v === days)!.bucket);
   const [metric, setMetric] = useState<Metric>("cost");
   // The agent filter replaces the scope tabs: none selected = the whole
@@ -234,7 +249,6 @@ export default function Costs({ me }: { me?: Principal }) {
   // The meter's readings of the last days, for the picker's helpers (since the
   // last reset, between two readings).
   const helperReadings = useUsageReadings({ days: 8 }, panelOpen || custom || badRange);
-  const wq = windowQuery(win);
   // The server refused the range (a 400 with its code): said in the panel, in
   // the reader's language.
   const apiCode: RangeCode | "unknown" | null = cells.error instanceof ApiError && cells.error.status === 400

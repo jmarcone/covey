@@ -88,7 +88,21 @@ export function customWindow(fromMs: number, toMs: number): CostWindow {
  *  RFC 3339, back to front, too long, in the future). */
 export type RangeParams = { tz: DisplayTz; from: number | null; to: number | null; error: RangeCode | null };
 
-const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
+// What the page writes and the server reads the same way: RFC 3339 to the
+// minute (seconds :00, no fraction), a zone, and a date that exists. Anything
+// else — no seconds (Go's time.RFC3339 refuses it), seconds that customWindow
+// would floor away, an impossible day — is range_time, so the window the page
+// asks for is the one its address names.
+const RFC3339 = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):00(?:Z|[+-]\d{2}:\d{2})$/;
+
+function minuteExact(v: string): boolean {
+  const m = RFC3339.exec(v);
+  if (!m) return false;
+  const [y, mo, d, h, mi] = m.slice(1).map(Number);
+  if (h > 23 || mi > 59) return false;
+  const day = new Date(Date.UTC(y, mo - 1, d));
+  return day.getUTCFullYear() === y && day.getUTCMonth() === mo - 1 && day.getUTCDate() === d;
+}
 
 export function readRange(p: URLSearchParams, nowMs: number): RangeParams {
   const tzp = p.get("tz");
@@ -96,7 +110,7 @@ export function readRange(p: URLSearchParams, nowMs: number): RangeParams {
   const f = p.get("from"), t = p.get("to");
   if (f == null && t == null) return { tz, from: null, to: null, error: null };
   if (!f || !t) return { tz, from: null, to: null, error: "range_incomplete" };
-  if (!RFC3339.test(f) || !RFC3339.test(t)) return { tz, from: null, to: null, error: "range_time" };
+  if (!minuteExact(f) || !minuteExact(t)) return { tz, from: null, to: null, error: "range_time" };
   const from = Date.parse(f), to = Date.parse(t);
   return { tz, from, to, error: validRange(from, to, nowMs) };
 }

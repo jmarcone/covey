@@ -1412,6 +1412,14 @@ func (e rangeError) Error() string { return e.Msg }
 // come together, parse as RFC 3339, from is before to and before now, the span
 // is at most 31 days, and 10-minute buckets hold at most two days. Keep both in
 // step.
+//
+// The endpoints that take from and to are the ones that call costRange:
+// /cost/cells, /cost/org, /cost/models, /cost/usage-readings, /cost/billed,
+// /cost/reconcile, /cost/runs, /agents/{id}/cost/runs and /cost/external-usage.
+// The others (/cost/indicators, /agents/{id}/cost/indicators,
+// /agents/{id}/cost/series, the work record) stay on costWindow: they read
+// whole quick ranges (their trend sets the span against the one before it) and
+// ignore from and to, answering for ?days= or the default.
 func costRange(r *http.Request, now time.Time) (bucket string, since, until time.Time, err error) {
 	q := r.URL.Query()
 	from, to := q.Get("from"), q.Get("to")

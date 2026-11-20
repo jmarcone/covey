@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { useLocation } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import Costs from "./Costs";
 import type { CostCells } from "../api";
 import { mockFetch, renderWithProviders, useGerman } from "../test/render";
@@ -202,5 +202,91 @@ describe("Kosten — eigener Zeitraum", () => {
   it("legt die Preisliste für einen eigenen Zeitraum nicht vor, mit dem Grund", async () => {
     serve(`/costs?from=${FROM}&to=${TO}&tz=utc`);
     expect(await screen.findByText(/Die Preisliste gilt für die Schnellbereiche/)).toBeInTheDocument();
+  });
+  // The range is in the address, so Back, Forward and a pasted link change it
+  // too; a bucket picked in the old range must not ride along (the server cuts
+  // a 10-minute window to 2 days, and the page would read 2 days under "30 days").
+  it("nimmt eine gewählte Intervallbreite nicht in einen anderen Zeitraum aus der Adresse mit", async () => {
+    const GoTo = ({ to }: { to: string }) => {
+      const nav = useNavigate();
+      return <button onClick={() => nav(to)}>{`gehe ${to}`}</button>;
+    };
+    const m = mockFetch(routes());
+    const to30 = "/costs?days=30&tz=utc";
+    const to3d = "/costs?from=2026-11-15T00:00:00Z&to=2026-11-18T00:00:00Z&tz=utc";
+    renderWithProviders(<><Costs /><Probe /><GoTo to={to30} /><GoTo to={to3d} /></>, { route: "/costs?tz=utc" });
+    fireEvent.click(await screen.findByRole("button", { name: "10 Min." }));
+    await waitFor(() => expect(m.calls.some((c) => /cost\/cells.*bucket=10min/.test(c))).toBe(true));
+    for (const to of [to30, to3d]) {
+      const before = m.calls.length;
+      fireEvent.click(screen.getByRole("button", { name: `gehe ${to}` }));
+      await waitFor(() => expect(m.calls.slice(before).some((c) => c.includes("/cost/cells"))).toBe(true));
+      const asked = m.calls.slice(before).filter((c) => c.includes("/cost/cells"));
+      expect(asked.every((c) => !c.includes("bucket=10min"))).toBe(true);
+      expect(asked.every((c) => c.includes("bucket=day"))).toBe(true);
+      expect(document.querySelector("[data-range-refused]")).toBeNull();
+    }
+  });
+
+  it("lässt eine gewählte Intervallbreite stehen, solange der Zeitraum derselbe bleibt", async () => {
+    const m = serve(`/costs?from=${FROM}&to=${TO}&tz=utc`);
+    fireEvent.click(await screen.findByRole("button", { name: "Stunde" }));
+    await waitFor(() => expect(m.calls.some((c) => /cost\/cells.*bucket=hour/.test(c))).toBe(true));
+    fireEvent.click(within(screen.getByRole("form", { name: "Eigener Zeitraum" })).getByRole("button", { name: "Lokal" }));
+    await waitFor(() => expect(search().get("tz")).toBe("local"));
+    expect(m.calls.filter((c) => c.includes("/cost/cells")).pop()).toContain("bucket=hour");
+  });
+});
+
+// The bill of an API key in a custom range (#193): a range that holds no whole
+// billed hour has no bill to show, and a range that ends in the past says
+// where its bill ends.
+describe("Kosten — Rechnung im eigenen Zeitraum", () => {
+  beforeEach(() => useGerman());
+  const KEY = "anthropic_api_key";
+  const billed = (window: { start: string; end: string; compared_until: string }) => ({
+    bucket: "hour", points: [],
+    window: { ...window, width: "1h",
+      totals: [{ secret_key: KEY, secret_slot: 0, has_billed: false, billed_usd: "0", billed_list_usd: "0", reported_usd: 3, list_usd: 3 }] },
+    sync: { configured: true, last_attempt_at: null, last_success_at: null, last_daily_at: null,
+      data_refreshed_at: "2026-11-21T00:00:00Z", last_status: "ok", last_error: "" },
+  });
+  async function tileOf(win: { start: string; end: string; compared_until: string }, route: string) {
+    const data = cells(true);
+    data.cells.push({ period: AT[0], agent_id: "a1", secret_key: KEY, secret_slot: 0, credential_kind: "api_key",
+      reported_usd: 3, measured: { output: 4 }, engine_usd: 4, tokens: { output: 200_000 } });
+    mockFetch({ ...routes(), "/api/v1/cost/cells": data, "/api/v1/cost/billed": billed(win) });
+    const { container } = renderWithProviders(<Costs />, { route });
+    const block = await waitFor(() => {
+      const b = container.querySelector<HTMLElement>(`[data-credential="${KEY}#0"]`);
+      if (!b) throw new Error("no block for the API key yet");
+      return b;
+    });
+    return { block, tile: within(block).getByRole("group", { name: "Von Anthropic berechnet" }) };
+  }
+
+  it("zeigt für einen Zeitraum ohne ganze abgerechnete Stunde keine 0,00 $, sondern den Grund", async () => {
+    // 16:00–16:45 holds no whole hour: the server's window starts at 17:00 and ends where it starts.
+    const { block, tile } = await tileOf(
+      { start: "2026-11-20T17:00:00Z", end: "2026-11-20T17:00:00Z", compared_until: "2026-11-20T17:00:00Z" },
+      `/costs?from=${FROM}&to=${TO}&tz=utc`);
+    expect(within(tile).getByText("–")).toBeInTheDocument();
+    expect(within(tile).getByText(/enthält keine ganze abgerechnete Stunde/)).toBeInTheDocument();
+    expect(tile.textContent).not.toMatch(/0,00/);
+    expect(within(block).queryByRole("group", { name: "Listenpreis laut Anthropic" })).toBeNull();
+  });
+
+  it("nennt bei einem Zeitraum in der Vergangenheit das Ende der Rechnung statt „jetzt“", async () => {
+    const { tile } = await tileOf(
+      { start: "2026-11-20T16:00:00Z", end: "2026-11-20T18:00:00Z", compared_until: "2026-11-20T18:00:00Z" },
+      `/costs?from=2026-11-20T16:00:00Z&to=2026-11-20T18:30:00Z&tz=utc`);
+    expect(within(tile).getByText(/Rechnung von 20\.11\., 16:00 UTC bis 20\.11\., 18:00 UTC,/)).toBeInTheDocument();
+    expect(tile.textContent).not.toMatch(/bis jetzt/);
+  });
+
+  it("sagt bei den schnellen Zeiträumen weiter „bis jetzt“", async () => {
+    const { tile } = await tileOf(
+      { start: "2026-11-20T16:00:00Z", end: "2026-11-20T18:00:00Z", compared_until: "2026-11-20T18:00:00Z" }, "/costs?tz=utc");
+    expect(within(tile).getByText(/bis jetzt/)).toBeInTheDocument();
   });
 });

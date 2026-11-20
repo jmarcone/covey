@@ -593,3 +593,27 @@ func TestBilledHourlyTileStartsWhereItsBillDoes(t *testing.T) {
 			w.Start, tile, chart, reported(w))
 	}
 }
+
+// A window asked for as [from, to) is read to the next UTC midnight after to,
+// and the answer says so; an open window has no until.
+func TestReconcileNamesWhereItReadsTo(t *testing.T) {
+	f := newBillingFixture(t, "abgleich-bis")
+	day := time.Now().UTC().Truncate(24 * time.Hour).Add(-3 * 24 * time.Hour)
+	rec, err := f.s.obs.Reconcile(f.ctx, f.s.orgID, day.Add(2*time.Hour), day.Add(10*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := day.Add(24 * time.Hour); rec.Until == nil || !rec.Until.Equal(want) {
+		t.Fatalf("until = %v, want %v (the midnight after to)", rec.Until, want)
+	}
+	if !rec.Since.Equal(day) {
+		t.Fatalf("since = %v, want the midnight before from, %v", rec.Since, day)
+	}
+	open, err := f.s.obs.Reconcile(f.ctx, f.s.orgID, day, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if open.Until != nil {
+		t.Fatalf("an open window names until %v, want none", open.Until)
+	}
+}

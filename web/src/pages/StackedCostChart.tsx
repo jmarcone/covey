@@ -1024,6 +1024,7 @@ function CredentialTiles({ f, filtered, narrowed, out, split, seatSplit, full }:
   full: boolean;
 }) {
   const { t } = useTranslation();
+  const custom = useContext(CustomRangeContext);
   // With the outside sessions on this seat included, each figure names its
   // parts — the range's, where the multiple of everything on the meter
   // stands beside them with the parts within the meter's readings (L5).
@@ -1129,6 +1130,7 @@ function CredentialTiles({ f, filtered, narrowed, out, split, seatSplit, full }:
         : b.state === "unmapped" ? t("costs.fig.billedUnmapped")
         : b.state === "failed" ? t("costs.fig.billedSyncFailed", { error: b.error || "–" })
         : b.state === "not_landed" ? t("costs.fig.billedNotLanded")
+        : b.state === "no_bucket" ? t("costs.fig.billedNoBucket")
         : t("costs.fig.billedUnavailable");
       tiles.push(<Tile key="billed" label={t("costs.fig.billed")} value="–" sub={why} color={SOURCE_COLOR.billed} />);
     } else {
@@ -1140,8 +1142,9 @@ function CredentialTiles({ f, filtered, narrowed, out, split, seatSplit, full }:
       const w = b.window;
       const until = w && (w.comparedUntil.toISOString().slice(0, 10) === w.end.toISOString().slice(0, 10)
         ? fmtClockUTC(w.comparedUntil) : fmtBucket(w.comparedUntil.toISOString(), "hour"));
-      const win = w ? t("costs.fig.billedWindow", {
-        from: fmtBucket(w.start.toISOString(), "hour"),
+      // A custom range's bill ends where the range does, not now.
+      const win = w ? t(custom ? "costs.fig.billedWindowTo" : "costs.fig.billedWindow", {
+        from: fmtBucket(w.start.toISOString(), "hour"), to: fmtBucket(w.end.toISOString(), "hour"),
         unit: t(w.width === "1h" ? "costs.fig.billedUnitHours" : "costs.fig.billedUnitDays"),
         reported: fmtUSD(b.reported), list: fmtUSD(b.recomputed), until,
       }) : undefined;

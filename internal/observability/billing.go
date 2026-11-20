@@ -499,7 +499,11 @@ type ReconcileDay struct {
 
 // Reconciliation is the per-day comparison for every mapped credential.
 type Reconciliation struct {
-	Since           time.Time      `json:"since"`
+	Since time.Time `json:"since"`
+	// Until is where a window asked for as [from, to) was read to: the next UTC
+	// midnight after `to`, so that its last day is whole. Absent for an open
+	// window, which runs to now.
+	Until           *time.Time     `json:"until,omitempty"`
 	DataRefreshedAt *time.Time     `json:"data_refreshed_at"`
 	Days            []ReconcileDay `json:"days"`
 }
@@ -524,6 +528,9 @@ func (s *Store) Reconcile(ctx context.Context, orgID uuid.UUID, since, until tim
 		until = until.UTC().Add(24*time.Hour - time.Nanosecond).Truncate(24 * time.Hour)
 	}
 	rec := Reconciliation{Since: since, Days: []ReconcileDay{}}
+	if !until.IsZero() {
+		rec.Until = &until
+	}
 	sync, err := s.BillingSync(ctx, orgID)
 	if err != nil {
 		return rec, err
