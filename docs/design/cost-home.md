@@ -21,7 +21,7 @@ Each question has **one** view that answers it. The home holds Q1, Q2, Q3, Q7 (t
 | Q7 | Will we run out? | home `/costs` (gauge) | **38–41 %** at the reset; stop level 85 % |
 | Q8 | Per account? | `/costs/accounts` | API key $31.80 of $51.35 real (62 %) |
 | Q9 | Can I trust these numbers? | `/costs/health` (the badge on every view links there) | 7 pass · 1 info |
-| Q10 | Where is the waste? | `/costs/waste` | $30.15 lost (7.2 % of token price) |
+| Q10 | Where is the waste? | `/costs/waste` | $30.15 lost (12.2 % of covey's token price) |
 | — | When was the work done? | `/costs/time` | $142.00 token price on the busiest day (Sun 22 Nov) |
 | — | Which way of working merges cheapest and cleanest? (#181) | `/costs/lanes` | 2 of 3 lanes compared, 14 merged PRs |
 | — | What can I share? | `/costs/report` | totals only, one page |
@@ -94,7 +94,7 @@ Both billed accounts are about 40 % below list in the sample (the API key's bill
 
 **Who moved the meter (the split behind every "≈ Real cost").** It is the code's split, not a pro-rata (`splitSeatSince`, `internal/observability/external.go:2700`; chunks `seatChunks` :2304; spec #187 R3/R4). The flat seat's points are cut into chunks that close at the reading where they reach 5 points (`chunkMinPoints`, :2365); inside a chunk a party's part is (P_c − U_c) × rate × L_g,c ÷ L_c (its share of the chunk's token price, :2814-2822); points no recorded call explains are **not attributed** (`chunkUnattributed`, :2519, a lower bound) and stay visible. A part's range is the code's part slack (`SplitCoveySlackUSD` / `SplitExternalSlackUSD`): Σ_c (S_c + extra_c) × share × ½TV(the steps' prices), S_c = 2 points (`chunkSlackPoints`), plus two terms the sample sets to zero: the widening of the share for lines spread over several readings (`chunkShareRange`, :2930) and the cut's extra points when the range does not start at a reset (`sinceCuts`, :2651).
 
-**The sample's week is 5 chunks, not 2.** With readings every few minutes the meter moves about one point per reading, so the 22 points of the sample are 22 one-point readings and make chunks of 5, 5, 5, 5 and 2 points, 10 points of slack in all. Shares are constant in every chunk (57.1 / 42.9 / 0.03 %) and the 1.5 not attributed points sit anywhere (constant shares make each part independent of where). A group's range is therefore about **±2 points × share for every 5 points moved: ≈ ±40 % of a part** whatever the length of the week; the sample's 2-point last chunk makes it ±49 %.
+**The sample's week is 5 chunks, not 2.** With readings every few minutes the meter moves about one point per reading, so the 22 points of the sample are 22 one-point readings and make chunks of 5, 5, 5, 5 and 2 points, 10 points of slack in all. Shares are constant in every chunk (57.1 / 42.9 / 0.03 %) and the 1.5 not attributed points sit anywhere (constant shares make each part independent of where). A group's range is therefore about **±2 points × share for every 5 points moved: ≈ ±40 % of a part** (full chunks, nothing unattributed) whatever the length of the week; the sample's 2-point last chunk and its 1.5 unexplained points make it ±49 % (10 slack points ÷ 20.5 attributed points; the short chunk alone would give 10 ÷ 22 = 45 %).
 
 | Flat seat, by group | Token price on it | Points | ≈ Real cost | Range (± 10 slack points × share × $0.461538) |
 |---|---|---|---|---|
@@ -173,7 +173,7 @@ Mock-up: `cost-home/1-home-drawer-dark-390.png`.
  [Waste]    [Health] [Report]
 ```
 
-**Every figure once.** The home's figures, each in exactly one place: headline $51.35 and its range; parts $10.15, $9.40, $31.80 (legend); Token price $420.44; multiple ≥ 31.9× and its estimate 34.8×; gauge now 22 %, stop 85 %, forecast 38–41 %, the reset date; cards: Accounts 62 % · 3 accounts; Who $247.10 · 59 % · 36 %; Work $28.46 · 14 · $21.16; Lanes 2 of 3; Models $0.05 · $1.95 · $0.24; Over time $142.00 · 33.8 %; Waste $30.15 · 7.2 %; Health 7 pass · 1 info · 09:27. The sentence under the headline therefore carries **no figure**; the multiple's range 31.9×–38.3× and the points behind the real cost are in the drawer and in Accounts. A test collects the text of the home's figures and fails on a duplicate.
+**Every figure once.** The home's figures, each in exactly one place: headline $51.35 and its range; parts $10.15, $9.40, $31.80 (legend); Token price $420.44; multiple ≥ 31.9× and its estimate 34.8×; gauge now 22 %, stop 85 %, forecast 38–41 %, the reset date; cards: Accounts 62 % · 3 accounts; Who $247.10 · 59 % · 36 %; Work $28.46 · 14 · $21.16; Lanes 2 of 3; Models $0.05 · $1.95 · $0.24; Over time $142.00 · 33.8 %; Waste $30.15 · 12.2 %; Health 7 pass · 1 info · 09:27. The sentence under the headline therefore carries **no figure**; the multiple's range 31.9×–38.3× and the points behind the real cost are in the drawer and in Accounts. A test collects the text of the home's figures and fails on a duplicate.
 
 | Figure | Formula | Label | Notes |
 |---|---|---|---|
@@ -280,22 +280,22 @@ Headline: **covey agents $247.10 · 59 % of token price**.
 
 ### 8.3 `/costs/work` — Q5: what does a merged PR cost?
 
-Headline: **$28.46 token price per merged PR, all work counted** (398.42 ÷ 14) · ≈ real $2.67 (2.27 – 3.07). Beside it, smaller: **$21.16 for the cost linked to merged PRs only** (296.30 ÷ 14; ≈ real $1.98, 1.69 – 2.28). The label under the headline: "all covey work in this range ÷ PRs merged in this range" (see D7). Scope: covey agents + operator ($398.42 of the $420.44; other projects and probes are not work on covey PRs, and the drawer says so). The headline is the all-in figure because the linked-only one leaves out $102.12 (25.6 % of the work) and can be flattered; the numerator always includes every cost of the scope.
+Headline: **$28.46 token price per merged PR, all work counted** (398.42 ÷ 14) · ≈ real $2.67 (2.27 – 3.07). Beside it, smaller: **$21.16 for the cost linked to merged PRs only** (296.30 ÷ 14; ≈ real $2.43, 2.13 – 2.74). The label under the headline: "all covey work in this range ÷ PRs merged in this range" (see D7). Scope: covey agents + operator ($398.42 of the $420.44; other projects and probes are not work on covey PRs, and the drawer says so). The headline is the all-in figure because the linked-only one leaves out $102.12 (25.6 % of the work; exact because the sample assumes the 14 PRs had no work before the range, D7) and can be flattered; the numerator always includes every cost of the scope.
 
 ```
  Where the covey work went                 Token price   ≈ Real cost (range)         PRs
- Linked to a merged PR                     $296.30       ≈ $27.78 (23.60 – 31.95)    14
+ Linked to a merged PR                     $296.30       ≈ $34.03 (29.76 – 38.30)    14
    #170 costs: meter line                   $48.20  …    top 3 shown, then "11 others $169.25"
- Linked to an open or unmerged PR          $40.84        ≈ $3.83 (3.25 – 4.40)       3
- Not linked to any PR                      $61.28        ≈ $5.74 (4.88 – 6.61)
+ Linked to an open or unmerged PR          $40.84        ≈ $1.68 (1.13 – 2.22)       3
+ Not linked to any PR                      $61.28        ≈ $1.64 (0.84 – 2.44)
  Total covey work                          $398.42       ≈ $37.35 (31.73 – 42.96)
  All-in per merged PR   = 398.42 ÷ 14 = $28.46 · ≈ real 37.35 ÷ 14 = $2.67 (2.27 – 3.07)
- Linked to merged PRs   = 296.30 ÷ 14 = $21.16 · ≈ real 27.78 ÷ 14 = $1.98 (1.69 – 2.28)
+ Linked to merged PRs   = 296.30 ÷ 14 = $21.16 · ≈ real 34.03 ÷ 14 = $2.43 (2.13 – 2.74)
 ```
 
 - A cost is linked to a PR by `Fixes #n` / `Part of #n` and the branch (#181 gap 3). The three rows plus total always sum; "not linked" is shown, never dropped.
-- **Which linked cost counts (D7).** A merged PR counts with its **whole linked cost**, including work done before the range began (the sample's $296.30), so "linked to merged PRs" is a cost per PR on a window of its own; in the range only it would understate a PR that started before the range. The all-in figure counts every cost **in the range** and is a flow ratio, not "what a PR costs" (the open PRs' $40.84 serves future merges, and PRs merged early in the range had work before it).
-- ≈ Real cost of the total = covey agents' $33.29 + operator's $4.05 = $37.35 (§3). The sample assumes the same account mix in every row (A6), so a row's real cost is its share of the work's token price × $37.35 (displayed by the largest-remainder rule: 27.78 + 3.83 + 5.74 = 37.35). **A row's range is per chunk, not pro rata**: Σ_c (S_c + extra_c) × L_row,c ÷ L_c × ½TV_c, plus the share term (§3), plus ±$1.00 for the pay-per-token seat's part; a pro-rata range was 5.5× too narrow in one fixture of the #126 review. The sample's constant mix makes the two the same arithmetic (flat seat ±$4.61 for covey + operator, 10 slack points × 0.4615 × 0.9997, plus ±$1.00 = ±$5.61 × the row's share of token price); a real install computes it per chunk on the server (§12).
+- **Which linked cost counts (D7).** A merged PR counts with its **whole linked cost**, including work done before the range began (the sample's $296.30), so "linked to merged PRs" is a cost per PR on a window of its own (**the sample assumes the 14 PRs had no work before the range**: that is why 296.30 + 40.84 + 61.28 = 398.42 is also the range's covey + operator token price and why the $102.12 left out is exact; in a real install the pre-range part of a merged PR's linked cost is a line under the table, outside "Total covey work", with its ≈ real cost taken from the meter week in which it ran, or "–" before the first reading, never from this week's split); in the range only it would understate a PR that started before the range. The all-in figure counts every cost **in the range** and is a flow ratio, not "what a PR costs" (the open PRs' $40.84 serves future merges, and PRs merged early in the range had work before it).
+- ≈ Real cost of the total = covey agents' $33.29 + operator's $4.05 = $37.35 (§3). **Each row follows its own group mix and each group its own rate.** The sample's rows are covey + operator token price: linked 241.70 + 54.60, open 5.40 + 35.44, not linked 0 + 61.28. Covey's rate is 33.2931 ÷ 247.10 = 13.474 % of token price; the operator's is 4.0545 ÷ 151.32 = 2.679 % (it works on the flat seat only, so it is cheaper per token-price dollar; covey's lines also run on the two billed accounts). A row's real cost = covey part × 13.474 % + operator part × 2.679 % (unrounded 34.0284 + 1.6772 + 1.6419 = 37.3475; displayed by the largest-remainder rule: 34.03 + 1.68 + 1.64 = 37.35). The sample gives every covey line covey's account mix (A6), so the pay-per-token seat's ±$1.00 spreads over covey's rows by token price. **A row's range is per chunk, not pro rata**: Σ_c (S_c + extra_c) × L_row,c ÷ L_c × ½TV_c, plus the share term (§3), plus ±$1.00 for the pay-per-token seat's part; a pro-rata range was 5.5× too narrow in one fixture of the #126 review. The sample's constant mix makes the two the same arithmetic, per token-price dollar: covey (2.636 + 1.00) ÷ 247.10 = 1.472 %, operator 1.978 ÷ 151.32 = 1.307 % (linked 241.70 × 1.472 % + 54.60 × 1.307 % = ± $4.27); a real install computes it per chunk on the server (§12).
 - Sub-table: the most expensive merged PRs (number, token price, hours to merge, rounds), **top 3** then the rest as one row.
 - Empty: "No PR merged in this range" (the per-PR figures become "–", the rows stay). Needs-data state until #181 ships (§12).
 
@@ -330,14 +330,14 @@ Headline: **$142.00 token price on the busiest day, Sun 22 Nov · 33.8 % of the 
 
 ### 8.6 `/costs/waste` — Q10: where is the waste?
 
-Headline: **$30.15 of token price lost (7.2 %)**.
+Headline: **$30.15 of token price lost (12.2 % of covey's token price)**. The scope is covey's runs, as in Models (§8.4): the $30.15 is covey's own failed, killed and duplicate runs, so it is divided by covey's token price ($247.10), not by all $420.44 (that would be 7.2 %, a share that mixes covey's runs with the operator's sessions and other projects, which have no covey runs).
 
 ```
- Where it was lost             Token price   Share of token price   Runs
- Failed runs                   $14.20        3.4 %                  17
- Killed runs                   $6.85         1.6 %                  9
- Duplicate runs                $9.10         2.2 %                  6
- Total lost                    $30.15        7.2 %
+ Where it was lost             Token price   Share of covey's token price   Runs
+ Failed runs                   $14.20        5.7 %                  17
+ Killed runs                   $6.85         2.8 %                  9
+ Duplicate runs                $9.10         3.7 %                  6
+ Total lost                    $30.15        12.2 %
  ──── not counted as waste ───────────────────────────────────────────────
  Cache reads (context re-read)  $186.00 token price · 44.2 % of T · 92 % of input tokens
 ```
@@ -377,7 +377,7 @@ A **static snapshot**, generated on request and stored read-only; light theme on
  Real cost $51.35 (range $49.43 – $53.28) · Token price $420.44 · Flat seat multiple at least 31.9×
  Real cost by account kind: Flat seat $10.15 · Pay-per-token seat $9.40 · API key $31.80
  Token price by group: covey agents $247.10 · operator $151.32 · other projects $18.90 · probes $3.12
- Per merged PR: $28.46 token price, all covey work in the range ÷ PRs merged in the range · waste $30.15 (7.2 %)
+ Per merged PR: $28.46 token price, all covey work in the range ÷ PRs merged in the range · waste $30.15 (12.2 % of covey's token price)
  How this is computed: <the five drawer blocks for each figure, inline, in plain words>
 ```
 
@@ -392,15 +392,15 @@ Mock-up `cost-home/3-lanes-1440.png`. Headline: **2 of 3 lanes compared** (14 me
 | Column | Formula | Label |
 |---|---|---|
 | Token price per PR | Σ token price **linked to the lane's merged PRs** ÷ the lane's merged PRs (team 163.20 ÷ 8 = $20.40; the lane's whole linked cost, D7) | Token price per PR, linked cost |
-| ≈ Real cost per PR | Σ of those lines' parts of the split (§3) ÷ PRs, with the lane's range computed **per chunk** from its own lines (§8.3, §12), not scaled pro rata (team 17.77 ÷ 8 = ≈ $2.22, 1.93 – 2.51; lead 8.55 ÷ 4 = ≈ $2.14, 1.86 – 2.42; operator 1.46 ÷ 2 = ≈ $0.73, 0.37 – 1.09) | ≈ Real cost per PR (range) |
+| ≈ Real cost per PR | Σ of those lines' parts of the split (§3) ÷ PRs, with the lane's range computed **per chunk** from its own lines (§8.3, §12), not scaled pro rata (team 163.20 × 13.474 % = 21.99 ÷ 8 = ≈ $2.75, 2.45 – 3.05; lead 78.50 × 13.474 % = 10.58 ÷ 4 = ≈ $2.64, 2.36 – 2.93; operator 54.60 × 2.679 % = 1.46 ÷ 2 = ≈ $0.73, 0.37 – 1.09) | ≈ Real cost per PR (range) |
 | Hours to merge | **median** of (merged at − first queued at); the "all lanes" row is the pooled median, not the mean of medians | Hours to merge (median) |
 | Review rounds | Σ rounds ÷ PRs (team 15 ÷ 8 = 1.9) | Review rounds (mean) |
 | Majors per PR | Σ majors found by the outside review ÷ PRs (team 5 ÷ 8 = 0.6) | Majors per PR |
 
-- **A lane with fewer than 3 PRs is shown, muted, with "n PRs: too few to compare"**, and takes no highlight; no lane is marked "best". The all-lanes row pools the lanes: **$21.16 and ≈ $1.98 (1.69 – 2.28) are the linked-only figures of §8.3, not its headline** (the all-in $28.46 is on Work); the footnote under the table says so and names the $102.12 not linked.
+- **A lane with fewer than 3 PRs is shown, muted, with "n PRs: too few to compare"**, and takes no highlight; no lane is marked "best". The all-lanes row pools the lanes: **$21.16 and ≈ $2.43 (2.13 – 2.74) are the linked-only figures of §8.3, not its headline** (the all-in $28.46 is on Work); the footnote under the table says so and names the $102.12 not linked.
 - Token price per PR compares the work (every lane priced by the same list). ≈ Real cost depends on the account that paid and on who moved the meter, so a lane on the flat seat reads cheap there: the footnote says so in plain words.
 - Cost not linked to a merged PR is in Work, not in a lane.
-- **Sample rule for the lanes' parts (A6):** the three lanes' ≈ real costs sum to the Work view's "linked" row ($27.78 = 17.77 + 8.55 + 1.46): the operator lane is priced at the operator's own ratio (flat seat only, $4.05 ÷ $151.32), the rest of the row goes to the two covey lanes by token price; ranges likewise (the operator lane's flat-seat range, the rest to the covey lanes). A real install gives each lane its own lines' parts and slack, per chunk.
+- **Sample rule for the lanes' parts (A6):** the three lanes' ≈ real costs sum to the Work view's "linked" row ($34.03 = 21.99 + 10.58 + 1.46): each lane is priced at its group's rate over its own linked token price, the operator lane at the operator's (2.679 %, flat seat only) and the two covey lanes at covey's (13.474 %); ranges likewise, at each group's range per token-price dollar (§8.3). A real install gives each lane its own lines' parts and slack, per chunk.
 - Account in the strip is ignored: "all accounts only" greyed note when one is picked. Per-session tree and per-subagent type (#181 view 4) are **not** designed here (A5).
 
 ## 10. Phone, dark, accessibility
@@ -482,11 +482,11 @@ Build order that follows the data: home band + gauge + context strip + drawer, A
 - A3. **Probes** are covey's own probe runs and a probe-tagged outside usage; the marker has to exist.
 - A4. A **duplicate run** is a run on a task that already had a result from another run started within one hour; needs the data owner's confirmation. A run is counted in the first row that fits (failed, killed, duplicate).
 - A5. The per-session tree and per-subagent-type views of #181 are a later design.
-- A6. Sample numbers are invented for consistency (they sum), not measured: the pay-per-token seat's $100 limit, the two billed accounts' discount, the same account mix in every Work row, the lanes' split of the linked row, constant shares in every chunk.
+- A6. Sample numbers are invented for consistency (they sum), not measured: the pay-per-token seat's $100 limit, the two billed accounts' discount, the same account mix in every covey line (every Work row and lane is covey's lines at covey's rate plus the operator's at the operator's), that the 14 merged PRs had no work before the range, constant shares in every chunk.
 - A7. A billed account's bill is split **per cell** of `billed_cost` by `list_amount_cents` with a row "Not attributed (bill)" (cost-controller's rule, finding 7): exact, so no range, "≥" while the bill is incomplete. The pay-per-token seat's usage charges carry ±1 point of its limit and go whole to covey only when covey's lines are the only ones on it.
 - A8. The gauge shows the fullest flat seat; the pay-per-token seat's monthly limit meter is not a gauge here.
 - A9. Amber and red mean *needs a look* and *needs action* on the whole page (§3); the stop level marker is ink.
 
-**Settled by the cost-controller's formula review (round 3):** the split's figures and its 5 chunks (§3), the total's range and floor from `meterSlack`, the Not split row, the billed split per cell, the pay-per-token seat's range, §8.4's scope and per-run main model, D5's low ends, D7's labels, per-chunk ranges. **Still for the cost-controller to check again on this head:** the figures in §3, §8.2, §8.3 and §13 AC5 (computed from the unrounded $0.461538; the pay-per-token seat's sample limit of $100 is mine, so the total's range $49.43 – $53.28 is the flat seat's $50.43 – $52.28 widened by ±$1.00).
+**Settled by the cost-controller's formula review (rounds 1–3):** the split's figures and its 5 chunks (§3), the total's range and floor from `meterSlack`, the Not split row, the billed split per cell, the pay-per-token seat's range, §8.4's scope and per-run main model, D5's low ends, D7's labels, per-chunk ranges, and the figures of §8.2 and AC5 (computed from the unrounded $0.461538; the pay-per-token seat's sample limit of $100 is mine, so the total's range $49.43 – $53.28 is the flat seat's $50.43 – $52.28 widened by ±$1.00). **Changed after round 3, for the cost-controller to re-check on the new head:** the Work rows, the linked per-PR figure and the lanes use each group's rate (§8.3, §9, A6), Waste's share is of covey's token price (§8.6, Q10, home card), the ±49 % label (§3) and D7's pre-range assumption are worded as asked.
 
 **Not checked:** the contrast of the new combinations (amber, red on their tints) was read from the tokens file, not re-measured; the mock-ups use media queries where the build should use container queries; German and other long locales were not rendered for the home cards; nothing was tested on a real device; the Who and Work views have no mock-up (their tables above are the sample's arithmetic, recomputed in round 3 from the unrounded $0.461538 with a script, not through the code's `splitSeat`; the 5-chunk ranges are the cost-controller's own run of the code, which I reproduced as 10 slack points × share × rate). Re-rendered in round 3: the home (light, dark, 390, drawer, red, stale) and Lanes; Time is unchanged (its figures did not change). The pay-per-token seat's $100 limit, its ±$1.00 and the billed accounts' discount are sample inventions (A6).
