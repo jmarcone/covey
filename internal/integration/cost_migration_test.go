@@ -44,7 +44,7 @@ func TestMigration0144CostDeltas(t *testing.T) {
 		}
 	}
 
-	agent := s.newSupportAgent("vor-0144")
+	agent := s.agentBelowSchema("vor-0144")
 	rt, err := s.runtimes.Create(ctx, s.orgID, "claude-code", "Claude", "")
 	if err != nil {
 		t.Fatal(err)
@@ -240,8 +240,8 @@ func TestMigration0145MeterReadings(t *testing.T) {
 		}
 	}
 
-	agent := s.newSupportAgent("vor-0145")
-	stranger := s.newSupportAgent("ohne-sitz")
+	agent := s.agentBelowSchema("vor-0145")
+	stranger := s.agentBelowSchema("ohne-sitz")
 	rt, err := s.runtimes.Create(ctx, s.orgID, "claude-code", "Claude", "")
 	if err != nil {
 		t.Fatal(err)

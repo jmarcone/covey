@@ -761,6 +761,42 @@
       "byCharges": "cargos de uso",
       "hint": "Los precios por token son sobre los intervalos que cubre el dinero real: la ventana de la factura de una clave API y los intervalos de los cargos de uso contados (periodos límite a prorrata por tiempo). Va aparte del contador de suscripción y nunca se le suma.",
       "rates": "En USD solo a los tipos de cambio que alguien introdujo: {{rates}}."
+    },
+    "fixRounds": {
+      "title": "Rondas de corrección (sesiones persistentes)",
+      "hint": "Tareas de desarrollo en un pull request o issue en el que el mismo agente ya trabajó, terminadas en el período. Cada cifra muestra n, el número de tareas detrás; cifras del primer turno solo donde se registró. $ es el precio de lista medido de las ejecuciones de la tarea.",
+      "byDecision": "Por decisión de despacho",
+      "byPolicy": "A/B por política, por agente",
+      "perPR": "Rondas por pull request",
+      "colDecision": "Decisión",
+      "colPolicy": "Política",
+      "colAgent": "Agente",
+      "colRounds": "Rondas",
+      "colUsd": "$ por ronda",
+      "colWrite": "Escritura de caché 1.er turno",
+      "colWrite5m": "de ello 5 min",
+      "colWrite1h": "de ello 1 h",
+      "colRead": "Lectura de caché 1.er turno",
+      "colGap": "Minutos desde la última ejecución",
+      "colContext": "Contexto al reanudar",
+      "colPRs": "PRs",
+      "colPerPR": "Rondas por PR",
+      "decision": {
+        "sticky_resumed": "reanudada",
+        "fresh": "nueva",
+        "unknown": "desconocida"
+      },
+      "policy": {
+        "always": "siempre",
+        "conditional": "condicional",
+        "fresh": "nueva",
+        "mixed": "mixta",
+        "unknown": "desconocida"
+      },
+      "noData": "sin datos",
+      "none": "No hay rondas de corrección en este período.",
+      "error": "No se pudieron cargar las rondas de corrección.",
+      "offNote": "Por agente. Las rondas de agentes que empiezan de cero por configuración (motivo \"off\", p. ej. el revisor) no se incluyen aquí: {{n}} en este período. Cuentan como \"nueva\" en el A/B de abajo."
     }
   },
   "lang": {
@@ -1439,6 +1475,16 @@
       "maxTurns": "Turnos máximos por ejecución",
       "maxTurnsPlaceholder": "0 = por defecto (30)",
       "maxTurnsHint": "Protección contra desbocamiento: aborta una ejecución después de n turnos. Usa un valor mayor para tareas con copias de repositorios.",
+      "sticky": "Sesiones persistentes",
+      "stickyHint": "Las rondas de corrección de un desarrollador en el mismo pull request reanudan la sesión anterior en lugar de empezar en frío; el revisor debe empezar de cero. La ventana y el límite se aplican a la reanudación condicional.",
+      "stickyWindow": "ventana (minutos)",
+      "stickyCap": "límite de contexto (tokens)",
+      "stickyPolicy": {
+        "fresh": "nueva — siempre una sesión nueva",
+        "conditional": "condicional — dentro de la ventana y bajo el límite",
+        "always": "siempre — sin importar el intervalo ni el tamaño",
+        "ab": "A/B por número de PR — impares siempre, pares condicional"
+      },
       "recordingLevel": "Profundidad de la grabación",
       "recordingInherit": "Heredar el mínimo de la organización",
       "recordingMinimal": "mínima (solo ciclo de vida y puertas)",

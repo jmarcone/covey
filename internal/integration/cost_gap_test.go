@@ -257,7 +257,7 @@ func TestMigration0147CostGap(t *testing.T) {
 	}
 	down()
 
-	agent := s.newSupportAgent("vor-0147")
+	agent := s.agentBelowSchema("vor-0147")
 	task := uuid.New()
 	sid := uuid.NewString()
 	sonnet := "claude-sonnet-5-5"

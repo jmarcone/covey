@@ -32,6 +32,44 @@ export type SandboxService = {
   env?: Record<string, string>;
 };
 
+export type StickyPolicy = "fresh" | "conditional" | "always" | "ab";
+
+/** One figure over a set of tasks (GET /cost/fix-rounds): mean and total are
+ *  null when no task carries it — n = 0 is "no data", never 0. */
+export type FixFigure = { mean: number | null; total: number | null; n: number };
+
+export type FixRoundGroup = {
+  key: string; // sticky_resumed | fresh | unknown, or always | conditional | fresh | unknown
+  rounds: number;
+  usd: FixFigure;
+  first_turn_cache_write: FixFigure;
+  first_turn_cache_write_5m: FixFigure;
+  first_turn_cache_write_1h: FixFigure;
+  first_turn_cache_read: FixFigure;
+  first_turn_input: FixFigure;
+  gap_minutes: FixFigure;
+  context_tokens: FixFigure;
+};
+
+export type FixRoundReport = {
+  from: string;
+  to: string;
+  /** Org-wide by decision, without the rounds whose reason is "off" (fresh by setting). */
+  by_decision: FixRoundGroup[];
+  by_policy: FixRoundGroup[];
+  /** The rounds left out of by_decision (reason "off"). */
+  off_excluded: number;
+  agents: {
+    agent_id: string;
+    slug: string;
+    by_decision: FixRoundGroup[];
+    by_policy: FixRoundGroup[];
+    off_excluded: number;
+  }[];
+  rounds_per_pr: { agent_id: string; slug: string; policy: string; prs: number; rounds: FixFigure }[];
+  prs: { agent_id: string; slug: string; repo: string; pr: number; rounds: number; policy: string }[];
+};
+
 export type Agent = {
   id: string;
   slug: string;
@@ -48,6 +86,14 @@ export type Agent = {
   model: string;
   effort: string; // "" = runtime default, otherwise low|medium|high|xhigh|max
   max_turns: number;
+  /** Sticky sessions (#130): whether a new task on a topic (pr:<owner>/<repo>#<n>,
+   *  issue:<owner>/<repo>#<n>) resumes the session of this agent's last finished task on it.
+   *  fresh = never; conditional = inside the window and under the context
+   *  cap; always = whatever the gap and size; ab = odd PRs always, even PRs
+   *  and issues conditional. Optional until every server sends them. */
+  sticky_policy?: StickyPolicy;
+  sticky_window_minutes?: number;
+  sticky_context_cap?: number;
   recording_level: string; // "" = inherits the org floor, otherwise minimal|standard|full
   // How long this agent's verbatim run is kept (spec/06). null/undefined =
   // inherits the organisation; a number only ever EXTENDS it, never shortens.

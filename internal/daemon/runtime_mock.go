@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -29,6 +30,7 @@ import (
 //	[mock:maxturns <handover-state>]         → run ends at the turn limit
 //	[mock:maxturns-always <handover-state>]  → likewise, on every resumption too
 //	[mock:prompt]                            → returns the system prompt as the result
+//	[mock:session]                           → returns how the run was started (prompt, dir, resume) as JSON
 //	[mock:line <json>]                       → emits <json> as a runtime line, verbatim
 //	[mock:cost <json>]                       → the run's cost message (daemon.Cost fields)
 //
@@ -86,9 +88,52 @@ func init() {
 // the parameter. A bare `]` still gets the group no further, so two directives
 // on one line stay separate.
 var mockDirective = regexp.MustCompile(
-	`\[mock:(action|block|fail|result|memory|reply|sleep|maxturns-always|maxturns|prompt|line|cost)\s*((?:[^\[\]]|\[[^\]]*\])*)\]`)
+	`\[mock:(action|block|fail|result|memory|reply|sleep|maxturns-always|maxturns|prompt|session|line|cost)\s*((?:[^\[\]]|\[[^\]]*\])*)\]`)
 
-func (Mock) Run(ctx context.Context, spec RunSpec, onEvent func(kind string, payload json.RawMessage)) (RunResult, error) {
+// Run is run plus the one thing a real engine leaves behind: the session's
+// transcript, here a marker per working directory under the home, so that a
+// sticky resume (#130) finds the session exactly where Claude Code would —
+// and does not find it after a run in another directory or another home.
+func (m Mock) Run(ctx context.Context, spec RunSpec, onEvent func(kind string, payload json.RawMessage)) (RunResult, error) {
+	res, err := m.run(ctx, spec, onEvent)
+	if res.SessionID != "" {
+		if path := mockSessionPath(spec, res.SessionID); path != "" {
+			if os.MkdirAll(filepath.Dir(path), 0o755) == nil {
+				_ = os.WriteFile(path, nil, 0o644)
+			}
+		}
+	}
+	return res, err
+}
+
+// HasSession: the marker Run left for this home and working directory.
+func (Mock) HasSession(spec RunSpec, id string) bool {
+	path := mockSessionPath(spec, id)
+	if path == "" {
+		return false
+	}
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+var mockSessionIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+
+// mockSessionPath mirrors Claude Code's layout: ~/.mock/sessions/<cwd>/<id>.
+func mockSessionPath(spec RunSpec, id string) string {
+	cwd := spec.WorkDir
+	if cwd == "" {
+		cwd = spec.HomeDir
+	}
+	// The id comes from the run (a task body can set it through mock:line),
+	// so it becomes a path element only in the one plain form an engine's
+	// session id takes.
+	if spec.HomeDir == "" || !mockSessionIDPattern.MatchString(id) || strings.Contains(id, "..") {
+		return ""
+	}
+	return filepath.Join(spec.HomeDir, ".mock", "sessions", claudeProjectKey(cwd), id)
+}
+
+func (Mock) run(ctx context.Context, spec RunSpec, onEvent func(kind string, payload json.RawMessage)) (RunResult, error) {
 	res := RunResult{
 		Status:    "done",
 		SessionID: "mock-session-" + spec.TaskID,
@@ -244,6 +289,20 @@ func (Mock) Run(ctx context.Context, spec RunSpec, onEvent func(kind string, pay
 			// target-system docs, team directory) — otherwise it is invisible
 			// from the outside.
 			res.Result = spec.SystemPrompt
+		case "session":
+			// How the run was started, as the engine would see it: the
+			// system prompt it is handed (memory context included), the
+			// working directory, the session it resumes and the message it
+			// gets (#130).
+			prompt := spec.Title + "\n\n" + spec.Body
+			if spec.ResumeSessionID != "" {
+				prompt = spec.ResumeInput
+			}
+			b, _ := json.Marshal(map[string]string{
+				"system_prompt": appendedSystemPrompt(spec), "work_dir": spec.WorkDir,
+				"resume": spec.ResumeSessionID, "prompt": prompt,
+			})
+			res.Result = string(b)
 		case "result":
 			res.Result = arg
 		case "memory":

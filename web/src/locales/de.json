@@ -761,6 +761,42 @@
       "byCharges": "Nutzungsabrechnungen",
       "hint": "Die Tokenpreise gelten über die Spannen, die das echte Geld abdeckt: das Rechnungsfenster eines API-Schlüssels und die Spannen der gezählten Nutzungsabrechnungen (Randperioden anteilig nach Zeit). Getrennt vom Abo-Zähler und nie zu ihm addiert.",
       "rates": "In USD nur zu den Kursen, die jemand eingetragen hat: {{rates}}."
+    },
+    "fixRounds": {
+      "title": "Korrekturrunden (Sitzung fortsetzen)",
+      "hint": "Entwickler-Aufgaben an einem Pull Request oder Issue, an dem derselbe Agent schon gearbeitet hat, im Zeitraum abgeschlossen. Jede Zahl zeigt n, die Zahl der Aufgaben dahinter; Werte des ersten Turns nur, wo er erfasst wurde. $ ist der gemessene Listenpreis der Läufe der Aufgabe.",
+      "byDecision": "Nach Dispatch-Entscheidung",
+      "byPolicy": "A/B nach Richtlinie, je Agent",
+      "perPR": "Runden pro Pull Request",
+      "colDecision": "Entscheidung",
+      "colPolicy": "Richtlinie",
+      "colAgent": "Agent",
+      "colRounds": "Runden",
+      "colUsd": "$ pro Runde",
+      "colWrite": "Cache-Schreiben 1. Turn",
+      "colWrite5m": "davon 5 Min",
+      "colWrite1h": "davon 1 Std",
+      "colRead": "Cache-Lesen 1. Turn",
+      "colGap": "Minuten seit letztem Lauf",
+      "colContext": "Kontext beim Fortsetzen",
+      "colPRs": "PRs",
+      "colPerPR": "Runden pro PR",
+      "decision": {
+        "sticky_resumed": "fortgesetzt",
+        "fresh": "frisch",
+        "unknown": "unbekannt"
+      },
+      "policy": {
+        "always": "immer",
+        "conditional": "bedingt",
+        "fresh": "frisch",
+        "mixed": "gemischt",
+        "unknown": "unbekannt"
+      },
+      "noData": "keine Daten",
+      "none": "Keine Korrekturrunden in diesem Zeitraum.",
+      "error": "Die Korrekturrunden konnten nicht geladen werden.",
+      "offNote": "Je Agent. Runden von Agenten, die per Einstellung frisch starten (Grund \"off\", z. B. der Reviewer), fehlen hier: {{n}} in diesem Zeitraum. Sie zählen unten im A/B unter \"frisch\"."
     }
   },
   "lang": {
@@ -1439,6 +1475,16 @@
       "maxTurns": "Max. Turns je Lauf",
       "maxTurnsPlaceholder": "0 = Default (30)",
       "maxTurnsHint": "Runaway-Guard: bricht einen Lauf nach n Turns ab. Für Aufgaben mit Repo-Checkout großzügig wählen.",
+      "sticky": "Sitzung fortsetzen",
+      "stickyHint": "Korrekturrunden eines Entwicklers am selben Pull Request setzen die vorige Sitzung fort, statt kalt zu starten; der Reviewer sollte frisch bleiben. Fenster und Obergrenze gelten für bedingtes Fortsetzen.",
+      "stickyWindow": "Fenster (Minuten)",
+      "stickyCap": "Kontext-Obergrenze (Tokens)",
+      "stickyPolicy": {
+        "fresh": "frisch — immer eine neue Sitzung",
+        "conditional": "bedingt — im Fenster und unter der Obergrenze",
+        "always": "immer — unabhängig von Abstand und Größe",
+        "ab": "A/B nach PR-Nummer — ungerade immer, gerade bedingt"
+      },
       "recordingLevel": "Aufzeichnungstiefe",
       "recordingInherit": "Org-Boden erben",
       "recordingMinimal": "minimal (nur Lifecycle & Gates)",

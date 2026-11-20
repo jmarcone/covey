@@ -6,6 +6,7 @@ import { api, ApiError, type IndicatorReport, type Principal, type RunCost } fro
 import { exact, fmtBucket, fmtCount, fmtUSD } from "../format";
 import { PriceList } from "../components/PriceList";
 import { CostInsights } from "./CostInsights";
+import { FixRounds } from "./FixRounds";
 import { credentialFigures, headline, payPerTokenHeadline, subscriptionDent } from "./costFigures";
 import { PayPerTokenRow, SubscriptionDentRow } from "./SubscriptionDent";
 import { canSetPlan } from "./PlanPrice";
@@ -479,6 +480,9 @@ export default function Costs({ me }: { me?: Principal }) {
           subscription meter per credential. The model lines follow the agent
           filter; what is per credential stays org-wide and says so. */}
       <CostInsights days={days} figures={orgFigures} agents={selected} outside={included} />
+
+      {/* Fix rounds and sticky sessions (#130): org-wide, a week at a time. */}
+      <FixRounds />
     </div>
   );
 }

@@ -663,7 +663,30 @@ func (c *Client) runTask(ctx context.Context, task AssignTask) {
 	// Every task works in a directory of its own, and the ones no run has
 	// entered for a week go (scratch.go, #271). Removed before the run rather
 	// than after: a run that is killed never reaches its end.
-	scratch := scratchDir(c.homeDir, task.TaskID)
+	// A task on a topic its agent keeps a session on works in the topic's
+	// directory instead of its own (#130): the next task on the topic finds
+	// the session there, and the directory's name in the prompt stays the
+	// same. The task's own directory is made only when it is used.
+	//
+	// A resume runs where its session lies: the topic's directory, the
+	// directory of its continuation chain's first task (ScratchOf), or its
+	// own — the first of them that holds the session, in that order.
+	topicDir, topicDirExisted := "", false
+	if task.WorkDirKey != "" {
+		topicDir, topicDirExisted = topicScratchDir(c.homeDir, task.WorkDirKey)
+	}
+	rootDir := ""
+	if task.ScratchOf != "" && task.ScratchOf != task.TaskID {
+		rootDir = taskScratchPath(c.homeDir, task.ScratchOf)
+	}
+	own := taskScratchPath(c.homeDir, task.TaskID)
+	scratch := runDirFor(runtime, c.homeDir, task.ResumeSessionID, topicDir, rootDir, own)
+	switch {
+	case scratch == "" || scratch == own:
+		scratch = scratchDir(c.homeDir, task.TaskID)
+	case scratch == rootDir:
+		scratch = scratchDir(c.homeDir, task.ScratchOf)
+	}
 	if n, err := sweepScratch(c.homeDir, time.Now(), scratch); err != nil {
 		c.log.Warn("scratch directories of past tasks not all removed", "removed", n, "err", err)
 	} else if n > 0 {
@@ -694,6 +717,12 @@ func (c *Client) runTask(ctx context.Context, task AssignTask) {
 		// action as a typed tool instead of assembling a curl in the shell
 		// (actionmcp.go). Empty = the shell route as before.
 		MCPConfig: proxy.mcpConfig(),
+	}
+	// A sticky resume (#130): resume the topic's session if the runtime holds
+	// it here, otherwise start fresh with the handover. Said before the run,
+	// so that a run killed midway still leaves the decision on its task.
+	if outcome := applySticky(runtime, &spec, task, scratch, topicDirExisted); outcome.Decision != "" {
+		_ = c.send(TypeEvent, Event{TaskID: task.TaskID, Kind: EventKindSticky, Payload: stickyEvent(outcome)})
 	}
 	// Materialize the wiki working copy into the home (spec/05) so the agent can
 	// read and edit it with ordinary file tools.

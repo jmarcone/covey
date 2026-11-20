@@ -526,6 +526,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("PATCH /api/v1/agents/{id}/model", s.agentScoped(manage, s.handleSetModel))
 	mux.Handle("PATCH /api/v1/agents/{id}/effort", s.agentScoped(manage, s.handleSetEffort))
 	mux.Handle("PATCH /api/v1/agents/{id}/max-turns", s.agentScoped(manage, s.handleSetMaxTurns))
+	mux.Handle("PATCH /api/v1/agents/{id}/sticky", s.agentScoped(manage, s.handleSetSticky))
 	mux.Handle("PATCH /api/v1/agents/{id}/recording-level", s.agentScoped(manage, s.handleSetRecordingLevel))
 	mux.Handle("PATCH /api/v1/agents/{id}/recording-retention", s.agentScoped(manage, s.handleSetRecordingRetention))
 	mux.Handle("PATCH /api/v1/agents/{id}/warm-sandbox", s.agentScoped(manage, s.handleSetWarmSandbox))
@@ -732,6 +733,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/agents/{id}/cost/series", s.agentScoped(anyRole, s.handleCostSeries))
 	mux.Handle("GET /api/v1/cost/org", s.rbac(anyRole, s.handleOrgCost))
 	mux.Handle("GET /api/v1/cost/runs", s.rbac(anyRole, s.handleOrgRunCosts))
+	// Fix rounds and sticky sessions (#130): ?from=&to= (RFC 3339), default the last 7 days.
+	mux.Handle("GET /api/v1/cost/fix-rounds", s.rbac(anyRole, s.handleFixRounds))
 	// Cost insights (0142): usage per model as the engine reported it, and the
 	// provider's subscription meter next to the booked list-price cost.
 	mux.Handle("GET /api/v1/cost/models", s.rbac(anyRole, s.handleModelUsage))

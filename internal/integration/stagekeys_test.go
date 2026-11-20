@@ -41,14 +41,16 @@ func stageByKey(t *testing.T, s *stack, agentID uuid.UUID, key string) backlog.S
 
 func stageOf(t *testing.T, s *stack, taskID uuid.UUID) uuid.UUID {
 	t.Helper()
-	tk, err := s.backlog.Get(context.Background(), taskID)
-	if err != nil {
+	// The column itself, not the store: the migration test reads it while
+	// the schema is rolled back below the store's column list.
+	var stage *uuid.UUID
+	if err := s.pool.QueryRow(context.Background(), "SELECT stage_id FROM backlog_tasks WHERE id=$1", taskID).Scan(&stage); err != nil {
 		t.Fatal(err)
 	}
-	if tk.StageID == nil {
+	if stage == nil {
 		return uuid.Nil
 	}
-	return *tk.StageID
+	return *stage
 }
 
 // A fresh board: three keyed columns under their old German names, recorded as
