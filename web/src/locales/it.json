@@ -761,6 +761,59 @@
       "byCharges": "addebiti d'uso",
       "hint": "I prezzi per token valgono sugli intervalli coperti dal denaro reale: la finestra di fatturazione di una chiave API e gli intervalli degli addebiti d'uso conteggiati (periodi di confine pro rata nel tempo). Separato dal contatore dell'abbonamento e mai sommato a esso.",
       "rates": "In USD solo ai cambi inseriti da una persona: {{rates}}."
+    },
+    "health": {
+      "title": "Controlli dei dati dei costi",
+      "hint": "Se le cifre della pagina dei costi sono affidabili in questo momento. I controlli girano al massimo ogni cinque minuti; ogni motivo dice cosa non va e cosa fare.",
+      "checkedAt": "Controllato {{when}}",
+      "loadError": "Non è stato possibile eseguire i controlli. Le cifre dei costi non sono controllate.",
+      "unavailable": "Controlli non disponibili",
+      "allPassed": "Tutti i controlli dei dati superati",
+      "badgeLabel": "Controlli dei dati: {{status}}. {{reason}}",
+      "status": {
+        "pass": "OK",
+        "warn": "Avviso",
+        "fail": "Errore",
+        "info": "Info"
+      },
+      "name": {
+        "c1": "Caricamento aggiornato",
+        "c2": "Contatore aggiornato",
+        "c3": "Il contatore non scende mai",
+        "c4": "Nessuna doppia registrazione",
+        "c5": "Modelli con prezzo",
+        "c6": "Base di costo impostata",
+        "c7": "Sincronizzazione fatture",
+        "c8": "Uso prima del contatore"
+      },
+      "incomplete": {
+        "mark": "incompleto",
+        "outside": "Incompleto: le sessioni fuori da covey. {{reason}}",
+        "multiple": "Incompleto: il multiplo. {{reason}}"
+      },
+      "reason": {
+        "c1_no_uploader": "Nessun caricamento ha inviato uso esterno a covey.",
+        "c1_fresh": "Ogni macchina ha inviato entro 75 min; ultimo invio {{ago}} fa.",
+        "c1_stale": "Ha smesso di inviare: {{hosts}}. Alle cifre esterne mancano le loro chiamate da allora. Ultimo invio di una macchina {{ago}} fa.",
+        "c2_no_meter": "Nessuna credenziale di abbonamento: non c'è un contatore da leggere.",
+        "c2_none": "Nessuna lettura settimanale del contatore: il multiplo non ha per cosa dividere.",
+        "c2_fresh": "Ultima lettura settimanale {{ago}} fa ({{pct}}).",
+        "c2_stale": "Ultima lettura settimanale {{ago}} fa ({{pct}}): le ore da allora non hanno una cifra del contatore.",
+        "c2_stalePaused": "Ultima lettura settimanale {{ago}} fa ({{pct}}). La flotta è in pausa, quindi nessuna esecuzione legge il contatore: prendi queste ore da una sonda.",
+        "c3_monotonic": "Il contatore settimanale non è mai sceso entro un periodo di azzeramento (14 giorni).",
+        "c3_drops": "Il contatore settimanale è sceso {{n}}× entro un periodo di azzeramento, l'ultima il {{when}}: un azzeramento che nessuno ha registrato. Dividi la finestra lì.",
+        "c4_unique": "Una riga per chiamata, fuori e dentro covey.",
+        "c4_duplicates": "Chiamate registrate più di una volta: {{outside}} esterne, {{agents}} righe di agenti.",
+        "c5_no_models": "Nessun modello usato negli ultimi 30 giorni.",
+        "c5_priced": "Tutti i {{n}} modelli usati in 30 giorni hanno un prezzo di listino.",
+        "c5_unpriced": "Nessun prezzo di listino per: {{models}}. Le loro chiamate non contano nulla a prezzo dei token.",
+        "c6_set": "Ogni credenziale di abbonamento con spesa in 7 giorni ha una base di costo o un piano.",
+        "c6_missing": "Nessuna base di costo né piano in vigore per: {{credentials}}. Il loro costo reale è sconosciuto.",
+        "c7_not_linked": "Nessuna sincronizzazione fatture: nessuna chiave di amministrazione collegata.",
+        "c7_ok": "La sincronizzazione fatture funziona; ultimo successo {{ago}} fa.",
+        "c7_failed": "L'ultima sincronizzazione fatture non è riuscita; ultimo successo {{ago}} fa.",
+        "c8_pre_meter": "{{n}} chiamate esterne precedono la prima lettura del contatore: solo prezzo dei token, mai in un multiplo."
+      }
     }
   },
   "lang": {

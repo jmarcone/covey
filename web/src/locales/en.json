@@ -761,6 +761,59 @@
       "byCharges": "usage charges",
       "hint": "The token prices are over the spans the real money covers: an API key's bill window, and the spans the counted usage charges cover (boundary periods pro rata by time). This is apart from the subscription meter and never added to it.",
       "rates": "In USD only at the rates a person entered: {{rates}}."
+    },
+    "health": {
+      "title": "Cost data checks",
+      "hint": "Whether the figures on the cost page can be trusted right now. The checks run at most every five minutes; each reason says what is wrong and what to do.",
+      "checkedAt": "Checked {{when}}",
+      "loadError": "The checks could not be run. The cost figures are unchecked.",
+      "unavailable": "Data checks unavailable",
+      "allPassed": "All data checks passed",
+      "badgeLabel": "Data checks: {{status}}. {{reason}}",
+      "status": {
+        "pass": "OK",
+        "warn": "Warning",
+        "fail": "Failed",
+        "info": "Info"
+      },
+      "name": {
+        "c1": "Uploader fresh",
+        "c2": "Meter fresh",
+        "c3": "Meter never drops",
+        "c4": "No double booking",
+        "c5": "Models priced",
+        "c6": "Cost basis set",
+        "c7": "Bill sync",
+        "c8": "Usage before the meter"
+      },
+      "incomplete": {
+        "mark": "incomplete",
+        "outside": "Incomplete: the sessions outside covey. {{reason}}",
+        "multiple": "Incomplete: the multiple. {{reason}}"
+      },
+      "reason": {
+        "c1_no_uploader": "No uploader has sent usage from outside covey.",
+        "c1_fresh": "Every machine pushed within 75 min; last push {{ago}} ago.",
+        "c1_stale": "Stopped pushing: {{hosts}}. The outside figures miss their calls since then. Last push of any machine {{ago}} ago.",
+        "c2_no_meter": "No subscription credential: there is no meter to read.",
+        "c2_none": "No weekly meter reading at all: the multiple has nothing to divide by.",
+        "c2_fresh": "Last weekly reading {{ago}} ago ({{pct}}).",
+        "c2_stale": "Last weekly reading {{ago}} ago ({{pct}}): the hours since then have no meter figure.",
+        "c2_stalePaused": "Last weekly reading {{ago}} ago ({{pct}}). The fleet is paused, so no run reads the meter: take these hours from a probe.",
+        "c3_monotonic": "The weekly meter never dropped inside a reset period (14 days).",
+        "c3_drops": "The weekly meter dropped inside one reset period {{n}}×, the last at {{when}}: a reset nobody recorded. Split the window there.",
+        "c4_unique": "One row per call, outside and in covey.",
+        "c4_duplicates": "Calls booked more than once: {{outside}} outside, {{agents}} agent lines.",
+        "c5_no_models": "No model used in the last 30 days.",
+        "c5_priced": "All {{n}} models used in 30 days have a list price.",
+        "c5_unpriced": "No list price for: {{models}}. Their calls count as nothing at token prices.",
+        "c6_set": "Every subscription credential that spent in 7 days has a cost basis or a plan.",
+        "c6_missing": "No cost basis or plan in force for: {{credentials}}. Their real cost is unknown.",
+        "c7_not_linked": "No bill sync: no admin key is linked.",
+        "c7_ok": "The bill sync works; last success {{ago}} ago.",
+        "c7_failed": "The last bill sync failed; last success {{ago}} ago.",
+        "c8_pre_meter": "{{n}} outside calls lie before the first meter reading: token price only, never in a multiple."
+      }
     }
   },
   "lang": {

@@ -761,6 +761,59 @@
       "byCharges": "Nutzungsabrechnungen",
       "hint": "Die Tokenpreise gelten über die Spannen, die das echte Geld abdeckt: das Rechnungsfenster eines API-Schlüssels und die Spannen der gezählten Nutzungsabrechnungen (Randperioden anteilig nach Zeit). Getrennt vom Abo-Zähler und nie zu ihm addiert.",
       "rates": "In USD nur zu den Kursen, die jemand eingetragen hat: {{rates}}."
+    },
+    "health": {
+      "title": "Datenprüfungen der Kosten",
+      "hint": "Ob die Zahlen auf der Kostenseite gerade stimmen können. Die Prüfungen laufen höchstens alle fünf Minuten; jeder Grund sagt, was nicht stimmt und was zu tun ist.",
+      "checkedAt": "Geprüft {{when}}",
+      "loadError": "Die Prüfungen konnten nicht laufen. Die Kostenzahlen sind ungeprüft.",
+      "unavailable": "Datenprüfungen nicht verfügbar",
+      "allPassed": "Alle Datenprüfungen bestanden",
+      "badgeLabel": "Datenprüfungen: {{status}}. {{reason}}",
+      "status": {
+        "pass": "OK",
+        "warn": "Warnung",
+        "fail": "Fehler",
+        "info": "Info"
+      },
+      "name": {
+        "c1": "Uploader aktuell",
+        "c2": "Zähler aktuell",
+        "c3": "Zähler fällt nie",
+        "c4": "Keine Doppelbuchung",
+        "c5": "Modelle mit Preis",
+        "c6": "Kostenbasis gesetzt",
+        "c7": "Rechnungsabgleich",
+        "c8": "Nutzung vor dem Zähler"
+      },
+      "incomplete": {
+        "mark": "unvollständig",
+        "outside": "Unvollständig: die Sitzungen außerhalb von covey. {{reason}}",
+        "multiple": "Unvollständig: das Vielfache. {{reason}}"
+      },
+      "reason": {
+        "c1_no_uploader": "Kein Uploader hat Nutzung von außerhalb von covey gesendet.",
+        "c1_fresh": "Jede Maschine hat innerhalb von 75 min gesendet; letzter Upload vor {{ago}}.",
+        "c1_stale": "Sendet nicht mehr: {{hosts}}. Den Zahlen von außerhalb fehlen deren Aufrufe seitdem. Letzter Upload einer Maschine vor {{ago}}.",
+        "c2_no_meter": "Keine Abo-Zugangsdaten: Es gibt keinen Zähler zu lesen.",
+        "c2_none": "Gar keine Wochenablesung: Das Vielfache hat nichts, durch das es teilen kann.",
+        "c2_fresh": "Letzte Wochenablesung vor {{ago}} ({{pct}}).",
+        "c2_stale": "Letzte Wochenablesung vor {{ago}} ({{pct}}): Für die Stunden seitdem gibt es keinen Zählerstand.",
+        "c2_stalePaused": "Letzte Wochenablesung vor {{ago}} ({{pct}}). Die Flotte ist pausiert, also liest kein Lauf den Zähler: Diese Stunden aus einer Messung nehmen.",
+        "c3_monotonic": "Der Wochenzähler ist innerhalb einer Rücksetzperiode nie gefallen (14 Tage).",
+        "c3_drops": "Der Wochenzähler ist innerhalb einer Rücksetzperiode {{n}}× gefallen, zuletzt am {{when}}: eine Rücksetzung, die niemand erfasst hat. Das Fenster dort teilen.",
+        "c4_unique": "Eine Zeile pro Aufruf, außerhalb und in covey.",
+        "c4_duplicates": "Mehrfach gebuchte Aufrufe: {{outside}} außerhalb, {{agents}} Agentenzeilen.",
+        "c5_no_models": "In den letzten 30 Tagen wurde kein Modell genutzt.",
+        "c5_priced": "Alle {{n}} in 30 Tagen genutzten Modelle haben einen Listenpreis.",
+        "c5_unpriced": "Kein Listenpreis für: {{models}}. Ihre Aufrufe zählen zu Tokenpreisen als nichts.",
+        "c6_set": "Alle Abo-Zugangsdaten mit Ausgaben in 7 Tagen haben eine Kostenbasis oder einen Tarif.",
+        "c6_missing": "Keine gültige Kostenbasis und kein Tarif für: {{credentials}}. Ihre echten Kosten sind unbekannt.",
+        "c7_not_linked": "Kein Rechnungsabgleich: Kein Admin-Schlüssel ist verknüpft.",
+        "c7_ok": "Der Rechnungsabgleich läuft; letzter Erfolg vor {{ago}}.",
+        "c7_failed": "Der letzte Rechnungsabgleich ist fehlgeschlagen; letzter Erfolg vor {{ago}}.",
+        "c8_pre_meter": "{{n}} Aufrufe von außerhalb liegen vor der ersten Zählerablesung: nur Tokenpreis, nie in einem Vielfachen."
+      }
     }
   },
   "lang": {

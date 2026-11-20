@@ -761,6 +761,59 @@
       "byCharges": "gebruikskosten",
       "hint": "De tokenprijzen gelden over de periodes die het echte geld dekt: het rekeningvenster van een API-sleutel en de periodes van de getelde gebruikskosten (grensperiodes naar rato van de tijd). Los van de abonnementsteller en er nooit bij opgeteld.",
       "rates": "In USD alleen tegen de koersen die iemand heeft ingevoerd: {{rates}}."
+    },
+    "health": {
+      "title": "Controles van de kostengegevens",
+      "hint": "Of de cijfers op de kostenpagina op dit moment te vertrouwen zijn. De controles draaien hooguit elke vijf minuten; elke reden zegt wat er mis is en wat te doen.",
+      "checkedAt": "Gecontroleerd {{when}}",
+      "loadError": "De controles konden niet draaien. De kostencijfers zijn niet gecontroleerd.",
+      "unavailable": "Gegevenscontroles niet beschikbaar",
+      "allPassed": "Alle gegevenscontroles geslaagd",
+      "badgeLabel": "Gegevenscontroles: {{status}}. {{reason}}",
+      "status": {
+        "pass": "OK",
+        "warn": "Waarschuwing",
+        "fail": "Mislukt",
+        "info": "Info"
+      },
+      "name": {
+        "c1": "Uploader actueel",
+        "c2": "Meter actueel",
+        "c3": "Meter daalt nooit",
+        "c4": "Geen dubbele boeking",
+        "c5": "Modellen geprijsd",
+        "c6": "Kostenbasis ingesteld",
+        "c7": "Factuursynchronisatie",
+        "c8": "Gebruik vóór de meter"
+      },
+      "incomplete": {
+        "mark": "onvolledig",
+        "outside": "Onvolledig: de sessies buiten covey. {{reason}}",
+        "multiple": "Onvolledig: het veelvoud. {{reason}}"
+      },
+      "reason": {
+        "c1_no_uploader": "Geen uploader heeft gebruik van buiten covey verstuurd.",
+        "c1_fresh": "Elke machine verstuurde binnen 75 min; laatste upload {{ago}} geleden.",
+        "c1_stale": "Verstuurt niet meer: {{hosts}}. De cijfers van buiten missen sindsdien hun aanroepen. Laatste upload van een machine {{ago}} geleden.",
+        "c2_no_meter": "Geen abonnementsreferentie: er is geen meter om af te lezen.",
+        "c2_none": "Helemaal geen wekelijkse meterstand: het veelvoud heeft niets om door te delen.",
+        "c2_fresh": "Laatste wekelijkse meterstand {{ago}} geleden ({{pct}}).",
+        "c2_stale": "Laatste wekelijkse meterstand {{ago}} geleden ({{pct}}): de uren sindsdien hebben geen meterstand.",
+        "c2_stalePaused": "Laatste wekelijkse meterstand {{ago}} geleden ({{pct}}). De vloot is gepauzeerd, dus geen run leest de meter: neem deze uren uit een meting.",
+        "c3_monotonic": "De weekmeter daalde nooit binnen een resetperiode (14 dagen).",
+        "c3_drops": "De weekmeter daalde {{n}}× binnen één resetperiode, het laatst op {{when}}: een reset die niemand vastlegde. Splits het venster daar.",
+        "c4_unique": "Eén rij per aanroep, buiten en in covey.",
+        "c4_duplicates": "Meer dan eens geboekte aanroepen: {{outside}} van buiten, {{agents}} agentregels.",
+        "c5_no_models": "Geen model gebruikt in de afgelopen 30 dagen.",
+        "c5_priced": "Alle {{n}} in 30 dagen gebruikte modellen hebben een catalogusprijs.",
+        "c5_unpriced": "Geen catalogusprijs voor: {{models}}. Hun aanroepen tellen tegen tokenprijzen als niets.",
+        "c6_set": "Elke abonnementsreferentie met uitgaven in 7 dagen heeft een kostenbasis of een abonnement.",
+        "c6_missing": "Geen geldige kostenbasis of abonnement voor: {{credentials}}. Hun echte kosten zijn onbekend.",
+        "c7_not_linked": "Geen factuursynchronisatie: er is geen beheerderssleutel gekoppeld.",
+        "c7_ok": "De factuursynchronisatie werkt; laatste succes {{ago}} geleden.",
+        "c7_failed": "De laatste factuursynchronisatie mislukte; laatste succes {{ago}} geleden.",
+        "c8_pre_meter": "{{n}} aanroepen van buiten liggen vóór de eerste meterstand: alleen tokenprijs, nooit in een veelvoud."
+      }
     }
   },
   "lang": {

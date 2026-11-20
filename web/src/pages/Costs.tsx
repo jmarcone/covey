@@ -10,6 +10,7 @@ import { credentialFigures, headline, payPerTokenHeadline, subscriptionDent } fr
 import { PayPerTokenRow, SubscriptionDentRow } from "./SubscriptionDent";
 import { canSetPlan } from "./PlanPrice";
 import { OutsideOverview } from "./OutsideSessions";
+import { CostHealthBadge, IncompleteMark, incompleteParts, useCostHealth } from "./CostHealth";
 import { COVEY_ONLY_PARAM, COVEY_ONLY_VALUE, PRICES_PARAM, PRICES_RECOMPUTED, RANGES, beforeRange, bucketOptions, kpiLead, listedSources,
   outsideKpis, outsideSplit, rangeOptions, sourceRealParts, type OutsideKpis } from "./outsideFigures";
 import {
@@ -363,12 +364,17 @@ export default function Costs({ me }: { me?: Principal }) {
         ? agentList.find((a) => a.id === scope)?.label ?? ""
         : t("costs.filter.nSelected", { count: selected.size });
   const fmtPeriod = (p: string) => fmtBucket(p, bucket);
+  // A failed data check marks the part it affects "incomplete" (#178); the
+  // figure stays as it is.
+  const health = useCostHealth();
+  const incomplete = incompleteParts(health.data);
 
   return (
     <div>
       <div className="flex items-baseline gap-3 mb-1">
         <h1 className="text-[22px]">{t("costs.title")}</h1>
         <span className="muted">{scopeName}</span>
+        <CostHealthBadge />
       </div>
       <p className="muted text-sm mb-4" style={{ maxWidth: 620 }}>{t("costs.subtitle")}</p>
 
@@ -388,6 +394,7 @@ export default function Costs({ me }: { me?: Principal }) {
       {sourcesListed.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 mb-4" data-inclusion>
           <Chip on={coveyOnly} onClick={() => setCoveyOnly(!coveyOnly)} title={t("costs.incl.coveyOnlyTitle")}>{t("costs.incl.coveyOnly")}</Chip>
+          {incomplete.outside && !coveyOnly && <IncompleteMark check={incomplete.outside} part="outside" />}
           <span className="muted text-xs" data-inclusion-note style={{ maxWidth: 760 }}>
             {t(coveyOnly ? "costs.incl.coveyOnlyNote" : filtered ? "costs.incl.includedNoteSelected" : "costs.incl.includedNote",
               { sources: sourcesListed.map((s) => s.source).join(", ") })}
@@ -397,6 +404,7 @@ export default function Costs({ me }: { me?: Principal }) {
 
       {/* The headline: what the subscription really paid, and for whom. */}
       {dent && <SubscriptionDentRow d={dent} filtered={selected.size > 0} h={head}
+        incomplete={incomplete.multiple && <IncompleteMark check={incomplete.multiple} part="multiple" />}
         sourceParts={(cells.data?.external?.meter.source_parts ?? []).flatMap((p) => {
           const s = sourcesListed.find((x) => x.source === p.source);
           return s ? [{ ...p, before: beforeRange(s, realParts) }] : [];
@@ -450,7 +458,8 @@ export default function Costs({ me }: { me?: Principal }) {
       </div>
 
       {/* The sessions outside covey (#120): apart or combined, never folded in unannounced. */}
-      <OutsideOverview data={cells.data} selected={selected} days={days} bucket={bucket} fmtPeriod={fmtPeriod} />
+      <OutsideOverview data={cells.data} selected={selected} days={days} bucket={bucket} fmtPeriod={fmtPeriod}
+        incomplete={incomplete.outside && <IncompleteMark check={incomplete.outside} part="outside" />} />
 
       {/* Price list + token types + priciest runs: they hold for every scope */}
       <div className="grid gap-4 mb-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(320px, 100%), 1fr))" }}>

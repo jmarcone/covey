@@ -761,6 +761,59 @@
       "byCharges": "opłaty za użycie",
       "hint": "Ceny tokenów dotyczą przedziałów, które pokrywają prawdziwe pieniądze: okna rachunku klucza API i przedziałów policzonych opłat za użycie (okresy brzegowe proporcjonalnie do czasu). Osobno od licznika subskrypcji i nigdy do niego nie dodawane.",
       "rates": "W USD tylko po kursach wpisanych przez osobę: {{rates}}."
+    },
+    "health": {
+      "title": "Kontrole danych kosztów",
+      "hint": "Czy liczbom na stronie kosztów można teraz ufać. Kontrole działają najwyżej co pięć minut; każdy powód mówi, co jest nie tak i co zrobić.",
+      "checkedAt": "Sprawdzono {{when}}",
+      "loadError": "Nie udało się uruchomić kontroli. Liczby kosztów są niesprawdzone.",
+      "unavailable": "Kontrole danych niedostępne",
+      "allPassed": "Wszystkie kontrole danych zaliczone",
+      "badgeLabel": "Kontrole danych: {{status}}. {{reason}}",
+      "status": {
+        "pass": "OK",
+        "warn": "Ostrzeżenie",
+        "fail": "Błąd",
+        "info": "Info"
+      },
+      "name": {
+        "c1": "Wysyłanie aktualne",
+        "c2": "Licznik aktualny",
+        "c3": "Licznik nigdy nie spada",
+        "c4": "Bez podwójnego księgowania",
+        "c5": "Modele z ceną",
+        "c6": "Podstawa kosztów ustawiona",
+        "c7": "Synchronizacja rachunków",
+        "c8": "Użycie przed licznikiem"
+      },
+      "incomplete": {
+        "mark": "niepełne",
+        "outside": "Niepełne: sesje poza covey. {{reason}}",
+        "multiple": "Niepełne: krotność. {{reason}}"
+      },
+      "reason": {
+        "c1_no_uploader": "Żaden uploader nie wysłał użycia spoza covey.",
+        "c1_fresh": "Każda maszyna wysłała w ciągu 75 min; ostatnie wysłanie {{ago}} temu.",
+        "c1_stale": "Przestało wysyłać: {{hosts}}. Liczbom spoza covey brakuje od tego czasu ich wywołań. Ostatnie wysłanie dowolnej maszyny {{ago}} temu.",
+        "c2_no_meter": "Brak poświadczenia subskrypcji: nie ma licznika do odczytu.",
+        "c2_none": "Brak jakiegokolwiek tygodniowego odczytu licznika: krotność nie ma przez co dzielić.",
+        "c2_fresh": "Ostatni tygodniowy odczyt {{ago}} temu ({{pct}}).",
+        "c2_stale": "Ostatni tygodniowy odczyt {{ago}} temu ({{pct}}): godziny od tego czasu nie mają wartości licznika.",
+        "c2_stalePaused": "Ostatni tygodniowy odczyt {{ago}} temu ({{pct}}). Flota jest wstrzymana, więc żadne uruchomienie nie odczytuje licznika: weź te godziny z pomiaru.",
+        "c3_monotonic": "Tygodniowy licznik nigdy nie spadł w obrębie okresu resetu (14 dni).",
+        "c3_drops": "Tygodniowy licznik spadł {{n}}× w obrębie jednego okresu resetu, ostatnio {{when}}: reset, którego nikt nie zapisał. Podziel tam okno.",
+        "c4_unique": "Jeden wiersz na wywołanie, poza covey i w covey.",
+        "c4_duplicates": "Wywołania zaksięgowane więcej niż raz: {{outside}} spoza covey, {{agents}} wierszy agentów.",
+        "c5_no_models": "W ostatnich 30 dniach nie użyto żadnego modelu.",
+        "c5_priced": "Wszystkie modele użyte w 30 dniach ({{n}}) mają cenę katalogową.",
+        "c5_unpriced": "Brak ceny katalogowej dla: {{models}}. Ich wywołania liczą się w cenach tokenów jako nic.",
+        "c6_set": "Każde poświadczenie subskrypcji z wydatkami w 7 dniach ma podstawę kosztów lub plan.",
+        "c6_missing": "Brak obowiązującej podstawy kosztów i planu dla: {{credentials}}. Ich rzeczywisty koszt jest nieznany.",
+        "c7_not_linked": "Brak synchronizacji rachunków: nie połączono klucza administratora.",
+        "c7_ok": "Synchronizacja rachunków działa; ostatni sukces {{ago}} temu.",
+        "c7_failed": "Ostatnia synchronizacja rachunków nie powiodła się; ostatni sukces {{ago}} temu.",
+        "c8_pre_meter": "Wywołań spoza covey sprzed pierwszego odczytu licznika: {{n}}. Tylko cena tokenów, nigdy w krotności."
+      }
     }
   },
   "lang": {

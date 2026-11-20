@@ -761,6 +761,59 @@
       "byCharges": "frais d'utilisation",
       "hint": "Les prix des tokens portent sur les périodes couvertes par l'argent réel : la fenêtre de facturation d'une clé API et les périodes des frais d'utilisation comptés (périodes limites au prorata du temps). À part du compteur d'abonnement, jamais ajouté à celui-ci.",
       "rates": "En USD uniquement aux taux saisis par une personne : {{rates}}."
+    },
+    "health": {
+      "title": "Contrôles des données de coûts",
+      "hint": "Si les chiffres de la page des coûts sont fiables en ce moment. Les contrôles tournent au plus toutes les cinq minutes ; chaque motif dit ce qui ne va pas et quoi faire.",
+      "checkedAt": "Contrôlé {{when}}",
+      "loadError": "Les contrôles n'ont pas pu être exécutés. Les chiffres des coûts ne sont pas contrôlés.",
+      "unavailable": "Contrôles indisponibles",
+      "allPassed": "Tous les contrôles de données sont passés",
+      "badgeLabel": "Contrôles des données : {{status}}. {{reason}}",
+      "status": {
+        "pass": "OK",
+        "warn": "Avertissement",
+        "fail": "Échec",
+        "info": "Info"
+      },
+      "name": {
+        "c1": "Envoi à jour",
+        "c2": "Compteur à jour",
+        "c3": "Le compteur ne baisse jamais",
+        "c4": "Pas de double comptage",
+        "c5": "Modèles tarifés",
+        "c6": "Base de coût définie",
+        "c7": "Synchro des factures",
+        "c8": "Usage avant le compteur"
+      },
+      "incomplete": {
+        "mark": "incomplet",
+        "outside": "Incomplet : les sessions hors de covey. {{reason}}",
+        "multiple": "Incomplet : le multiple. {{reason}}"
+      },
+      "reason": {
+        "c1_no_uploader": "Aucun envoi d'usage hors de covey n'a eu lieu.",
+        "c1_fresh": "Chaque machine a envoyé dans les 75 min ; dernier envoi il y a {{ago}}.",
+        "c1_stale": "N'envoie plus : {{hosts}}. Les chiffres hors covey manquent leurs appels depuis. Dernier envoi d'une machine il y a {{ago}}.",
+        "c2_no_meter": "Aucun identifiant d'abonnement : il n'y a pas de compteur à lire.",
+        "c2_none": "Aucun relevé hebdomadaire du compteur : le multiple n'a rien par quoi diviser.",
+        "c2_fresh": "Dernier relevé hebdomadaire il y a {{ago}} ({{pct}}).",
+        "c2_stale": "Dernier relevé hebdomadaire il y a {{ago}} ({{pct}}) : les heures depuis n'ont pas de chiffre du compteur.",
+        "c2_stalePaused": "Dernier relevé hebdomadaire il y a {{ago}} ({{pct}}). La flotte est en pause, aucune exécution ne lit le compteur : prenez ces heures d'une sonde.",
+        "c3_monotonic": "Le compteur hebdomadaire n'a jamais baissé dans une période de réinitialisation (14 jours).",
+        "c3_drops": "Le compteur hebdomadaire a baissé {{n}}× dans une période de réinitialisation, la dernière le {{when}} : une réinitialisation que personne n'a enregistrée. Coupez la fenêtre là.",
+        "c4_unique": "Une ligne par appel, hors de covey et dans covey.",
+        "c4_duplicates": "Appels comptés plus d'une fois : {{outside}} hors covey, {{agents}} lignes d'agents.",
+        "c5_no_models": "Aucun modèle utilisé ces 30 derniers jours.",
+        "c5_priced": "Les {{n}} modèles utilisés en 30 jours ont un prix catalogue.",
+        "c5_unpriced": "Pas de prix catalogue pour : {{models}}. Leurs appels ne comptent pour rien au prix des tokens.",
+        "c6_set": "Chaque identifiant d'abonnement ayant dépensé en 7 jours a une base de coût ou un forfait.",
+        "c6_missing": "Aucune base de coût ni forfait en vigueur pour : {{credentials}}. Leur coût réel est inconnu.",
+        "c7_not_linked": "Pas de synchro des factures : aucune clé d'administration n'est liée.",
+        "c7_ok": "La synchro des factures fonctionne ; dernier succès il y a {{ago}}.",
+        "c7_failed": "La dernière synchro des factures a échoué ; dernier succès il y a {{ago}}.",
+        "c8_pre_meter": "{{n}} appels hors covey précèdent le premier relevé du compteur : prix des tokens seulement, jamais dans un multiple."
+      }
     }
   },
   "lang": {

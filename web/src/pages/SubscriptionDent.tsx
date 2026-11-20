@@ -157,8 +157,10 @@ function HeadlineSentence({ h }: { h: Headline }) {
   );
 }
 
-export function SubscriptionDentRow({ d, filtered, h = null, sourceParts = [] }: {
+export function SubscriptionDentRow({ d, filtered, h = null, sourceParts = [], incomplete }: {
   d: SubscriptionDent; filtered: boolean;
+  /** A failed data check's mark (#178): the meter behind the multiple is not to be trusted. */
+  incomplete?: React.ReactNode;
   /** The headline: all the work at token prices against the one real cost. */
   h?: Headline | null;
   /** The outside part per source (the server's source_parts), for the estimate below; before: its calls lie before the range. */
@@ -219,6 +221,7 @@ export function SubscriptionDentRow({ d, filtered, h = null, sourceParts = [] }:
       <div style={{ fontWeight: 600, marginBottom: 4 }}>
         {t("costs.dent.title")}
         {filtered && <OrgWide />}
+        {incomplete && <> {incomplete}</>}
       </div>
       {h && <HeadlineSentence h={h} />}
       {/* The per-party real shares are an estimate: a detail, collapsed. */}

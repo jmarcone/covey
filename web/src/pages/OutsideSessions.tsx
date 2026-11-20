@@ -116,8 +116,10 @@ export function outsideLines(t: T, o: OutsideTotals): string[] {
   return lines;
 }
 
-export function OutsideOverview({ data, selected, days, bucket, fmtPeriod }: {
+export function OutsideOverview({ data, selected, days, bucket, fmtPeriod, incomplete }: {
   data: CostCells | undefined; selected: Set<string>; days: number; bucket: string; fmtPeriod: (p: string) => string;
+  /** A failed data check's mark (#178): the uploads behind these figures stopped. */
+  incomplete?: React.ReactNode;
 }) {
   const { t } = useTranslation();
   const filtered = selected.size > 0;
@@ -158,7 +160,7 @@ export function OutsideOverview({ data, selected, days, bucket, fmtPeriod }: {
     <section className="card mb-4" aria-label={seriesLabel} data-outside>
       <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
         <div style={{ fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 6 }}>
-          <Swatch color={OUTSIDE_COLOR} /> {seriesLabel}
+          <Swatch color={OUTSIDE_COLOR} /> {seriesLabel}{incomplete}
         </div>
         <Link to={detail} className="text-sm" data-outside-detail>{t("costs.outside.details")}</Link>
       </div>
