@@ -39,17 +39,23 @@ func isTopicDir(name string) bool { return topicDirPattern.MatchString(name) }
 // topicScratchDir creates ~/scratch/<key> for a topic and stamps it as entered,
 // like scratchDir does for a task. "" for a key of any other form or when the
 // directory cannot be made — the run then uses its task's own directory.
-func topicScratchDir(home, key string) string {
+// existed says whether the directory was there already: one that had to be
+// made again was swept, and a session that worked in it would come back to
+// none of its files.
+func topicScratchDir(home, key string) (dir string, existed bool) {
 	if home == "" || !isTopicDir(key) {
-		return ""
+		return "", false
 	}
-	dir := filepath.Join(home, scratchRoot, key)
+	dir = filepath.Join(home, scratchRoot, key)
+	if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
+		existed = true
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return ""
+		return "", false
 	}
 	now := time.Now()
 	_ = os.Chtimes(dir, now, now)
-	return dir
+	return dir, existed
 }
 
 // SessionHolder is a runtime that can say whether it holds a session's
@@ -69,11 +75,13 @@ func (c *ClaudeCode) HasSession(spec RunSpec, id string) bool {
 // the runtime holds the session, otherwise the fallback (fresh, with the
 // handover in Title/Body, under the task's own prompt). It reports which, for
 // the "sticky" event.
-func applySticky(rt Runtime, spec *RunSpec, task AssignTask, scratch string) StickyOutcome {
+func applySticky(rt Runtime, spec *RunSpec, task AssignTask, scratch string, dirExisted bool) StickyOutcome {
 	if task.StickySessionID == "" {
 		return StickyOutcome{}
 	}
-	if holder, ok := rt.(SessionHolder); ok && holder.HasSession(*spec, task.StickySessionID) {
+	// Never into a directory that was swept and made again: the transcript
+	// outlives it under ~/.claude, the files the session worked on do not.
+	if holder, ok := rt.(SessionHolder); ok && dirExisted && holder.HasSession(*spec, task.StickySessionID) {
 		spec.ResumeSessionID = task.StickySessionID
 		spec.ResumeInput = task.StickyInput
 		return StickyOutcome{Decision: "sticky_resumed"}

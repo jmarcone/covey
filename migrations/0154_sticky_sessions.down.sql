@@ -9,6 +9,7 @@ ALTER TABLE agents
 ALTER TABLE backlog_tasks
     DROP COLUMN IF EXISTS first_turn_input,
     DROP COLUMN IF EXISTS first_turn_cache_read,
+    DROP COLUMN IF EXISTS first_turn_cache_write,
     DROP COLUMN IF EXISTS first_turn_cache_write_5m,
     DROP COLUMN IF EXISTS first_turn_cache_write_1h,
     DROP COLUMN IF EXISTS sticky_decision,

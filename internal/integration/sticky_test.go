@@ -15,6 +15,7 @@ import (
 	"covey/internal/backlog"
 	"covey/internal/daemon"
 	"covey/internal/db"
+	"covey/internal/memory"
 	"covey/migrations"
 )
 
@@ -101,7 +102,17 @@ func mockSessionID(id uuid.UUID) string { return "mock-session-" + id.String() }
 // session>, in A's directory, under a system prompt byte-identical to A's.
 func TestStickyFixRoundResumesSession(t *testing.T) {
 	s := newStack(t)
+	ctx := context.Background()
 	dev := s.stickyAgent("sticky-dev", agents.StickyConditional)
+	// A stopped colleague, stopped from the start (so the agent's part of the
+	// prompt does not change between the rounds): only round 2 names it.
+	helper, err := s.registry.Create(ctx, s.orgID, "helper-bot", "Helper Bot", "mock", &s.adminID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE agents SET killed=true WHERE id=$1`, helper.ID); err != nil {
+		t.Fatal(err)
+	}
 
 	a, va := s.runTopic(dev, "Fix round 1", "pr:42", "")
 	if va.Resume != "" {
@@ -114,8 +125,23 @@ func TestStickyFixRoundResumesSession(t *testing.T) {
 		t.Fatalf("first round: %s/%s", d, r)
 	}
 	s.finishedAgo(a.ID, 10*time.Minute)
+	// A wiki page only round 2 can find. Compiled afresh, it would change the
+	// memory context (its hit, and the index); the resumed session keeps A's.
+	if _, err := s.mem.Write(ctx, dev.ID, memory.PageInput{Slug: "retry-budget", Title: "Retry budget",
+		Body: "The retry budget of the payment client is three attempts.", Source: "agent"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(va.SystemPrompt, "retry-budget") {
+		t.Fatal("round 1 cannot have seen the page")
+	}
 
-	b, vb := s.runTopic(dev, "Fix round 2", "pr:42", "")
+	b, vb := s.runTopic(dev, "Fix round 2", "pr:42", "Ask helper-bot about the fixture.")
+	if !strings.Contains(vb.Prompt, "## Wiki pages that match this task") || !strings.Contains(vb.Prompt, "three attempts") {
+		t.Fatalf("the new task's wiki hit goes into the resume message: %q", vb.Prompt)
+	}
+	if !strings.Contains(vb.Prompt, "## For this task") || !strings.Contains(vb.Prompt, "helper-bot") {
+		t.Fatalf("the new task's own prompt sections (the stopped colleague it names) go into the resume message: %q", vb.Prompt)
+	}
 	if vb.Resume != mockSessionID(a.ID) {
 		t.Fatalf("round 2 resumes A's session %q, resumed %q", mockSessionID(a.ID), vb.Resume)
 	}
@@ -683,5 +709,33 @@ func TestStickyHandoverTakesThePostedReview(t *testing.T) {
 		if strings.Contains(vb.Prompt, not) {
 			t.Fatalf("%q must not be in the handover", not)
 		}
+	}
+}
+
+// A round beside a blocked one on the topic runs in its own directory, so it
+// cannot overwrite what the blocked round will come back to.
+func TestStickyBusyRoundHasItsOwnDir(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	dev := s.stickyAgent("own-dir-dev", agents.StickyAlways)
+	s.runTopic(dev, "Round 1", "pr:5", "")
+	if err := s.registry.SetSticky(ctx, dev.ID, agents.StickyFresh, 55, 200000); err != nil {
+		t.Fatal(err)
+	}
+	blocked, err := s.backlog.CreateWithTopic(ctx, s.orgID, dev.ID, "Round 2",
+		"[mock:block key=ext:pr-5 question=which?]", "manual", 3, "pr:5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "round 2 blocked", 30*time.Second, func() bool { return s.taskState(blocked.ID) == backlog.StateBlocked })
+	if err := s.registry.SetSticky(ctx, dev.ID, agents.StickyAlways, 55, 200000); err != nil {
+		t.Fatal(err)
+	}
+	c, vc := s.runTopic(dev, "Round 3", "pr:5", "")
+	if d, r := s.decision(c.ID); d != backlog.DecisionFresh || r != backlog.ReasonBusy {
+		t.Fatalf("decision %s/%s", d, r)
+	}
+	if !strings.HasSuffix(vc.WorkDir, "/scratch/"+c.ID.String()) {
+		t.Fatalf("a busy round works in its own directory, is %q", vc.WorkDir)
 	}
 }

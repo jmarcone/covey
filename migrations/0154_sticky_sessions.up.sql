@@ -45,10 +45,13 @@ ALTER TABLE backlog_tasks
 
 -- (4) The first assistant turn of the task's first run: whether a resume was read
 -- from the cache or written to it, and at which lifetime (a 5-minute write
--- inside a 55-minute window is a full rewrite).
+-- inside a 55-minute window is a full rewrite). The write in total, and split
+-- by lifetime only when the engine said which: an unsplit write is not a
+-- 5-minute one.
 ALTER TABLE backlog_tasks
     ADD COLUMN first_turn_input          BIGINT,
     ADD COLUMN first_turn_cache_read     BIGINT,
+    ADD COLUMN first_turn_cache_write    BIGINT,
     ADD COLUMN first_turn_cache_write_5m BIGINT,
     ADD COLUMN first_turn_cache_write_1h BIGINT;
 

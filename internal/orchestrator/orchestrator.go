@@ -2751,6 +2751,7 @@ func (o *Orchestrator) processTask(ctx context.Context, agent agents.Agent, link
 	// The model and effort count too: the prompt cache is per model, and a
 	// resume under another one writes the whole context again.
 	basis := promptBasis(agent.Model + "|" + agent.Effort + "|" + compiled)
+	agentPart := compiled
 	if stopped != "" {
 		compiled += "\n\n" + stopped
 	}
@@ -2774,7 +2775,11 @@ func (o *Orchestrator) processTask(ctx context.Context, agent agents.Agent, link
 	// (with a handover) — and either way record why. A resumed session runs
 	// under the prompt it was started with, byte for byte.
 	s.turns.reset(taskID)
-	plan := o.planSticky(ctx, agent, task, s, compiled, memCtx, hits, basis, time.Now())
+	// The sections the task itself brings (a stopped colleague it names, its
+	// conversation, the chat tone, the audience): a resume keeps the
+	// session's prompt, so they travel in the resume message instead.
+	taskSections := strings.TrimSpace(strings.TrimPrefix(compiled, agentPart))
+	plan := o.planSticky(ctx, agent, task, s, compiled, memCtx, hits, taskSections, basis, time.Now())
 	o.applyStickyPlan(ctx, agent, taskID, plan, s)
 	systemPrompt, assignMemory := compiled, memCtx
 	if plan.pinned != nil {

@@ -24,11 +24,11 @@ func TestValidTopicAndTopicDir(t *testing.T) {
 	home := t.TempDir()
 	for _, bad := range []string{"../topic-x", "topic-a/b", "topic-..", "topic-A", "topic-", "x-topic-a", "topic-a.b",
 		"topic-covey-dev-pr-42", "topic-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-pr-0", "topic-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-mr-4", "topic-6F1C2A3B-4D5E-4F60-8A7B-9C0D1E2F3A4B-pr-4"} {
-		if dir := topicScratchDir(home, bad); dir != "" {
+		if dir := mustTopicDir(home, bad); dir != "" {
 			t.Errorf("%q must not become a directory, got %q", bad, dir)
 		}
 	}
-	dir := topicScratchDir(home, "topic-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-pr-42")
+	dir := mustTopicDir(home, "topic-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-pr-42")
 	if dir != filepath.Join(home, scratchRoot, "topic-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-pr-42") {
 		t.Fatalf("topic dir: %q", dir)
 	}
@@ -41,8 +41,8 @@ func TestValidTopicAndTopicDir(t *testing.T) {
 // that entered it, kept otherwise.
 func TestSweepScratchAgesTopicDirs(t *testing.T) {
 	home := t.TempDir()
-	old := topicScratchDir(home, "topic-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-pr-1")
-	fresh := topicScratchDir(home, "topic-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-pr-2")
+	old := mustTopicDir(home, "topic-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-pr-1")
+	fresh := mustTopicDir(home, "topic-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-pr-2")
 	foreign := filepath.Join(home, scratchRoot, "topic-Not.Ours")
 	if err := os.MkdirAll(foreign, 0o755); err != nil {
 		t.Fatal(err)
@@ -83,7 +83,7 @@ func TestScratchDocTopicIsStable(t *testing.T) {
 // working directory, and otherwise falls back to the task's own prompt.
 func TestApplySticky(t *testing.T) {
 	home := t.TempDir()
-	topicDir := topicScratchDir(home, "topic-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-pr-42")
+	topicDir := mustTopicDir(home, "topic-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-pr-42")
 	otherDir := filepath.Join(home, scratchRoot, "11111111-1111-1111-1111-111111111111")
 	task := AssignTask{TaskID: "t", Title: "B", Body: "handover + body", StickySessionID: "sess-a",
 		StickyInput: "B's message", FallbackSystemPrompt: "B's own prompt", FallbackMemoryContext: "B's memory"}
@@ -91,7 +91,7 @@ func TestApplySticky(t *testing.T) {
 
 	// No transcript: fresh, under the fallback prompt.
 	spec := base
-	out := applySticky(Mock{}, &spec, task, topicDir)
+	out := applySticky(Mock{}, &spec, task, topicDir, true)
 	if out.Decision != "fresh" || out.Reason != "no_session" || spec.ResumeSessionID != "" {
 		t.Fatalf("without the session: %+v, resume %q", out, spec.ResumeSessionID)
 	}
@@ -106,7 +106,7 @@ func TestApplySticky(t *testing.T) {
 		t.Fatal(err)
 	}
 	spec = base
-	if out := applySticky(Mock{}, &spec, task, topicDir); out.Decision != "fresh" {
+	if out := applySticky(Mock{}, &spec, task, topicDir, true); out.Decision != "fresh" {
 		t.Fatalf("a session from another directory must not be resumed: %+v", out)
 	}
 
@@ -116,7 +116,7 @@ func TestApplySticky(t *testing.T) {
 		t.Fatal(err)
 	}
 	spec = base
-	out = applySticky(Mock{}, &spec, task, topicDir)
+	out = applySticky(Mock{}, &spec, task, topicDir, true)
 	if out.Decision != "sticky_resumed" || spec.ResumeSessionID != "sess-a" || spec.ResumeInput != "B's message" {
 		t.Fatalf("with the session: %+v %+v", out, spec)
 	}
@@ -126,12 +126,12 @@ func TestApplySticky(t *testing.T) {
 
 	// A runtime that keeps no sessions it can show: fresh.
 	spec = base
-	if out := applySticky(noSessions{}, &spec, task, topicDir); out.Decision != "fresh" {
+	if out := applySticky(noSessions{}, &spec, task, topicDir, true); out.Decision != "fresh" {
 		t.Fatalf("runtime without SessionHolder: %+v", out)
 	}
 	// No sticky request: nothing happens.
 	spec = base
-	if out := applySticky(Mock{}, &spec, AssignTask{}, topicDir); out.Decision != "" || spec.SystemPrompt != "A's prompt" {
+	if out := applySticky(Mock{}, &spec, AssignTask{}, topicDir, true); out.Decision != "" || spec.SystemPrompt != "A's prompt" {
 		t.Fatalf("no request: %+v", out)
 	}
 }
@@ -146,7 +146,7 @@ var _ Runtime = noSessions{}
 // directory (started by an older daemon) resumes there, not in the topic's.
 func TestResumeDirFallsBackToTheTaskDir(t *testing.T) {
 	home := t.TempDir()
-	topicDir := topicScratchDir(home, "topic-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-pr-1")
+	topicDir := mustTopicDir(home, "topic-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-pr-1")
 	taskDir := scratchDir(home, "22222222-2222-2222-2222-222222222222")
 	if got := resumeDir(Mock{}, home, topicDir, taskDir, ""); got != topicDir {
 		t.Fatalf("no resume: topic dir, got %q", got)
@@ -164,5 +164,38 @@ func TestResumeDirFallsBackToTheTaskDir(t *testing.T) {
 	}
 	if got := resumeDir(Mock{}, home, topicDir, taskDir, "old"); got != topicDir {
 		t.Fatalf("in both: the topic dir wins, got %q", got)
+	}
+}
+
+func mustTopicDir(home, key string) string {
+	dir, _ := topicScratchDir(home, key)
+	return dir
+}
+
+// A topic directory the sweep removed and the run made again holds none of
+// the files the session worked on: never resume into it, even though the
+// transcript under ~/.claude survived.
+func TestApplyStickyNotIntoASweptDir(t *testing.T) {
+	home := t.TempDir()
+	key := "topic-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-pr-9"
+	dir, existed := topicScratchDir(home, key)
+	if dir == "" || existed {
+		t.Fatalf("first time: made, not existing (%q, %v)", dir, existed)
+	}
+	if _, existed := topicScratchDir(home, key); !existed {
+		t.Fatal("second time: it exists")
+	}
+	if _, err := (Mock{}).Run(context.Background(), RunSpec{TaskID: "a", HomeDir: home, WorkDir: dir,
+		ResumeSessionID: "sess-a"}, func(string, json.RawMessage) {}); err != nil {
+		t.Fatal(err)
+	}
+	task := AssignTask{TaskID: "t", StickySessionID: "sess-a", StickyInput: "in", FallbackSystemPrompt: "own"}
+	spec := RunSpec{HomeDir: home, WorkDir: dir, SystemPrompt: "pinned"}
+	if out := applySticky(Mock{}, &spec, task, dir, false); out.Decision != "fresh" || out.Reason != "no_session" || spec.ResumeSessionID != "" {
+		t.Fatalf("a recreated dir must not be resumed into: %+v", out)
+	}
+	spec = RunSpec{HomeDir: home, WorkDir: dir, SystemPrompt: "pinned"}
+	if out := applySticky(Mock{}, &spec, task, dir, true); out.Decision != "sticky_resumed" {
+		t.Fatalf("an existing dir with the session resumes: %+v", out)
 	}
 }

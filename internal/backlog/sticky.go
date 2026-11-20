@@ -187,7 +187,7 @@ func (s *Store) RecordSticky(ctx context.Context, id uuid.UUID, d StickyDecision
 	// decision starts, not by the lost one.
 	_, err := s.pool.Exec(ctx, `UPDATE backlog_tasks SET sticky_decision=$2, sticky_reason=NULLIF($3,''),
 		sticky_policy=NULLIF($4,''), sticky_from=$5, sticky_gap_s=$6, sticky_context=$7,
-		first_turn_input=NULL, first_turn_cache_read=NULL, first_turn_cache_write_5m=NULL,
+		first_turn_input=NULL, first_turn_cache_read=NULL, first_turn_cache_write=NULL, first_turn_cache_write_5m=NULL,
 		first_turn_cache_write_1h=NULL WHERE id=$1`,
 		id, d.Decision, d.Reason, d.Policy, d.From, d.GapS, d.Context)
 	return err
@@ -215,15 +215,20 @@ func (s *Store) RecordSessionEnd(ctx context.Context, id uuid.UUID, sessionID st
 
 // FirstTurn is the usage of a run's first assistant turn.
 type FirstTurn struct {
-	Input, CacheRead, CacheWrite5m, CacheWrite1h int64
+	Input, CacheRead int64
+	// CacheWrite is the turn's cache write in total; CacheWrite5m and
+	// CacheWrite1h split it by lifetime, nil when the engine sent no split.
+	CacheWrite                 int64
+	CacheWrite5m, CacheWrite1h *int64
 }
 
 // RecordFirstTurn stores the first turn of the task's FIRST run; later runs
 // (a resume after a block, say) leave it alone.
 func (s *Store) RecordFirstTurn(ctx context.Context, id uuid.UUID, f FirstTurn) error {
 	_, err := s.pool.Exec(ctx, `UPDATE backlog_tasks SET first_turn_input=$2, first_turn_cache_read=$3,
-		first_turn_cache_write_5m=$4, first_turn_cache_write_1h=$5 WHERE id=$1 AND first_turn_input IS NULL`,
-		id, f.Input, f.CacheRead, f.CacheWrite5m, f.CacheWrite1h)
+		first_turn_cache_write=$4, first_turn_cache_write_5m=$5, first_turn_cache_write_1h=$6
+		WHERE id=$1 AND first_turn_input IS NULL`,
+		id, f.Input, f.CacheRead, f.CacheWrite, f.CacheWrite5m, f.CacheWrite1h)
 	return err
 }
 

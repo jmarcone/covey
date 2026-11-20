@@ -34,10 +34,12 @@ import (
 //   - The dispatch decision, its reason, the policy, the gap, the context and
 //     the first-turn figures are the chain ROOT's: the root's dispatch is the
 //     decision; a continuation resumes its own session by construction.
-//   - First-turn cache write = first_turn_cache_write_5m + first_turn_cache_write_1h
-//     of the first assistant turn of the task's first run, also shown split
-//     by lifetime (a 5-minute write inside a 55-minute window is a full
-//     rewrite); first-turn cache read = first_turn_cache_read. A task whose
+//   - First-turn cache write = first_turn_cache_write (the total; for rows
+//     from before it existed, first_turn_cache_write_5m + _1h) of the first
+//     assistant turn of the task's first run, also shown split by lifetime
+//     where the engine sent the split (a 5-minute write inside a 55-minute
+//     window is a full rewrite; an unsplit write counts in the total only,
+//     never as 5-minute); first-turn cache read = first_turn_cache_read. A task whose
 //     first turn is unknown (NULL) is left out of these figures, and their n
 //     says how many were not.
 //   - $ per fix round = Σ over the task's model_usage rows (one row per
@@ -180,6 +182,8 @@ type FixRoundRow struct {
 	FinishedAt time.Time
 
 	FirstInput, FirstCacheRead, FirstWrite5m, FirstWrite1h *int64
+	// FirstWrite is the first turn's cache write in total (nil = unknown).
+	FirstWrite *int64
 
 	GapS    *int64 // sticky_gap_s
 	Context *int64 // sticky_context
@@ -205,6 +209,7 @@ type ChainTask struct {
 	FinishedAt               *time.Time
 
 	FirstInput, FirstCacheRead, FirstWrite5m, FirstWrite1h *int64
+	FirstWrite                                             *int64
 	GapS, Context                                          *int64
 
 	// HasEarlier: an earlier task of the agent on the topic exists that is
@@ -264,7 +269,7 @@ func ChainRounds(tasks []ChainTask) []FixRoundRow {
 		r := FixRoundRow{TaskID: root.TaskID, AgentID: root.AgentID, Slug: root.Slug, TopicKey: root.TopicKey,
 			Decision: root.Decision, Reason: root.Reason, Policy: root.Policy, FinishedAt: *end.FinishedAt,
 			FirstInput: root.FirstInput, FirstCacheRead: root.FirstCacheRead,
-			FirstWrite5m: root.FirstWrite5m, FirstWrite1h: root.FirstWrite1h,
+			FirstWrite5m: root.FirstWrite5m, FirstWrite1h: root.FirstWrite1h, FirstWrite: root.FirstWrite,
 			GapS: root.GapS, Context: root.Context}
 		for _, m := range c.members {
 			r.Usage = append(r.Usage, m.Usage...)
@@ -329,7 +334,10 @@ func (g *groupAcc) add(r FixRoundRow) {
 	if usd, ok := MeasuredUSD(r.Usage); ok {
 		g.usd.add(usd)
 	}
-	if r.FirstWrite5m != nil && r.FirstWrite1h != nil {
+	switch {
+	case r.FirstWrite != nil:
+		g.write.add(float64(*r.FirstWrite))
+	case r.FirstWrite5m != nil && r.FirstWrite1h != nil:
 		g.write.add(float64(*r.FirstWrite5m + *r.FirstWrite1h))
 	}
 	if r.FirstWrite5m != nil {
@@ -590,7 +598,7 @@ func (s *Store) FixRounds(ctx context.Context, orgID uuid.UUID, from, to time.Ti
 			WHERE t.origin LIKE 'continuation:%' AND t.parent_task_id IS NOT NULL AND c.depth < 100)
 		SELECT c.end_id, t.id, t.parent_task_id, t.agent_id, a.slug, COALESCE(t.topic_key, ''), t.origin, t.state,
 			t.sticky_decision, t.sticky_reason, t.sticky_policy, t.session_finished_at,
-			t.first_turn_input, t.first_turn_cache_read, t.first_turn_cache_write_5m, t.first_turn_cache_write_1h,
+			t.first_turn_input, t.first_turn_cache_read, t.first_turn_cache_write_5m, t.first_turn_cache_write_1h, t.first_turn_cache_write,
 			t.sticky_gap_s, t.sticky_context,
 			EXISTS (SELECT 1 FROM backlog_tasks p
 				WHERE p.agent_id = t.agent_id AND p.topic_key = t.topic_key
@@ -606,7 +614,7 @@ func (s *Store) FixRounds(ctx context.Context, orgID uuid.UUID, from, to time.Ti
 		var c ChainTask
 		if err := rows.Scan(&c.EndID, &c.TaskID, &c.Parent, &c.AgentID, &c.Slug, &c.TopicKey, &c.Origin, &c.State,
 			&c.Decision, &c.Reason, &c.Policy, &c.FinishedAt,
-			&c.FirstInput, &c.FirstCacheRead, &c.FirstWrite5m, &c.FirstWrite1h, &c.GapS, &c.Context, &c.HasEarlier); err != nil {
+			&c.FirstInput, &c.FirstCacheRead, &c.FirstWrite5m, &c.FirstWrite1h, &c.FirstWrite, &c.GapS, &c.Context, &c.HasEarlier); err != nil {
 			rows.Close()
 			return FixRoundReport{}, err
 		}

@@ -116,7 +116,7 @@ func credentialKey(s *session) string {
 // planSticky decides how a task's run starts with regard to its topic. It
 // does not write anything; applyStickyPlan records the decision.
 func (o *Orchestrator) planSticky(ctx context.Context, agent agents.Agent, task backlog.Task, s *session,
-	compiled, memCtx, hits, basis string, now time.Time) stickyPlan {
+	compiled, memCtx, hits, taskSections, basis string, now time.Time) stickyPlan {
 	var plan stickyPlan
 	if task.TopicKey == nil || !backlog.IsStickyTopic(*task.TopicKey) {
 		return plan
@@ -157,7 +157,11 @@ func (o *Orchestrator) planSticky(ctx context.Context, agent agents.Agent, task 
 	fresh := func(reason string) stickyPlan {
 		plan.decision.Decision = backlog.DecisionFresh
 		plan.decision.Reason = reason
-		if policy != agents.StickyFresh {
+		// A busy round runs beside another round still in play on the
+		// topic: in its own directory, so it cannot overwrite what the other
+		// one will come back to, and without a session the next round could
+		// take for the topic's.
+		if policy != agents.StickyFresh && reason != backlog.ReasonBusy {
 			plan.workDirKey = topicWorkDir(agent.ID, topic)
 			plan.record = &sessionPrompt{compiled, memCtx, basis}
 		}
@@ -205,17 +209,23 @@ func (o *Orchestrator) planSticky(ctx context.Context, agent agents.Agent, task 
 	plan.pinned = &sessionPrompt{*pred.Prompt, pred.Memory, pred.Basis}
 	plan.record = plan.pinned
 	plan.sessionID = pred.SessionID
-	plan.input = stickyInput(task, hits)
+	plan.input = stickyInput(task, hits, taskSections)
 	plan.fallback = &sessionPrompt{compiled, memCtx, basis}
 	plan.handover = o.stickyHandover(ctx, agent, topic, pred)
 	return plan
 }
 
-// stickyInput is the message a resumed session gets: the new task, and the
-// wiki pages its text found.
-func stickyInput(task backlog.Task, hits string) string {
+// stickyInput is the message a resumed session gets: the new task, the
+// sections of the prompt that belong to this task rather than to the agent
+// (a stopped colleague it names, its conversation, tone and audience — the
+// session's prompt carries the first task's, not these), and the wiki pages
+// its text found.
+func stickyInput(task backlog.Task, hits, taskSections string) string {
 	in := "New task on the same topic — your earlier work on it is above in this session.\n\n" +
 		task.Title + "\n\n" + task.Body
+	if strings.TrimSpace(taskSections) != "" {
+		in += "\n\n## For this task\n\n" + strings.TrimSpace(taskSections)
+	}
 	if strings.TrimSpace(hits) != "" {
 		in += "\n\n## Wiki pages that match this task\n\n" + strings.TrimSpace(hits)
 	}
@@ -363,9 +373,16 @@ func assistantUsage(payload []byte) (u backlog.FirstTurn, ok bool) {
 		return u, false
 	}
 	us := line.Msg.Usage
-	u = backlog.FirstTurn{Input: us.Input, CacheRead: us.CacheRead, CacheWrite5m: us.CacheCreation}
-	if us.Split != nil && us.Split.W5m+us.Split.W1h > 0 {
-		u.CacheWrite5m, u.CacheWrite1h = us.Split.W5m, us.Split.W1h
+	// Without the split the write is known in total only: booking it as a
+	// 5-minute write would put a 1-hour write in the wrong column of the
+	// split the window default is tuned from (AC 9).
+	u = backlog.FirstTurn{Input: us.Input, CacheRead: us.CacheRead, CacheWrite: us.CacheCreation}
+	if us.Split != nil {
+		w5m, w1h := us.Split.W5m, us.Split.W1h
+		u.CacheWrite5m, u.CacheWrite1h = &w5m, &w1h
+		if w5m+w1h > 0 {
+			u.CacheWrite = w5m + w1h
+		}
 	}
 	return u, true
 }
@@ -380,7 +397,7 @@ func (o *Orchestrator) observeTurn(ctx context.Context, taskID uuid.UUID, payloa
 	if t.task != taskID {
 		t.reset(taskID)
 	}
-	t.context = u.Input + u.CacheRead + u.CacheWrite5m + u.CacheWrite1h
+	t.context = u.Input + u.CacheRead + u.CacheWrite
 	if !t.seen {
 		t.seen = true
 		if err := o.Backlog.RecordFirstTurn(ctx, taskID, u); err != nil {

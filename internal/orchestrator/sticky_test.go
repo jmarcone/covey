@@ -121,12 +121,13 @@ func TestAssistantUsage(t *testing.T) {
 		`"cache_read_input_tokens":150000,"cache_creation_input_tokens":2000,` +
 		`"cache_creation":{"ephemeral_5m_input_tokens":500,"ephemeral_1h_input_tokens":1500}}}}`
 	u, ok := assistantUsage([]byte(main))
-	if !ok || u.Input != 3 || u.CacheRead != 150000 || u.CacheWrite5m != 500 || u.CacheWrite1h != 1500 {
+	if !ok || u.Input != 3 || u.CacheRead != 150000 || u.CacheWrite != 2000 || u.CacheWrite5m == nil || *u.CacheWrite5m != 500 ||
+		u.CacheWrite1h == nil || *u.CacheWrite1h != 1500 {
 		t.Fatalf("main-thread turn: %+v ok=%v", u, ok)
 	}
-	// Without the split, the whole write counts as 5-minute (the API default).
+	// Without the split the write is known in total only, its lifetime unknown.
 	noSplit := `{"type":"assistant","message":{"usage":{"input_tokens":1,"cache_read_input_tokens":2,"cache_creation_input_tokens":7}}}`
-	if u, ok := assistantUsage([]byte(noSplit)); !ok || u.CacheWrite5m != 7 || u.CacheWrite1h != 0 {
+	if u, ok := assistantUsage([]byte(noSplit)); !ok || u.CacheWrite != 7 || u.CacheWrite5m != nil || u.CacheWrite1h != nil {
 		t.Fatalf("turn without split: %+v ok=%v", u, ok)
 	}
 	// A sub-agent's turn is the sub-agent's context, not the session's.

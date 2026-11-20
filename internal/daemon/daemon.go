@@ -668,9 +668,10 @@ func (c *Client) runTask(ctx context.Context, task AssignTask) {
 	// the session there, and the directory's name in the prompt stays the
 	// same. The task's own directory is made only when it is used.
 	scratch := ""
+	topicDirExisted := false
 	if task.WorkDirKey != "" {
-		if dir := topicScratchDir(c.homeDir, task.WorkDirKey); dir != "" {
-			scratch = dir
+		if dir, existed := topicScratchDir(c.homeDir, task.WorkDirKey); dir != "" {
+			scratch, topicDirExisted = dir, existed
 			if own := taskScratchPath(c.homeDir, task.TaskID); resumeDir(runtime, c.homeDir, dir, own, task.ResumeSessionID) == own {
 				scratch = ""
 			}
@@ -713,7 +714,7 @@ func (c *Client) runTask(ctx context.Context, task AssignTask) {
 	// A sticky resume (#130): resume the topic's session if the runtime holds
 	// it here, otherwise start fresh with the handover. Said before the run,
 	// so that a run killed midway still leaves the decision on its task.
-	if outcome := applySticky(runtime, &spec, task, scratch); outcome.Decision != "" {
+	if outcome := applySticky(runtime, &spec, task, scratch, topicDirExisted); outcome.Decision != "" {
 		_ = c.send(TypeEvent, Event{TaskID: task.TaskID, Kind: EventKindSticky, Payload: stickyEvent(outcome)})
 	}
 	// Materialize the wiki working copy into the home (spec/05) so the agent can
