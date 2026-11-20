@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useMemo, useState } from "react";
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -16,7 +16,9 @@ import {
   credId,
   isSeat,
   leadOf,
-  meterCrossings,
+  meterPoints,
+  meterY,
+  type MeterPoint,
   periodMultiple,
   priceTableDifference,
   pricePerPoint,
@@ -475,10 +477,100 @@ export type Bar = {
 
 const sum = (s: Seg[]) => s.reduce((a, x) => a + x.value, 0);
 
+/** The weekly meter's right-hand axis: fixed, whatever the readings were. */
+const METER_TICKS = [0, 25, 50, 75, 100];
+/** The width of that axis: its labels ("100 %") and its rotated title. */
+const METER_AXIS_W = 60;
+/** A tooltip lists this many readings from each end of a period; more are left out as "…". */
+const READINGS_SHOWN = 4;
+
+/** The readings a period's details list, each as its time and value ("18:05 UTC 9 %"), the first of a new week
+ *  marked as such; null marks the readings left out of the middle. */
+function readingTexts(ps: readonly MeterPoint[], fmtAt: (iso: string) => string, t: TFunction): (string | null)[] {
+  const text = (p: MeterPoint) => `${fmtAt(p.at)} ${fmtNumber(p.pct, 0)} %${p.newWeek ? ` (${t("costs.fig.meterReset")})` : ""}`;
+  return ps.length <= 2 * READINGS_SHOWN ? ps.map(text) : [...ps.slice(0, READINGS_SHOWN).map(text), null, ...ps.slice(-READINGS_SHOWN).map(text)];
+}
+
+/** The meter's line: one part per run of readings with none missing between
+ *  them, a dot at each reading. Drawn only for what was measured, so a gap
+ *  stays a gap. A weekly reset between two readings that exist is a fall from
+ *  the old week's last value to the new week's first, a stroke that goes down.
+ *  The line is solid: dashed is the edge of a bar's "not split" part, and a gap is
+ *  empty space, not a different stroke. Not for the pointer or a screen reader:
+ *  the period's details say the same. */
+function MeterLine({ points, x, y }: { points: readonly MeterPoint[]; x: (p: MeterPoint) => number; y: (p: MeterPoint) => number }) {
+  const parts: MeterPoint[][] = [];
+  for (const p of points) (parts[p.part] ??= []).push(p);
+  // Many readings (a day or a week per slot) would run into a string of beads: the dots shrink then.
+  const dense = points.length > DENSE_POINTS;
+  const pts = (ps: readonly MeterPoint[]) => ps.map((p) => `${x(p).toFixed(1)},${y(p).toFixed(1)}`).join(" ");
+  return (
+    <g aria-hidden pointerEvents="none" data-meter-line>
+      {parts.filter(Boolean).map((ps) => {
+        // The readings of one week, and the fall into each new week from the reading before it.
+        const weeks: MeterPoint[][] = [];
+        ps.forEach((p, k) => { if (k === 0 || p.reset) weeks.push([]); weeks[weeks.length - 1].push(p); });
+        return (
+          <g key={ps[0].part} data-meter-part>
+            {weeks.map((w, k) => (
+              <Fragment key={w[0].at}>
+                {k > 0 && (() => {
+                  const drop = pts([weeks[k - 1].at(-1)!, w[0]]);
+                  return (
+                    <>
+                      <polyline points={drop} fill="none" stroke="var(--surface-2)" strokeWidth={3.75} strokeLinecap="round" data-meter-casing />
+                      <polyline points={drop} fill="none" stroke="var(--cost-meter)" strokeWidth={1.75} strokeLinecap="round" data-meter-drop />
+                    </>
+                  );
+                })()}
+                {w.length > 1 && (
+                  <>
+                    {/* A casing in the card's colour under the line: the line keeps its contrast where it crosses a bar. */}
+                    <polyline points={pts(w)} fill="none" stroke="var(--surface-2)" strokeWidth={3.75} strokeLinejoin="round" data-meter-casing />
+                    <polyline points={pts(w)} fill="none" stroke="var(--cost-meter)" strokeWidth={1.75} strokeLinejoin="round" />
+                  </>
+                )}
+              </Fragment>
+            ))}
+            {ps.map((p, k) => {
+              // Dense: small dots, but a part's first and last keep their size and halo, so the ends of a gap stay visible.
+              const big = !dense || k === 0 || k === ps.length - 1;
+              return (
+                <circle key={p.at} cx={x(p)} cy={y(p)} r={big ? 2.25 : 1.25} fill="var(--cost-meter)"
+                  stroke={big ? "var(--surface-2)" : undefined} strokeWidth={1}
+                  data-meter-point data-at={p.at} data-pct={p.pct} />
+              );
+            })}
+          </g>
+        );
+      })}
+    </g>
+  );
+}
+
+/** More readings than this and the line's dots are drawn small and without a halo, except each part's ends. */
+const DENSE_POINTS = 48;
+
+/** The legend entry of the meter's line: its colour and dot. */
+export function MeterSwatch() {
+  return (
+    <svg aria-hidden width={22} height={10} style={{ flexShrink: 0 }}>
+      <line x1={0} x2={22} y1={5} y2={5} stroke="var(--cost-meter)" strokeWidth={1.75} />
+      <circle cx={11} cy={5} r={2.25} fill="var(--cost-meter)" />
+    </svg>
+  );
+}
+
+/** A chart's notes (a line per period) come with the label of their column
+ *  and of their line in the details: notes never go without a label of their own. */
+type NotesProps =
+  | { notes?: undefined; notesLabel?: undefined }
+  | { /** A line per period. */ notes?: Map<number, string>; /** The notes' column header in the table and their label in the details. */ notesLabel: string };
+
 /** Groups of bars over the periods. Every period is focusable: focus or hover
  *  opens its details, Enter/Space (or a tap) pins them, Escape closes them.
  *  "Show as table" renders the same numbers as a table. */
-export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis, height = 280, max, notes, notesLabel, showX = true, asTable, wide }: {
+export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis, height = 280, max, notes, notesLabel, meter, scrollKey, showX = true, asTable, wide }: NotesProps & {
   title: string;
   periods: string[];
   groups: Bar[][];
@@ -489,22 +581,28 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
   height?: number;
   /** A shared top for several charts (small multiples). */
   max?: number;
-  /** A line per period, e.g. the meter's crossings. */
-  notes?: Map<number, string>;
-  /** The notes' column header in the table and their label in the details;
-   *  the meter's by default. */
-  notesLabel?: string;
+  /** The weekly meter as a line over the periods, on a right-hand axis from 0
+   *  to 100 %: the readings, the axis's title ("Weekly meter (%)"), the meter's
+   *  name for the details and the table ("Weekly meter") and how a reading's
+   *  time reads. */
+  meter?: { points: readonly MeterPoint[]; label: string; name: string; fmtAt: (iso: string) => string };
+  /** What the chart shows, as the caller knows it (the range and the bucket):
+   *  when it changes, a chart with the meter's axis scrolls to its newest period. */
+  scrollKey?: string;
   showX?: boolean;
   asTable?: boolean;
   /** Wider bars, for a value printed above each: the label spills over less. */
   wide?: boolean;
 }) {
   const { t } = useTranslation();
-  const notesHead = notesLabel ?? t("costs.fig.meterCol");
+  const notesHead = notesLabel ?? "";
   const uid = useId().replace(/[^a-zA-Z0-9_-]/g, "");
   const [hover, setHover] = useState<number | null>(null);
   const [pinned, setPinned] = useState<number | null>(null);
   const open = pinned ?? hover;
+  const scroller = useRef<HTMLDivElement>(null);
+  // A scroll or a resize re-places an open tooltip (see tipLeft); the number itself is read from the scroller.
+  const [, setScrolled] = useState(0);
 
   // The series and their totals: the <desc>, the table's last row.
   const series = useMemo(() => {
@@ -530,8 +628,46 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
     }
     return [...m.values()];
   }, [groups]);
+  // The meter's readings of each period, for its details.
+  const readingsAt = useMemo(() => {
+    const m = new Map<number, MeterPoint[]>();
+    for (const p of meter?.points ?? []) {
+      const at = m.get(p.slot);
+      if (at) at.push(p); else m.set(p.slot, [p]);
+    }
+    return m;
+  }, [meter]);
+  // A chart with the meter's axis scrolls with its newest period in view: the
+  // axis sticks to the right edge and would otherwise hide the last bar.
+  // It scrolls there on the first draw, when the caller's `scrollKey` (the
+  // range and the bucket) changes, and when the view was already at the end;
+  // a user who scrolled back to an older period stays there when a refetch
+  // adds or drops one. The periods are sparse (only those with data), so the
+  // chart cannot tell a new range from a refetch by their count or spacing.
+  const hasMeter = meter != null, newest = periods.at(-1);
+  const drawn = useRef<{ width: number; key: string | undefined } | null>(null);
+  useEffect(() => {
+    const el = scroller.current;
+    if (!hasMeter || !el) { drawn.current = null; return; }
+    const before = drawn.current;
+    const atEnd = before != null && el.scrollLeft + el.clientWidth >= before.width - 2;
+    if (before == null || atEnd || scrollKey !== before.key) el.scrollLeft = el.scrollWidth;
+    drawn.current = { width: el.scrollWidth, key: scrollKey };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasMeter, periods.length, newest, scrollKey]);
+  // A window or orientation change re-places a pinned or open tooltip, as a scroll does.
+  const isOpen = (pinned ?? hover) != null;
+  useEffect(() => {
+    const el = scroller.current;
+    if (!isOpen || !el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setScrolled((n) => n + 1));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [isOpen]);
   const desc = t("costs.fig.chartDesc", { totals: series.map((s) => `${s.label} ${fmtValue(s.total)}`).join(", ") });
   // The price-table check of a period's bars: a column only where some period has one.
+  // A period's readings as one string: the table's cell and the period's label.
+  const readingsLabel = (i: number) => (readingsAt.get(i) ? readingTexts(readingsAt.get(i)!, meter!.fmtAt, t).map((x) => x ?? "…").join(" · ") : "");
   const checks = groups.some((g) => g.some((b) => b.note));
   const checkOf = (i: number) => (groups[i] ?? []).filter((b) => b.note).map((b) => b.note).join(" · ");
 
@@ -546,7 +682,8 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
               {series.map((s) => <th key={s.key} scope="col" style={{ padding: "2px 8px 4px 0", fontWeight: 500 }}>{s.label}</th>)}
               {extra.map((e) => <th key={e.key} scope="col" data-extra-col style={{ padding: "2px 8px 4px 0", fontWeight: 500 }}>{e.label}</th>)}
               {checks && <th scope="col" data-check-col style={{ padding: "2px 8px 4px 0", fontWeight: 500, textAlign: "left" }}>{t("costs.lead.colCheck")}</th>}
-              {notes && <th scope="col" style={{ padding: "2px 0 4px 0", fontWeight: 500, textAlign: "left" }}>{notesHead}</th>}
+              {notes && <th scope="col" style={{ padding: "2px 8px 4px 0", fontWeight: 500, textAlign: "left" }}>{notesHead}</th>}
+              {meter && <th scope="col" data-meter-col style={{ padding: "2px 0 4px 0", fontWeight: 500, textAlign: "left" }}>{meter.name}</th>}
             </tr>
           </thead>
           <tbody>
@@ -563,7 +700,8 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
                     {!x ? "–" : x.none && x.value === 0 ? x.none : fmtValue(x.value)}</td>;
                 })}
                 {checks && <td data-check style={{ padding: "2px 8px 2px 0" }}>{checkOf(i)}</td>}
-                {notes && <td style={{ padding: "2px 0" }}>{notes.get(i) ?? ""}</td>}
+                {notes && <td style={{ padding: "2px 8px 2px 0" }}>{notes.get(i) ?? ""}</td>}
+                {meter && <td data-meter-cell style={{ padding: "2px 0" }}>{readingsLabel(i)}</td>}
               </tr>
             ))}
           </tbody>
@@ -574,6 +712,7 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
               {extra.map((e) => <td key={e.key} data-total style={{ textAlign: "right", padding: "4px 8px 2px 0", fontVariantNumeric: "tabular-nums" }}>{e.any || e.total > 0 ? fmtValue(e.total) : "–"}</td>)}
               {checks && <td />}
               {notes && <td />}
+              {meter && <td />}
             </tr>
           </tfoot>
         </table>
@@ -595,9 +734,16 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
   // hour it is "11/17, 04:00 PM UTC", wider than a slot.
   const labelW = Math.max(84, Math.max(0, ...periods.map((p) => fmtPeriod(p).length)) * 6 + 12);
   const every = Math.max(1, Math.ceil(labelW / slot));
-  const tipW = 250;
+  // The tooltip stays inside the part of the chart in view: the scroller's
+  // window less the meter's axis, which sticks to its right edge. The details
+  // are the only place a reading's value is printed.
+  const el = scroller.current;
+  const v0 = el?.scrollLeft ?? 0;
+  const vw = (el?.clientWidth || W) - (meter ? METER_AXIS_W : 0);
+  const tipW = Math.min(250, vw - 8);
   const hx = open != null ? padL + open * slot + slot / 2 : 0;
-  const tipLeft = open == null ? 0 : Math.max(0, Math.min(hx + 16 + tipW > W ? hx - 16 - tipW : hx + 16, W - tipW));
+  const preferred = hx + 16 + tipW > v0 + vw ? hx - 16 - tipW : hx + 16;
+  const tipLeft = open == null ? 0 : Math.max(v0 + 4, Math.min(preferred, v0 + vw - tipW - 4));
   const tipId = `${uid}-tip`;
   // A hatched bar is hatched in each segment's own colour: the real cost
   // split between covey and the sessions outside it is one bar of three.
@@ -616,8 +762,19 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
   const close = () => { setPinned(null); setHover(null); };
 
   return (
-    <div style={{ position: "relative", overflowX: "auto" }}>
-      <svg width={W} height={height} style={{ display: "block", maxWidth: "none" }} role="group"
+    <div ref={scroller} style={{ position: "relative", overflowX: "auto" }}
+      onScroll={open != null ? (e) => setScrolled(e.currentTarget.scrollLeft) : undefined}>
+      <div style={{ display: "flex", width: "max-content" }}>
+      {/* The $ axis in a strip of its own that sticks to the left edge, like the meter's on the right: a chart opened
+          scrolled to its end still shows both scales. It stops above the x labels, so the first one is not covered. The plot
+          starts under it (its x = 0 is the strip's left). */}
+      <svg width={padL} height={height - padB + 6} aria-hidden data-cost-axis
+        style={{ display: "block", flex: "none", position: "sticky", left: 0, zIndex: 1, background: "var(--surface-2)", borderRight: "1px solid var(--border)" }}>
+        {ax.ticks.map((v, i) => (
+          <text key={i} x={padL - 8} y={y(v) + 4} textAnchor="end" fontSize={11} fill="var(--text-muted)" data-cost-tick>{fmtAxis(v, ax.step)}</text>
+        ))}
+      </svg>
+      <svg width={W} height={height} style={{ display: "block", maxWidth: "none", marginLeft: -padL }} role="group"
         aria-labelledby={`${uid}-title`} aria-describedby={`${uid}-desc`}>
         <title id={`${uid}-title`}>{title}</title>
         <desc id={`${uid}-desc`} data-desc>{desc}</desc>
@@ -630,14 +787,13 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
         {ax.ticks.map((v, i) => (
           <g key={i} aria-hidden>
             <line x1={padL} x2={W - padR} y1={y(v)} y2={y(v)} stroke="var(--border)" strokeDasharray={i === 0 ? undefined : "2 4"} />
-            <text x={padL - 8} y={y(v) + 4} textAnchor="end" fontSize={11} fill="var(--text-muted)">{fmtAxis(v, ax.step)}</text>
           </g>
         ))}
         {groups.map((bars, i) => {
           const groupW = bars.length * barW + (bars.length - 1) * gap;
           const x0 = padL + i * slot + slot / 2 - groupW / 2;
           const isOpen = open === i;
-          const label = `${fmtPeriod(periods[i] ?? "")}: ${summary(i) || t("costs.fig.nothing")}${notes?.get(i) ? ` · ${notes.get(i)}` : ""}`;
+          const label = `${fmtPeriod(periods[i] ?? "")}: ${summary(i) || t("costs.fig.nothing")}${notes?.get(i) ? ` · ${notes.get(i)}` : ""}${readingsLabel(i) ? ` · ${meter!.name}: ${readingsLabel(i)}` : ""}`;
           return (
             <g key={periods.at(i)} tabIndex={0} role="button" aria-label={label} aria-pressed={pinned === i}
               aria-describedby={isOpen ? tipId : undefined} data-period={periods[i]}
@@ -658,7 +814,6 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
               {bars.map((b, bi) => {
                 const bx = x0 + bi * (barW + gap);
                 let acc = 0;
-                const total = sum(b.segs);
                 return (
                   <g key={b.key}>
                     {b.segs.map((g) => {
@@ -673,30 +828,66 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
                       return <rect key={g.key} x={bx} y={top} width={barW} height={h} rx={1.5} data-seg={g.key}
                         fill={hv != null ? `url(#${hatchId(g.color, hv, g.hatch != null ? g.ink : undefined)})` : g.color} stroke={hv != null ? g.color : undefined} />;
                     })}
-                    {(isOpen || b.valueLabel) && total > 0 && (
-                      // A halo in the page's colour keeps the value legible where it spills over the bar next to it.
-                      <text x={bx + barW / 2} y={Math.max(10, y(total) - 4)} textAnchor="middle" fontSize={9.5} fill="var(--text-primary)"
-                        stroke="var(--surface-1)" strokeWidth={3} paintOrder="stroke" data-value>{fmtValue(total)}</text>
-                    )}
-                    {b.tag && total > 0 && (
-                      <text x={bx + barW / 2} y={Math.max(10, y(total) - 15)} textAnchor="middle" fontSize={9} fill="var(--text-muted)"
-                        stroke="var(--surface-1)" strokeWidth={3} paintOrder="stroke" data-tag>{b.tag}</text>
-                    )}
                   </g>
                 );
               })}
-              {notes?.get(i) && (
-                <text x={padL + i * slot + slot / 2} y={padT - 6} textAnchor="middle" fontSize={9.5} fill="var(--cost-real)">{notes.get(i)}</text>
-              )}
             </g>
           );
         })}
+        {meter && <MeterLine points={meter.points} x={(p) => padL + (p.slot + p.frac) * slot} y={(p) => meterY(p.pct, padT, plotH)} />}
+        {/* The labels over the bars and the meter's line, so the line never strikes a value out. The period's group
+            beneath still takes the pointer. */}
+        <g aria-hidden pointerEvents="none">
+          {groups.map((bars, i) => {
+            const groupW = bars.length * barW + (bars.length - 1) * gap;
+            const x0 = padL + i * slot + slot / 2 - groupW / 2;
+            const isOpen = open === i;
+            return (
+              <g key={periods.at(i)}>
+                {bars.map((b, bi) => {
+                  const bx = x0 + bi * (barW + gap);
+                  const total = sum(b.segs);
+                  return (
+                    <g key={b.key}>
+                      {(isOpen || b.valueLabel) && total > 0 && (
+                        // A halo in the page's colour keeps the value legible where it spills over the bar next to it.
+                        <text x={bx + barW / 2} y={Math.max(10, y(total) - 4)} textAnchor="middle" fontSize={9.5} fill="var(--text-primary)"
+                          stroke="var(--surface-1)" strokeWidth={3} paintOrder="stroke" data-value>{fmtValue(total)}</text>
+                      )}
+                      {b.tag && total > 0 && (
+                        <text x={bx + barW / 2} y={Math.max(10, y(total) - 15)} textAnchor="middle" fontSize={9} fill="var(--text-muted)"
+                          stroke="var(--surface-1)" strokeWidth={3} paintOrder="stroke" data-tag>{b.tag}</text>
+                      )}
+                    </g>
+                  );
+                })}
+              </g>
+            );
+          })}
+        </g>
         {showX && periods.map((p, i) =>
           i % every !== 0 && i !== n - 1 ? null : (
             <text key={p} aria-hidden x={padL + i * slot + slot / 2} y={height - padB + 18} textAnchor="middle" fontSize={11} fill="var(--text-muted)">{fmtPeriod(p)}</text>
           ),
         )}
       </svg>
+      {meter && (
+        // The weekly meter's own axis, right of the plot. It sticks to the
+        // right edge of a chart that scrolls, so the line can be read at any
+        // scroll position.
+        <svg width={METER_AXIS_W} height={height} aria-hidden data-meter-axis
+          style={{ display: "block", flex: "none", position: "sticky", right: 0, background: "var(--surface-2)", borderLeft: "1px solid var(--border)" }}>
+          {METER_TICKS.map((v) => (
+            <g key={v}>
+              <line x1={0} x2={4} y1={meterY(v, padT, plotH)} y2={meterY(v, padT, plotH)} stroke="var(--cost-meter)" />
+              <text x={8} y={meterY(v, padT, plotH) + 4} fontSize={11} fill="var(--cost-meter)" data-meter-tick data-pct={v}>{fmtNumber(v, 0)} %</text>
+            </g>
+          ))}
+          <text transform={`translate(${METER_AXIS_W - 8} ${padT + plotH / 2}) rotate(90)`} textAnchor="middle" fontSize={11}
+            fill="var(--cost-meter)" data-meter-title>{meter.label}</text>
+        </svg>
+      )}
+      </div>
       {open != null && groups.at(open) && (
         <div id={tipId} role="tooltip" style={{
           position: "absolute", left: tipLeft, top: 4, width: tipW, pointerEvents: "none", zIndex: 5,
@@ -721,7 +912,15 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
             </div>
           ))}
           {notes?.get(open) && <div className="muted" style={{ fontSize: 11 }}>{notesHead}: {notes.get(open)}</div>}
-          {groups.at(open)!.every((b) => sum(b.segs) <= 0) && !notes?.get(open) && <div className="muted">{t("costs.fig.nothing")}</div>}
+          {meter && readingsAt.get(open) && (
+            // The weekly meter's readings of the period, each with its time: "Weekly meter: 18:05 UTC 9 % · 18:50 UTC 10 %".
+            <div className="muted" data-meter-readings style={{ fontSize: 11 }}>
+              {meter.name}: {readingTexts(readingsAt.get(open)!, meter.fmtAt, t).map((x, k) => (
+                <Fragment key={k}>{k > 0 ? " · " : ""}<span style={{ whiteSpace: "nowrap" }}>{x ?? "…"}</span></Fragment>
+              ))}
+            </div>
+          )}
+          {groups.at(open)!.every((b) => sum(b.segs) <= 0) && !notes?.get(open) && !readingsAt.get(open) && <div className="muted">{t("costs.fig.nothing")}</div>}
         </div>
       )}
     </div>
@@ -1205,8 +1404,8 @@ function NoMultiple({ f }: { f: CredentialFigures }) {
 }
 
 /** One credential: its tiles, its chart, its agents. */
-function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPeriod, selected, src, split, types, layout, view, sharedScale, asTable, outside, full }: {
-  f: CredentialFigures; data: CostCells; billed: BilledReport | undefined; readings: readonly UsageReading[]; canSetPlan: boolean; bucket: string; fmtPeriod: (p: string) => string;
+function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, scrollKey, fmtPeriod, selected, src, split, types, layout, view, sharedScale, asTable, outside, full }: {
+  f: CredentialFigures; data: CostCells; billed: BilledReport | undefined; readings: readonly UsageReading[]; canSetPlan: boolean; bucket: string; scrollKey?: string; fmtPeriod: (p: string) => string;
   selected: Set<string>; src: Record<Source, boolean>; split: Split; types: Set<string>; layout: Layout; view: View; sharedScale: boolean; asTable: boolean;
   /** The full view of covey's price table (the toggle): Reported and Recomputed apart. */
   full: boolean;
@@ -1334,20 +1533,11 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
   const hourlyFrom = showBilled && (bucket === "hour" || bucket === "10hour") && billed?.hourly_from ? Date.parse(billed.hourly_from) : null;
   const billedShort = hourlyFrom != null && periods.some((p) => Date.parse(p) < hourlyFrom);
   const notes = useMemo(() => {
-    if (f.kind === "api_key") {
-      if (hourlyFrom == null) return undefined;
-      const m = new Map<number, string>();
-      periods.forEach((p, i) => { if (Date.parse(p) < hourlyFrom) m.set(i, t("costs.fig.billedBeforeHourly")); });
-      return m;
-    }
-    if (!f.meter || bucket !== "hour") return undefined;
+    if (f.kind !== "api_key" || hourlyFrom == null) return undefined;
     const m = new Map<number, string>();
-    for (const [p, x] of meterCrossings(f.meter, steps)) {
-      const i = idx.get(Date.parse(p));
-      if (i != null) m.set(i, x.reset ? t("costs.fig.crossingReset", { to: x.to }) : t("costs.fig.crossing", { from: x.from, to: x.to }));
-    }
+    periods.forEach((p, i) => { if (Date.parse(p) < hourlyFrom) m.set(i, t("costs.fig.billedBeforeHourly")); });
     return m;
-  }, [f.meter, f.kind, bucket, steps, idx, t, hourlyFrom, periods]);
+  }, [f.kind, t, hourlyFrom, periods]);
 
   // The bar's label says when it carries the outside sessions too.
   const withOut = (label: string, on: boolean) => (on && mine.length > 0
@@ -1362,6 +1552,26 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
     const table = cs.reduce((a, c) => a + recomputedOf(c), 0) + (withMoney && outside ? outsideTable(outside, mine, at) : 0);
     return { key: "reported", label: withOut(t("costs.lead.label"), withMoney), color: SOURCE_COLOR.reported, segs, note: priceTableLine(t, sum(segs), table) };
   };
+  // The weekly meter as a line: a subscription's readings, by the server's
+  // weeks. Not an API key's, and not in the per-agent charts: the meter
+  // belongs to the credential, not to an agent. Not at 10 minutes either:
+  // the meter is read per hour (costs.outside.tenMinNoMeter, as Real and
+  // Billed), so every reading there would be a gap and the chart dots only.
+  const meterLine = useMemo(() => {
+    if (!f.meter || f.kind === "api_key" || bucket === "10min") return undefined;
+    const points = meterPoints(readings, f.meter, periods, bucket);
+    return points.length > 0 ? points : undefined;
+  }, [f.meter, f.kind, readings, periods, bucket]);
+  // One object per change of its inputs, so the chart's per-period readings
+  // are not rebuilt on every hover or focus.
+  const meterProp = useMemo(() => meterLine && {
+    points: meterLine,
+    label: t("costs.fig.meterLine"),
+    name: t("costs.fig.meterName"),
+    // A week, a month or 10 hours can span days (20:00 to 06:00): the reading names its day.
+    fmtAt: (iso: string) => (bucket === "week" || bucket === "month" || bucket === "10hour" ? fmtBucket(iso, "hour") : fmtClockUTC(iso)),
+  }, [meterLine, bucket, t]);
+
   const barsFor = (cs: CostCell[], i: number, withMoney: boolean): Bar[] => {
     const out: Bar[] = [];
     const at = Date.parse(periods[i]);
@@ -1490,8 +1700,16 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
       {periods.length === 0 ? (
         <div className="muted text-sm" style={{ padding: "20px 0", textAlign: "center" }}>{t("costs.empty")}</div>
       ) : layout === "combined" ? (
-        <BarChart title={`${t("costs.chartCost")} · ${name}`} periods={periods} groups={combined} fmtPeriod={fmtPeriod}
-          fmtValue={fmtUSD} fmtAxis={fmtUSDAxis} notes={notes} asTable={asTable} wide={vs} />
+        <>
+          {meterLine && !asTable && (
+            <div className="muted text-xs mb-1" data-meter-legend style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <MeterSwatch /> {t("costs.fig.meterLine")}
+            </div>
+          )}
+          <BarChart title={`${t("costs.chartCost")} · ${name}`} periods={periods} groups={combined} fmtPeriod={fmtPeriod}
+            fmtValue={fmtUSD} fmtAxis={fmtUSDAxis} notes={notes} notesLabel={t("costs.outside.colNote")} asTable={asTable} wide={vs}
+            meter={meterProp} scrollKey={scrollKey} />
+        </>
       ) : (
         <div style={{ display: "grid", gap: 6 }}>
           {perAgent.map((r, i) => (
@@ -1741,9 +1959,11 @@ function ColourKey({ split, sources = [], other = [], full = true, list = full }
   );
 }
 
-export function CostExplorer({ data, billed, readings = [], canSetPlan = false, selected, bucket, fmtPeriod, outside = null, full: fullProp, onFull }: {
+export function CostExplorer({ data, billed, readings = [], canSetPlan = false, selected, bucket, scrollKey, fmtPeriod, outside = null, full: fullProp, onFull }: {
   data: CostCells | undefined; billed?: BilledReport; readings?: readonly UsageReading[]; canSetPlan?: boolean;
   selected: Set<string>; bucket: string; fmtPeriod: (p: string) => string;
+  /** The chart's view, range and bucket: where it changes, a chart with the meter scrolls to its newest period. */
+  scrollKey?: string;
   /** The sessions outside covey, included (#120, the default); null: covey only. */
   outside?: ExternalUsage | null;
   /** The full view of covey's price table (Reported and Recomputed apart),
@@ -1871,7 +2091,7 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
       {figures.length === 0 && loose.length === 0 ? (
         <div className="muted text-sm" style={{ padding: "40px 0", textAlign: "center" }}>{t("costs.empty")}</div>
       ) : figures.map((f) => (
-        <CredentialBlock key={f.id} f={f} data={data!} billed={billed} readings={readings} canSetPlan={canSetPlan} bucket={bucket} fmtPeriod={fmtPeriod} selected={selected}
+        <CredentialBlock key={f.id} f={f} data={data!} billed={billed} readings={readings} canSetPlan={canSetPlan} bucket={bucket} scrollKey={scrollKey} fmtPeriod={fmtPeriod} selected={selected}
           src={shown} split={split} types={types} layout={layout} view={view} sharedScale={sharedScale} asTable={asTable} outside={onChart} full={full} />
       ))}
       {onChart && loose.length > 0 && (

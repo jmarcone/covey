@@ -14,7 +14,7 @@ function ticks(max: number, fmtAxis: (v: number, step: number) => string) {
     <BarChart title="t" periods={["2026-11-17T18:00:00Z"]} groups={bars(max)} fmtPeriod={(p) => p}
       fmtValue={fmtUSD} fmtAxis={fmtAxis} />,
   );
-  return [...container.querySelectorAll("svg > g[aria-hidden] text")].map((t) => t.textContent);
+  return [...container.querySelectorAll("svg[data-cost-axis] text")].map((t) => t.textContent);
 }
 
 describe("axis ticks", () => {

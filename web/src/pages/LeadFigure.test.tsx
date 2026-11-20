@@ -271,7 +271,7 @@ describe("the lead figure per source (#120)", () => {
     const table = [...b.querySelectorAll("table")].find((x) => x.querySelector("tr[data-totals]"))!;
     const heads = [...table.querySelectorAll("thead th")].map((x) => x.textContent);
     expect(heads).toEqual(["Period", `${LEAD}, incl. outside sessions`, t("costs.fig.realEstimate"),
-      `At token prices · ${OP} (outside covey)`, `At token prices · ${SY} (outside covey)`, "covey's price table", t("costs.fig.meterCol")]);
+      `At token prices · ${OP} (outside covey)`, `At token prices · ${SY} (outside covey)`, "covey's price table"]);
     const checks = [...table.querySelectorAll("tbody td[data-check]")].map((x) => x.textContent);
     expect(checks).toEqual([`covey's own price table gives ${fmtUSD(7)}, ${fmtNumber(17, 0)} % more than Claude Code reported`, ""]);
     // The agents' table: one list-price column; the check where a row differs.

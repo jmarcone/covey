@@ -227,8 +227,8 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     fireEvent.focusIn(period);
     const tip = await screen.findByRole("tooltip");
     expect(period.getAttribute("aria-describedby")).toBe(tip.id);
-    // at an hour the meter shows its crossings, not dollars
-    expect(within(tip).getByText(/9 % → 10 %/)).toBeInTheDocument();
+    // the meter's crossings are no longer written out (#117): its line says it
+    expect(tip.textContent).not.toMatch(/9 % → 10 %/);
     fireEvent.keyDown(period, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
     fireEvent.keyDown(period, { key: "Enter" });
