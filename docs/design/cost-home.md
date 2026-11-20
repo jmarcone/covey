@@ -1,6 +1,6 @@
 # Design: the cost home and its subviews (health first, one question per view)
 
-Status: proposal **for the human's approval** (round 2: review round 1 worked in). Nothing is built. `Part of #161` (the redesign brief); the lane view is #181, the trust badge #178 (built in #179), the meter line #170, the methodology #187. Starting point: the operator's draft of questions Q1–Q10 and views (approved direction: health first). Files this will touch later: `web/src/pages/Costs.tsx` and a new `web/src/pages/costs/` folder, `AppShell.tsx` routes, `format.ts`, the ten locale files. Colours and tokens: `web/src/styles.css`. Mock-ups (static HTML with covey's tokens, rendered in both themes) are in `docs/design/cost-home/mockup/`; every number on them comes from one seeded sample (§3) and is **sample data, not a measurement**. Start with `cost-home/1-home-1440.png`.
+Status: proposal **for the human's approval** (round 3: review rounds 1 and 2 worked in). Nothing is built. `Part of #161` (the redesign brief); the lane view is #181, the trust badge #178 (built in #179), the meter line #170, the methodology #187. Starting point: the operator's draft of questions Q1–Q10 and views (approved direction: health first). Files this will touch later: `web/src/pages/Costs.tsx` and a new `web/src/pages/costs/` folder, `AppShell.tsx` routes, `format.ts`, the ten locale files. Colours and tokens: `web/src/styles.css`. Mock-ups (static HTML with covey's tokens, rendered in both themes) are in `docs/design/cost-home/mockup/`; every number on them comes from one seeded sample (§3) and is **sample data, not a measurement**. Start with `cost-home/1-home-1440.png`.
 
 ![The cost home at 1440, light](cost-home/1-home-1440.png)
 
@@ -23,10 +23,10 @@ Each question has **one** view that answers it. The home holds Q1, Q2, Q3, Q7 (t
 | Q9 | Can I trust these numbers? | `/costs/health` (the badge on every view links there) | 7 pass · 1 info |
 | Q10 | Where is the waste? | `/costs/waste` | $30.15 lost (7.2 % of token price) |
 | — | When was the work done? | `/costs/time` | $142.00 token price on the busiest day (Sun 22 Nov) |
-| — | Which way of working merges cheapest and cleanest? (#181) | `/costs/lanes` | 2 of 3 lanes compared, 14 merged PRs |
+| — | Which way of working merges PRs cheapest and cleanest? (#181) | `/costs/lanes` | 2 of 3 lanes compared, 14 merged PRs |
 | — | What can I share? | `/costs/report` | totals only, one page |
 
-**Relation to the headline spec (`cost-page-headline.md`).** That spec fixed seven tiles for the old single page. Here they find their homes: Real, Billed and the multiple are the Accounts view (and three of them the home band), Reported and the price-table check are in Health (`Reported` is Claude Code's own number and answers no question of its own), Input/Output tokens are in Models and Waste. Its rules carry over unchanged except one: **the all-or-nothing sum is replaced by "a total with a missing part is a lower bound"** (§7, decision D5). If both specs are approved, the headline spec's tiles become the accounts view's per-account facts and this spec wins where they differ.
+**Relation to the headline spec (`cost-page-headline.md`).** That spec fixed seven tiles for the old single page. Here they find their homes: Real, Billed and the multiple are the Accounts view (and three of them the home band), Reported and the price-table check are in Health (`Reported` is Claude Code's own number and answers no question of its own), Input/Output tokens are in Models and Waste. Its rules carry over unchanged except one: **the all-or-nothing sum is replaced by "a total with a missing part is a lower bound, with the missing account named"** (§7, decision D5). If both specs are approved, the headline spec's tiles become the accounts view's per-account facts and this spec wins where they differ.
 
 ## 2. Principles, applied (the checklist a reviewer uses)
 
@@ -195,9 +195,9 @@ Cards (each: one question, one labelled figure, one sub-line; mockup `1-home-144
 | FAIL | `--danger-tint`, ■ (act now) | Check failed · {{reason}} | any FAIL |
 | unavailable | dashed outline, ? | Data checks unavailable · Retry | the checks could not run (a 5xx; #179 never shows green then) |
 
-The FAIL word is "Check failed", not "Incomplete": a check can fail by *over*-counting (C4) as well as under-counting. The reason is the worst check's one-liner (#178). WARN and FAIL also raise **one alert line** under the strip with what it means for the figures and a link to Health; the alert says "incomplete", "may count twice" or "meter unreliable" as the check demands. "Unavailable" raises the line "The checks could not run; the figures are shown unchecked" and **changes no figure** (nothing is known).
+The FAIL word is "Check failed", not "Incomplete": a check can fail by *over*-counting (C4) as well as under-counting. The reason is the worst check's one-liner (#178). WARN and FAIL also raise **one alert line** under the strip with what it means for the figures and a link to Health; the alert says "incomplete", "may count twice" or "meter unreliable" as the check demands. Its text is a template and says nothing the check does not measure: `{{what the check found}}. {{which figures carry which mark}}. See the checks` (stale meter: "The weekly meter was last read 20 h ago. Figures that read it are marked "as of Mon 23 Nov 13:28 UTC". See the checks"). "Unavailable" raises the line "The checks could not run; the figures are shown unchecked" and **changes no figure** (nothing is known).
 
-**One rule for a sum with a missing part (decision D5).** A total over accounts is the **sum of the accounts that have a figure, shown as "≥" with a chip naming what is missing** ("≥ $41.20 · API key: no bill yet"); an account without a figure is "–" with its one-line reason on its own row; only when no account has a figure is the total "–". This replaces the headline spec's all-or-nothing rule for **totals** (its §3: "one account without a figure → –, never a smaller sum"): a smaller sum never appears *silently*, it appears marked. It does not change an account's own row, and the headline spec's "–" for the multiple stands. A ratio is never a bound unless one side is fixed: the **multiple** keeps its floor when only its numerator can be too small (C1, C5), and is "–" when its floor could be wrong the other way (C3, C4, C6 on the flat seat). #179 builds only an "incomplete" mark and hides nothing; the rule here is new work on top of it (§12).
+**One rule for a sum with a missing part (decision D5).** A total over accounts is the **sum of the low ends of the accounts that have a figure** (a flat seat's range bottom, a bill as it stands), **shown as "≥" with a chip naming what is missing**: without the API key's bill, "≥ $19.09 · API key: no bill yet" (flat seat 21 points × $0.4615 = 9.69, plus pay-per-token seat 9.40). An account without a figure is "–" with its one-line reason on its own row; only when no account has a figure is the total "–". A share or ratio whose denominator is such a total is "–" (its denominator is only a bound). This replaces the headline spec's all-or-nothing rule ("Several credentials of one kind: all or nothing", `cost-page-headline.md:55-56`: Re and the multiple need every seat to have a figure, Billed every API key, else "–" with "{{n}} of {{m}} seats without a figure") for **totals over accounts**: a smaller sum never appears *silently*, it appears marked. It does not change an account's own row, and that rule's "–" for the multiple stands. A ratio is never a bound unless one side is fixed: the **multiple** keeps its floor when only its numerator can be too small (C1, C5), and is "–" when its floor could be wrong the other way (C3, C4, C6 on the flat seat). #179 builds only an "incomplete" mark and hides nothing; the rule here is new work on top of it (§12).
 
 **What a failing check does, figure by figure.** Cell = what the figure shows while that check is WARN/FAIL. `≥` lower bound: value kept, "≥" and the chip "incomplete". `chip` value kept, chip says why ("incomplete" for a share or ratio, "may count twice" for an over-count, "as of {{time}}" for a stale meter); no bound claimed. `floor` the multiple keeps "≥ floor", hides its estimate and range. `–` no value, one-line reason. `·` unaffected. C8 is info and changes nothing.
 
@@ -205,6 +205,8 @@ The FAIL word is "Check failed", not "Incomplete": a check can fail by *over*-co
 |---|---|---|---|---|---|---|---|
 | Real cost, total | · | chip as of | ≥ | · | · | ≥ | ≥ |
 | Real cost, one account | · | chip (flat seat) | ≥ (flat seat) | · | · | – (that account) | ≥ (API key) |
+| Real as a share of the total (Accounts card "API key 62 % of real cost", §8.1's 19.8 / 18.3 / 61.9 %) | · | chip as of | – | · | · | – | – |
+| Billed accounts' ratio, token price ÷ real (§8.1's 1.6×) | ≥ (API key: its outside lines) | · | · | chip may count twice | ≥ | – (that account) | – (API key: the bill is only a lower bound) |
 | Token price (home, view totals) | ≥ | · | · | chip may count twice | ≥ | · | · |
 | Flat seat multiple | floor | chip as of | – | – | floor | – if the account is the flat seat, else · | · |
 | Gauge, now % | · | chip as of | chip as read, "meter dropped" | · | · | · | · |
@@ -246,7 +248,7 @@ Headline: **API key $31.80 · 62 % of the $51.35 real cost** (Q1 is answered on 
 
 - Token price ÷ real: flat seat is an estimate with a range (meter in whole points); the other two are exact ratios (a bill). Real as a share of the total: 19.8 %, 18.3 %, 61.9 %.
 - ▾ expands the account: plan price and its source, the meter's span and last reading time, readings count, the per-account rows the old "Subscription meter per credential" card carried (so that card goes). ⚙ opens the settings drawer (plan price, cost basis, usage charges) for `org_admin` and `security`; others see the read-only line.
-- States per account: **no figure** (dashed row, reason: no meter reading / no plan price / no bill, the existing strings of the headline spec §4; the total becomes "≥", §7), **greyed** when an account is picked in the strip and the row is another account's.
+- States per account: **no figure** (dashed row, reason: no meter reading / no plan price / no bill, the existing strings of the headline spec §4; the total becomes "≥" with this account named, §7 D5), **greyed** when an account is picked in the strip and the row is another account's.
 
 ### 8.2 `/costs/who` — Q4: who spent it?
 
@@ -269,21 +271,30 @@ Headline: **covey agents $247.10 · 59 % of token price**.
 
 ### 8.3 `/costs/work` — Q5: what does a merged PR cost?
 
-Headline: **$28.46 token price per merged PR, all work counted** (398.42 ÷ 14) · ≈ real $2.66 (2.53 – 2.80). Beside it, smaller: **$21.16 for the cost linked to merged PRs only** (296.30 ÷ 14; ≈ real $1.98, 1.88 – 2.08). Scope: covey agents + operator ($398.42 of the $420.44; other projects and probes are not work on covey PRs). The headline is the all-in figure because the linked-only one leaves out $102.12 (25.6 % of the work) and can be flattered; the numerator always includes every cost of the scope.
+Headline: **$28.46 token price per merged PR, all work counted** (398.42 ÷ 14) · ≈ real $2.66 (2.53 – 2.80). Beside it, smaller: **$21.16 for the cost linked to merged PRs only** (296.30 ÷ 14; ≈ real $2.42, 2.33 – 2.52). Scope: covey agents + operator ($398.42 of the $420.44; other projects and probes are not work on covey PRs). The headline is the all-in figure because the linked-only one leaves out $102.12 (25.6 % of the work) and can be flattered; the numerator always includes every cost of the scope.
 
 ```
  Where the covey work went                 Token price   ≈ Real cost (range)         PRs
- Linked to a merged PR                     $296.30       ≈ $27.74 (26.37 – 29.11)    14
+ Linked to a merged PR                     $296.30       ≈ $33.92 (32.61 – 35.24)    14
    #170 costs: meter line                   $48.20  …    top 3 shown, then "11 others $169.25"
- Linked to an open or unmerged PR          $40.84        ≈ $3.82 (3.63 – 4.01)       3
- Not linked to any PR                      $61.28        ≈ $5.74 (5.46 – 6.02)
+ Linked to an open or unmerged PR          $40.84        ≈ $1.70 (1.49 – 1.90)       3
+ Not linked to any PR                      $61.28        ≈ $1.68 (1.36 – 2.00)
  Total covey work                          $398.42       ≈ $37.30 (35.45 – 39.15)
  All-in per merged PR   = 398.42 ÷ 14 = $28.46 · ≈ real 37.30 ÷ 14 = $2.66 (2.53 – 2.80)
- Linked to merged PRs   = 296.30 ÷ 14 = $21.16 · ≈ real 27.74 ÷ 14 = $1.98 (1.88 – 2.08)
+ Linked to merged PRs   = 296.30 ÷ 14 = $21.16 · ≈ real 33.92 ÷ 14 = $2.42 (2.33 – 2.52)
 ```
 
 - A cost is linked to a PR by `Fixes #n` / `Part of #n` and the branch (#181 gap 3). The three rows plus total always sum; "not linked" is shown, never dropped.
-- ≈ Real cost of a row = its lines' parts of the split (§3, covey agents $33.15 + operator $4.15 = $37.30). The sample assumes the same account mix in every row (A6); the range of a row is the flat-seat range of covey and operator together (±$1.85) times the row's share of token price.
+- ≈ Real cost of a row = the sum of its lines' parts of the split (§3), **group by group**: a line takes its group's rate (A6: covey agents 33.15 ÷ 247.10 = 13.42 % of token price, operator 4.15 ÷ 151.32 = 2.74 %). The rows differ in mix, so they differ in rate:
+
+  | Row | Token price: covey agents | operator | ≈ Real cost = covey × 33.15 ÷ 247.10 + operator × 4.15 ÷ 151.32 | Range = covey × 1.0544 ÷ 247.10 + operator × 0.7911 ÷ 151.32 (the groups' flat-seat ranges of §3, unrounded) |
+  |---|---|---|---|---|
+  | Linked to a merged PR | $241.70 | $54.60 | $33.92 | ± $1.32 |
+  | Open or unmerged PR | $5.40 | $35.44 | $1.70 | ± $0.21 |
+  | Not linked | — | $61.28 | $1.68 | ± $0.32 |
+  | **Total** | **$247.10** | **$151.32** | **$37.30** (33.15 + 4.15) | ± $1.85 |
+
+  Displayed parts follow the largest-remainder rule (33.92 + 1.70 + 1.68 = 37.30). The linked row is the sum of the three lanes of §9 (21.89 + 10.53 + 1.50).
 - Sub-table: the most expensive merged PRs (number, token price, hours to merge, rounds), **top 3** then the rest as one row.
 - Empty: "No PR merged in this range" (the per-PR figures become "–", the rows stay). Needs-data state until #181 ships (§12).
 
@@ -369,7 +380,7 @@ A **static snapshot**, generated on request and stored read-only; light theme on
 
 Sample/empty/stale: the report states the freshness of each source at generation and **copies every figure's mark from §7** (≥, chips); a snapshot never refreshes. Not available when the user's role cannot see the cost page.
 
-## 9. `/costs/lanes` — which way of working merges cheapest and cleanest? (#181)
+## 9. `/costs/lanes` — which way of working merges PRs cheapest and cleanest? (#181)
 
 Mock-up `cost-home/3-lanes-1440.png`. Headline: **2 of 3 lanes compared** (14 merged PRs). Lanes: **covey team**, **department lead + subagents**, **operator session + subagents**.
 
@@ -378,13 +389,13 @@ Mock-up `cost-home/3-lanes-1440.png`. Headline: **2 of 3 lanes compared** (14 me
 | Column | Formula | Label |
 |---|---|---|
 | Token price per PR | Σ token price **linked to the lane's merged PRs** ÷ the lane's merged PRs (team 163.20 ÷ 8 = $20.40) | Token price per PR, linked cost |
-| ≈ Real cost per PR | Σ of those lines' parts of the split (§3) ÷ PRs, with the range of §8.3 scaled to the lane (team 17.76 ÷ 8 = ≈ $2.22, 2.13 – 2.31; lead 8.48 ÷ 4 = ≈ $2.12; operator 1.50 ÷ 2 = ≈ $0.75) | ≈ Real cost per PR (range) |
+| ≈ Real cost per PR | Σ of those lines' parts of the split (§3), group by group as in §8.3, ÷ PRs; range as in §8.3, by the lane's share of each group's token price. Team and lead are covey agents (13.42 %), the operator lane is the operator (2.74 %): team 163.20 × 33.15 ÷ 247.10 = 21.89, ÷ 8 = ≈ $2.74 (2.65 – 2.82); lead 78.50 × 33.15 ÷ 247.10 = 10.53, ÷ 4 = ≈ $2.63 (2.55 – 2.72); operator 54.60 × 4.15 ÷ 151.32 = 1.50, ÷ 2 = ≈ $0.75 (0.61 – 0.89) | ≈ Real cost per PR (range) |
 | Hours to merge | **median** of (merged at − first queued at); the "all lanes" row is the pooled median, not the mean of medians | Hours to merge (median) |
 | Review rounds | Σ rounds ÷ PRs (team 15 ÷ 8 = 1.9) | Review rounds (mean) |
 | Majors per PR | Σ majors found by the outside review ÷ PRs (team 5 ÷ 8 = 0.6) | Majors per PR |
 
-- **A lane with fewer than 3 PRs is shown, muted, with "n PRs: too few to compare"**, and takes no highlight; no lane is marked "best". The all-lanes row pools the lanes: **$21.16 and ≈ $1.98 are the linked-only figures of §8.3, not its headline** (the all-in $28.46 is on Work); the footnote under the table says so and names the $102.12 not linked.
-- Token price per PR compares the work (every lane priced by the same list). ≈ Real cost depends on the account that paid and on who moved the meter, so a lane on the flat seat reads cheap there: the footnote says so in plain words.
+- **A lane with fewer than 3 PRs is shown, muted, with "n PRs: too few to compare"**, and takes no highlight; no lane is marked "best". The all-lanes row pools the lanes: **$21.16 and ≈ $2.42 are the linked-only figures of §8.3, not its headline** (the all-in $28.46 is on Work); the footnote under the table says so and names the $102.12 not linked.
+- Token price per PR compares the work (every lane priced by the same list). ≈ Real cost depends on the account that paid and on who moved the meter: the operator's lane runs on the flat seat (2.74 % of its token price against covey's 13.42 %), so it reads cheap there; the footnote says so in plain words.
 - Cost not linked to a merged PR is in Work, not in a lane.
 - Account in the strip is ignored: "all accounts only" greyed note when one is picked. Per-session tree and per-subagent type (#181 view 4) are **not** designed here (A5).
 
@@ -449,7 +460,7 @@ Build order that follows the data: home band + gauge + context strip + drawer, A
 - **D2. The headline multiple is the floor ("at least 33.3×"), with the estimate (34.8×) beside it and the range in the drawer**, not "≈ 41×" alone as in #161. The meter moves in whole points; the floor can only be too low, so it can never be quoted as more than it is.
 - **D3. "Token price" and "Real cost" replace "Recomputed"/"Reported"/"Real (estimate)" on the page.** Reported (Claude Code's own number) appears only in Health.
 - **D4. The multiple is the flat seat's only**; billed accounts show their exact ratio in Accounts (1.6×), not on the home.
-- **D5. A total with a missing part is a marked lower bound, not "–"** (§7). This **changes the headline spec's all-or-nothing rule for totals**; cost-controller reviews it. Reason: a "–" headline over one missing account hides $41 of known cost; a "≥" with the account named is true and still readable. Option B: keep all-or-nothing (the home's headline would read "–" whenever one account lacks a figure). Recommendation A.
+- **D5. A total with a missing part is a marked lower bound, not "–"** (§7). This **changes the headline spec's all-or-nothing rule for totals**; cost-controller reviews it. Reason: without the API key's bill, a "–" headline hides at least $19.09 of known cost (§7: the flat seat's low end 9.69 + the pay-per-token seat 9.40); a "≥" with the account named is true and still readable. Option B: keep all-or-nothing (the home's headline would read "–" whenever one account lacks a figure). Recommendation A.
 - **D6. "≈ Real cost" by group follows the code's split with a range and a Not attributed row** (§3), not the earlier single rate per account; the earlier sample numbers (covey $40.10, operator $4.35) are replaced. Needs the cost-controller's formula review, which I have asked for; the ranges of a group (2 points × share per chunk) are wider than the total's ±1 point and do not add up to it.
 - **D7. The Q5 headline is the all-in token price per merged PR ($28.46)**, the linked-only figure ($21.16) beside it. The alternative, the linked-only figure as the headline labelled as such, is smaller and flatters.
 
@@ -460,11 +471,11 @@ Build order that follows the data: home band + gauge + context strip + drawer, A
 - A3. **Probes** are covey's own probe runs and a probe-tagged outside usage; the marker has to exist.
 - A4. A **duplicate run** is a run on a task that already had a result from another run started within one hour; needs the data owner's confirmation. A run is counted in the first row that fits (failed, killed, duplicate).
 - A5. The per-session tree and per-subagent-type views of #181 are a later design.
-- A6. Sample numbers are invented for consistency (they sum), not measured.
+- A6. Sample numbers are invented for consistency (they sum), not measured. Inside a group of §3 every line has the group's account mix and the same share in every chunk, so a line's ≈ real cost is its token price × the group's rate (covey agents 13.42 %, operator 2.74 %), and its range is the group's range × its share of the group's token price. Work rows and lanes are sums of their lines by group; they are **not** given one rate for all covey work (the 9.36 % of 37.30 ÷ 398.42 is the total's, no row's).
 - A7. A billed account's bill is spread over its lines by token price; the code has no range for it today, so the Who view shows "billed split" where a seat part has a range. Cost-controller to confirm or define the range.
 - A8. The gauge shows the fullest flat seat; the pay-per-token seat's monthly limit meter is not a gauge here.
 - A9. Amber and red mean *needs a look* and *needs action* on the whole page (§3); the stop level marker is ink.
 
-**Open for the cost-controller (formula review, task `review cost-home formulas`):** the split and its ranges (§3), the billed split (A7), the total range ±1 point against the code's 2 points per chunk (`chunkSlackPoints`), and whether "token price per delivered run" (§8.4) should drop outside lines from its numerator (outside usage has no covey runs; the sample divides the whole model total).
+**Open for the cost-controller (formula review, task `review cost-home formulas`):** the split and its ranges (§3), the group rate per line of A6 for Work and Lanes against the code's split per line, the billed split (A7), the total range ±1 point against the code's 2 points per chunk (`chunkSlackPoints`), and whether "token price per delivered run" (§8.4) should drop outside lines from its numerator (outside usage has no covey runs; the sample divides the whole model total).
 
 **Not checked:** the contrast of the new combinations (amber, red on their tints) was read from the tokens file, not re-measured; the mock-ups use media queries where the build should use container queries; German and other long locales were not rendered for the home cards; nothing was tested on a real device; the Who and Work views have no mock-up (their tables above are the sample's arithmetic).
