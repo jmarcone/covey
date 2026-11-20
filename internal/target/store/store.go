@@ -555,8 +555,11 @@ func (s *Store) DocsForAgent(ctx context.Context, orgID, agentID uuid.UUID) ([]S
 	for name := range grantedScopes {
 		granted[name] = true
 	}
+	// By name: the docs stand in the system prompt, and an order the query plan
+	// or the last UPDATE decides would change the prompt — and with it the
+	// prompt cache's hit — without anything in it having changed (#23).
 	rows, err := s.pool.Query(ctx,
-		`SELECT name, kind, enabled, manifest FROM target_plugins WHERE org_id=$1`, orgID)
+		`SELECT name, kind, enabled, manifest FROM target_plugins WHERE org_id=$1 ORDER BY name`, orgID)
 	if err != nil {
 		return nil, err
 	}

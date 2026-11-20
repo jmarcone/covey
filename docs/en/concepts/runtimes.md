@@ -68,7 +68,7 @@ When an agent is put on an engine whose CLI is found in none of these places, th
 
 ## Claude Code
 
-`claude-code` runs Claude Code headless (`claude -p`, output as `stream-json`), and it is the engine the rest of the platform is measured against: resume through `--resume`, the system prompt through `--append-system-prompt`, skills from `.claude/skills`, the target-system actions as an MCP server, the tool scope through `--allowedTools`, and reasoning effort through `--effort`. It reports its own cost, which covey books unchanged, and on a subscription the provider's own utilisation of the window.
+`claude-code` runs Claude Code headless (`claude -p`, output as `stream-json`), and it is the engine the rest of the platform is measured against: resume through `--resume`, the system prompt through `--append-system-prompt`, skills from `.claude/skills`, the target-system actions as an MCP server, the tool scope through `--allowedTools`, and reasoning effort through `--effort`. It reports its own cost, which covey books unchanged, and on a subscription the provider's own utilisation of the window. The system prompt carries the agent's configuration only and is the same for every task, so the prompt cache serves it from one task to the next; the task, its wiki context and its working directory go into the first message. Claude Code's own auto memory is off for covey runs: the wiki is the agent's memory.
 
 It needs one of two credentials:
 

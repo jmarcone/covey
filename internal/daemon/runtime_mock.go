@@ -86,7 +86,7 @@ func init() {
 // the parameter. A bare `]` still gets the group no further, so two directives
 // on one line stay separate.
 var mockDirective = regexp.MustCompile(
-	`\[mock:(action|block|fail|result|memory|reply|sleep|maxturns-always|maxturns|prompt|line|cost)\s*((?:[^\[\]]|\[[^\]]*\])*)\]`)
+	`\[mock:(action|block|fail|result|memory|reply|sleep|maxturns-always|maxturns|prompt|input|line|cost)\s*((?:[^\[\]]|\[[^\]]*\])*)\]`)
 
 func (Mock) Run(ctx context.Context, spec RunSpec, onEvent func(kind string, payload json.RawMessage)) (RunResult, error) {
 	res := RunResult{
@@ -244,6 +244,13 @@ func (Mock) Run(ctx context.Context, spec RunSpec, onEvent func(kind string, pay
 			// target-system docs, team directory) — otherwise it is invisible
 			// from the outside.
 			res.Result = spec.SystemPrompt
+		case "input":
+			// The first user message the run would send beside it (taskInput),
+			// so a test can see what goes with the task and how often.
+			res.Result = taskInput(spec)
+			if spec.ResumeSessionID != "" {
+				res.Result = spec.ResumeInput
+			}
 		case "result":
 			res.Result = arg
 		case "memory":

@@ -65,3 +65,56 @@ func TestTargetDocsFollowAccessNotOnlyActivation(t *testing.T) {
 		t.Fatal("after the grant the Teams actions belong in the prompt")
 	}
 }
+
+// The target docs stand in the system prompt, so their order is part of what
+// keeps the prompt the same from task to task (#23). The query had no ORDER BY:
+// the order was the plan's — the unique index's when Postgres read through it,
+// the table's when it scanned, and there a re-uploaded manifest (an UPDATE,
+// which moves the row) went last. Read by name, it is the same whatever was
+// written last and however the rows are read.
+func TestTargetDocsComeInNameOrder(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	manifest := func(name string) []byte {
+		return []byte(`{"name":"` + name + `","actions":{"list":{"method":"GET","path":"/items"}}}`)
+	}
+	for _, name := range []string{"alpha-desk", "zulu-desk"} {
+		if _, err := s.targets.PutManifest(ctx, s.orgID, manifest(name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	agent, err := s.registry.Create(ctx, s.orgID, "reihenfolge", "Reihenfolge", "mock", &s.adminID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.registry.SaveConfig(ctx, agent.ID, map[string]string{
+		"SOUL.md":   "# Reihenfolge",
+		"ACCESS.md": "- system: zulu-desk scope: read\n- system: alpha-desk scope: read",
+	}, &s.adminID); err != nil {
+		t.Fatal(err)
+	}
+	order := func() string {
+		t.Helper()
+		docs, err := s.targets.DocsForAgent(ctx, s.orgID, agent.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var names []string
+		for _, d := range docs {
+			if strings.HasSuffix(d.System, "-desk") {
+				names = append(names, d.System)
+			}
+		}
+		return strings.Join(names, ",")
+	}
+	if got := order(); got != "alpha-desk,zulu-desk" {
+		t.Fatalf("the docs come in name order, got %s", got)
+	}
+	// Upload alpha again: an UPDATE, after which the table holds it behind zulu.
+	if _, err := s.targets.PutManifest(ctx, s.orgID, manifest("alpha-desk")); err != nil {
+		t.Fatal(err)
+	}
+	if got := order(); got != "alpha-desk,zulu-desk" {
+		t.Fatalf("a re-uploaded manifest must not move its system in the prompt, got %s", got)
+	}
+}

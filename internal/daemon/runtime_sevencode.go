@@ -278,27 +278,25 @@ func (SevenCode) Prices() PriceList { return PriceList{} }
 
 func (s *SevenCode) Name() string { return "sevencode" }
 
-// taskPrompt puts the compiled config and the memory in front of the task, in the
-// one message the CLI takes. See the package comment: there is no flag for a
-// system prompt, and the file that would do it is the operator's.
+// taskPrompt puts the compiled config in front of the task, in the one message
+// the CLI takes. See the package comment: there is no flag for a system prompt,
+// and the file that would do it is the operator's.
+//
+// The config comes first and alone, the task with its wiki context and its
+// directory after the separator (taskInput, the same text Claude Code gets as
+// its first message). An engine that caches a prompt's prefix reuses the config
+// from one task to the next only if nothing of the task stands in front of it.
 func (s *SevenCode) taskPrompt(spec RunSpec) string {
-	task := spec.Title + "\n\n" + spec.Body
 	if spec.ResumeSessionID != "" {
-		// A resumed run speaks into a session that already carries the config,
-		// so repeating it would say it twice.
+		// A resumed run speaks into a session that already carries the config
+		// and the task, so repeating them would say them twice.
 		return spec.ResumeInput
 	}
-	head := spec.SystemPrompt
-	if spec.MemoryContext != "" {
-		if head != "" {
-			head += "\n\n"
-		}
-		head += spec.MemoryContext
-	}
-	if head == "" {
+	task := taskInput(spec)
+	if spec.SystemPrompt == "" {
 		return task
 	}
-	return head + "\n\n---\n\n" + task
+	return spec.SystemPrompt + "\n\n---\n\n" + task
 }
 
 // buildArgs is the flag set, every entry read from the parse loop of the CLI that

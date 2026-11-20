@@ -674,11 +674,14 @@ func (c *Client) runTask(ctx context.Context, task AssignTask) {
 		TaskID: task.TaskID,
 		Title:  task.Title,
 		Body:   task.Body,
-		// Workplace and scratch directory are appended here, not compiled into
+		// Workplace and scratch directory are added here, not compiled into
 		// the agent's configuration: what the image brings along only the image
 		// knows, and where the run starts only the daemon that starts it. See
-		// workplace.go and scratch.go.
-		SystemPrompt:    withScratch(withWorkplace(cfg.SystemPrompt), scratch),
+		// workplace.go and scratch.go. The workplace is the same for every
+		// task and stays in the system prompt; the scratch directory carries
+		// the task id and goes with the task into the first user message.
+		SystemPrompt:    withWorkplace(cfg.SystemPrompt),
+		ScratchDoc:      scratchParagraph(scratch),
 		Model:           cfg.Model,
 		Effort:          cfg.Effort,
 		MemoryContext:   task.MemoryContext,

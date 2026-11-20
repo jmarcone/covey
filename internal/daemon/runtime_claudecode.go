@@ -348,10 +348,11 @@ const summaryToolGuard = `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type
 	`"command":"echo 'No tools in the handover turn. Answer only with the handover state.' >&2; exit 2"}]}]}}`
 
 func (c *ClaudeCode) buildArgs(spec RunSpec) ([]string, string) {
-	prompt := spec.Title + "\n\n" + spec.Body
+	prompt := taskInput(spec)
 	if spec.ResumeSessionID != "" {
 		// Resumption: Claude Code restores the context itself, we only feed in
-		// the correlated event as the new input.
+		// the correlated event as the new input. The task, its wiki context and
+		// its directory are in the session's first message already.
 		prompt = spec.ResumeInput
 		if prompt == "" {
 			prompt = "The event you were waiting for has occurred. Continue the task."
@@ -362,12 +363,14 @@ func (c *ClaudeCode) buildArgs(spec RunSpec) ([]string, string) {
 	if spec.ResumeSessionID != "" {
 		args = append(args, "--resume", spec.ResumeSessionID)
 	}
-	systemPrompt := spec.SystemPrompt
-	if spec.MemoryContext != "" {
-		systemPrompt += "\n\n" + spec.MemoryContext
-	}
-	if systemPrompt != "" {
-		args = append(args, "--append-system-prompt", systemPrompt)
+	// The agent's configuration only, the same for every task and for every
+	// process of one task: the fresh run, a resume and the handover turn
+	// (summaryArgs) all pass it unchanged. The CLI records the system prompt
+	// with the session and resends that record on --resume, but an older one
+	// sends what it is given, and then only the same text keeps the cached
+	// prefix (#23).
+	if spec.SystemPrompt != "" {
+		args = append(args, "--append-system-prompt", spec.SystemPrompt)
 	}
 	// The action proxy as an MCP server. Its tools have to stand in the SAME
 	// --allowedTools list: the flag is a whitelist, it may appear only once, and
@@ -410,11 +413,12 @@ func (c *ClaudeCode) buildArgs(spec RunSpec) ([]string, string) {
 // without one.
 //
 // With one exception. Claude Code keeps a session's transcript per working
-// directory, and `--resume <id>` looks only in the directory of the cwd it is
-// started in. A task that went blocked while runs still started in the home
-// (before #271) has its session there; resuming it from its scratch directory
-// would find nothing and lose the thread. Such a resume starts where its session
-// lies.
+// directory, and older versions of `--resume <id>` looked only in the directory
+// of the cwd they were started in. A task that went blocked while runs still
+// started in the home (before #271) has its session there; resuming it from its
+// scratch directory would have found nothing and lost the thread. Such a resume
+// starts where its session lies. Claude Code 2.1.327 finds a session started
+// from another directory as well; the fallback stays for older images.
 func runDir(spec RunSpec) string {
 	if spec.WorkDir == "" {
 		return spec.HomeDir
@@ -463,6 +467,24 @@ func claudeProjectKey(cwd string) string {
 	return b.String()
 }
 
+// autoMemoryOff turns Claude Code's auto memory off for every process covey
+// starts: a task's run, its handover turn, a sub-run in a project checkout and
+// educa, which runs the same harness.
+//
+// Two reasons. The wiki is an agent's one memory of record (spec/05); a second
+// one under ~/.claude would hold what the wiki should. And the CLI writes that
+// memory's path into its system prompt, ahead of covey's text in the same
+// cached block: ~/.claude/projects/<cwd>/memory/, and the cwd is the task's
+// scratch directory. With it the system prompt differed from task to task
+// whatever covey sent, and the first turn of every run wrote it into the prompt
+// cache again (#23). The directory was empty in every task anyway.
+//
+// An environment variable rather than a setting: the handover turn passes
+// --settings already (summaryToolGuard), and a second --settings would replace
+// the first. Appended after childEnv, so it wins over a value the daemon's own
+// environment or spec.Env carries.
+const autoMemoryOff = "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1"
+
 // stream starts a `claude` process, passes every stream-json line 1:1 into the
 // recording and collects the raw result from it.
 //
@@ -481,7 +503,7 @@ func (c *ClaudeCode) stream(ctx context.Context, spec RunSpec, args []string, ba
 	// gets only what the caller explicitly hands it — otherwise a hook or MCP
 	// server from the project would inherit the daemon token.
 	cmd.Env = childEnv(spec.Env...)
-	cmd.Env = append(cmd.Env, "HOME="+spec.HomeDir)
+	cmd.Env = append(cmd.Env, "HOME="+spec.HomeDir, autoMemoryOff)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
