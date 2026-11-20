@@ -43,15 +43,15 @@ type UsageLimit struct {
 	ValidTo    *time.Time `json:"valid_to"`
 }
 
-// usageLimitsFor returns the organisation's limits valid at any point since
-// `since` (and the 35 days of baseline before it), per credential in order of
-// validity.
-func (s *Store) usageLimitsFor(ctx context.Context, orgID uuid.UUID, since time.Time) ([]UsageLimit, error) {
+// usageLimitsFor returns the organisation's limits valid at any point in
+// [since, until) (a zero until is open; and the 35 days of baseline before
+// since), per credential in order of validity.
+func (s *Store) usageLimitsFor(ctx context.Context, orgID uuid.UUID, since, until time.Time) ([]UsageLimit, error) {
 	rows, err := s.pool.Query(ctx, `SELECT secret_key, secret_slot, window_kind, amount::float8, currency,
 		fx_to_usd::float8, to_char(fx_date, 'YYYY-MM-DD'), valid_from, valid_to
 		FROM credential_usage_limits
-		WHERE org_id = $1 AND (valid_to IS NULL OR valid_to > $2)
-		ORDER BY secret_key, secret_slot, valid_from`, orgID, since)
+		WHERE org_id = $1 AND (valid_to IS NULL OR valid_to > $2) AND `+beforeSQL("valid_from", 3)+`
+		ORDER BY secret_key, secret_slot, valid_from`, orgID, since, untilArg(until))
 	if err != nil {
 		return nil, err
 	}

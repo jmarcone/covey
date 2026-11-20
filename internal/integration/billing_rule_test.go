@@ -147,7 +147,7 @@ func TestReconcileReadsTheRowsOfEveryView(t *testing.T) {
 	f.billedRow(t, "1d", day, "apikey_s", "", 3800, now)
 
 	want := map[string]float64{"key_b": 40, "key_c": 56, "key_s": 38}
-	rec, err := f.s.obs.Reconcile(f.ctx, f.s.orgID, now.Add(-5*24*time.Hour))
+	rec, err := f.s.obs.Reconcile(f.ctx, f.s.orgID, now.Add(-5*24*time.Hour), time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +283,7 @@ func TestReconcileResavedDayBilledOnce(t *testing.T) {
 	f.line(t, cred, day.Add(8*time.Hour), 1000000)  // the first mapping's
 	f.line(t, cred, day.Add(14*time.Hour), 1000000) // the second's
 
-	rec, err := f.s.obs.Reconcile(f.ctx, f.s.orgID, day)
+	rec, err := f.s.obs.Reconcile(f.ctx, f.s.orgID, day, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +322,7 @@ func TestReconcileWorkspaceSplitsTheDay(t *testing.T) {
 	f.billedRow(t, "1h", day.Add(8*time.Hour), "apikey_v", "wrkspc_a", 200, now)
 	f.billedRow(t, "1h", day.Add(14*time.Hour), "apikey_v", "wrkspc_b", 500, now)
 
-	rec, err := f.s.obs.Reconcile(f.ctx, f.s.orgID, day)
+	rec, err := f.s.obs.Reconcile(f.ctx, f.s.orgID, day, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,7 +379,7 @@ func TestBilledMappingEdges(t *testing.T) {
 		}
 	}
 
-	rec, err := f.s.obs.Reconcile(f.ctx, f.s.orgID, now.Add(-5*24*time.Hour))
+	rec, err := f.s.obs.Reconcile(f.ctx, f.s.orgID, now.Add(-5*24*time.Hour), time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -449,7 +449,7 @@ func TestReconcileHandOverDaySplitsLikeTheTile(t *testing.T) {
 
 	_, tile, _ := billedShown(t, admin, "days=5&bucket=hour")
 	_, daily, _ := billedShown(t, admin, "days=5&bucket=day")
-	rec, err := f.s.obs.Reconcile(f.ctx, f.s.orgID, day)
+	rec, err := f.s.obs.Reconcile(f.ctx, f.s.orgID, day, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -541,7 +541,7 @@ func TestBilledHourlyTileStartsWhereItsBillDoes(t *testing.T) {
 
 	shown := func() (observability.BilledWindow, float64, float64) {
 		t.Helper()
-		w, err := f.s.obs.BilledWindowFor(f.ctx, f.s.orgID, since, now)
+		w, err := f.s.obs.BilledWindowFor(f.ctx, f.s.orgID, since, time.Time{}, now)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -551,7 +551,7 @@ func TestBilledHourlyTileStartsWhereItsBillDoes(t *testing.T) {
 				tile, _ = strconv.ParseFloat(b.BilledUSD, 64)
 			}
 		}
-		series, err := f.s.obs.BilledSeries(f.ctx, f.s.orgID, "hour", since)
+		series, err := f.s.obs.BilledSeries(f.ctx, f.s.orgID, "hour", since, time.Time{})
 		if err != nil {
 			t.Fatal(err)
 		}

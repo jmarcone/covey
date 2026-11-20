@@ -341,7 +341,7 @@ func TestBillingSyncAndReconcile(t *testing.T) {
 	if c3, _ := count(); c3 != c1 {
 		t.Errorf("the revision changed the row count: %d, want %d", c3, c1)
 	}
-	got, err := s.obs.Reconcile(ctx, s.orgID, dayA)
+	got, err := s.obs.Reconcile(ctx, s.orgID, dayA, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -470,7 +470,7 @@ func TestBillingWindowSameAsTheLines(t *testing.T) {
 		t.Fatalf("no total for slot %d in %+v", slot, w.Totals)
 		return observability.BilledTotal{}
 	}
-	day, err := s.obs.BilledWindowFor(ctx, s.orgID, since, now)
+	day, err := s.obs.BilledWindowFor(ctx, s.orgID, since, time.Time{}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -485,7 +485,7 @@ func TestBillingWindowSameAsTheLines(t *testing.T) {
 		t.Errorf("a mapped credential without a bill: %+v", q)
 	}
 
-	week, err := s.obs.BilledWindowFor(ctx, s.orgID, weekAgo, now)
+	week, err := s.obs.BilledWindowFor(ctx, s.orgID, weekAgo, time.Time{}, now)
 	if err != nil {
 		t.Fatal(err)
 	}

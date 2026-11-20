@@ -515,9 +515,14 @@ const matchBelowUSD = 0.01
 // a day is one row for that day, with the bill once. The rows are the chart's
 // and the tile's (chosenRows): a hand-over day's hours, which split where the
 // lines split, and the freshest width elsewhere. since is moved back to its
-// UTC midnight.
-func (s *Store) Reconcile(ctx context.Context, orgID uuid.UUID, since time.Time) (Reconciliation, error) {
+// UTC midnight; a non-zero until is moved on to the next one, so the days a
+// window touches are compared whole: a bill read over a whole day beside
+// lines up to a minute in it would invent a gap.
+func (s *Store) Reconcile(ctx context.Context, orgID uuid.UUID, since, until time.Time) (Reconciliation, error) {
 	since = since.UTC().Truncate(24 * time.Hour)
+	if !until.IsZero() {
+		until = until.UTC().Add(24*time.Hour - time.Nanosecond).Truncate(24 * time.Hour)
+	}
 	rec := Reconciliation{Since: since, Days: []ReconcileDay{}}
 	sync, err := s.BillingSync(ctx, orgID)
 	if err != nil {
@@ -551,6 +556,7 @@ ours AS (
 	FROM maps m
 	JOIN model_usage mu ON mu.org_id = $1 AND mu.secret_key = m.secret_key AND mu.secret_slot = m.secret_slot
 		AND mu.created_at >= m.valid_from AND mu.created_at < m.valid_to AND mu.created_at >= $2
+		AND ` + beforeSQL("mu.created_at", 3) + `
 	CROSS JOIN LATERAL (SELECT ` + normModel("mu.model") + ` AS model) nm
 	LEFT JOIN prices p ON p.id = nm.model
 	GROUP BY 1, 2, 3, 4, 5, 6),
@@ -562,7 +568,7 @@ billed AS (
 	FROM bcost c
 	` + billedMapping + `
 	CROSS JOIN LATERAL (SELECT ` + normModel("c.model") + ` AS model) nm
-	WHERE mk.secret_key IS NOT NULL
+	WHERE mk.secret_key IS NOT NULL AND ` + beforeSQL("c.bucket_start", 3) + `
 	GROUP BY 1, 2, 3, 4, 5, 6),
 btok AS (
 	SELECT mk.secret_key, mk.secret_slot, mk.api_key_id, mk.workspace_id, c.day, nm.model,
@@ -572,7 +578,7 @@ btok AS (
 	FROM buse c
 	` + billedMapping + `
 	CROSS JOIN LATERAL (SELECT ` + normModel("c.model") + ` AS model) nm
-	WHERE mk.secret_key IS NOT NULL
+	WHERE mk.secret_key IS NOT NULL AND ` + beforeSQL("c.bucket_start", 3) + `
 	GROUP BY 1, 2, 3, 4, 5, 6),
 keys AS (
 	SELECT secret_key, secret_slot, api_key_id, workspace_id, day, model FROM ours
@@ -586,6 +592,7 @@ noresult AS (
 	FROM maps m
 	JOIN cost_entries ce ON ce.secret_key = m.secret_key AND ce.secret_slot = m.secret_slot
 		AND ce.created_at >= m.valid_from AND ce.created_at < m.valid_to AND ce.created_at >= $2
+		AND ` + beforeSQL("ce.created_at", 3) + `
 	JOIN agents a ON a.id = ce.agent_id AND a.org_id = $1
 	WHERE NOT EXISTS (SELECT 1 FROM model_usage l WHERE l.cost_entry_id = ce.id)
 	GROUP BY 1, 2, 3, 4, 5)
@@ -608,7 +615,7 @@ LEFT JOIN billed b USING (secret_key, secret_slot, api_key_id, workspace_id, day
 LEFT JOIN btok t USING (secret_key, secret_slot, api_key_id, workspace_id, day, model)
 LEFT JOIN noresult n USING (secret_key, secret_slot, api_key_id, workspace_id, day)
 ORDER BY k.day, k.secret_key, k.secret_slot, f.valid_from, k.api_key_id, k.workspace_id, k.model`
-	rows, err := s.pool.Query(ctx, q, orgID, since)
+	rows, err := s.pool.Query(ctx, q, orgID, since, untilArg(until))
 	if err != nil {
 		return rec, err
 	}
@@ -761,8 +768,10 @@ const billedMapping = `LEFT JOIN LATERAL (SELECT k.secret_key, k.secret_slot::in
 // goes to WholeDays instead of a bucket it does not fit (a UTC day does not
 // split into epoch-aligned 10-hour buckets, and an hour would take the whole
 // day), with HourlyFrom where the hours begin. 10min is finer than any bill
-// row: no points, with ReasonBucketBelowSource.
-func (s *Store) BilledSeries(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time) (BilledSeries, error) {
+// row: no points, with ReasonBucketBelowSource. A non-zero until ends the
+// series: only the rows that end at or before it are read, a row that reaches
+// past it is a bucket the window does not hold whole.
+func (s *Store) BilledSeries(ctx context.Context, orgID uuid.UUID, bucket string, since, until time.Time) (BilledSeries, error) {
 	out := BilledSeries{Bucket: bucket, Points: []BilledPoint{}}
 	since = since.UTC().Truncate(24 * time.Hour)
 	switch bucket {
@@ -798,8 +807,9 @@ func (s *Store) BilledSeries(ctx context.Context, orgID uuid.UUID, bucket string
 			bool_and(c.data_refreshed_at IS NOT NULL AND c.bucket_end <= c.data_refreshed_at)
 		FROM bcost c
 		`+billedMapping+`
+		WHERE ($3::timestamptz IS NULL OR c.bucket_end <= $3)
 		GROUP BY 1, 2, 3, 4, 5, 6, 7
-		ORDER BY 1, 3, 5`, orgID, since)
+		ORDER BY 1, 3, 5`, orgID, since, untilArg(until))
 	if err != nil {
 		return out, err
 	}
@@ -925,10 +935,37 @@ func billedWindowStart(since, now time.Time) (time.Time, string) {
 // its 1d row starts at midnight, before Start, and counts in neither the tile
 // nor the chart's points from Start on. The window then starts at the next
 // midnight instead, for the bill and the lines alike.
-func (s *Store) BilledWindowFor(ctx context.Context, orgID uuid.UUID, since, now time.Time) (BilledWindow, error) {
+//
+// A window asked for as [since, until) (a non-zero until) ends the same way
+// it starts, on whole buckets: End is until cut back to the bucket's start,
+// and to the midnight before it where its day is read whole — a bucket that
+// reaches past until is not in the window. now is the instant the hourly reach
+// is measured from, and the end of an open window (a zero until). An End that
+// falls before Start leaves the window empty: no bucket lies wholly in it.
+func (s *Store) BilledWindowFor(ctx context.Context, orgID uuid.UUID, since, until, now time.Time) (BilledWindow, error) {
 	start, width := billedWindowStart(since, now)
-	out := BilledWindow{Start: start, End: now.UTC(), Width: width, Totals: []BilledTotal{}}
+	end := now.UTC()
 	src := chosenRows("billed_cost", "cpick", "bcost")
+	if !until.IsZero() {
+		end = until.UTC().Truncate(time.Hour)
+		if width == billing.Day {
+			end = until.UTC().Truncate(24 * time.Hour)
+		} else if day := end.Truncate(24 * time.Hour); !day.Equal(end) {
+			var fresh string
+			err := s.pool.QueryRow(ctx, `WITH `+src+` SELECT fresh FROM cpick WHERE day = $3`,
+				orgID, day, day).Scan(&fresh)
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return BilledWindow{Start: start, End: end, Width: width, Totals: []BilledTotal{}}, err
+			}
+			if fresh == billing.Day {
+				end = day
+			}
+		}
+		if end.Before(start) {
+			end = start
+		}
+	}
+	out := BilledWindow{Start: start, End: end, Width: width, Totals: []BilledTotal{}}
 	if first := start.Truncate(24 * time.Hour); !first.Equal(start) {
 		var fresh string
 		err := s.pool.QueryRow(ctx, `WITH `+src+` SELECT fresh FROM cpick WHERE day = $3`,
@@ -939,6 +976,9 @@ func (s *Store) BilledWindowFor(ctx context.Context, orgID uuid.UUID, since, now
 		if fresh == billing.Day {
 			start = first.Add(24 * time.Hour)
 			out.Start = start
+			if out.End.Before(start) {
+				out.End = start
+			}
 		}
 	}
 	maps := `maps AS (
@@ -962,7 +1002,7 @@ func (s *Store) BilledWindowFor(ctx context.Context, orgID uuid.UUID, since, now
 		FROM (SELECT secret_key, secret_slot FROM maps UNION SELECT secret_key, secret_slot FROM billed) m
 		LEFT JOIN billed b ON b.secret_key = m.secret_key AND b.secret_slot = m.secret_slot
 		GROUP BY 1, 2
-		ORDER BY 1, 2`, orgID, start, now)
+		ORDER BY 1, 2`, orgID, start, out.End)
 	if err != nil {
 		return out, err
 	}

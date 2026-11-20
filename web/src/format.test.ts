@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import i18n from "./i18n";
-import { exact, fmtBucket, fmtBytes, fmtClockUTC, fmtCount, fmtDelta, fmtNumber, fmtUSD, fmtUSDAxis, fmtUSDBelow, fmtUSDFixed, fmtUSDUnit } from "./format";
+import { exact, fmtBucket, fmtBytes, fmtClockUTC, fmtCount, fmtDelta, fmtNumber, fmtUSD, fmtUSDAxis, fmtUSDBelow, fmtUSDFixed, fmtUSDUnit, setDisplayTz } from "./format";
 
 /* The reason stood on the cost side: 147952885 read cache tokens. Nobody reads
    that as a hundred forty-eight million — you count it through digit by digit.
@@ -267,6 +267,35 @@ describe("fmtBucket", () => {
     expect(s).not.toMatch(/PM|AM/);
     expect(s.endsWith(" UTC")).toBe(true);
     await i18n.changeLanguage("de");
+    expect(fmtBucket("2026-11-17T20:00:00Z", "hour")).toBe("17.11., 20:00 UTC");
+  });
+});
+
+describe("fmtBucket in the reader's time zone", () => {
+  // The tests run in Asia/Tokyo (UTC+9, vite.config.ts).
+  it("labels a bucket below a day on the reader's clock, naming the zone, and in UTC otherwise", async () => {
+    await i18n.changeLanguage("de");
+    expect(fmtBucket("2026-11-17T20:00:00Z", "hour", "utc")).toBe("17.11., 20:00 UTC");
+    const local = fmtBucket("2026-11-17T20:00:00Z", "hour", "local");
+    expect(local).toContain("18.11., 05:00");
+    expect(local).not.toContain("UTC");
+    expect(fmtBucket("2026-11-17T20:00:00Z", "10min", "local")).toContain("05:00");
+  });
+
+  it("keeps a day, a week and a month at UTC midnight whatever the zone", async () => {
+    await i18n.changeLanguage("de");
+    expect(fmtBucket("2026-11-17T00:00:00Z", "day", "local")).toBe("17.11. UTC");
+    expect(fmtBucket("2026-11-16T00:00:00Z", "week", "local")).toBe("Woche ab 16.11. UTC");
+  });
+
+  it("follows the page's zone unless one is given", async () => {
+    await i18n.changeLanguage("de");
+    setDisplayTz("local");
+    try {
+      expect(fmtBucket("2026-11-17T20:00:00Z", "hour")).toContain("05:00");
+    } finally {
+      setDisplayTz("utc");
+    }
     expect(fmtBucket("2026-11-17T20:00:00Z", "hour")).toBe("17.11., 20:00 UTC");
   });
 });

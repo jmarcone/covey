@@ -1050,7 +1050,7 @@ func ExternalListUSD(model string, t ModelTokens) *float64 {
 // chart's bucket, and the meter share per reading step, whatever the bucket.
 // coverage and plans are the cost cells' own: the share reads the meter the
 // page reads, priced as the page prices it.
-func (s *Store) externalFor(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time,
+func (s *Store) externalFor(ctx context.Context, orgID uuid.UUID, bucket string, since, until time.Time,
 	coverage []MeterCoverage, plans []CredentialPlan, bases []CredentialBasis) (ExternalUsage, error) {
 	out := ExternalUsage{Sources: []ExternalSource{}, Cells: []ExternalCell{}, Meter: emptyMeter()}
 
@@ -1104,8 +1104,8 @@ func (s *Store) externalFor(ctx context.Context, orgID uuid.UUID, bucket string,
 		SUM(input), SUM(output), SUM(cache_read), SUM(cache_write_5m), SUM(cache_write_1h),
 		SUM(reported_usd)::float8, count(reported_usd), MIN(ts), MAX(ts)
 		FROM external_usage
-		WHERE org_id = $1 AND ts >= $2
-		GROUP BY 1, 2, 3, 4, reported_usd IS NULL`, orgID, since)
+		WHERE org_id = $1 AND ts >= $2 AND `+beforeSQL("ts", 3)+`
+		GROUP BY 1, 2, 3, 4, reported_usd IS NULL`, orgID, since, untilArg(until))
 	if err != nil {
 		return out, err
 	}
@@ -1234,7 +1234,7 @@ func (s *Store) externalFor(ctx context.Context, orgID uuid.UUID, bucket string,
 	if len(links) == 0 {
 		return out, nil
 	}
-	readings, err := s.meterRows(ctx, orgID, since)
+	readings, err := s.meterRows(ctx, orgID, since, until)
 	if err != nil {
 		return out, err
 	}
@@ -1249,12 +1249,12 @@ func (s *Store) externalFor(ctx context.Context, orgID uuid.UUID, bucket string,
 		tot, st := splitSeatSince(seat, linked[seat], in, since)
 		tot.MeterSource = cov.Source
 		n := sort.Search(len(in), func(i int) bool { return !in[i].At.Before(since) })
-		um, err := s.unmeteredList(ctx, orgID, since, linked[seat], in[n:])
+		um, err := s.unmeteredList(ctx, orgID, since, until, linked[seat], in[n:])
 		if err != nil {
 			return out, err
 		}
 		tot.UnmeteredListUSD, tot.UnmeteredBeforeListUSD, tot.UnmeteredLeadUSD, tot.UnmeteredBeforeLeadUSD = um.list, um.beforeList, um.lead, um.beforeLead
-		if um, err = s.unmeteredCoveyList(ctx, orgID, since, seat, in[n:]); err != nil {
+		if um, err = s.unmeteredCoveyList(ctx, orgID, since, until, seat, in[n:]); err != nil {
 			return out, err
 		}
 		tot.UnmeteredCoveyListUSD, tot.UnmeteredCoveyBeforeListUSD, tot.UnmeteredCoveyLeadUSD, tot.UnmeteredCoveyBeforeLeadUSD = um.list, um.beforeList, um.lead, um.beforeLead
@@ -1789,7 +1789,7 @@ func unmeteredSpan(since time.Time, steps []shareStep) (from, to time.Time, has 
 // step's span: the steps' spans are contiguous, from the first step's
 // previous reading through the last reading, so it is every call outside
 // that stretch — before it or after it.
-func (s *Store) unmeteredList(ctx context.Context, orgID uuid.UUID, since time.Time, sources []string, steps []shareStep) (unmetered, error) {
+func (s *Store) unmeteredList(ctx context.Context, orgID uuid.UUID, since, until time.Time, sources []string, steps []shareStep) (unmetered, error) {
 	var u unmetered
 	if len(sources) == 0 {
 		return u, nil
@@ -1799,8 +1799,8 @@ func (s *Store) unmeteredList(ctx context.Context, orgID uuid.UUID, since time.T
 		SUM(input), SUM(output), SUM(cache_read), SUM(cache_write_5m), SUM(cache_write_1h),
 		COALESCE(SUM(reported_usd), 0)::float8
 		FROM external_usage
-		WHERE org_id = $1 AND source = ANY($2) AND ts >= $3 AND NOT (ts > $4 AND ts <= $5)
-		GROUP BY 1, 2, 3`, orgID, sources, since, from, to, has)
+		WHERE org_id = $1 AND source = ANY($2) AND ts >= $3 AND NOT (ts > $4 AND ts <= $5) AND `+beforeSQL("ts", 7)+`
+		GROUP BY 1, 2, 3`, orgID, sources, since, from, to, has, untilArg(until))
 	if err != nil {
 		return u, err
 	}
@@ -1833,7 +1833,7 @@ func (s *Store) unmeteredList(ctx context.Context, orgID uuid.UUID, since time.T
 // the seat's first reading in the range or after its last one (or with no
 // reading at all), with no real share. Its lead price is the engine's
 // figure.
-func (s *Store) unmeteredCoveyList(ctx context.Context, orgID uuid.UUID, since time.Time, seat meterSeat, steps []shareStep) (unmetered, error) {
+func (s *Store) unmeteredCoveyList(ctx context.Context, orgID uuid.UUID, since, until time.Time, seat meterSeat, steps []shareStep) (unmetered, error) {
 	var u unmetered
 	from, to, has := unmeteredSpan(since, steps)
 	rows, err := s.pool.Query(ctx, `SELECT model, $7 AND created_at <= $5,
@@ -1841,8 +1841,8 @@ func (s *Store) unmeteredCoveyList(ctx context.Context, orgID uuid.UUID, since t
 		SUM(cache_write_1h_tokens), SUM(web_search_requests), SUM(engine_usd)::float8
 		FROM model_usage
 		WHERE org_id = $1 AND secret_key = $2 AND secret_slot = $3 AND created_at >= $4
-			AND NOT (created_at > $5 AND created_at <= $6)
-		GROUP BY 1, 2`, orgID, seat.key, seat.slot, since, from, to, has)
+			AND NOT (created_at > $5 AND created_at <= $6) AND `+beforeSQL("created_at", 8)+`
+		GROUP BY 1, 2`, orgID, seat.key, seat.slot, since, from, to, has, untilArg(until))
 	if err != nil {
 		return u, err
 	}

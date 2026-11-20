@@ -49,7 +49,7 @@ func TestMeterCoveragePricedPerReading(t *testing.T) {
 		}
 	}
 	perPoint := 200.0 * 12 / 52 / 100
-	cells, err := s.obs.CostCellsFor(ctx, agent.OrgID, "day", since)
+	cells, err := s.obs.CostCellsFor(ctx, agent.OrgID, "day", since, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestMeterCoveragePricedPerReading(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	cells, err = s.obs.CostCellsFor(ctx, agent.OrgID, "day", since)
+	cells, err = s.obs.CostCellsFor(ctx, agent.OrgID, "day", since, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func meterPointsOf(t *testing.T, s *stack, since time.Time, cases map[string][]m
 			}
 		}
 	}
-	cells, err := s.obs.CostCellsFor(ctx, agent.OrgID, "hour", since)
+	cells, err := s.obs.CostCellsFor(ctx, agent.OrgID, "hour", since, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}

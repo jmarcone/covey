@@ -355,14 +355,14 @@ func TestCostBucketsIgnoreSessionTimeZone(t *testing.T) {
 	since := at.Add(-48 * time.Hour)
 	day := time.Date(2026, 11, 16, 0, 0, 0, 0, time.UTC)
 
-	cells, err := obs.CostCellsFor(ctx, agent.OrgID, "day", since)
+	cells, err := obs.CostCellsFor(ctx, agent.OrgID, "day", since, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(cells.Cells) != 1 || !cells.Cells[0].Period.Equal(day) || cells.Cells[0].Reported == 0 || len(cells.Cells[0].Measured) == 0 {
 		t.Errorf("cells = %+v, want one on %v with both figures", cells.Cells, day)
 	}
-	rep, err := obs.OrgCostReport(ctx, agent.OrgID, "day", since)
+	rep, err := obs.OrgCostReport(ctx, agent.OrgID, "day", since, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -72,7 +72,7 @@ func TestOverageIsMonthlyMeter(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	cells, err := s.obs.CostCellsFor(ctx, agent.OrgID, "hour", since)
+	cells, err := s.obs.CostCellsFor(ctx, agent.OrgID, "hour", since, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestUsageLimitPricesMonthlyMeter(t *testing.T) {
 		t.Errorf("an unknown kind: %v, want refused", err)
 	}
 
-	cells, err := s.obs.CostCellsFor(ctx, s.orgID, "hour", since)
+	cells, err := s.obs.CostCellsFor(ctx, s.orgID, "hour", since, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +298,7 @@ func TestUsageLimitMergesManualAroundRun(t *testing.T) {
 		}
 	}
 
-	cells, err := s.obs.CostCellsFor(ctx, s.orgID, "hour", since)
+	cells, err := s.obs.CostCellsFor(ctx, s.orgID, "hour", since, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}

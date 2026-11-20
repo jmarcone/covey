@@ -139,7 +139,7 @@ func TestCostGapOfAProcessWithoutResult(t *testing.T) {
 	}
 
 	// The gap is a kind of its own on the cost page's booking check.
-	cells, err := s.obs.CostCellsFor(ctx, agent.OrgID, "day", time.Now().Add(-time.Hour))
+	cells, err := s.obs.CostCellsFor(ctx, agent.OrgID, "day", time.Now().Add(-time.Hour), time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}

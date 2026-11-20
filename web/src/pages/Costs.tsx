@@ -1,15 +1,19 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link, useSearchParams } from "react-router";
 import { api, ApiError, type IndicatorReport, type Principal, type RunCost } from "../api";
-import { exact, fmtBucket, fmtCount, fmtUSD } from "../format";
+import { exact, fmtBucket, fmtCount, fmtUSD, setDisplayTz } from "../format";
 import { PriceList } from "../components/PriceList";
 import { CostInsights } from "./CostInsights";
 import { credentialFigures, headline, payPerTokenHeadline, subscriptionDent } from "./costFigures";
 import { PayPerTokenRow, SubscriptionDentRow } from "./SubscriptionDent";
 import { canSetPlan } from "./PlanPrice";
 import { OutsideOverview } from "./OutsideSessions";
+import { RangePanel } from "./RangePanel";
+import { Seg } from "./Seg";
+import { bucketForSpan, customWindow, isCustom, isRangeCode, readRange, windowQuery, writeRange,
+  type CostWindow, type RangeCode } from "./costRange";
 import { COVEY_ONLY_PARAM, COVEY_ONLY_VALUE, PRICES_PARAM, PRICES_RECOMPUTED, RANGES, beforeRange, bucketOptions, kpiLead, listedSources,
   outsideKpis, outsideSplit, rangeOptions, sourceRealParts, type OutsideKpis } from "./outsideFigures";
 import {
@@ -17,6 +21,7 @@ import {
   BUCKET_MS,
   Chip,
   CostExplorer,
+  CustomRangeContext,
   OrgWide,
   SOURCE_COLOR,
   Swatch,
@@ -64,64 +69,7 @@ function Kpi({ label, value, sub, color, parts, check }: { label: string; value:
   );
 }
 
-// --- Segmented switches ------------------------------------------------------
-
-export function Seg<T extends string | number>({
-  value,
-  options,
-  onChange,
-}: {
-  value: T;
-  options: { v: T; label: string; disabled?: boolean; title?: string }[];
-  onChange: (v: T) => void;
-}) {
-  // A disabled option says why in visible text under the switch, and is
-  // described by it (not by its title alone, which a touch screen or a
-  // keyboard never shows).
-  const uid = useId().replace(/[^a-zA-Z0-9_-]/g, "");
-  const reasons = [...new Set(options.filter((o) => o.disabled && o.title).map((o) => o.title!))];
-  const reasonId = (title?: string) => (title && reasons.includes(title) ? `${uid}-r${reasons.indexOf(title)}` : undefined);
-  return (
-    <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-end", maxWidth: "100%" }}>
-    {/* One option per agent grows past any width with a large fleet: the
-       control scrolls inside itself rather than widening the page (#463). */}
-    <div style={{ display: "inline-flex", gap: 2, maxWidth: "100%", overflowX: "auto", scrollbarWidth: "thin", background: "var(--surface-1)", border: "0.5px solid var(--border)", borderRadius: 8, padding: 2 }}>
-      {options.map((o) => {
-        const active = o.v === value;
-        return (
-          <button
-            key={String(o.v)}
-            onClick={() => onChange(o.v)}
-            aria-pressed={active}
-            disabled={o.disabled}
-            title={o.title}
-            aria-describedby={o.disabled ? reasonId(o.title) : undefined}
-            style={{
-              border: "none",
-              flexShrink: 0,
-              whiteSpace: "nowrap",
-              borderRadius: 6,
-              padding: "5px 12px",
-              fontSize: 13,
-              cursor: o.disabled ? "not-allowed" : "pointer",
-              opacity: o.disabled ? 0.45 : 1,
-              background: active ? "var(--surface-2)" : "transparent",
-              color: active ? "var(--text-primary)" : "var(--text-secondary)",
-              fontWeight: active ? 600 : 400,
-              boxShadow: active ? "0 1px 3px var(--shadow-xs)" : "none",
-            }}
-          >
-            {o.label}
-          </button>
-        );
-      })}
-    </div>
-    {reasons.map((r, i) => (
-      <span key={r} id={`${uid}-r${i}`} className="muted" data-seg-reason style={{ fontSize: 11, marginTop: 2, textAlign: "right" }}>{r}</span>
-    ))}
-    </span>
-  );
-}
+export { Seg };
 
 // --- Page --------------------------------------------------------------------
 
@@ -229,9 +177,26 @@ function ExpensiveRuns({ runs }: { runs: RunCost[] }) {
 export default function Costs({ me }: { me?: Principal }) {
   const { t } = useTranslation();
 
-  // 24 hours, hourly: the window in which the cost per hour can actually be read.
-  const [days, setDays] = useState(1);
-  const [bucket, setBucket] = useState("hour");
+  // The range is in the address: ?days= for the quick ranges, or ?from=&to=
+  // (RFC 3339, [from, to)) with ?tz= for a custom one, so a segment can be
+  // shared, reloaded and walked back to. Without any, 24 hours, hourly: the
+  // window in which the cost per hour can actually be read.
+  const [params, setParams] = useSearchParams();
+  const range = useMemo(() => readRange(params, Date.now()), [params]);
+  const tz = range.tz;
+  // One clock for every label of the page (the tiles, the axis, the tables).
+  setDisplayTz(tz);
+  useEffect(() => () => setDisplayTz("utc"), []);
+  const dp = Number(params.get("days"));
+  const days = RANGES.some((r) => r.v === dp) ? dp : 1;
+  const customOk = range.from != null && range.to != null && range.error == null;
+  // from/to given but not usable: no query is asked, the panel says why.
+  const badRange = range.error != null;
+  const win: CostWindow = customOk ? customWindow(range.from!, range.to!) : { days };
+  const custom = isCustom(win);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [bucketPick, setBucketPick] = useState<string | null>(null);
+  const bucket = bucketPick ?? (custom ? bucketForSpan(range.to! - range.from!) : RANGES.find((r) => r.v === days)!.bucket);
   const [metric, setMetric] = useState<Metric>("cost");
   // The agent filter replaces the scope tabs: none selected = the whole
   // organisation, any combination for the charts and the KPIs; exactly one
@@ -239,7 +204,6 @@ export default function Costs({ me }: { me?: Principal }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   // The sessions outside covey are included by default and labelled
   // everywhere (#120); ?only=covey shows covey's agents alone, as before.
-  const [params, setParams] = useSearchParams();
   const coveyOnly = params.get(COVEY_ONLY_PARAM) === COVEY_ONLY_VALUE;
   const setCoveyOnly = (v: boolean) => setParams((prev) => {
     const n = new URLSearchParams(prev);
@@ -258,9 +222,19 @@ export default function Costs({ me }: { me?: Principal }) {
     return n;
   }, { replace: true });
   const scope = selected.size === 1 ? [...selected][0] : "org";
-  const cells = useCostCells(days, bucket);
-  const billed = useBilled(days, bucket);
-  const readings = useUsageReadings(days);
+  const cells = useCostCells(win, bucket, !badRange);
+  const billed = useBilled(win, bucket, !badRange);
+  const readings = useUsageReadings(win, !badRange);
+  // The meter's readings of the last days, for the picker's helpers (since the
+  // last reset, between two readings).
+  const helperReadings = useUsageReadings({ days: 8 }, panelOpen || custom || badRange);
+  const wq = windowQuery(win);
+  // The server refused the range (a 400 with its code): said in the panel, in
+  // the reader's language.
+  const apiCode: RangeCode | "unknown" | null = cells.error instanceof ApiError && cells.error.status === 400
+    ? (isRangeCode(cells.error.code) ? cells.error.code : "unknown") : null;
+  const rangeError: RangeCode | "unknown" | null = range.error ?? apiCode;
+  const refused = badRange || apiCode != null;
 
   // A new range can lose agents the selection still names: they would narrow
   // every figure to nothing while no chip shows them. Drop them.
@@ -275,12 +249,13 @@ export default function Costs({ me }: { me?: Principal }) {
 
   // The most expensive runs of the period — org-wide or for the chosen agent.
   const runs = useQuery({
-    queryKey: ["cost", "runs", scope, days],
+    queryKey: ["cost", "runs", scope, wq],
     queryFn: () =>
       api<RunCost[] | null>(
-        scope === "org" ? `/cost/runs?days=${days}&limit=25` : `/agents/${scope}/cost/runs?days=${days}&limit=25`,
+        scope === "org" ? `/cost/runs?${wq}&limit=25` : `/agents/${scope}/cost/runs?${wq}&limit=25`,
       ),
     refetchInterval: 30000,
+    enabled: !badRange,
   });
 
   // The price list hangs on the same scope and period as everything else on
@@ -298,31 +273,50 @@ export default function Costs({ me }: { me?: Principal }) {
     // every 30 seconds for an answer that does not change.
     // Performance.tsx does the same on the same route.
     retry: false,
+    // The price list is over whole quick ranges (its trend sets the span
+    // against the one before it): not asked for a custom range.
+    enabled: !custom && !badRange,
   });
   // A role that may not see something should not get it as an empty box:
   // empty means "there are no metrics", and that is a different statement
   // than "you do not see them".
   const indicatorsForbidden = indicators.error instanceof ApiError && indicators.error.status === 403;
 
-  const setRange = (v: number) => {
-    setDays(v);
-    const r = RANGES.find((x) => x.v === v);
-    if (r) setBucket(r.bucket);
+  // A change of range is a step in the history: Back returns to the one before.
+  const setRange = (v: number | "custom") => {
+    if (v === "custom") {
+      setPanelOpen(true);
+      return;
+    }
+    setPanelOpen(false);
+    setBucketPick(null);
+    setParams((prev) => writeRange(prev, { days: v }, tz));
   };
+  const applyCustom = (from: number, to: number) => {
+    setBucketPick(null);
+    setParams((prev) => writeRange(prev, customWindow(from, to), tz));
+  };
+  const setTz = (next: typeof tz) => setParams((prev) => {
+    const n = new URLSearchParams(prev);
+    n.set("tz", next);
+    return n;
+  }, { replace: true });
 
   // The credentials' figures over the whole organisation, for the meter card:
   // the same the tiles show without an agent filter.
+  // The end of the window: now, or a custom range's end (cut to now).
+  const end = useMemo(() => (cells.data?.until ? new Date(cells.data.until) : new Date()), [cells.data]);
   const orgFigures = useMemo(() => (cells.data ? credentialFigures({
-    cells: cells.data, billed: billed.data, bucketMs: BUCKET_MS[bucket] ?? BUCKET_MS.day, windowEnd: new Date(),
+    cells: cells.data, billed: billed.data, bucketMs: BUCKET_MS[bucket] ?? BUCKET_MS.day, windowEnd: end,
     includeOutside: !coveyOnly && listedSources(cells.data.external).length > 0,
-  }) : []), [cells.data, billed.data, bucket, coveyOnly]);
+  }) : []), [cells.data, billed.data, bucket, coveyOnly, end]);
 
   // The whole dent in the subscription meters, split between covey's agents
   // and the sessions outside covey (#120): null until a source names a meter.
   const dent = useMemo(() => subscriptionDent(cells.data?.external), [cells.data]);
   const head = useMemo(() => headline(cells.data), [cells.data]);
-  const ppt = useMemo(() => payPerTokenHeadline(cells.data, orgFigures, BUCKET_MS[bucket] ?? BUCKET_MS.day, new Date()),
-    [cells.data, orgFigures, bucket]);
+  const ppt = useMemo(() => payPerTokenHeadline(cells.data, orgFigures, BUCKET_MS[bucket] ?? BUCKET_MS.day, end),
+    [cells.data, orgFigures, bucket, end]);
 
   // KPIs over the same lines as the charts, narrowed by the same filter.
   const totals = useMemo(() => cellTotals(cells.data, selected), [cells.data, selected]);
@@ -362,7 +356,7 @@ export default function Costs({ me }: { me?: Principal }) {
       : selected.size === 1
         ? agentList.find((a) => a.id === scope)?.label ?? ""
         : t("costs.filter.nSelected", { count: selected.size });
-  const fmtPeriod = (p: string) => fmtBucket(p, bucket);
+  const fmtPeriod = (p: string, utc?: boolean) => fmtBucket(p, bucket, utc ? "utc" : tz);
 
   return (
     <div>
@@ -375,110 +369,123 @@ export default function Costs({ me }: { me?: Principal }) {
       {/* Controls */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <div style={{ flex: 1 }} />
-        <Seg value={days} onChange={setRange} options={rangeOptions(t)} />
-        <Seg value={bucket} onChange={setBucket} options={bucketOptions(t, days)} />
+        <Seg<number | "custom"> value={custom || panelOpen || badRange ? "custom" : days} onChange={setRange}
+          options={[...rangeOptions(t), { v: "custom", label: t("costs.range.custom") }]} />
+        <Seg value={bucket} onChange={setBucketPick} options={bucketOptions(t, win.days)} />
       </div>
-
-      <div className="mb-4">
-        <AgentFilter agents={agentList} selected={selected} onChange={setSelected} />
-      </div>
-
-      {/* The sessions outside covey: in every figure below by default, each
-          figure naming its parts; "covey only" leaves them out (#120). */}
-      {sourcesListed.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 mb-4" data-inclusion>
-          <Chip on={coveyOnly} onClick={() => setCoveyOnly(!coveyOnly)} title={t("costs.incl.coveyOnlyTitle")}>{t("costs.incl.coveyOnly")}</Chip>
-          <span className="muted text-xs" data-inclusion-note style={{ maxWidth: 760 }}>
-            {t(coveyOnly ? "costs.incl.coveyOnlyNote" : filtered ? "costs.incl.includedNoteSelected" : "costs.incl.includedNote",
-              { sources: sourcesListed.map((s) => s.source).join(", ") })}
-          </span>
-        </div>
+      {(custom || panelOpen || badRange) && (
+        // Re-made when the range changes from outside (Back, a pasted link), so the fields hold what the address says.
+        <RangePanel key={`${range.from}-${range.to}-${tz}`} from={customOk ? range.from : null} to={customOk ? range.to : null}
+          tz={tz} onTz={setTz} onApply={applyCustom} error={rangeError} readings={helperReadings.data ?? []} />
       )}
+      {refused && <p className="muted text-sm" data-range-refused>{t("costs.range.refused")}</p>}
 
-      {/* The headline: what the subscription really paid, and for whom. */}
-      {dent && <SubscriptionDentRow d={dent} filtered={selected.size > 0} h={head}
-        sourceParts={(cells.data?.external?.meter.source_parts ?? []).flatMap((p) => {
-          const s = sourcesListed.find((x) => x.source === p.source);
-          return s ? [{ ...p, before: beforeRange(s, realParts) }] : [];
-        })} />}
-      {/* Pay per token (0152): an API key's bill, usage charges and the
-          monthly meter — its own headline, never added to the seats'. */}
-      {ppt && <PayPerTokenRow h={ppt} filtered={selected.size > 0} />}
+      {!refused && (
+        <CustomRangeContext.Provider value={custom}>
+          <div className="mb-4">
+            <AgentFilter agents={agentList} selected={selected} onChange={setSelected} />
+          </div>
 
-      {/* KPIs: over every credential, dollars and tokens of the same lines.
-          One list-price figure leads (#120): Claude Code's price of each
-          call, covey's list price where it reported none (marked), and
-          covey's price table under it only where it differs; the toggle
-          shows the two apart. */}
-      <div className="flex flex-wrap gap-3 mb-4">
-        {fullPrices ? <>
-          <Kpi label={t("costs.fig.reported")} value={fmtUSD(totals.reported + (outside?.reported ?? 0))} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.reported}
-            parts={parts(fmtUSD(totals.reported), (o) => outsideMoney(t, o, "reported"))} />
-          <Kpi label={t("costs.fig.recomputed")} value={fmtUSD(totals.recomputed + (outside?.list ?? 0))} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.recomputed}
-            parts={parts(fmtUSD(totals.recomputed), (o) => outsideMoney(t, o, "list"))} />
-        </> : (
-          <Kpi label={t("costs.lead.label")} value={fmtUSD(lead)} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.reported}
-            parts={outside && split ? <SplitParts stacked lines={leadLines(t, filtered, fmtUSD(totals.reported), split)} /> : undefined}
-            check={priceTableLine(t, lead, totals.recomputed + (outside?.list ?? 0))} />
-        )}
-        <Kpi
-          label={t("costs.inputTokens")}
-          value={fmtCount(input)}
-          sub={t("costs.cachedShare", { pct: input > 0 ? Math.round((cached / input) * 100) : 0 })}
-          parts={tokParts(inputOf)}
-        />
-        <Kpi label={t("costs.outputTokens")} value={fmtCount(output)} sub={exact(output)} parts={tokParts((x) => x.output ?? 0)} />
-        <Kpi label={t("costs.totalTokens")} value={fmtCount(input + output)} parts={tokParts((x) => inputOf(x) + (x.output ?? 0))} />
-      </div>
-
-      {/* Chart */}
-      <div className="card mb-4">
-        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-          <div style={{ fontWeight: 600 }}>{metric === "cost" ? t("costs.chartCost") : t("costs.chartTokens")}</div>
-          <Seg
-            value={metric}
-            onChange={setMetric}
-            options={[{ v: "cost", label: t("costs.mCost") }, { v: "tokens", label: t("costs.mTokens") }]}
-          />
-        </div>
-        {metric === "cost" ? (
-          <CostExplorer data={cells.data} billed={billed.data} readings={readings.data ?? []} canSetPlan={canSetPlan(me?.Role ?? "")} selected={selected} bucket={bucket} fmtPeriod={fmtPeriod}
-            outside={included} full={fullPrices} onFull={setFullPrices} />
-        ) : (
-          <TokenExplorer data={cells.data} selected={selected} fmtPeriod={fmtPeriod} outside={included} />
-        )}
-      </div>
-
-      {/* The sessions outside covey (#120): apart or combined, never folded in unannounced. */}
-      <OutsideOverview data={cells.data} selected={selected} days={days} bucket={bucket} fmtPeriod={fmtPeriod} />
-
-      {/* Price list + token types + priciest runs: they hold for every scope */}
-      <div className="grid gap-4 mb-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(320px, 100%), 1fr))" }}>
-        <div className="card">
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.indicators.title")}{scope === "org" && selected.size > 0 && <OrgWide />}</div>
-          <p className="muted text-xs mb-3">{t("costs.indicators.hint")}</p>
-          {indicatorsForbidden ? (
-            <p className="muted text-xs">{t("costs.indicators.restricted")}</p>
-          ) : (
-            <PriceList rep={indicators.data} />
+          {/* The sessions outside covey: in every figure below by default, each
+              figure naming its parts; "covey only" leaves them out (#120). */}
+          {sourcesListed.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 mb-4" data-inclusion>
+              <Chip on={coveyOnly} onClick={() => setCoveyOnly(!coveyOnly)} title={t("costs.incl.coveyOnlyTitle")}>{t("costs.incl.coveyOnly")}</Chip>
+              <span className="muted text-xs" data-inclusion-note style={{ maxWidth: 760 }}>
+                {t(coveyOnly ? "costs.incl.coveyOnlyNote" : filtered ? "costs.incl.includedNoteSelected" : "costs.incl.includedNote",
+                  { sources: sourcesListed.map((s) => s.source).join(", ") })}
+              </span>
+            </div>
           )}
-        </div>
-        <div className="card">
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.mix.title")}</div>
-          <p className="muted text-xs mb-3">{t("costs.mix.hint")}</p>
-          <TokenMix tokens={tok} split={tokParts((x) => inputOf(x) + (x.output ?? 0))} />
-        </div>
-        <div className="card" style={{ gridColumn: "span 1" }}>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.runs.title")}{scope === "org" && selected.size > 0 && <OrgWide />}</div>
-          <p className="muted text-xs mb-3">{t("costs.runs.hint")}</p>
-          <ExpensiveRuns runs={runs.data ?? []} />
-        </div>
-      </div>
 
-      {/* Cost insights: per model as Claude Code reported it, and the
-          subscription meter per credential. The model lines follow the agent
-          filter; what is per credential stays org-wide and says so. */}
-      <CostInsights days={days} figures={orgFigures} agents={selected} outside={included} />
+          {/* The headline: what the subscription really paid, and for whom. */}
+          {dent && <SubscriptionDentRow d={dent} filtered={selected.size > 0} h={head}
+            sourceParts={(cells.data?.external?.meter.source_parts ?? []).flatMap((p) => {
+              const s = sourcesListed.find((x) => x.source === p.source);
+              return s ? [{ ...p, before: beforeRange(s, realParts) }] : [];
+            })} />}
+          {/* Pay per token (0152): an API key's bill, usage charges and the
+              monthly meter — its own headline, never added to the seats'. */}
+          {ppt && <PayPerTokenRow h={ppt} filtered={selected.size > 0} />}
+
+          {/* KPIs: over every credential, dollars and tokens of the same lines.
+              One list-price figure leads (#120): Claude Code's price of each
+              call, covey's list price where it reported none (marked), and
+              covey's price table under it only where it differs; the toggle
+              shows the two apart. */}
+          <div className="flex flex-wrap gap-3 mb-4">
+            {fullPrices ? <>
+              <Kpi label={t("costs.fig.reported")} value={fmtUSD(totals.reported + (outside?.reported ?? 0))} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.reported}
+                parts={parts(fmtUSD(totals.reported), (o) => outsideMoney(t, o, "reported"))} />
+              <Kpi label={t("costs.fig.recomputed")} value={fmtUSD(totals.recomputed + (outside?.list ?? 0))} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.recomputed}
+                parts={parts(fmtUSD(totals.recomputed), (o) => outsideMoney(t, o, "list"))} />
+            </> : (
+              <Kpi label={t("costs.lead.label")} value={fmtUSD(lead)} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.reported}
+                parts={outside && split ? <SplitParts stacked lines={leadLines(t, filtered, fmtUSD(totals.reported), split)} /> : undefined}
+                check={priceTableLine(t, lead, totals.recomputed + (outside?.list ?? 0))} />
+            )}
+            <Kpi
+              label={t("costs.inputTokens")}
+              value={fmtCount(input)}
+              sub={t("costs.cachedShare", { pct: input > 0 ? Math.round((cached / input) * 100) : 0 })}
+              parts={tokParts(inputOf)}
+            />
+            <Kpi label={t("costs.outputTokens")} value={fmtCount(output)} sub={exact(output)} parts={tokParts((x) => x.output ?? 0)} />
+            <Kpi label={t("costs.totalTokens")} value={fmtCount(input + output)} parts={tokParts((x) => inputOf(x) + (x.output ?? 0))} />
+          </div>
+
+          {/* Chart */}
+          <div className="card mb-4">
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <div style={{ fontWeight: 600 }}>{metric === "cost" ? t("costs.chartCost") : t("costs.chartTokens")}</div>
+              <Seg
+                value={metric}
+                onChange={setMetric}
+                options={[{ v: "cost", label: t("costs.mCost") }, { v: "tokens", label: t("costs.mTokens") }]}
+              />
+            </div>
+            {metric === "cost" ? (
+              <CostExplorer data={cells.data} billed={billed.data} readings={readings.data ?? []} canSetPlan={canSetPlan(me?.Role ?? "")} selected={selected} bucket={bucket} fmtPeriod={fmtPeriod}
+                outside={included} full={fullPrices} onFull={setFullPrices} />
+            ) : (
+              <TokenExplorer data={cells.data} selected={selected} fmtPeriod={fmtPeriod} outside={included} />
+            )}
+          </div>
+
+          {/* The sessions outside covey (#120): apart or combined, never folded in unannounced. */}
+          <OutsideOverview data={cells.data} selected={selected} days={days} bucket={bucket} fmtPeriod={fmtPeriod} detailLink={!custom} />
+
+          {/* Price list + token types + priciest runs: they hold for every scope */}
+          <div className="grid gap-4 mb-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(320px, 100%), 1fr))" }}>
+            <div className="card">
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.indicators.title")}{scope === "org" && selected.size > 0 && <OrgWide />}</div>
+              <p className="muted text-xs mb-3">{t("costs.indicators.hint")}</p>
+              {custom ? (
+                <p className="muted text-xs" data-indicators-custom>{t("costs.range.indicatorsCustom")}</p>
+              ) : indicatorsForbidden ? (
+                <p className="muted text-xs">{t("costs.indicators.restricted")}</p>
+              ) : (
+                <PriceList rep={indicators.data} />
+              )}
+            </div>
+            <div className="card">
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.mix.title")}</div>
+              <p className="muted text-xs mb-3">{t("costs.mix.hint")}</p>
+              <TokenMix tokens={tok} split={tokParts((x) => inputOf(x) + (x.output ?? 0))} />
+            </div>
+            <div className="card" style={{ gridColumn: "span 1" }}>
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.runs.title")}{scope === "org" && selected.size > 0 && <OrgWide />}</div>
+              <p className="muted text-xs mb-3">{t("costs.runs.hint")}</p>
+              <ExpensiveRuns runs={runs.data ?? []} />
+            </div>
+          </div>
+
+          {/* Cost insights: per model as Claude Code reported it, and the
+              subscription meter per credential. The model lines follow the agent
+              filter; what is per credential stays org-wide and says so. */}
+          <CostInsights days={win.days} win={custom ? win : undefined} figures={orgFigures} agents={selected} outside={included} />
+        </CustomRangeContext.Provider>
+      )}
     </div>
   );
 }

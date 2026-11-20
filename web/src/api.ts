@@ -831,6 +831,8 @@ export type BookingBasis = {
 export type CostCells = {
   /** The window's start: every line and source total is from it on; a meter step's span (from, at] may begin before it. */
   since?: string;
+  /** The window's end, exclusive, when it was asked for as from/to; absent for a window that runs to now. */
+  until?: string;
   periods: string[];
   agents: CellAgent[];
   types: string[];
@@ -2220,9 +2222,14 @@ export type AuditEntry = {
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /** The server's machine-readable reason, where the answer has one (a refused
+   *  cost range: range_order, …) — a screen maps it to its own words and never
+   *  shows the server's English message. */
+  code?: string;
+  constructor(status: number, message: string, code?: string) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -2262,13 +2269,15 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
        against itself. */
     if (res.status === 401 && !path.startsWith("/auth/")) abgelaufenMelden?.();
     let msg = res.statusText;
+    let code: string | undefined;
     try {
       const body = await res.json();
       if (body.error) msg = body.error;
+      if (typeof body.code === "string") code = body.code;
     } catch {
       /* not JSON */
     }
-    throw new ApiError(res.status, msg);
+    throw new ApiError(res.status, msg, code);
   }
   // 204/empty body (e.g. DELETE endpoints): res.json() would throw.
   if (res.status === 204) return undefined as T;
