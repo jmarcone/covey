@@ -22,13 +22,14 @@ func TestValidTopicAndTopicDir(t *testing.T) {
 		}
 	}
 	home := t.TempDir()
-	for _, bad := range []string{"../topic-x", "topic-a/b", "topic-..", "topic-A", "topic-", "x-topic-a", "topic-a.b"} {
+	for _, bad := range []string{"../topic-x", "topic-a/b", "topic-..", "topic-A", "topic-", "x-topic-a", "topic-a.b",
+		"topic-covey-dev-pr-42", "topic-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-pr-0", "topic-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-mr-4", "topic-6F1C2A3B-4D5E-4F60-8A7B-9C0D1E2F3A4B-pr-4"} {
 		if dir := topicScratchDir(home, bad); dir != "" {
 			t.Errorf("%q must not become a directory, got %q", bad, dir)
 		}
 	}
-	dir := topicScratchDir(home, "topic-covey-dev-pr-42")
-	if dir != filepath.Join(home, scratchRoot, "topic-covey-dev-pr-42") {
+	dir := topicScratchDir(home, "topic-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-pr-42")
+	if dir != filepath.Join(home, scratchRoot, "topic-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-pr-42") {
 		t.Fatalf("topic dir: %q", dir)
 	}
 	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
@@ -40,8 +41,8 @@ func TestValidTopicAndTopicDir(t *testing.T) {
 // that entered it, kept otherwise.
 func TestSweepScratchAgesTopicDirs(t *testing.T) {
 	home := t.TempDir()
-	old := topicScratchDir(home, "topic-dev-pr-1")
-	fresh := topicScratchDir(home, "topic-dev-pr-2")
+	old := topicScratchDir(home, "topic-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-pr-1")
+	fresh := topicScratchDir(home, "topic-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-pr-2")
 	foreign := filepath.Join(home, scratchRoot, "topic-Not.Ours")
 	if err := os.MkdirAll(foreign, 0o755); err != nil {
 		t.Fatal(err)
@@ -68,9 +69,9 @@ func TestSweepScratchAgesTopicDirs(t *testing.T) {
 // The text naming a topic dir is the same for every task of the topic: it is
 // part of the system prompt a resume must repeat byte for byte.
 func TestScratchDocTopicIsStable(t *testing.T) {
-	a := withScratch("P", "/h/scratch/topic-dev-pr-42")
-	b := withScratch("P", "/other/home/scratch/topic-dev-pr-42")
-	if a != b || !strings.Contains(a, "~/scratch/topic-dev-pr-42/") {
+	a := withScratch("P", "/h/scratch/topic-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-pr-42")
+	b := withScratch("P", "/other/home/scratch/topic-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-pr-42")
+	if a != b || !strings.Contains(a, "~/scratch/topic-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-pr-42/") {
 		t.Fatalf("topic scratch text differs or misses the dir:\n%s\n%s", a, b)
 	}
 	if strings.Contains(a, "belongs to this task") {
@@ -82,7 +83,7 @@ func TestScratchDocTopicIsStable(t *testing.T) {
 // working directory, and otherwise falls back to the task's own prompt.
 func TestApplySticky(t *testing.T) {
 	home := t.TempDir()
-	topicDir := topicScratchDir(home, "topic-dev-pr-42")
+	topicDir := topicScratchDir(home, "topic-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-pr-42")
 	otherDir := filepath.Join(home, scratchRoot, "11111111-1111-1111-1111-111111111111")
 	task := AssignTask{TaskID: "t", Title: "B", Body: "handover + body", StickySessionID: "sess-a",
 		StickyInput: "B's message", FallbackSystemPrompt: "B's own prompt", FallbackMemoryContext: "B's memory"}
@@ -95,7 +96,7 @@ func TestApplySticky(t *testing.T) {
 		t.Fatalf("without the session: %+v, resume %q", out, spec.ResumeSessionID)
 	}
 	if spec.MemoryContext != "B's memory" || !strings.HasPrefix(spec.SystemPrompt, "B's own prompt") ||
-		!strings.Contains(spec.SystemPrompt, "topic-dev-pr-42") {
+		!strings.Contains(spec.SystemPrompt, "topic-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-pr-42") {
 		t.Fatalf("fallback prompt not used: %q / %q", spec.SystemPrompt, spec.MemoryContext)
 	}
 
@@ -145,7 +146,7 @@ var _ Runtime = noSessions{}
 // directory (started by an older daemon) resumes there, not in the topic's.
 func TestResumeDirFallsBackToTheTaskDir(t *testing.T) {
 	home := t.TempDir()
-	topicDir := topicScratchDir(home, "topic-dev-pr-1")
+	topicDir := topicScratchDir(home, "topic-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-pr-1")
 	taskDir := scratchDir(home, "22222222-2222-2222-2222-222222222222")
 	if got := resumeDir(Mock{}, home, topicDir, taskDir, ""); got != topicDir {
 		t.Fatalf("no resume: topic dir, got %q", got)

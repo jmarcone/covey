@@ -98,30 +98,20 @@ func TestEffectiveStickyPolicy(t *testing.T) {
 }
 
 // The daemon accepts only this form of directory name (daemon/sticky.go).
-var daemonTopicDir = regexp.MustCompile(`^topic-[a-z0-9][a-z0-9-]{0,150}$`)
+var daemonTopicDir = regexp.MustCompile(`^topic-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-(pr|issue)-[1-9][0-9]{0,62}$`)
 
 func TestTopicWorkDir(t *testing.T) {
-	cases := map[[2]string]string{
-		{"covey-dev", "pr:42"}:         "topic-covey-dev-pr-42",
-		{"Covey_Front.end", "issue:7"}: "topic-covey-front-end-issue-7",
-		{"../../etc", "pr:1"}:          "topic-etc-pr-1",
-		{"---", "pr:1"}:                "topic-agent-pr-1",
+	id := uuid.MustParse("6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b")
+	if got := topicWorkDir(id, "pr:42"); got != "topic-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-pr-42" {
+		t.Fatalf("topicWorkDir = %q", got)
 	}
-	for in, want := range cases {
-		got := topicWorkDir(in[0], in[1])
-		if got != want {
-			t.Errorf("topicWorkDir(%q, %q) = %q, want %q", in[0], in[1], got, want)
-		}
-		if !daemonTopicDir.MatchString(got) {
+	for _, topic := range []string{"pr:42", "issue:7", "pr:" + strings.Repeat("9", 60)} {
+		if got := topicWorkDir(id, topic); !daemonTopicDir.MatchString(got) {
 			t.Errorf("%q is not a name the daemon accepts", got)
 		}
 	}
-	long := topicWorkDir(strings.Repeat("a", 300), "pr:"+strings.Repeat("9", 60))
-	if !daemonTopicDir.MatchString(long) {
-		t.Errorf("a long slug and topic still make a name the daemon accepts: %q (%d)", long, len(long))
-	}
 	// Two agents never share a directory.
-	if topicWorkDir("covey-dev", "pr:42") == topicWorkDir("covey-frontend", "pr:42") {
+	if topicWorkDir(uuid.New(), "pr:42") == topicWorkDir(uuid.New(), "pr:42") {
 		t.Error("two agents share a topic directory")
 	}
 }

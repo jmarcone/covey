@@ -663,14 +663,21 @@ func (c *Client) runTask(ctx context.Context, task AssignTask) {
 	// Every task works in a directory of its own, and the ones no run has
 	// entered for a week go (scratch.go, #271). Removed before the run rather
 	// than after: a run that is killed never reaches its end.
-	scratch := scratchDir(c.homeDir, task.TaskID)
 	// A task on a topic its agent keeps a session on works in the topic's
-	// directory instead (#130): the next task on the topic finds the session
-	// there, and the directory's name in the prompt stays the same.
+	// directory instead of its own (#130): the next task on the topic finds
+	// the session there, and the directory's name in the prompt stays the
+	// same. The task's own directory is made only when it is used.
+	scratch := ""
 	if task.WorkDirKey != "" {
 		if dir := topicScratchDir(c.homeDir, task.WorkDirKey); dir != "" {
-			scratch = resumeDir(runtime, c.homeDir, dir, scratch, task.ResumeSessionID)
+			scratch = dir
+			if own := taskScratchPath(c.homeDir, task.TaskID); resumeDir(runtime, c.homeDir, dir, own, task.ResumeSessionID) == own {
+				scratch = ""
+			}
 		}
+	}
+	if scratch == "" {
+		scratch = scratchDir(c.homeDir, task.TaskID)
 	}
 	if n, err := sweepScratch(c.homeDir, time.Now(), scratch); err != nil {
 		c.log.Warn("scratch directories of past tasks not all removed", "removed", n, "err", err)

@@ -116,13 +116,18 @@ func (Mock) HasSession(spec RunSpec, id string) bool {
 	return err == nil
 }
 
+var mockSessionIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+
 // mockSessionPath mirrors Claude Code's layout: ~/.mock/sessions/<cwd>/<id>.
 func mockSessionPath(spec RunSpec, id string) string {
 	cwd := spec.WorkDir
 	if cwd == "" {
 		cwd = spec.HomeDir
 	}
-	if spec.HomeDir == "" || id == "" || strings.ContainsAny(id, `/\`) || strings.Contains(id, "..") {
+	// The id comes from the run (a task body can set it through mock:line),
+	// so it becomes a path element only in the one plain form an engine's
+	// session id takes.
+	if spec.HomeDir == "" || !mockSessionIDPattern.MatchString(id) || strings.Contains(id, "..") {
 		return ""
 	}
 	return filepath.Join(spec.HomeDir, ".mock", "sessions", claudeProjectKey(cwd), id)

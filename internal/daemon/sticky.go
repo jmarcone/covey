@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -26,10 +27,12 @@ var topicPattern = regexp.MustCompile(`^(pr|issue):[1-9][0-9]*$`)
 // ValidTopic says whether s is a topic in TopicFormat.
 func ValidTopic(s string) bool { return len(s) <= 64 && topicPattern.MatchString(s) }
 
-// topicDirPattern is the only form a topic directory name takes: no separator,
-// no dot, nothing a path could be built from but one plain name. The control
+// topicDirPattern is the only form a topic directory name takes,
+// topic-<agent id>-<pr|issue>-<n>: no separator, no dot, nothing a path could
+// be built from but one plain name — and nothing an agent would name a
+// directory of its own, which the sweep would otherwise take for one. The control
 // plane composes it (orchestrator.topicWorkDir); the daemon accepts nothing else.
-var topicDirPattern = regexp.MustCompile(`^topic-[a-z0-9][a-z0-9-]{0,150}$`)
+var topicDirPattern = regexp.MustCompile(`^topic-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-(pr|issue)-[1-9][0-9]{0,62}$`)
 
 func isTopicDir(name string) bool { return topicDirPattern.MatchString(name) }
 
@@ -120,4 +123,13 @@ func resumeDir(rt Runtime, home, topicDir, taskDir, resumeID string) string {
 		return taskDir
 	}
 	return topicDir
+}
+
+// taskScratchPath is where scratchDir would put the task's own directory,
+// without making it; "" for an id scratchDir refuses.
+func taskScratchPath(home, taskID string) string {
+	if home == "" || !isTaskID(taskID) {
+		return ""
+	}
+	return filepath.Join(home, scratchRoot, strings.ToLower(taskID))
 }

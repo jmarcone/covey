@@ -107,7 +107,7 @@ func TestStickyFixRoundResumesSession(t *testing.T) {
 	if va.Resume != "" {
 		t.Fatalf("the first task on a topic starts fresh, resumed %q", va.Resume)
 	}
-	if !strings.HasSuffix(va.WorkDir, "/scratch/topic-sticky-dev-pr-42") {
+	if !strings.HasSuffix(va.WorkDir, "/scratch/topic-"+dev.ID.String()+"-pr-42") {
 		t.Fatalf("a topic task works in the topic's directory, is %q", va.WorkDir)
 	}
 	if d, r := s.decision(a.ID); d != backlog.DecisionFresh || r != backlog.ReasonNoPrevious {
@@ -410,7 +410,7 @@ func TestStickyBlockKeepsTopic(t *testing.T) {
 	if err := json.Unmarshal([]byte(*got.Result), &v); err != nil {
 		t.Fatalf("result %q", *got.Result)
 	}
-	if v.Resume != mockSessionID(task.ID) || !strings.HasSuffix(v.WorkDir, "/scratch/topic-block-dev-pr-11") {
+	if v.Resume != mockSessionID(task.ID) || !strings.HasSuffix(v.WorkDir, "/scratch/topic-"+dev.ID.String()+"-pr-11") {
 		t.Fatalf("blocked→working resumes its own session in the topic dir: %+v", v)
 	}
 	if v.Prompt != "the left one" && !strings.Contains(v.Prompt, "the left one") {
@@ -444,7 +444,7 @@ func TestStickyContinuation(t *testing.T) {
 	}
 	// The continuation resumes the cut-off session in the topic's directory,
 	// under the prompt that session was started with.
-	if vc.Resume != mockSessionID(task.ID) || !strings.HasSuffix(vc.WorkDir, "/scratch/topic-cont-dev-pr-21") {
+	if vc.Resume != mockSessionID(task.ID) || !strings.HasSuffix(vc.WorkDir, "/scratch/topic-"+dev.ID.String()+"-pr-21") {
 		t.Fatalf("continuation: resume %q dir %q", vc.Resume, vc.WorkDir)
 	}
 	var parentPrompt, childPrompt string

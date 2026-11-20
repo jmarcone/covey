@@ -90,26 +90,13 @@ func effectiveStickyPolicy(policy, topic string) string {
 }
 
 // topicWorkDir is the topic's directory name under ~/scratch:
-// topic-<agent>-<kind>-<n>, with everything outside [a-z0-9-] in the slug
-// replaced. The daemon accepts no other form (daemon/sticky.go).
-func topicWorkDir(slug, topic string) string {
-	var b strings.Builder
-	for _, r := range strings.ToLower(slug) {
-		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
-			b.WriteRune(r)
-		} else {
-			b.WriteByte('-')
-		}
-	}
-	s := strings.Trim(b.String(), "-")
-	if len(s) > 80 {
-		s = strings.TrimRight(s[:80], "-")
-	}
-	if s == "" {
-		s = "agent"
-	}
+// topic-<agent id>-<kind>-<n>. The agent's id and not its slug: a slug can be
+// renamed, and a blocked task resuming its session after a rename would look
+// for it in a directory of another name. The daemon accepts no other form
+// (daemon/sticky.go).
+func topicWorkDir(agentID uuid.UUID, topic string) string {
 	kind, number := backlog.TopicParts(topic)
-	return "topic-" + s + "-" + kind + "-" + number
+	return "topic-" + agentID.String() + "-" + kind + "-" + number
 }
 
 // credentialKey names the pool value a session runs on, for the comparison
@@ -147,7 +134,7 @@ func (o *Orchestrator) planSticky(ctx context.Context, agent agents.Agent, task 
 	// to decide.
 	if task.RuntimeSessionID != nil && task.ResumeInput != nil {
 		if state.Policy != "" && state.Policy != agents.StickyFresh {
-			plan.workDirKey = topicWorkDir(agent.Slug, topic)
+			plan.workDirKey = topicWorkDir(agent.ID, topic)
 		}
 		if state.Prompt != nil {
 			plan.pinned = &sessionPrompt{*state.Prompt, state.Memory, ""}
@@ -171,7 +158,7 @@ func (o *Orchestrator) planSticky(ctx context.Context, agent agents.Agent, task 
 		plan.decision.Decision = backlog.DecisionFresh
 		plan.decision.Reason = reason
 		if policy != agents.StickyFresh {
-			plan.workDirKey = topicWorkDir(agent.Slug, topic)
+			plan.workDirKey = topicWorkDir(agent.ID, topic)
 			plan.record = &sessionPrompt{compiled, memCtx, basis}
 		}
 		if found {
@@ -214,7 +201,7 @@ func (o *Orchestrator) planSticky(ctx context.Context, agent agents.Agent, task 
 	// in the system prompt they would change the prefix and turn the whole
 	// resumed context into a cache write.
 	plan.decision.Decision = backlog.DecisionPending
-	plan.workDirKey = topicWorkDir(agent.Slug, topic)
+	plan.workDirKey = topicWorkDir(agent.ID, topic)
 	plan.pinned = &sessionPrompt{*pred.Prompt, pred.Memory, pred.Basis}
 	plan.record = plan.pinned
 	plan.sessionID = pred.SessionID
