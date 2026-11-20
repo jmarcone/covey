@@ -92,7 +92,7 @@ var createCommitPath = regexp.MustCompile(`/(repos/[^/]+/[^/]+|repositories/[^/]
 // ErrBodyTooLarge is what a commit-creating request over maxBody gets: it
 // cannot be given an author, and sending it without one would record the
 // token's own account.
-var ErrBodyTooLarge = errors.New("gitauthor: commit body over the cap, refusing to send it without an author")
+var ErrBodyTooLarge = errors.New("gitauthor: commit message too long: the request body is over 1 MiB; shorten the message")
 
 // maxBody caps what the transport buffers to rewrite. A commit request carries
 // a message and SHAs, but the message is the agent's and the pack puts no cap

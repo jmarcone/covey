@@ -494,9 +494,10 @@ Both compose files pass the variable on (`x-covey-base`), so a line in the
 `.env` is enough there; another way of starting covey has to set it in the
 control plane's environment itself.
 
-A commit-creating request the transport cannot rewrite is refused, not sent
-without an author: a body over 1 MiB (the commit message is the agent's and has
-no cap of its own) fails with an error. A redirect to
+A commit request too large to rewrite (a body over 1 MiB; the commit message is
+the agent's and has no cap of its own) is refused with an error, not sent
+without an author. A body that is not JSON, or that already carries an author
+or committer key, goes out unchanged. A redirect to
 `/repositories/{id}/git/commits`, which GitHub sends for a renamed or moved
 repository, is rewritten like the original request. Only the github plugin is
 covered; the GitLab commit action sets no identity.

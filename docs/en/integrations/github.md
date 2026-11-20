@@ -340,7 +340,7 @@ move. The alternative (the contents API) writes one file per commit, so a change
 across five files would arrive as five commits and every intermediate state
 would be a broken tree in the history.
 
-Two guarantees the action enforces itself, not by prompt discipline:
+Three guarantees the action enforces itself, not by prompt discipline:
 
 - **A direct commit onto the default branch is refused.** The route into the
   main branch leads exclusively through a pull request.
