@@ -140,6 +140,24 @@ const (
 	migrationsRefused                       // a restart will refuse: numbering disagrees with the database
 )
 
+// mismatchRemedy words the way out by who can act, and prints the statement
+// where the numbers settle it. The reader is an operator: for a binary that is
+// an unmerged branch the numbering is fixed in the source, and for a database
+// that ran a branch build it is one row, recorded by hand — never rewritten by
+// the doctor, which reads and changes nothing.
+func mismatchRemedy(ms []db.NameMismatch) string {
+	var steps []string
+	for _, m := range ms {
+		if st := m.Statement(); st != "" {
+			steps = append(steps, st+";")
+			continue
+		}
+		steps = append(steps, fmt.Sprintf("version %d: the database has %s, this binary %s — if the database ran a branch build, that row belongs under the number main gave the migration; if this binary is the branch, its migration is renumbered in the source; a migration main never got is a developer's decision",
+			m.Version, m.Applied, m.File))
+	}
+	return "`covey serve` refuses to start until rows and files agree. If this binary is an unmerged branch, renumber its migration in the source (CLAUDE.md). If the database ran a branch build whose numbering main changed: take a backup, check that the SQL of the two files is the same (git diff of the branch's file against main's), then record the row under main's number by hand: " + strings.Join(steps, " ")
+}
+
 // checkMigrations says what a restart is about to do to the database — the one
 // moment somebody would want a backup.
 func (d *doctor) checkMigrations(ctx context.Context, pool *pgxpool.Pool) migrationState {
@@ -152,11 +170,7 @@ func (d *doctor) checkMigrations(ctx context.Context, pool *pgxpool.Pool) migrat
 		for i, m := range mismatch.Mismatches {
 			lines[i] = m.String()
 		}
-		// The reader is an operator, who cannot renumber what is embedded in the
-		// binary — the numbering is a developer's to fix, in the source. Until then
-		// the build this database was migrated with is the one to keep running.
-		d.problem("migrations", strings.Join(lines, "; "),
-			"`covey serve` refuses to start until the numbering is fixed in the source — keep running the build this database was migrated with", true)
+		d.problem("migrations", strings.Join(lines, "; "), mismatchRemedy(mismatch.Mismatches), true)
 		return migrationsRefused
 	}
 	if err != nil {

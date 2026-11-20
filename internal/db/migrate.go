@@ -117,15 +117,30 @@ func (m NameMismatch) Renumbered() bool { return m.Version != m.AppliedVersion }
 
 // String names both sides. It does not say which side is the right one: the
 // guard cannot tell a database that ran a branch build from a binary that is
-// the branch.
+// the branch, and it cannot tell the same migration from a different one with
+// the same name.
 func (m NameMismatch) String() string {
 	at := m.AppliedAt.UTC().Format(time.RFC3339)
 	if m.Renumbered() {
-		return fmt.Sprintf("this database applied %s as version %d (at %s), from another build; this binary carries it as %s under version %d, where it would run a second time",
+		return fmt.Sprintf("this database carries a migration of the same name, %s, as version %d (applied at %s); this binary has it as %s under version %d. If it is the same migration, it would run a second time",
 			m.Applied, m.AppliedVersion, at, m.File, m.Version)
 	}
 	return fmt.Sprintf("this database applied version %d as %s (at %s), from another build; this binary carries %s under the same number",
 		m.Version, m.Applied, at, m.File)
+}
+
+// Statement is the one-row update that records a renumbered migration under
+// the number this binary carries it as. It is empty for the first shape: there
+// the row has no counterpart to move to, and which side is wrong is a decision.
+//
+// It is printed for a person to run, after a backup and after they have checked
+// that the SQL of the two files is the same; nothing here runs it.
+func (m NameMismatch) Statement() string {
+	if !m.Renumbered() {
+		return ""
+	}
+	return fmt.Sprintf("UPDATE schema_migrations SET version=%d, name='%s' WHERE version=%d",
+		m.Version, strings.ReplaceAll(m.File, "'", "''"), m.AppliedVersion)
 }
 
 // NameMismatchError says that migration files and the database disagree on a
@@ -136,10 +151,16 @@ type NameMismatchError struct {
 	Mismatches []NameMismatch
 }
 
-// NameMismatchRemedy is what to do about it, worded for the person who reads a failed
-// start. Which side is wrong depends on which build ran against the database,
-// so it names the rule, not a file.
-const NameMismatchRemedy = "renumber whichever of the two is not on main yet (CLAUDE.md), never one that other databases have already run; `covey serve` refuses until the numbering in the source agrees"
+// NameMismatchRemedy is what to do about it, worded by who can act, because
+// which side is wrong depends on which build ran against the database:
+//
+//   - the binary is an unmerged branch: its migration is renumbered in the
+//     source (CLAUDE.md);
+//   - the database ran a branch build whose numbering main changed: the operator
+//     records the row under main's number — after a backup, and after checking
+//     that the SQL is the same;
+//   - a row of a migration main never got is a developer's decision.
+const NameMismatchRemedy = "if this binary is an unmerged branch, renumber its migration in the source (CLAUDE.md); if the database ran a branch build whose numbering main changed, record the row under main's number after a backup and after checking that the SQL is the same (`covey doctor` prints the statement); a row of a migration main never got is a developer's decision. `covey serve` refuses until rows and files agree"
 
 func (e *NameMismatchError) Error() string {
 	lines := make([]string, len(e.Mismatches))

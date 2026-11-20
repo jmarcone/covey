@@ -171,6 +171,61 @@ func TestMigrateUpRefusesAMigrationRenumberedAfterItRan(t *testing.T) {
 	}
 }
 
+// The way out for a database that ran a branch build is one row: record the
+// migration under the number main gave it. The statement the doctor prints is
+// run here as it is printed; after it the rest runs, and the moved migration
+// does not run a second time.
+func TestMigrateUpAfterTheRowIsMovedToMainsNumber(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	recordApplied(t, pool, 84, "0084_base")
+	recordApplied(t, pool, 85, "0085_rte")
+	// Main files only: the database's own numbering for rte is on no file.
+	fsys := fstest.MapFS{
+		"0084_base.up.sql": {Data: []byte("CREATE TABLE base_probe (id INT)")},
+		"0085_a.up.sql":    {Data: []byte("CREATE TABLE a_probe (id INT)")},
+		"0086_b.up.sql":    {Data: []byte("CREATE TABLE b_probe (id INT)")},
+		"0087_rte.up.sql":  {Data: []byte("CREATE TABLE rte_probe (id INT)")},
+	}
+
+	_, err := MigrateUp(ctx, pool, fsys)
+	var mm *NameMismatchError
+	if !errors.As(err, &mm) {
+		t.Fatalf("MigrateUp returned %v, expected a *NameMismatchError", err)
+	}
+	var stmt string
+	for _, m := range mm.Mismatches {
+		if m.Renumbered() {
+			stmt = m.Statement()
+		} else if m.Statement() != "" {
+			t.Errorf("a same-number mismatch prints a statement: %q", m.Statement())
+		}
+	}
+	const want = "UPDATE schema_migrations SET version=87, name='0087_rte' WHERE version=85"
+	if stmt != want {
+		t.Fatalf("statement = %q, expected %q", stmt, want)
+	}
+
+	if _, err := pool.Exec(ctx, stmt); err != nil {
+		t.Fatal(err)
+	}
+	n, err := MigrateUp(ctx, pool, fsys)
+	if err != nil {
+		t.Fatalf("MigrateUp after the row was moved: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("applied = %d, expected the two new ones (0085_a, 0086_b)", n)
+	}
+	for _, table := range []string{"a_probe", "b_probe"} {
+		if !tableExists(t, pool, table) {
+			t.Errorf("%s was not created: the rest did not run", table)
+		}
+	}
+	if tableExists(t, pool, "rte_probe") {
+		t.Error("the moved migration ran a second time")
+	}
+}
+
 // Two mismatches are both reported at once, in file order, so that fixing the
 // first does not reveal the second only at the next start.
 func TestNameMismatchErrorListsEveryMismatch(t *testing.T) {
