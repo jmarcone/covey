@@ -1,0 +1,267 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Costs — lanes</title><style>:root {
+  /* Ohne ausdrückliche Wahl folgt die Oberfläche dem Betriebssystem;
+     data-theme (gesetzt in src/theme.ts) übersteuert das. `color-scheme`
+     färbt zugleich Bildlaufleisten, Auswahlfelder und Datumsauswahl mit —
+     die Teile der Oberfläche, die der Browser selbst zeichnet. */
+  color-scheme: light;
+
+  /* Exactly neutral, and layered rather than coloured.
+     
+     Two earlier attempts are spent. Warm paper was the rendition every model
+     ships for a filing-cabinet subject. Replacing it with a slightly green
+     grey only removed the colour without putting anything in its place: at a
+     saturation span of 3 out of 255 that is not a hue, it is grey with
+     measurement noise, and it read as flat.
+
+     So the separation comes from layering and hairlines instead, with no hue
+     at all: R, G and B are identical in every ground. Surface-1 is DARKER
+     than surface-0, not lighter — it is the pressed-in surface (sidebar,
+     hover, a resting badge), while surface-2 is the raised one (the card,
+     the form sheet). Measured 4.65:1 or better for every text and mark
+     against all three. */
+  /* Eine Stufe mehr Kontrast, überall.
+     
+     Die vorige Fassung bestand die Prüfung und sah trotzdem flau aus: Die
+     leiseste Schriftstufe lag bei 4,71:1 — knapp über der Grenze, also
+     genau dort, wo „besteht" und „liest sich gut" auseinandergehen —, und
+     die drei Flächen unterschieden sich um den Faktor 1,09, was auf einem
+     durchschnittlichen Bildschirm keine Trennung mehr ist. Jetzt: keine
+     Schriftstufe unter 5,4:1, die Haarlinie deutlich sichtbar, und der
+     Abstand zwischen Grund und Blatt um die Hälfte größer. */
+  --surface-0: light-dark(#f2f2f2, #121214);
+  --surface-1: light-dark(#e6e6e6, #0b0b0c);
+  --surface-2: light-dark(#ffffff, #1f1f22);
+  --text-primary: light-dark(#16161a, #f4f4f5);
+  --text-secondary: light-dark(#48484e, #b4b4ba);
+  --text-muted: light-dark(#5a5a60, #9b9ba1);
+  --border: light-dark(rgba(0, 0, 0, 0.16), rgba(255, 255, 255, 0.2));
+  --border-strong: light-dark(rgba(0, 0, 0, 0.28), rgba(255, 255, 255, 0.34));
+  /* The three message colours of the website, and the rule that they never
+     work alone.
+
+     This reverses an earlier decision, so the reasoning for it stays: the
+     state palette used to be neutral grey, on the grounds that every state
+     already carries a drawn SHAPE (filled runs, hollow rests, dashed is
+     undecided, a bar is held up, a cross has ended) and a colour beside the
+     form only repeats it. The form does still carry the meaning — that is
+     what keeps this accessible, and no state is EVER signalled by hue alone.
+     But grey on grey made a workforce of forty agents read as one grey list,
+     and the product's own website has carried green, amber and red for
+     messages all along. Two palettes for one product was one too many.
+
+     Taken from covey-web's DESIGN.md, measured against every ground they
+     appear on: green 5.7 to 8.9:1, amber 5.1 to 8.4:1, red 6.9 to 7.8:1.
+     The tinted grounds hold their own text at 5.1:1 or better. */
+  /* The one colour, and it is the brand's own. Clay marks action and
+     activity — the primary button, a link, the active navigation point, an
+     agent that is working. Nothing else. The signet keeps #cc7a5b as the
+     picture mark; this is its deeper, text-capable cut, because #cc7a5b
+     carries white at only 3.2:1 and cannot hold a button. Same value on the
+     website, so the product has one mark and not two. */
+  /* Der Lehm, tiefer gefasst und ohne Creme.
+     
+     Die vorige Fassung (#a4522c auf #f6ece6) war die des Kanons der Website,
+     und in der Anwendung las sie sich als Papierton: Jede getönte Fläche
+     bekam einen Beigestich, und beige war auf der Website selbst schon
+     einmal verworfen worden. Der Ton ist jetzt satter und die Tönung
+     neutraler — dieselbe Marke, weniger Kaffee. Gemessen 6,1 bis 9,3:1. */
+  --bg-accent: light-dark(#f2e8e4, #2b1a12);
+  --text-accent: light-dark(#8f3f18, #f0a184);
+  /* Warten ist keine Warnung, und beide brauchen deshalb ihre eigene Farbe.
+     
+     Solange es nur eine gab, trug Bernstein beides: den parkenden Agenten,
+     der auf eine Antwort wartet, und die Zahl, die nicht zählt. Zwei
+     Bedeutungen an einem Ton, und im Verlauf stand die wartende Frage in
+     demselben Warmton wie die eigene Nachricht daneben — zwei warme Flächen,
+     die um dieselbe Aufmerksamkeit warben.
+     
+     Warten ist jetzt kühl: die einzige kalte Farbe der Oberfläche, und damit
+     die, die aus dem Warmton heraussticht, ohne zu alarmieren. Bernstein
+     bleibt der echten Warnung. Gemessen 6,9 bis 9,8:1. */
+  --bg-wait: light-dark(#eceff3, #1c2330);
+  --text-wait: light-dark(#37506e, #9dbbe0);
+  --bg-warning: light-dark(#f5eede, #2a2113);
+  --text-warning: light-dark(#8a5a00, #e0a33a);
+  --bg-success: light-dark(#e7f1ec, #16241d);
+  --text-success: light-dark(#0e6b45, #4ec98a);
+  /* „pro" bleibt neutral: Es ist keine Meldung, sondern eine Gattung
+     (ausgelöst, Triage, MCP). Eine vierte Farbe wäre die, die die Website
+     nicht hat. */
+  --bg-pro: light-dark(#e6e6e6, #2a2a2d);
+  --text-pro: light-dark(#3a3a3e, #b8b8bd);
+  --text-danger: light-dark(#9d2427, #ef8d84);
+  --border-danger: light-dark(rgba(157, 36, 39, 0.35), rgba(239, 141, 132, 0.4));
+  /* The signet keeps its colour so the mark stays the mark across website and
+     product. It is no longer part of the surface system: it marks the brand,
+     it does not tint the interface. */
+  --clay: light-dark(#cc7a5b, #d4805f);
+
+  /* The primary button is filled with ink, the way a form is printed: black
+     on the sheet, not a colour. That frees every colour in the carbon-copy
+     set to mean an addressee instead of an action. White on ink measures
+     16.9:1 light; dark keeps a filled surface darker than its own label. */
+  --accent-solid: light-dark(#1a1d22, #2c3038);
+  --on-accent: #fff;
+
+  /* Schatten tragen auf Papier; im Dunkeln ist der Grund schon schwarz. Sie
+     bleiben, werden aber tiefer und leiser — die Trennung übernimmt dort die
+     hellere Kante (--border). */
+  --shadow-xs: light-dark(rgba(0, 0, 0, 0.05), rgba(0, 0, 0, 0.4));
+  --shadow-sm: light-dark(rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0.5));
+  --shadow-md: light-dark(rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0.6));
+  --shadow-lg: light-dark(rgba(0, 0, 0, 0.32), rgba(0, 0, 0, 0.72));
+  /* Schleier hinter Dialogen und Schubladen. */
+  --scrim: light-dark(rgba(0, 0, 0, 0.3), rgba(0, 0, 0, 0.6));
+  --scrim-weak: light-dark(rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0.45));
+
+  /* Lasuren: eine Spur Tinte auf hellem Grund, eine Spur Licht auf dunklem.
+     Sie heben eine Fläche an, ohne eine eigene Farbe mitzubringen. */
+  --tint-weak: light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.045));
+  --tint: light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.07));
+  /* Glanzkante oben auf erhabenen Flächen — im Dunkeln fast nur noch angedeutet. */
+  --inset-highlight: light-dark(rgba(255, 255, 255, 0.4), rgba(255, 255, 255, 0.06));
+
+  /* Eingefärbte Lasuren: Drop-Ziele, Lehm-Schein, Löschen-Warnung. Sie leiten
+     sich von --clay/--text-accent/--text-danger ab und drehen deshalb mit. */
+  --accent-tint: color-mix(in srgb, var(--text-accent) 12%, transparent);
+  --accent-ring: color-mix(in srgb, var(--text-accent) 30%, transparent);
+  --danger-tint: color-mix(in srgb, var(--text-danger) 9%, transparent);
+  --warning-ring: color-mix(in srgb, var(--text-warning) 34%, transparent);
+  --wait-ring: color-mix(in srgb, var(--text-wait) 34%, transparent);
+  --success-ring: color-mix(in srgb, var(--text-success) 30%, transparent);
+
+  /* The Costs page's colour code, explained once in its key: one hue per
+     source of a figure, everywhere on the page, each at least 3:1 against the
+     card in both themes (#ffffff / #1f1f22). Grey = what Claude Code reported,
+     blue = recomputed from tokens with the list, green = real money of a
+     subscription (an estimate, drawn hatched), teal = billed by Anthropic. */
+  --cost-reported: light-dark(#6e6e76, #a1a1a8);
+  --cost-recomputed: light-dark(#2f6db5, #6fa8e8);
+  --cost-real: light-dark(#2e7d3e, #4fbf6a);
+  --cost-billed: light-dark(#0e7a7e, #3fc1c0);
+  /* Cost and token types: one blue family, light (cheap, plentiful) to dark
+     (dear). Only for types — never for a source or an agent. */
+  --cost-type-input: light-dark(#7d9fd0, #9dbbe8);
+  --cost-type-cache-read: light-dark(#5582c4, #7aa3dc);
+  --cost-type-cache-write: light-dark(#36639f, #5b8fd6);
+  --cost-type-cache-write-1h: light-dark(#2a5390, #4a7fc8);
+  --cost-type-output: light-dark(#1d4580, #b3cdf2);
+  --cost-type-web-search: light-dark(#6a5fb0, #9c90e0);
+  --cost-type-unpriced: light-dark(#7c828c, #8d939c);
+  /* Agents: a qualitative palette that never reuses a source hue (no grey,
+     blue, green or teal) and has one orange only. */
+  --agent-1: light-dark(#d9711c, #e8913f);
+  --agent-2: light-dark(#8e5cc0, #b28be0);
+  --agent-3: light-dark(#cc3d5a, #ea7088);
+  --agent-4: light-dark(#a88600, #d6b23a);
+  --agent-5: light-dark(#b8418f, #dc77b8);
+  --agent-6: light-dark(#8a5a3b, #c49470);
+  --agent-7: light-dark(#5c5c8a, #9a9ad0);
+  --agent-8: light-dark(#c26d8e, #e8a0bb);
+
+  --radius: 8px;
+  --sans: "Inter", ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+:root[data-theme="dark"]{color-scheme:dark}
+:root{--cost-meter:light-dark(#1f1f24,#ececef)}
+@font-face{font-family:"Inter";font-weight:400;src:url("fonts/inter-latin-400-normal.woff2") format("woff2")}
+@font-face{font-family:"Inter";font-weight:500;src:url("fonts/inter-latin-500-normal.woff2") format("woff2")}
+*{box-sizing:border-box}
+body{margin:0;background:var(--surface-0);color:var(--text-primary);font-family:var(--sans);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+h1,h2,h3{font-weight:500;margin:0}
+.muted{color:var(--text-muted)}.xs{font-size:12px}.sm{font-size:13px}.num{font-variant-numeric:tabular-nums}
+.app{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100vh}
+.side{background:var(--surface-1);padding:22px 20px;border-right:.5px solid var(--border)}
+.side div{padding:6px 0;color:var(--text-secondary)}.side .on{color:var(--text-primary);font-weight:500}
+main{padding:24px 32px 48px;max-width:1160px}
+.top{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+a.lnk{color:var(--text-accent);text-decoration:none}
+.ctx{position:sticky;top:0;z-index:2;background:var(--surface-0);border-bottom:.5px solid var(--border);padding:10px 0;margin:10px 0 16px;display:flex;gap:10px 16px;flex-wrap:wrap;align-items:center}
+.sel{border:.5px solid var(--border-strong);border-radius:6px;padding:4px 10px;background:var(--surface-2);font-size:13px}
+.sel b{font-weight:500}.lbl{color:var(--text-muted);font-size:12px;margin-right:4px}
+.span{color:var(--text-secondary);font-size:13px;flex:1;min-width:200px}
+.badge{display:inline-flex;gap:6px;align-items:center;border:1px solid var(--border-strong);border-radius:999px;padding:3px 12px 3px 8px;font-size:13px;color:var(--text-secondary);background:var(--surface-2);text-decoration:none}
+.badge i{font-style:normal;font-weight:500;width:16px;height:16px;border-radius:50%;display:inline-grid;place-items:center;font-size:11px;border:1.5px solid currentColor}
+.badge.warn{color:var(--text-warning);background:var(--bg-warning);border-color:var(--warning-ring)}
+.badge.fail{color:var(--text-danger);background:var(--danger-tint);border-color:var(--border-danger)}
+.badge.fail i{border-radius:3px}.badge.warn i{border-radius:2px;transform:rotate(45deg)}.badge.warn i span{transform:rotate(-45deg)}
+.card{background:var(--surface-2);border:.5px solid var(--border);border-radius:var(--radius);padding:16px 18px}
+.band{padding:20px 22px;margin-bottom:12px}
+.q{font-size:13px;color:var(--text-secondary);display:flex;gap:8px;align-items:center}
+.big{font-size:44px;line-height:1.1;font-weight:500;letter-spacing:-.01em;font-variant-numeric:tabular-nums;margin:2px 0 0}
+.sub{color:var(--text-secondary);font-size:13px}
+.info{display:inline-grid;place-items:center;width:20px;height:20px;border:1px solid var(--border-strong);border-radius:50%;font-size:12px;color:var(--text-secondary);background:var(--surface-2)}
+.row3.two{grid-template-columns:repeat(2,minmax(0,1fr))}
+.row3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:16px;padding-top:14px;border-top:.5px solid var(--border)}
+.fig .v{font-size:24px;font-weight:500;font-variant-numeric:tabular-nums;line-height:1.2}
+.fig .l{font-size:13px;color:var(--text-secondary);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;background:var(--c);vertical-align:baseline}
+.sw.real{background:repeating-linear-gradient(45deg,var(--c) 0 2px,transparent 2px 4px);outline:1px solid var(--c);outline-offset:-1px}
+.split{display:flex;height:14px;border-radius:3px;overflow:hidden;gap:2px;margin:12px 0 6px}
+.split>span{display:block;height:100%}
+.split .real{background:repeating-linear-gradient(45deg,var(--c) 0 3px,transparent 3px 6px);outline:1px solid var(--c);outline-offset:-1px}
+.legend{display:flex;gap:6px 18px;flex-wrap:wrap;font-size:13px;color:var(--text-secondary)}
+.gauge{margin:12px 0 8px;position:relative;height:28px}
+.gauge .trk{position:absolute;left:0;right:0;top:10px;height:8px;background:var(--tint);border-radius:4px;border:.5px solid var(--border)}
+.gauge .fill{position:absolute;left:0;top:10px;height:8px;background:var(--cost-meter);border-radius:4px 0 0 4px}
+.gauge .fc{position:absolute;top:10px;height:8px;background:repeating-linear-gradient(90deg,var(--cost-meter) 0 2px,transparent 2px 5px);opacity:.55}
+.gauge .stop{position:absolute;top:2px;height:24px;width:0;border-left:2px solid var(--text-danger)}
+.gl{display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);position:relative;height:18px}
+.gl span{position:absolute;transform:translateX(-50%);white-space:nowrap}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:12px}
+.tile{display:block;color:inherit;text-decoration:none;min-height:150px;display:flex;flex-direction:column;gap:4px;position:relative}
+.tile .t{font-weight:500;font-size:14px}
+.tile .qq{font-size:13px;color:var(--text-secondary)}
+.tile .hv{font-size:22px;font-weight:500;font-variant-numeric:tabular-nums;margin-top:auto;line-height:1.2}
+.tile .hs{font-size:12px;color:var(--text-muted)}
+.tile .go{position:absolute;right:16px;top:14px;color:var(--text-muted)}
+.tile.inc .hv{color:var(--text-muted)}
+.chip{display:inline-block;font-size:12px;padding:1px 8px;border-radius:999px;border:1px dashed var(--border-strong);color:var(--text-secondary);margin-left:6px;font-weight:400;vertical-align:middle}
+.chip.w{border-color:var(--warning-ring);color:var(--text-warning)}
+.alert{display:flex;gap:10px;padding:10px 14px;border-radius:var(--radius);margin-bottom:12px;font-size:13px}
+.alert.warn{background:var(--bg-warning);color:var(--text-warning);border:.5px solid var(--warning-ring)}
+.alert.fail{background:var(--danger-tint);color:var(--text-danger);border:.5px solid var(--border-danger)}
+.alert b{font-weight:500}.alert a{color:inherit}
+table{border-collapse:collapse;width:100%}
+th{font-weight:500;text-align:right;font-size:12px;color:var(--text-muted);padding:6px 8px;border-bottom:.5px solid var(--border-strong)}
+th:first-child,td:first-child{text-align:left}
+td{padding:8px;border-bottom:.5px solid var(--border);text-align:right;font-variant-numeric:tabular-nums}
+tfoot td{font-weight:500;border-bottom:0}
+.drawer{position:fixed;right:0;top:0;bottom:0;width:420px;background:var(--surface-2);border-left:.5px solid var(--border-strong);box-shadow:-8px 0 24px var(--shadow-md);padding:20px 22px;overflow:auto;z-index:5;display:none}
+.drawer h3{font-size:16px;margin-bottom:4px}.drawer h4{font-size:13px;margin:14px 0 2px;font-weight:500}
+.drawer p{margin:2px 0;font-size:13px;color:var(--text-secondary)}.drawer .calc{font-variant-numeric:tabular-nums;background:var(--tint-weak);border:.5px solid var(--border);border-radius:6px;padding:8px 10px;margin:6px 0;font-size:13px;color:var(--text-primary)}
+.scrim{position:fixed;inset:0;background:var(--scrim);z-index:4;display:none}
+body.drawer-open .drawer,body.drawer-open .scrim{display:block}
+.x{float:right;font-size:13px;border:.5px solid var(--border-strong);border-radius:6px;padding:2px 10px}
+@media (max-width:700px){
+ .app{display:block}.side{display:none}
+ main{padding:12px 14px 32px}
+ .big{font-size:36px}.grid{grid-template-columns:1fr}.row3,.row3.two{grid-template-columns:1fr}
+ .tile{min-height:0}.tile .hv{margin-top:6px}
+ .drawer{top:auto;left:0;right:0;width:auto;max-height:82vh;border-left:0;border-top:.5px solid var(--border-strong);border-radius:12px 12px 0 0;box-shadow:0 -8px 24px var(--shadow-md)}
+ .ctx .span{order:5;flex-basis:100%}
+}
+
+.s-stale .b-ok,.s-red .b-ok{display:none}.b-warn,.b-fail,.a-warn,.a-fail{display:none}
+.s-stale .b-warn,.s-stale .a-warn,.s-red .b-fail,.s-red .a-fail{display:flex}
+.r,.st{display:none}.s-red .r,.s-stale .st{display:inline}
+.s-red .nr,.s-stale .nst{display:none}
+.s-red .rb,.s-stale .stb{display:block}.rb,.stb{display:none}
+.hv small{font-size:13px;font-weight:400;color:var(--text-secondary)}
+.chip{white-space:nowrap}
+</style></head><body><div class="app"><nav class="side" aria-hidden="true"><b>Admin</b><div>Org Chart</div><div class="on">Costs</div><div>Credentials</div><div>Settings</div></nav><main><div class="top"><h1 style="font-size:22px">Costs</h1><span class="muted sm">› Lanes</span></div><div class="ctx"><span><span class="lbl">Range</span><span class="sel"><b>Since meter start</b> ▾</span></span>
+<span><span class="lbl">Account</span><span class="sel"><b>All accounts</b> ▾</span></span>
+<span class="span">Fri 20 Nov 16:00 → Tue 24 Nov 09:28 UTC · 3.7 of 7 days</span>
+<a class="badge b-ok" href="#"><i>✓</i>Numbers checked</a>
+<a class="badge b-warn warn" href="#"><i><span>!</span></i>Check · meter reading stale</a>
+<a class="badge b-fail fail" href="#"><i>×</i>Check failed · uploader silent</a></div>
+<div class="alert warn a-warn"><span>▲</span><span><b>The weekly meter was last read 20 h ago.</b> Figures that read it are marked “as of Mon 23 Nov 13:28 UTC”. <a href="#">See the checks</a></span></div>
+<div class="alert fail a-fail"><span>■</span><span><b>The operator's usage uploader has been silent for 20 h.</b> Token price and what is built from outside usage are incomplete: each figure it touches shows “≥” or the chip “incomplete”. Real cost is not affected. <a href="#">See the checks</a></span></div>
+<section class="card band"><div class="q">Which way of working merges PRs cheapest and cleanest? <span class="info">i</span></div>
+<div class="big" style="font-size:30px">2 of 3 lanes compared <span class="sub" style="font-size:16px">14 merged PRs</span></div><div class="sub">Merged between Fri 20 Nov 16:00 and Tue 24 Nov 09:28 UTC. A lane with fewer than 3 PRs is shown but not compared.</div>
+<table style="margin-top:14px"><thead><tr><th>Lane</th><th><span class="sw" style="--c:var(--cost-recomputed);background:var(--cost-recomputed)"></span>Token price per PR, linked cost</th><th>≈ Real cost per PR (range)</th><th>Hours to merge (median)</th><th>Review rounds (mean)</th><th>Majors per PR</th></tr></thead><tbody><tr><td>covey team<br><span class="xs muted">8 PRs</span></td><td>$20.40</td><td>≈ $2.75 (2.45 – 3.05)</td><td>9.5 h</td><td>1.9</td><td>0.6</td></tr><tr><td>Department lead + subagents<br><span class="xs muted">4 PRs</span></td><td>$19.63</td><td>≈ $2.64 (2.36 – 2.93)</td><td>6.2 h</td><td>1.5</td><td>0.3</td></tr><tr><td>Operator session + subagents<br><span class="xs muted">2 PRs: too few to compare</span></td><td style="color:var(--text-muted)">$27.30</td><td style="color:var(--text-muted)">≈ $0.73 (0.37 – 1.09)</td><td style="color:var(--text-muted)">3.1 h</td><td style="color:var(--text-muted)">1.0</td><td style="color:var(--text-muted)">0.0</td></tr></tbody>
+<tfoot><tr><td>All lanes · 14 PRs</td><td>$21.16</td><td>≈ $2.43 (2.13 – 2.74)</td><td>7.4 h</td><td>1.6</td><td>0.4</td></tr></tfoot></table>
+<p class="xs muted" style="margin:10px 0 0;max-width:760px">Both cost columns count only cost linked to the lane's merged PRs; cost not linked to any merged PR ($102.12, 25.6 % of all covey work) is in Work, where the all-in figure is $28.46 per merged PR. Token price compares the work: every lane is priced by the same list. ≈ Real cost depends on which account paid and on who moved the meter, so a lane on the flat seat looks cheap there; read it as “what it cost us”, not “how much work it was”.</p></section></main></div><script>var h=location.hash;if(h.includes('dark'))document.documentElement.dataset.theme='dark';
+if(h.includes('drawer'))document.body.classList.add('drawer-open');
+if(h.includes('red')||h.includes('stale'))document.body.classList.add(h.includes('red')?'s-red':'s-stale');</script></body></html>
