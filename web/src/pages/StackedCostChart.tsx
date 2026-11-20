@@ -484,7 +484,7 @@ const READINGS_SHOWN = 4;
 /** The readings a period's details list, each as its time and value ("18:05 UTC 9 %"), the first of a new week
  *  marked as such; null marks the readings left out of the middle. */
 function readingTexts(ps: readonly MeterPoint[], fmtAt: (iso: string) => string, t: TFunction): (string | null)[] {
-  const text = (p: MeterPoint) => `${fmtAt(p.at)} ${fmtNumber(p.pct, 0)} %${p.reset ? ` (${t("costs.fig.meterReset")})` : ""}`;
+  const text = (p: MeterPoint) => `${fmtAt(p.at)} ${fmtNumber(p.pct, 0)} %${p.newWeek ? ` (${t("costs.fig.meterReset")})` : ""}`;
   return ps.length <= 2 * READINGS_SHOWN ? ps.map(text) : [...ps.slice(0, READINGS_SHOWN).map(text), null, ...ps.slice(-READINGS_SHOWN).map(text)];
 }
 
@@ -558,10 +558,16 @@ export function MeterSwatch() {
   );
 }
 
+/** A chart's notes (a line per period) come with the label of their column
+ *  and of their line in the details: notes never go without a label of their own. */
+type NotesProps =
+  | { notes?: undefined; notesLabel?: undefined }
+  | { /** A line per period. */ notes?: Map<number, string>; /** The notes' column header in the table and their label in the details. */ notesLabel: string };
+
 /** Groups of bars over the periods. Every period is focusable: focus or hover
  *  opens its details, Enter/Space (or a tap) pins them, Escape closes them.
  *  "Show as table" renders the same numbers as a table. */
-export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis, height = 280, max, notes, notesLabel, meter, showX = true, asTable, wide }: {
+export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis, height = 280, max, notes, notesLabel, meter, showX = true, asTable, wide }: NotesProps & {
   title: string;
   periods: string[];
   groups: Bar[][];
@@ -572,10 +578,6 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
   height?: number;
   /** A shared top for several charts (small multiples). */
   max?: number;
-  /** A line per period. */
-  notes?: Map<number, string>;
-  /** The notes' column header in the table and their label in the details. */
-  notesLabel?: string;
   /** The weekly meter as a line over the periods, on a right-hand axis from 0
    *  to 100 %: the readings, the axis's title ("Weekly meter (%)"), the meter's
    *  name for the details and the table ("Weekly meter") and how a reading's
@@ -587,13 +589,13 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
   wide?: boolean;
 }) {
   const { t } = useTranslation();
-  const notesHead = notesLabel ?? t("costs.fig.meterCol");
+  const notesHead = notesLabel ?? "";
   const uid = useId().replace(/[^a-zA-Z0-9_-]/g, "");
   const [hover, setHover] = useState<number | null>(null);
   const [pinned, setPinned] = useState<number | null>(null);
   const open = pinned ?? hover;
   const scroller = useRef<HTMLDivElement>(null);
-  // A scroll re-places an open tooltip (see tipLeft); the number itself is read from the scroller.
+  // A scroll or a resize re-places an open tooltip (see tipLeft); the number itself is read from the scroller.
   const [, setScrolled] = useState(0);
 
   // The series and their totals: the <desc>, the table's last row.
@@ -631,11 +633,31 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
   }, [meter]);
   // A chart with the meter's axis scrolls with its newest period in view: the
   // axis sticks to the right edge and would otherwise hide the last bar.
+  // It scrolls there on the first draw, when the range or the bucket changes
+  // (the number of periods jumps by more than the one a refetch adds), and
+  // when the view was already at the end; a user who scrolled back to an
+  // older period stays there when a new one arrives.
   const hasMeter = meter != null, newest = periods.at(-1);
+  const drawn = useRef<{ width: number; n: number; step: number } | null>(null);
   useEffect(() => {
     const el = scroller.current;
-    if (hasMeter && el) el.scrollLeft = el.scrollWidth;
+    if (!hasMeter || !el) { drawn.current = null; return; }
+    const before = drawn.current;
+    const step = periods.length > 1 ? Date.parse(periods[1]) - Date.parse(periods[0]) : 0;
+    const atEnd = before != null && el.scrollLeft + el.clientWidth >= before.width - 2;
+    if (before == null || atEnd || Math.abs(periods.length - before.n) > 1 || step !== before.step) el.scrollLeft = el.scrollWidth;
+    drawn.current = { width: el.scrollWidth, n: periods.length, step };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasMeter, periods.length, newest]);
+  // A window or orientation change re-places a pinned or open tooltip, as a scroll does.
+  const isOpen = (pinned ?? hover) != null;
+  useEffect(() => {
+    const el = scroller.current;
+    if (!isOpen || !el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setScrolled((n) => n + 1));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [isOpen]);
   const desc = t("costs.fig.chartDesc", { totals: series.map((s) => `${s.label} ${fmtValue(s.total)}`).join(", ") });
   // The price-table check of a period's bars: a column only where some period has one.
   // A period's readings as one string: the table's cell and the period's label.
@@ -1429,9 +1451,11 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
   };
   // The weekly meter as a line: a subscription's readings, by the server's
   // weeks. Not an API key's, and not in the per-agent charts: the meter
-  // belongs to the credential, not to an agent.
+  // belongs to the credential, not to an agent. Not at 10 minutes either:
+  // the meter is read per hour (costs.outside.tenMinNoMeter, as Real and
+  // Billed), so every reading there would be a gap and the chart dots only.
   const meterLine = useMemo(() => {
-    if (!f.meter || f.kind === "api_key") return undefined;
+    if (!f.meter || f.kind === "api_key" || bucket === "10min") return undefined;
     const points = meterPoints(readings, f.meter, periods, bucket);
     return points.length > 0 ? points : undefined;
   }, [f.meter, f.kind, readings, periods, bucket]);
@@ -1441,7 +1465,8 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
     points: meterLine,
     label: t("costs.fig.meterLine"),
     name: t("costs.fig.meterName"),
-    fmtAt: (iso: string) => (bucket === "week" || bucket === "month" ? fmtBucket(iso, "hour") : fmtClockUTC(iso)),
+    // A week, a month or 10 hours can span days (20:00 to 06:00): the reading names its day.
+    fmtAt: (iso: string) => (bucket === "week" || bucket === "month" || bucket === "10hour" ? fmtBucket(iso, "hour") : fmtClockUTC(iso)),
   }, [meterLine, bucket, t]);
 
   const barsFor = (cs: CostCell[], i: number, withMoney: boolean): Bar[] => {
@@ -1578,7 +1603,7 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
             </div>
           )}
           <BarChart title={`${t("costs.chartCost")} · ${name}`} periods={periods} groups={combined} fmtPeriod={fmtPeriod}
-            fmtValue={fmtUSD} fmtAxis={fmtUSDAxis} notes={notes} asTable={asTable} wide={vs}
+            fmtValue={fmtUSD} fmtAxis={fmtUSDAxis} notes={notes} notesLabel={t("costs.outside.colNote")} asTable={asTable} wide={vs}
             meter={meterProp} />
         </>
       ) : (

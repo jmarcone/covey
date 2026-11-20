@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { fireEvent, screen, within } from "@testing-library/react";
+import { useState } from "react";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { act, fireEvent, screen, within } from "@testing-library/react";
 import type { CostCells, MeterSegment, UsageReading } from "../api";
 import i18n from "../i18n";
 import { fmtBucket, fmtUSD, fmtUSDAxis } from "../format";
 import { renderWithProviders } from "../test/render";
-import { meterPoints } from "./costFigures";
+import { meterPoints, nextBucket, usableReadings } from "./costFigures";
 import { BarChart, CostExplorer, type Bar } from "./StackedCostChart";
 
 // The weekly meter as a line over the cost bars (#117): one dot per usable
@@ -95,6 +96,28 @@ describe("weekly meter line", () => {
     expect(parts(daily.container)[0].querySelector("polyline")).not.toBeNull();
   });
 
+  it("draws no line at 10 minutes: the meter is read per hour there, as Real and Billed are not drawn", () => {
+    const rs = [reading(iso(18, 10, 5), 10), reading(iso(18, 10, 15), 10), reading(iso(18, 10, 25), 11)];
+    const segs = [seg(iso(18, 10, 5), iso(18, 10, 25))];
+    const ten = chart(cellsOf([iso(18, 10, 0), iso(18, 10, 10), iso(18, 10, 20)], segs), rs, "10min");
+    expect(ten.container.querySelector("[data-meter-line]")).toBeNull();
+    expect(ten.container.querySelector("[data-meter-axis]")).toBeNull();
+    ten.unmount();
+    const hour = chart(cellsOf([iso(18, 10, 0)], segs), rs, "hour");
+    expect(hour.container.querySelector("[data-meter-line]")).not.toBeNull();
+  });
+
+  it("names the day of a reading in a 10-hour bucket, which can cross midnight", () => {
+    // 11/18 20:00 to 11/19 06:00 UTC is one 10-hour bucket; a reading at 02:00 is on the 19th
+    const b = 1_794_996_000_000 + 36_000_000;
+    expect(new Date(b).toISOString()).toBe(iso(18, 20));
+    const at = new Date(b + 6 * 3600_000).toISOString();
+    const rs = [reading(at, 10)];
+    const { container } = chart(cellsOf([new Date(b).toISOString()], [seg(at, at)]), rs, "10hour");
+    fireEvent.focusIn(container.querySelector<SVGGElement>("g[data-period]")!);
+    expect(screen.getByRole("tooltip").querySelector("[data-meter-readings]")!.textContent).toContain(fmtBucket(at, "hour"));
+  });
+
   // 3
   it("draws a weekly reset as a fall from the old week's last value to the new week's first", () => {
     const rs = [reading(iso(18, 18, 5), 49), reading(iso(18, 18, 20), 51), reading(iso(18, 18, 40), 2), reading(iso(18, 18, 55), 3)];
@@ -126,6 +149,9 @@ describe("weekly meter line", () => {
     const { container } = chart(cellsOf([iso(18, 1), iso(18, 9)], segs), rs, "hour");
     expect(parts(container)).toHaveLength(2);
     expect(container.querySelector("[data-meter-drop]")).toBeNull();
+    // the week did change, and the tooltip of that period says so
+    fireEvent.focusIn(container.querySelectorAll<SVGGElement>("g[data-period]")[1]);
+    expect(screen.getByRole("tooltip").querySelector("[data-meter-readings]")!.textContent).toContain("09:10 UTC 3 % (new week)");
   });
 
   // 4
@@ -214,7 +240,7 @@ describe("weekly meter line", () => {
 describe("weekly meter line: legibility", () => {
   beforeEach(() => { void i18n.changeLanguage("en"); });
   const bar = (v: number): Bar[] => [{ key: "x", label: "x", color: "red", valueLabel: true, segs: [{ key: "x", label: "x", color: "red", value: v }] }];
-  const point = (pct: number, slot: number, frac: number, at: string, part = 0) => ({ at, pct, slot, frac, part, reset: false });
+  const point = (pct: number, slot: number, frac: number, at: string, part = 0) => ({ at, pct, slot, frac, part, reset: false, newWeek: false });
   const draw = (points: ReturnType<typeof point>[], n = 2) => {
     const periods = Array.from({ length: n }, (_, i) => iso(18, i));
     return renderWithProviders(
@@ -277,7 +303,7 @@ describe("weekly meter line: position", () => {
 
   it("puts 0 % on the baseline, 100 % at the top, and a reading at its fraction of its bucket's slot", () => {
     const periods = [iso(18, 18), iso(18, 19)];
-    const point = (pct: number, slot: number, frac: number, part = 0) => ({ at: iso(18, 19, 30), pct, slot, frac, part, reset: false });
+    const point = (pct: number, slot: number, frac: number, part = 0) => ({ at: iso(18, 19, 30), pct, slot, frac, part, reset: false, newWeek: false });
     const { container } = renderWithProviders(
       <BarChart title="t" periods={periods} groups={periods.map(() => bar(1))} fmtPeriod={(p) => p} fmtValue={fmtUSD} fmtAxis={fmtUSDAxis}
         meter={{ points: [point(0, 1, 0.5), point(100, 1, 0.5, 1), point(50, 0, 0.25, 2)], label: "m", name: "n", fmtAt: (s) => s }} />,
@@ -303,7 +329,7 @@ describe("meterPoints", () => {
 
   it("gives each reading its slot and its fraction of the bucket", () => {
     const ps = meterPoints([reading(iso(18, 18, 45), 10)], cov([seg(iso(18, 18, 45), iso(18, 18, 45))]), [iso(18, 17), iso(18, 18)], "hour");
-    expect(ps).toEqual([{ at: iso(18, 18, 45), pct: 10, slot: 1, frac: 0.75, part: 0, reset: false }]);
+    expect(ps).toEqual([{ at: iso(18, 18, 45), pct: 10, slot: 1, frac: 0.75, part: 0, reset: false, newWeek: false }]);
   });
 
   it("draws nothing for a reading in no segment, in no period, or without segments", () => {
@@ -333,6 +359,90 @@ describe("meterPoints", () => {
     expect(meterPoints(weeks, cov(segs), [iso(16, 0), iso(22, 0), iso(23, 0)], "day").map((p) => p.part)).toEqual([0, 1, 1]);
     expect(meterPoints(weeks, cov(segs), [iso(16, 0), iso(23, 0)], "day").map((p) => p.part)).toEqual([0, 1]);
   });
+
+  it("knows the width of every bucket the Costs page offers", () => {
+    const t0 = Date.UTC(2026, 10, 18, 10);
+    expect(nextBucket(t0, "10min") - t0).toBe(600_000);
+    expect(nextBucket(t0, "hour") - t0).toBe(3600_000);
+    expect(nextBucket(t0, "10hour") - t0).toBe(36_000_000);
+    expect(nextBucket(Date.UTC(2026, 10, 18), "day") - Date.UTC(2026, 10, 18)).toBe(86400_000);
+    expect(nextBucket(Date.UTC(2026, 10, 16), "week") - Date.UTC(2026, 10, 16)).toBe(7 * 86400_000);
+    // a month is as long as its calendar month: November has 30 days, December 31, February 28
+    expect(nextBucket(Date.UTC(2026, 10, 1), "month")).toBe(Date.UTC(2026, 11, 1));
+    expect(nextBucket(Date.UTC(2026, 11, 1), "month")).toBe(Date.UTC(2027, 0, 1));
+    expect(nextBucket(Date.UTC(2027, 1, 1), "month")).toBe(Date.UTC(2027, 2, 1));
+  });
+
+  it("places a reading by the width of a 10-minute bucket, and joins readings of adjacent buckets", () => {
+    const segs = [seg(iso(18, 10, 5), iso(18, 10, 25))];
+    const rs = [reading(iso(18, 10, 5), 10), reading(iso(18, 10, 15), 10), reading(iso(18, 10, 25), 11)];
+    const ps = meterPoints(rs, cov(segs), [iso(18, 10, 0), iso(18, 10, 10), iso(18, 10, 20)], "10min");
+    expect(ps.map((p) => p.part)).toEqual([0, 0, 0]);
+    expect(ps.map((p) => p.frac)).toEqual([0.5, 0.5, 0.5]);
+  });
+
+  it("places a reading by the width of a 10-hour bucket, and joins readings of adjacent buckets", () => {
+    // 10-hour buckets start at multiples of 10 h from the epoch: 11/18 10:00 and 20:00 UTC are two of them
+    const b1 = 1_794_996_000_000, b2 = b1 + 36_000_000;
+    expect(new Date(b1).toISOString()).toBe(iso(18, 10));
+    const at = (ms: number) => new Date(ms).toISOString();
+    const segs = [seg(at(b1 + 5 * 3600_000), at(b2 + 3600_000))];
+    const rs = [reading(at(b1 + 5 * 3600_000), 10), reading(at(b1 + 9 * 3600_000), 11), reading(at(b2 + 3600_000), 12)];
+    const ps = meterPoints(rs, cov(segs), [at(b1), at(b2)], "10hour");
+    expect(ps.map((p) => p.frac)).toEqual([0.5, 0.9, 0.1]);
+    // adjacent buckets: one part, no gap where no reading is missing
+    expect(ps.map((p) => p.part)).toEqual([0, 0, 0]);
+  });
+
+  it("joins readings of adjacent months, and splits them at a month between", () => {
+    const segs = [seg(iso(1, 0), "2027-03-31T00:00:00Z")];
+    const m = (y: number, mo: number) => new Date(Date.UTC(y, mo, 1)).toISOString();
+    const rs = [reading(iso(20, 12), 5), reading("2026-12-15T12:00:00Z", 6), reading("2027-02-15T12:00:00Z", 7)];
+    const ps = meterPoints(rs, cov(segs), [m(2026, 10), m(2026, 11), m(2027, 1)], "month");
+    expect(ps.map((p) => p.part)).toEqual([0, 0, 1]);
+    expect(ps[0].frac).toBeCloseTo(19.5 / 30, 6);
+    expect(ps[1].frac).toBeCloseTo(14.5 / 31, 6);
+  });
+
+  it("drops a reading that lags behind into an old week, by the server's rule, and takes only the coverage's window kind", () => {
+    const week1 = "2026-11-25T09:00:00Z", week2 = "2026-12-02T09:00:00Z";
+    const rs = [
+      reading(iso(18, 9), 38, { resets_at: week1 }), reading(iso(18, 10), 39, { resets_at: week1 }),
+      reading(iso(18, 10, 35), 1, { resets_at: week2 }),
+      reading(iso(18, 10, 45), 39, { resets_at: week1, runtime_id: "rt-lagging" }),
+      reading(iso(18, 11), 2, { resets_at: week2 }),
+      // another window kind of the same credential: no week of these segments
+      reading(iso(18, 10, 50), 77, { window_kind: "" }),
+    ];
+    const segs = [seg(iso(18, 9), iso(18, 10), { from_percent: 38, to_percent: 39 }), seg(iso(18, 10, 35), iso(18, 11), { reset: true, from_percent: 1, to_percent: 2 })];
+    const ps = meterPoints(rs, cov(segs), [iso(18, 9), iso(18, 10), iso(18, 11)], "hour");
+    expect(ps.map((p) => p.pct)).toEqual([38, 39, 1, 2]);
+    // the line's readings are the server's: each week's first and last drawn reading are the segment's ends and values
+    for (const g of segs) {
+      const inSeg = ps.filter((p) => Date.parse(p.at) >= Date.parse(g.start_at) && Date.parse(p.at) <= Date.parse(g.end_at));
+      expect([inSeg[0].at, inSeg.at(-1)!.at]).toEqual([g.start_at, g.end_at]);
+      expect([inSeg[0].pct, inSeg.at(-1)!.pct]).toEqual([g.from_percent, g.to_percent]);
+    }
+    expect(ps.map((p) => p.newWeek)).toEqual([false, false, true, false]);
+  });
+
+  it("keeps a late reading when a reset time is within the hour, or missing", () => {
+    const rs = [
+      reading(iso(18, 9), 10, { resets_at: "2026-11-25T09:30:00Z" }), reading(iso(18, 9, 10), 11, { resets_at: "2026-11-25T09:00:00Z" }),
+      reading(iso(18, 9, 20), 12, { resets_at: null }),
+    ];
+    expect(usableReadings(rs, SEAT, 0, "usage_cmd", "seven_day").map((r) => r.week_percent)).toEqual([10, 11, 12]);
+    // the meter card's call, without a window kind, takes the old "" window as well
+    const old = [reading(iso(18, 9), 10, { window_kind: "" }), reading(iso(18, 10), 11)];
+    expect(usableReadings(old, SEAT, 0, "usage_cmd")).toHaveLength(2);
+    expect(usableReadings(old, SEAT, 0, "usage_cmd", "seven_day")).toHaveLength(1);
+  });
+
+  it("marks a new week after a gap as such without drawing a fall", () => {
+    const segs = [seg(iso(18, 1, 50), iso(18, 1, 50)), seg(iso(18, 9, 10), iso(18, 9, 10), { reset: true })];
+    const ps = meterPoints([reading(iso(18, 1, 50), 39), reading(iso(18, 9, 10), 1)], cov(segs), [iso(18, 1), iso(18, 9)], "hour");
+    expect(ps.map((p) => [p.reset, p.newWeek])).toEqual([[false, false], [false, true]]);
+  });
 });
 
 // Design review round 2 of #170.
@@ -342,7 +452,7 @@ describe("weekly meter: names, the $ axis and the tooltip in the scrolled view",
   const periods = Array.from({ length: 10 }, (_, i) => iso(18, i));
   const draw = (asTable = false) => renderWithProviders(
     <BarChart title="t" periods={periods} asTable={asTable} groups={periods.map(() => bar(1))} fmtPeriod={(p) => p} fmtValue={fmtUSD} fmtAxis={fmtUSDAxis}
-      meter={{ points: [{ at: "a", pct: 10, slot: 0, frac: 0.5, part: 0, reset: false }, { at: "b", pct: 20, slot: 9, frac: 0.5, part: 0, reset: false }],
+      meter={{ points: [{ at: "a", pct: 10, slot: 0, frac: 0.5, part: 0, reset: false, newWeek: false }, { at: "b", pct: 20, slot: 9, frac: 0.5, part: 0, reset: false, newWeek: false }],
         label: "m (%)", name: "m", fmtAt: (x) => x }} />,
   );
 
@@ -411,5 +521,94 @@ describe("weekly meter: names, the $ axis and the tooltip in the scrolled view",
     expect(t.width).toBe(140 - 8);
     expect(t.left).toBeGreaterThanOrEqual(304);
     expect(t.left + t.width).toBeLessThanOrEqual(300 + 140 - 4);
+  });
+
+  it("re-places an open tooltip on a scroll", () => {
+    const { container } = draw();
+    const sc = scrolled(container, 390, 0);
+    const before = tipOf(container, 9).left;
+    sc.scrollLeft = 500;
+    fireEvent.scroll(sc);
+    const left = parseFloat(screen.getByRole("tooltip").style.left);
+    expect(left).toBeGreaterThanOrEqual(504);
+    expect(left).not.toBe(before);
+  });
+
+  it("re-places an open tooltip when the window is resized, and stops watching when it closes", () => {
+    const seen: { cb: () => void; disconnected: boolean }[] = [];
+    vi.stubGlobal("ResizeObserver", class {
+      rec: { cb: () => void; disconnected: boolean };
+      constructor(cb: () => void) { this.rec = { cb, disconnected: false }; seen.push(this.rec); }
+      observe() {}
+      unobserve() {}
+      disconnect() { this.rec.disconnected = true; }
+    });
+    try {
+      const { container } = draw();
+      const sc = scrolled(container, 390, 500);
+      const wide = tipOf(container, 9);
+      // an orientation change: the window gets narrower
+      Object.defineProperty(sc, "clientWidth", { configurable: true, value: 300 });
+      act(() => seen.filter((r) => !r.disconnected).forEach((r) => r.cb()));
+      const narrow = screen.getByRole("tooltip");
+      expect(parseFloat(narrow.style.left) + parseFloat(narrow.style.width)).toBeLessThanOrEqual(500 + 300 - 60 - 4);
+      expect(parseFloat(narrow.style.width)).toBeLessThan(wide.width);
+      fireEvent.blur(container.querySelectorAll<SVGGElement>("g[data-period]")[9]);
+      expect(seen.every((r) => r.disconnected)).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("weekly meter: the scroll to the newest period", () => {
+  beforeEach(() => { void i18n.changeLanguage("en"); });
+  const bar = (v: number): Bar[] => [{ key: "x", label: "x", color: "red", segs: [{ key: "x", label: "x", color: "red", value: v }] }];
+  const periodsOf = (n: number, step = 3600_000) => Array.from({ length: n }, (_, i) => new Date(Date.UTC(2026, 10, 18) + i * step).toISOString());
+  const pt = (slot: number) => ({ at: "a", pct: 10, slot, frac: 0.5, part: 0, reset: false, newWeek: false });
+  function Harness({ first }: { first: number }) {
+    const [n, setN] = useState(first);
+    const ps = periodsOf(n);
+    return (
+      <>
+        <button onClick={() => setN(n + 1)}>more</button>
+        <button onClick={() => setN(first + 30)}>range</button>
+        <BarChart title="t" periods={ps} groups={ps.map(() => bar(1))} fmtPeriod={(p) => p} fmtValue={fmtUSD} fmtAxis={fmtUSDAxis}
+          meter={{ points: [pt(0)], label: "m", name: "n", fmtAt: (x) => x }} />
+      </>
+    );
+  }
+  /** A scroller 400 px wide whose content grows 120 px with every period; jsdom measures nothing. */
+  function measured() {
+    const w = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollWidth");
+    const c = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+    Object.defineProperty(HTMLElement.prototype, "scrollWidth", { configurable: true, get() { return this.querySelectorAll("g[data-period]").length * 120 + 64; } });
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get() { return 400; } });
+    return () => {
+      if (w) Object.defineProperty(HTMLElement.prototype, "scrollWidth", w); else delete (HTMLElement.prototype as unknown as Record<string, unknown>).scrollWidth;
+      if (c) Object.defineProperty(HTMLElement.prototype, "clientWidth", c); else delete (HTMLElement.prototype as unknown as Record<string, unknown>).clientWidth;
+    };
+  }
+  const scrollerOf = (c: HTMLElement) => c.querySelector("svg[role=group]")!.parentElement!.parentElement as HTMLElement;
+
+  it("follows a new period when the view is at the end, and stays where a user who scrolled back is", () => {
+    const restore = measured();
+    try {
+      const { container } = renderWithProviders(<Harness first={10} />);
+      const sc = scrollerOf(container);
+      expect(sc.scrollLeft).toBe(10 * 120 + 64);
+      // at the end: a new period scrolls on
+      fireEvent.click(screen.getByRole("button", { name: "more" }));
+      expect(sc.scrollLeft).toBe(11 * 120 + 64);
+      // scrolled back to an older period: the view stays
+      sc.scrollLeft = 200;
+      fireEvent.click(screen.getByRole("button", { name: "more" }));
+      expect(sc.scrollLeft).toBe(200);
+      // a change of range (many periods at once) goes to the end again
+      fireEvent.click(screen.getByRole("button", { name: "range" }));
+      expect(sc.scrollLeft).toBe(40 * 120 + 64);
+    } finally {
+      restore();
+    }
   });
 });

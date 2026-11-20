@@ -1130,12 +1130,29 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
 // --- The meter card ------------------------------------------------------------
 
 /** The readings of one credential and source on the weekly window that can be
- *  used: supported, fresh, with a figure; oldest first. */
-export function usableReadings(rs: readonly UsageReading[], key: string, slot: number, source: string): UsageReading[] {
-  return rs
+ *  used: supported, fresh, with a figure; oldest first. `windowKind` is the
+ *  window the readings belong to: the meter card (no `windowKind`) takes
+ *  "seven_day" and "" (older daemons) together; a chart that draws the
+ *  server's weeks passes its coverage's own kind, since the segments belong
+ *  to that one only.
+ *
+ *  A reading that lags behind into an old week is dropped, by the server's
+ *  rule (stacked.go, meterQueryTemplate): its `resets_at` lies more than an
+ *  hour before the latest one an earlier reading gave (a second daemon still
+ *  reporting the old week). The mark is the latest reset time of all earlier
+ *  readings, so a run of late ones goes as a whole. */
+export function usableReadings(rs: readonly UsageReading[], key: string, slot: number, source: string, windowKind?: string): UsageReading[] {
+  const sorted = rs
     .filter((r) => r.secret_key === key && r.secret_slot === slot && r.source === source && r.supported && !r.stale
-      && r.week_percent != null && (r.window_kind === "seven_day" || r.window_kind === ""))
+      && r.week_percent != null && (windowKind != null ? r.window_kind === windowKind : r.window_kind === "seven_day" || r.window_kind === ""))
     .sort((a, b) => Date.parse(a.fetched_at) - Date.parse(b.fetched_at));
+  let seen = NaN;
+  return sorted.filter((r) => {
+    const resets = r.resets_at ? Date.parse(r.resets_at) : NaN;
+    const late = !Number.isNaN(resets) && !Number.isNaN(seen) && resets < seen - 3600_000;
+    if (!Number.isNaN(resets) && !(resets <= seen)) seen = resets;
+    return !late;
+  });
 }
 
 /** One drawn reading of the weekly meter's line. */
@@ -1153,6 +1170,10 @@ export type MeterPoint = {
   /** The first reading of a new week, read right after the last of the old one
    *  (no gap between them): the line falls from the previous point to it. */
   reset: boolean;
+  /** The first reading of a new week, with or without a gap before it: the
+   *  details say "new week" for it. After a gap there is no fall to draw
+   *  (`reset` is false), but the week did change. */
+  newWeek: boolean;
 };
 
 /** The start of the bucket after the one that starts at `start`. */
@@ -1161,7 +1182,8 @@ export function nextBucket(start: number, bucket: string): number {
     const d = new Date(start);
     return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
   }
-  return start + (bucket === "hour" ? 3600_000 : bucket === "week" ? 7 * 86400_000 : 86400_000);
+  const width = { "10min": 600_000, hour: 3600_000, "10hour": 36_000_000, week: 7 * 86400_000 }[bucket] ?? 86400_000;
+  return start + width;
 }
 
 /** The y of the weekly meter on the chart's right-hand axis: 0 % on the
@@ -1185,7 +1207,7 @@ export function meterPoints(rs: readonly UsageReading[], cov: MeterCoverage, per
   const slots = new Map(periods.map((p, i) => [Date.parse(p), i]));
   const out: MeterPoint[] = [];
   let part = -1, lastSeg = -1, lastStart = NaN;
-  for (const r of usableReadings(rs, cov.secret_key, cov.secret_slot, cov.source)) {
+  for (const r of usableReadings(rs, cov.secret_key, cov.secret_slot, cov.source, cov.window_kind)) {
     const at = Date.parse(r.fetched_at);
     const seg = segs.findIndex(([a, b]) => at >= a && at <= b);
     const start = bucketStart(at, bucket);
@@ -1194,7 +1216,8 @@ export function meterPoints(rs: readonly UsageReading[], cov: MeterCoverage, per
     const next = nextBucket(start, bucket);
     const gap = start !== lastStart && start !== nextBucket(lastStart, bucket);
     if (gap) part++;
-    out.push({ at: r.fetched_at, pct: r.week_percent!, slot, frac: (at - start) / (next - start), part, reset: !gap && lastSeg >= 0 && seg !== lastSeg });
+    const newWeek = lastSeg >= 0 && seg !== lastSeg;
+    out.push({ at: r.fetched_at, pct: r.week_percent!, slot, frac: (at - start) / (next - start), part, reset: !gap && newWeek, newWeek });
     lastSeg = seg;
     lastStart = start;
   }
