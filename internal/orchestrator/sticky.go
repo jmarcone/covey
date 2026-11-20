@@ -180,18 +180,22 @@ func (o *Orchestrator) planSticky(ctx context.Context, agent agents.Agent, task 
 			plan.decision.Context = &c
 		}
 	}
+	// Another round on the topic is still in play (blocked on its own
+	// session, say): it holds newer work than the predecessor, and the topic
+	// directory is where it comes back to. Asked first, whatever else would
+	// be decided: a round beside it — resumed or fresh — must neither fork
+	// the topic's line of work nor write into that directory.
+	if policy != agents.StickyFresh {
+		if open, err := o.Backlog.OpenSessionOnTopic(ctx, agent.OrgID, agent.ID, topic, task.ID); err != nil || open {
+			if err != nil {
+				o.Log.Warn("sticky: open rounds on the topic not readable — starting fresh", "task", task.ID, "err", err)
+			}
+			return fresh(backlog.ReasonBusy)
+		}
+	}
 	if reason := stickyVerdict(policy, found, pred, now, agent.StickyWindowMinutes, agent.StickyContextCap,
 		credentialKey(s), basis); reason != "" {
 		return fresh(reason)
-	}
-	// Another round on the topic is still in play (blocked on its own
-	// session, say): it holds newer work than the predecessor, and resuming
-	// the older session beside it would fork the topic's line of work.
-	if open, err := o.Backlog.OpenSessionOnTopic(ctx, agent.OrgID, agent.ID, topic, task.ID); err != nil || open {
-		if err != nil {
-			o.Log.Warn("sticky: open rounds on the topic not readable — starting fresh", "task", task.ID, "err", err)
-		}
-		return fresh(backlog.ReasonBusy)
 	}
 	claimed, err := o.Backlog.ClaimSession(ctx, pred.TaskID, task.ID)
 	if err != nil || !claimed {

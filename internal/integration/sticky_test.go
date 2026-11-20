@@ -732,8 +732,8 @@ func TestStickyBusyRoundHasItsOwnDir(t *testing.T) {
 
 // A busy round that runs into the turn limit: its continuation resumes the
 // busy round's session where it lies, in the busy round's own directory —
-// not in the topic's, which holds the blocked round's work. And the busy
-// chain is no predecessor for the next round.
+// not in the topic's, which holds the blocked round's work. A round while the
+// blocked one is still in play is busy too, whatever its predecessor.
 func TestStickyBusyRoundContinuation(t *testing.T) {
 	s := newStack(t)
 	ctx := context.Background()
@@ -773,9 +773,20 @@ func TestStickyBusyRoundContinuation(t *testing.T) {
 	if vn.Resume != "" || !strings.Contains(vn.Prompt, "## Handover (pr:6)") {
 		t.Fatalf("round 4 after a busy chain: fresh with its handover, resumed %q", vn.Resume)
 	}
-	if d, r := s.decision(n.ID); d != backlog.DecisionFresh || (r != backlog.ReasonNoSession && r != backlog.ReasonBusy) {
+	// Round 2 is still blocked: round 4 is busy and keeps out of the topic's
+	// directory.
+	if d, r := s.decision(n.ID); d != backlog.DecisionFresh || r != backlog.ReasonBusy {
 		t.Fatalf("round 4: %s/%s", d, r)
 	}
+	if !strings.HasSuffix(vn.WorkDir, "/scratch/"+n.ID.String()) {
+		t.Fatalf("round 4 works in its own directory, is %q", vn.WorkDir)
+	}
+	// Once round 2 is done, the next round finds no round in play: the
+	// newest finished work decides.
+	if _, err := s.backlog.Answer(ctx, blocked.ID, "ada", "the left one"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "round 2 done", 30*time.Second, func() bool { return s.taskState(blocked.ID) == backlog.StateDone })
 	_ = first
 }
 
@@ -811,5 +822,26 @@ func (s *stack) setStickyAtRest(agentID uuid.UUID, policy string) {
 	waitFor(s.t, "agent at rest", 30*time.Second, func() bool { return s.agentStatus(agentID) == agents.StatusSleeping })
 	if err := s.registry.SetSticky(context.Background(), agentID, policy, 55, 200000); err != nil {
 		s.t.Fatal(err)
+	}
+}
+
+// A round that would start fresh anyway (no finished predecessor yet) still
+// keeps out of the topic's directory while another round is blocked there.
+func TestStickyFreshRoundBesideABlockedOne(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	dev := s.stickyAgent("beside-fresh-dev", agents.StickyConditional)
+	blocked, err := s.backlog.CreateWithTopic(ctx, s.orgID, dev.ID, "Round 1",
+		"[mock:block key=ext:pr-8 question=which?]", "manual", 3, "pr:8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "round 1 blocked", 30*time.Second, func() bool { return s.taskState(blocked.ID) == backlog.StateBlocked })
+	b, vb := s.runTopic(dev, "Round 2", "pr:8", "")
+	if d, r := s.decision(b.ID); d != backlog.DecisionFresh || r != backlog.ReasonBusy {
+		t.Fatalf("round 2 beside a blocked round 1: %s/%s", d, r)
+	}
+	if !strings.HasSuffix(vb.WorkDir, "/scratch/"+b.ID.String()) {
+		t.Fatalf("round 2 works in its own directory, is %q", vb.WorkDir)
 	}
 }
