@@ -1229,7 +1229,7 @@ func TestBilledTenHourSaysWhereTheHourlyRowsBegin(t *testing.T) {
 			VALUES ($1,'1h',$2,$3,'apikey_z','claude-opus-5-5','tokens','output_tokens',100,100,$4,$4)`,
 			f.s.orgID, at, at.Add(time.Hour), now)
 	}
-	series, err := f.s.obs.BilledSeries(f.ctx, f.s.orgID, "10hour", now.Add(-10*24*time.Hour))
+	series, err := f.s.obs.BilledSeries(f.ctx, f.s.orgID, "10hour", now.Add(-10*24*time.Hour), time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}

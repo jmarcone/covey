@@ -1157,7 +1157,8 @@ func (s *Store) CostSeriesByAgent(ctx context.Context, agentID uuid.UUID, bucket
 	return scanBuckets(rows)
 }
 
-// RunCosts returns the organization's most expensive runs since `since`,
+// RunCosts returns the organization's most expensive runs in [since, until)
+// (a zero until runs to now),
 // costliest first — with agentID set, only that agent's.
 //
 // Grouped by task, not by cost entry: a run books several entries (the run
@@ -1169,7 +1170,7 @@ func (s *Store) CostSeriesByAgent(ctx context.Context, agentID uuid.UUID, bucket
 // The action count comes from the recording as a separate aggregation instead
 // of a second join: joined in directly it would multiply the cost sums by the
 // number of events.
-func (s *Store) RunCosts(ctx context.Context, orgID uuid.UUID, agentID *uuid.UUID, since time.Time, limit int) ([]RunCost, error) {
+func (s *Store) RunCosts(ctx context.Context, orgID uuid.UUID, agentID *uuid.UUID, since, until time.Time, limit int) ([]RunCost, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 50
 	}
@@ -1181,7 +1182,7 @@ func (s *Store) RunCosts(ctx context.Context, orgID uuid.UUID, agentID *uuid.UUI
 				+ mu.web_search_requests * `+strconv.FormatFloat(WebSearchUSD, 'f', -1, 64)+`::numeric, mu.engine_usd))::float8 AS measured,
 				SUM(mu.engine_usd)::float8 AS engine
 			FROM model_usage mu LEFT JOIN prices p ON p.id = `+normModel("mu.model")+`
-			WHERE mu.org_id = $1 AND mu.created_at >= $2 AND mu.task_id IS NOT NULL
+			WHERE mu.org_id = $1 AND mu.created_at >= $2 AND `+beforeSQL("mu.created_at", 5)+` AND mu.task_id IS NOT NULL
 			GROUP BY mu.task_id)
 		SELECT t.id, t.agent_id, a.slug, t.title, t.state, t.origin,
 		       COALESCE(SUM(ce.usd),0), `+tokenSums("ce.")+`, COUNT(ce.id),
@@ -1192,10 +1193,10 @@ func (s *Store) RunCosts(ctx context.Context, orgID uuid.UUID, agentID *uuid.UUI
 		JOIN backlog_tasks t ON t.id = ce.task_id
 		JOIN agents a ON a.id = t.agent_id
 		LEFT JOIN lines l ON l.task_id = t.id
-		WHERE a.org_id = $1 AND ce.created_at >= $2 AND ($3::uuid IS NULL OR t.agent_id = $3)
+		WHERE a.org_id = $1 AND ce.created_at >= $2 AND `+beforeSQL("ce.created_at", 5)+` AND ($3::uuid IS NULL OR t.agent_id = $3)
 		GROUP BY t.id, t.agent_id, a.slug, t.title, t.state, t.origin, t.created_at, t.updated_at, l.measured, l.engine
 		ORDER BY COALESCE(l.measured, SUM(ce.usd)::float8) DESC
-		LIMIT $4`, orgID, since, agentID, limit)
+		LIMIT $4`, orgID, since, agentID, limit, untilArg(until))
 	if err != nil {
 		return nil, err
 	}
@@ -1216,14 +1217,14 @@ func (s *Store) RunCosts(ctx context.Context, orgID uuid.UUID, agentID *uuid.UUI
 // OrgCostReport aggregates an organization's costs: totals, time series,
 // breakdown per agent and per model. cost_entries has no org_id — we therefore
 // join via agents.
-func (s *Store) OrgCostReport(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time) (OrgCostReport, error) {
+func (s *Store) OrgCostReport(ctx context.Context, orgID uuid.UUID, bucket string, since, until time.Time) (OrgCostReport, error) {
 	rep := OrgCostReport{Bucket: normalizeBucket(bucket), Series: []CostBucket{}, Agents: []AgentCost{},
 		Models: []ModelCost{}, Credentials: []CredentialCost{}}
 
 	// Totals.
 	if err := s.pool.QueryRow(ctx, `SELECT COALESCE(SUM(ce.usd),0), `+tokenSums("ce.")+`, COUNT(*)
 		FROM cost_entries ce JOIN agents a ON a.id=ce.agent_id
-		WHERE a.org_id=$1 AND ce.created_at >= $2`, orgID, since).
+		WHERE a.org_id=$1 AND ce.created_at >= $2 AND `+beforeSQL("ce.created_at", 3), orgID, since, untilArg(until)).
 		Scan(&rep.TotalUSD, &rep.Input, &rep.Output, &rep.CacheRead, &rep.CacheCreation, &rep.Entries); err != nil {
 		return rep, err
 	}
@@ -1232,8 +1233,8 @@ func (s *Store) OrgCostReport(ctx context.Context, orgID uuid.UUID, bucket strin
 	rows, err := s.pool.Query(ctx, `SELECT `+periodSQL(rep.Bucket, "ce.created_at")+` AS period,
 		COALESCE(SUM(ce.usd),0), `+tokenSums("ce.")+`, COUNT(*)
 		FROM cost_entries ce JOIN agents a ON a.id=ce.agent_id
-		WHERE a.org_id=$1 AND ce.created_at >= $2
-		GROUP BY period ORDER BY period`, orgID, since)
+		WHERE a.org_id=$1 AND ce.created_at >= $2 AND `+beforeSQL("ce.created_at", 3)+`
+		GROUP BY period ORDER BY period`, orgID, since, untilArg(until))
 	if err != nil {
 		return rep, err
 	}
@@ -1244,11 +1245,11 @@ func (s *Store) OrgCostReport(ctx context.Context, orgID uuid.UUID, bucket strin
 	// Per agent.
 	arows, err := s.pool.Query(ctx, `SELECT a.id, a.slug, a.display_name,
 		COALESCE(SUM(ce.usd),0), `+tokenSums("ce.")+`, COUNT(ce.id)
-		FROM agents a LEFT JOIN cost_entries ce ON ce.agent_id=a.id AND ce.created_at >= $2
+		FROM agents a LEFT JOIN cost_entries ce ON ce.agent_id=a.id AND ce.created_at >= $2 AND `+beforeSQL("ce.created_at", 3)+`
 		WHERE a.org_id=$1
 		GROUP BY a.id, a.slug, a.display_name
 		HAVING COUNT(ce.id) > 0
-		ORDER BY SUM(ce.usd) DESC NULLS LAST`, orgID, since)
+		ORDER BY SUM(ce.usd) DESC NULLS LAST`, orgID, since, untilArg(until))
 	if err != nil {
 		return rep, err
 	}
@@ -1272,8 +1273,8 @@ func (s *Store) OrgCostReport(ctx context.Context, orgID uuid.UUID, bucket strin
 	mrows, err := s.pool.Query(ctx, `SELECT COALESCE(NULLIF(ce.model,''),'unknown'),
 		COALESCE(SUM(ce.usd),0), `+tokenSums("ce.")+`, COUNT(*)
 		FROM cost_entries ce JOIN agents a ON a.id=ce.agent_id
-		WHERE a.org_id=$1 AND ce.created_at >= $2
-		GROUP BY 1 ORDER BY SUM(ce.usd) DESC`, orgID, since)
+		WHERE a.org_id=$1 AND ce.created_at >= $2 AND `+beforeSQL("ce.created_at", 3)+`
+		GROUP BY 1 ORDER BY SUM(ce.usd) DESC`, orgID, since, untilArg(until))
 	if err != nil {
 		return rep, err
 	}
@@ -1304,9 +1305,9 @@ func (s *Store) OrgCostReport(ctx context.Context, orgID uuid.UUID, bucket strin
 		LEFT JOIN runtimes r ON r.id=ce.runtime_id
 		LEFT JOIN runtime_credentials rc
 			ON rc.runtime_id=ce.runtime_id AND rc.ord=ce.credential_ord
-		WHERE a.org_id=$1 AND ce.created_at >= $2 AND ce.runtime_id IS NOT NULL
+		WHERE a.org_id=$1 AND ce.created_at >= $2 AND `+beforeSQL("ce.created_at", 3)+` AND ce.runtime_id IS NOT NULL
 		GROUP BY ce.runtime_id, ce.credential_ord, r.display_name, rc.label, rc.kind
-		ORDER BY SUM(ce.usd) DESC`, orgID, since)
+		ORDER BY SUM(ce.usd) DESC`, orgID, since, untilArg(until))
 	if err != nil {
 		return rep, err
 	}

@@ -10,6 +10,7 @@ import { MonthlyMeters, usageList } from "./CostBasis";
 import { Chip } from "./StackedCostChart";
 import { usableReadings, type CredentialFigures } from "./costFigures";
 import { OrgWide, OutsideMark, SOURCE_COLOR, Swatch, useUsageReadings } from "./StackedCostChart";
+import { windowQuery, type CostWindow } from "./costRange";
 import { externalStamp, kpiLead, listedSources, outsideModelRows, outsideSplit, seatSources, sourceStyles, type OutsideModelRow, type SourceStyles } from "./outsideFigures";
 import { withUnpriced, withinMoney, withinSplit } from "./StackedCostChart";
 
@@ -437,15 +438,18 @@ const times = (v: number) => (Number.isFinite(v) ? `${fmtNumber(v, 1)}×` : "∞
  *  whole organisation — the same the tiles show without an agent filter —
  *  while the model table follows `agents`, the page's agent filter (empty:
  *  all agents). */
-export function CostInsights({ days, figures, agents = NO_AGENTS, outside = null }: {
-  days: number; figures: CredentialFigures[]; agents?: ReadonlySet<string>;
+export function CostInsights({ days, win: customWin, figures, agents = NO_AGENTS, outside = null }: {
+  days: number; /** The window when it is a custom range (days is then its span). */ win?: CostWindow;
+  figures: CredentialFigures[]; agents?: ReadonlySet<string>;
   /** The sessions outside covey, included (#120); null: covey only. */
   outside?: ExternalUsage | null;
 }) {
   const { t } = useTranslation();
+  const win: CostWindow = customWin ?? { days };
+  const wq = windowQuery(win);
   const models = useQuery({
-    queryKey: ["cost", "models", days],
-    queryFn: () => api<ModelUsageReport>(`/cost/models?days=${days}`),
+    queryKey: ["cost", "models", wq],
+    queryFn: () => api<ModelUsageReport>(`/cost/models?${wq}`),
     refetchInterval: 30000,
   });
   // Per source and model, from the outside sessions' own read (the agents'
@@ -454,8 +458,8 @@ export function CostInsights({ days, figures, agents = NO_AGENTS, outside = null
   // /cost/cells, polled anyway, changed), not every 30 s (L4).
   const stamp = useMemo(() => externalStamp(outside), [outside]);
   const outsideModels = useQuery({
-    queryKey: ["cost", "external-usage", days, "day", null, stamp],
-    queryFn: () => api<ExternalModelUsage>(`/cost/external-usage?days=${days}&bucket=day`),
+    queryKey: ["cost", "external-usage", wq, "day", null, stamp],
+    queryFn: () => api<ExternalModelUsage>(`/cost/external-usage?${wq}&bucket=day`),
     staleTime: Infinity,
     placeholderData: (prev) => prev,
     enabled: outside != null,
@@ -466,7 +470,7 @@ export function CostInsights({ days, figures, agents = NO_AGENTS, outside = null
     const names = new Set(listedSources(outside).map((s) => s.source));
     return { ext: outside, styles, rows: outsideModelRows(outsideModels.data.cells.filter((c) => names.has(c.source))) };
   }, [outside, outsideModels.data, styles]);
-  const readings = useUsageReadings(days);
+  const readings = useUsageReadings(win);
   const rs = useMemo(() => readings.data ?? [], [readings.data]);
   const filtered = agents.size > 0;
   const metered = figures.filter((f) => f.meter != null && isSeat(f));

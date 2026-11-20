@@ -56,7 +56,7 @@ func TestCostCellsNameTheAgentsDepartment(t *testing.T) {
 		in["kosten-ohne"]:     {nil, ""},
 	}
 
-	cells, err := s.obs.CostCellsFor(ctx, s.orgID, "hour", time.Now().Add(-time.Hour))
+	cells, err := s.obs.CostCellsFor(ctx, s.orgID, "hour", time.Now().Add(-time.Hour), time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestCostCellsNeverNameAForeignDepartment(t *testing.T) {
 		Model: opus, Credential: seat}); err != nil {
 		t.Fatal(err)
 	}
-	cells, err := s.obs.CostCellsFor(ctx, s.orgID, "hour", time.Now().Add(-time.Hour))
+	cells, err := s.obs.CostCellsFor(ctx, s.orgID, "hour", time.Now().Add(-time.Hour), time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -127,7 +127,7 @@ const modelCell = (source: string, model: string, calls: number, list: number | 
   unpriced_tokens: list == null ? output + 13 : 0, unpriced_calls: list == null ? calls : 0,
 });
 
-function serve(data: CostCells = cells(), route = "/costs") {
+function serve(data: CostCells = cells(), route = "/costs?tz=utc") {
   const ext = data.external;
   mockFetch({
     "/api/v1/cost/cells": data,
@@ -722,7 +722,7 @@ describe("the outside review's minors (#120)", () => {
       "/api/v1/cost/usage-readings": [],
       "/api/v1/cost/indicators": null,
     });
-    const { container } = renderWithProviders(<Costs />, { route: "/costs", path: "/costs" });
+    const { container } = renderWithProviders(<Costs />, { route: "/costs?tz=utc", path: "/costs" });
     const note = await waitFor(() => {
       const n = container.querySelector(`[data-credential="${KEY}#0"] [data-billed-hourly-from]`);
       if (!n) throw new Error("no note yet");
