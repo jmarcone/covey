@@ -647,3 +647,36 @@ func TestStickyBusyBesideBlockedRound(t *testing.T) {
 		t.Fatalf("decision %s/%s", d, r)
 	}
 }
+
+// The handover prefers the review comment as it was posted on the pull request
+// (the recording of the reviewer's github action) over the reviewer's report,
+// and only one newer than the previous round.
+func TestStickyHandoverTakesThePostedReview(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	dev := s.stickyAgent("posted-dev", agents.StickyConditional)
+	reviewer := s.newSupportAgent("posted-reviewer")
+	a, _ := s.runTopic(dev, "Round 1", "pr:77", "")
+	record := func(at time.Duration, pr int, body string) {
+		t.Helper()
+		payload, _ := json.Marshal(map[string]any{"action": "github:comment_pr", "ok": true,
+			"params": map[string]any{"repo": "example/app", "pr_number": pr, "body": body}})
+		if _, err := s.pool.Exec(ctx, `INSERT INTO recording_events (org_id, agent_id, kind, payload, created_at)
+			VALUES ($1,$2,'action',$3, now() - $4::interval)`, s.orgID, reviewer.ID, payload, at.String()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.finishedAgo(a.ID, 60*time.Minute)
+	record(2*time.Hour, 77, "## Review round 0\nOLD: before round 1")
+	record(30*time.Minute, 77, "Thanks.\n## Review round 1\nM1: posted on the PR")
+	record(10*time.Minute, 78, "## Review round 1\nOTHER PR")
+	_, vb := s.runTopic(dev, "Round 2", "pr:77", "")
+	if !strings.Contains(vb.Prompt, "## Review round 1\nM1: posted on the PR") {
+		t.Fatalf("the posted review is in the handover: %q", vb.Prompt)
+	}
+	for _, not := range []string{"OLD: before round 1", "OTHER PR", "Thanks."} {
+		if strings.Contains(vb.Prompt, not) {
+			t.Fatalf("%q must not be in the handover", not)
+		}
+	}
+}

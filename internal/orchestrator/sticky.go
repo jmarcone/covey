@@ -5,12 +5,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"covey/internal/agents"
 	"covey/internal/backlog"
@@ -240,10 +242,15 @@ func stickyInput(task backlog.Task, hits string) string {
 func (o *Orchestrator) stickyHandover(ctx context.Context, agent agents.Agent, topic string, pred backlog.Predecessor) string {
 	report := strings.TrimSpace(pred.Result)
 	review := ""
-	if kind, _ := backlog.TopicParts(topic); kind == "pr" {
-		var err error
-		if review, err = o.Backlog.LatestReview(ctx, agent.OrgID, agent.ID, topic, pred.FinishedAt); err != nil {
-			o.Log.Warn("sticky: latest review not readable", "topic", topic, "err", err)
+	if kind, number := backlog.TopicParts(topic); kind == "pr" {
+		// The review comment as it was posted on the pull request, from the
+		// recording; else the reviewer's own report on the topic.
+		review = o.postedReview(ctx, agent.OrgID, number, pred.FinishedAt)
+		if review == "" {
+			var err error
+			if review, err = o.Backlog.LatestReview(ctx, agent.OrgID, agent.ID, topic, pred.FinishedAt); err != nil {
+				o.Log.Warn("sticky: latest review not readable", "topic", topic, "err", err)
+			}
 		}
 	}
 	if report == "" && review == "" {
@@ -453,4 +460,37 @@ func stickyVerdict(policy string, found bool, pred backlog.Predecessor, now time
 		return backlog.ReasonPromptChanged
 	}
 	return ""
+}
+
+// reviewActions are the github plugin's actions that post a review on a pull
+// request; their params carry pr_number and body.
+var reviewActions = []string{"github:comment_pr", "github:request_changes", "github:approve_pr"}
+
+// postedReview is the latest "## Review round" comment an agent of the
+// organisation posted on pull request number after since, from its "## Review
+// round" heading on; "" when the recording holds none (a recording level that
+// keeps no params, a review posted outside covey). Idea and query from #205.
+func (o *Orchestrator) postedReview(ctx context.Context, orgID uuid.UUID, number string, since time.Time) string {
+	if o.Pool == nil || number == "" {
+		return ""
+	}
+	var body string
+	err := o.Pool.QueryRow(ctx, `SELECT r.payload->'params'->>'body' FROM recording_events r
+		WHERE r.agent_id IN (SELECT id FROM agents WHERE org_id=$1) AND r.org_id=$1
+		  AND r.kind='action' AND r.created_at > $5
+		  AND r.payload->>'action' = ANY($2)
+		  AND r.payload->'params'->>'pr_number' = $3
+		  AND COALESCE(r.payload->>'ok','') = 'true'
+		  AND r.payload->'params'->>'body' ~ $4
+		ORDER BY r.id DESC LIMIT 1`, orgID, reviewActions, number, `(^|\n)## Review round`, since).Scan(&body)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			o.Log.Warn("sticky: posted review not readable", "pr", number, "err", err)
+		}
+		return ""
+	}
+	if i := strings.LastIndex("\n"+body, "\n## Review round"); i >= 0 {
+		body = body[i:]
+	}
+	return strings.TrimSpace(body)
 }
