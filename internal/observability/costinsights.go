@@ -282,7 +282,8 @@ func usageEach(x func(name string) string, p string) string {
 // the next line's gap holds its share again, booked twice where its run
 // reported). A run killed after a failed line of its own was followed by a
 // filed one is no longer among them: that line's gap counts the failed line
-// as its run's, still to come, and the run's end files it (FileFailedLines).
+// as its run's, still to come, and the run's end files its rows — without a
+// gap of its own, which that line's gap already holds (FileFailedLines).
 //
 // Only a difference above a millionth of a dollar is filed, and only upwards:
 // a negative difference is never booked. Tokens follow the money, each floored
@@ -463,15 +464,15 @@ func (s *Store) RecordRuntime(ctx context.Context, orgID, agentID uuid.UUID, tas
 		VALUES ($1,$2,$3,$4,$5) RETURNING id`, orgID, agentID, taskID, KindRuntime, []byte(payload)).Scan(&id); err != nil {
 		return err
 	}
-	if err := s.fileModelUsage(ctx, id, cred); err != nil {
+	if err := s.fileModelUsage(ctx, id, cred, true); err != nil {
 		return fmt.Errorf("model usage of recording event %d: %w", id, err)
 	}
 	return nil
 }
 
-// fileModelUsage files the per-model rows of recording event id, then the gap
-// it reveals, and books the gap.
-func (s *Store) fileModelUsage(ctx context.Context, id int64, cred CredentialRef) error {
+// fileModelUsage files the per-model rows of recording event id, then — with
+// gap — the gap it reveals, and books the gap.
+func (s *Store) fileModelUsage(ctx context.Context, id int64, cred CredentialRef, gap bool) error {
 	rt, ord, key, slot := cred.columns()
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -480,6 +481,9 @@ func (s *Store) fileModelUsage(ctx context.Context, id int64, cred CredentialRef
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, modelUsageInsert, id, rt, ord, key, slot, cred.Kind); err != nil {
 		return err
+	}
+	if !gap {
+		return tx.Commit(ctx)
 	}
 	tag, err := tx.Exec(ctx, modelUsageGapInsert, id, rt, ord, key, slot, cred.Kind)
 	if err != nil {
@@ -514,6 +518,11 @@ func (s *Store) fileModelUsage(ctx context.Context, id int64, cred CredentialRef
 // Copies of one line count once, the first: the same session and running
 // total, as the gap counts them (a copy carries the line's uuid, and a line
 // without one its total).
+//
+// Each line comes with its session and whether a later line of the session
+// has rows (followed): that line's gap was measured from the same bound, over
+// the failed line, and subtracted the failed line's share as its run's — what
+// a dead process spent before the failed line is in it already.
 var failedLines = `
 WITH run AS (
 	SELECT r.id, r.created_at FROM recording_events r
@@ -532,7 +541,10 @@ u AS (
 	SELECT DISTINCT ON (l.session_id, l.total) l.*
 	FROM l
 	ORDER BY l.session_id, l.total, l.id)
-SELECT u.id FROM u
+SELECT u.id, u.session_id, EXISTS (
+	SELECT 1 FROM model_usage p
+	WHERE u.session_id <> '' AND p.session_id = u.session_id AND p.event_id > u.id) AS followed
+FROM u
 WHERE NOT EXISTS (
 	SELECT 1 FROM cost_entries c
 	WHERE c.task_id = $1 AND c.agent_id = $2 AND c.created_at >= u.started
@@ -553,7 +565,11 @@ ORDER BY u.id`
 // budget, its sandbox gone, or its booking failed — before BookUnreported,
 // which then books their rows like any other line's. Each line goes through
 // fileModelUsage on its own, oldest first, against cred, the run's
-// credential: its rows, the gap it reveals and the gap's booking.
+// credential: its rows, and — where no later line of its session has rows —
+// the gap it reveals and the gap's booking. Where a later line has rows, its
+// gap holds what a dead process spent between the bound and the failed line
+// already (failedLines, followed); the failed line's gap would book that a
+// second time, so only its rows are filed.
 //
 // A line filed this way is a filed line for every gap after it, so a line
 // of the session resumed later does not count it among the failed ones: it
@@ -561,25 +577,45 @@ ORDER BY u.id`
 // the session comes, and a later line of the same run would subtract it as
 // its run's, the report still to come.
 //
-// It returns how many lines it filed. The first failure ends it, the lines
-// before it staying filed: a line filed after a failed one would subtract
-// that one as its run's, the report still to come, and lose it. Left
-// unfiled, both stay with the gap of the session's next line.
+// It returns how many lines it filed and the first error. A failure ends its
+// session, the lines before it staying filed: a later line of that session
+// filed after the failed one would subtract it as its run's, the report still
+// to come, and lose it. Left unfiled, both stay with the gap of the session's
+// next line. The other sessions of the run (a sub-run's is its own) go on.
 func (s *Store) FileFailedLines(ctx context.Context, agentID, taskID uuid.UUID, cred CredentialRef) (int, error) {
 	rows, err := s.pool.Query(ctx, failedLines, taskID, agentID)
 	if err != nil {
 		return 0, err
 	}
-	ids, err := pgx.CollectRows(rows, pgx.RowTo[int64])
+	type failedLine struct {
+		id       int64
+		session  string
+		followed bool
+	}
+	lines, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (failedLine, error) {
+		var l failedLine
+		err := r.Scan(&l.id, &l.session, &l.followed)
+		return l, err
+	})
 	if err != nil {
 		return 0, err
 	}
-	for i, id := range ids {
-		if err := s.fileModelUsage(ctx, id, cred); err != nil {
-			return i, fmt.Errorf("model usage of recording event %d: %w", id, err)
+	filed, stopped := 0, map[string]bool{}
+	var first error
+	for _, l := range lines {
+		if l.session != "" && stopped[l.session] {
+			continue
 		}
+		if err := s.fileModelUsage(ctx, l.id, cred, !l.followed); err != nil {
+			if first == nil {
+				first = fmt.Errorf("model usage of recording event %d: %w", l.id, err)
+			}
+			stopped[l.session] = true
+			continue
+		}
+		filed++
 	}
-	return len(ids), nil
+	return filed, first
 }
 
 // ModelTokens is what one model consumed, with the cache writes split by TTL.

@@ -835,30 +835,32 @@ func TestCostOfAFailedLineOfAKilledRun(t *testing.T) {
 		// unreported entry.
 		f       float64
 		refiled bool
+		// gap: what a process without a line spent, booked once as a gap.
+		gap float64
 	}{
 		{"killed", func(task uuid.UUID) []gapRun {
 			return []gapRun{{task: task, lines: []recordedLine{gapLine(0.5, 0.5), gapLine(0.8, 0.3)},
 				failed: map[int]bool{1: true}, end: "killed"}}
-		}, 0.8, 0.8, 0.8, true},
+		}, 0.8, 0.8, 0.8, true, 0},
 		{"reported", func(task uuid.UUID) []gapRun {
 			return []gapRun{{task: task, lines: []recordedLine{gapLine(0.5, 0.5), gapLine(0.8, 0.3)},
 				failed: map[int]bool{1: true}, end: "booked"}}
-		}, 0.8, 0, 0.8, false},
+		}, 0.8, 0, 0.8, false, 0},
 		{"followed by a filed line", func(task uuid.UUID) []gapRun {
 			return []gapRun{
 				{task: task, lines: []recordedLine{gapLine(0.5, 0.5)}, end: "booked"},
 				{task: task, lines: []recordedLine{gapLine(1.3, 0.8), gapLine(1.7, 0.4)},
 					failed: map[int]bool{0: true}, end: "killed"},
 			}
-		}, 1.7, 1.2, 1.3, true},
+		}, 1.7, 1.2, 1.3, true, 0},
 		{"sent twice", func(task uuid.UUID) []gapRun {
 			return []gapRun{{task: task, lines: []recordedLine{gapLine(0.5, 0.5), gapLine(0.8, 0.3), gapLine(0.8, 0.3)},
 				failed: map[int]bool{1: true, 2: true}, resent: map[int]bool{2: true}, end: "killed"}}
-		}, 0.8, 0.8, 0.8, true},
+		}, 0.8, 0.8, 0.8, true, 0},
 		{"derived", func(task uuid.UUID) []gapRun {
 			return []gapRun{{task: task, lines: []recordedLine{gapLine(0.5, 0.5), gapLine(0.8, 0.3)},
 				failed: map[int]bool{1: true}, derived: true, end: "killed"}}
-		}, 0.8, 0.8, 0.8, true},
+		}, 0.8, 0.8, 0.8, true, 0},
 		{"derived, followed by a filed line", func(task uuid.UUID) []gapRun {
 			// L2's derived row is its total minus L0's row: F's share is in
 			// it, and filing F would book it twice.
@@ -867,7 +869,35 @@ func TestCostOfAFailedLineOfAKilledRun(t *testing.T) {
 				{task: task, lines: []recordedLine{gapLine(1.3, 0.8), gapLine(1.7, 0.4)},
 					failed: map[int]bool{0: true}, derived: true, end: "killed"},
 			}
-		}, 1.7, 1.2, 1.3, false},
+		}, 1.7, 1.2, 1.3, false, 0},
+		// A process without a line before F (0.2 of 1.5 - 0.5 - 0.8). Where
+		// a later line of F's session was filed, its gap measured over F from
+		// the same bound and holds the 0.2: F is filed without a gap of its
+		// own, or the 0.2 is booked twice.
+		{"dead process before f, a later line filed", func(task uuid.UUID) []gapRun {
+			return []gapRun{
+				{task: task, lines: []recordedLine{gapLine(0.5, 0.5)}, end: "booked"},
+				{task: task, lines: []recordedLine{gapLine(1.5, 0.8), gapLine(1.9, 0.4)},
+					failed: map[int]bool{0: true}, end: "killed"},
+			}
+		}, 1.9, 1.2, 1.5, true, 0.2},
+		{"dead process before f, a later line filed in one run", func(task uuid.UUID) []gapRun {
+			return []gapRun{{task: task, lines: []recordedLine{gapLine(0.5, 0.5), gapLine(1.5, 0.8), gapLine(1.9, 0.4)},
+				failed: map[int]bool{1: true}, end: "killed"}}
+		}, 1.9, 1.7, 1.5, true, 0.2},
+		{"dead process before f, f last", func(task uuid.UUID) []gapRun {
+			// No later line: F's own gap is the only one that finds the 0.2.
+			return []gapRun{{task: task, lines: []recordedLine{gapLine(0.5, 0.5), gapLine(1.5, 0.8)},
+				failed: map[int]bool{1: true}, end: "killed"}}
+		}, 1.5, 1.3, 1.5, true, 0.2},
+		{"dead process before f, resumed", func(task uuid.UUID) []gapRun {
+			return []gapRun{
+				{task: task, lines: []recordedLine{gapLine(0.5, 0.5)}, end: "booked"},
+				{task: task, lines: []recordedLine{gapLine(1.5, 0.8), gapLine(1.9, 0.4)},
+					failed: map[int]bool{0: true}, end: "killed"},
+				{task: task, lines: []recordedLine{gapLine(2.3, 0.4)}, end: "booked"},
+			}
+		}, 2.3, 1.2, 1.5, true, 0.2},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			agent := s.newSupportAgent("gap-unberichtet-" + strings.ReplaceAll(strings.ReplaceAll(c.name, " ", "-"), ",", ""))
@@ -875,16 +905,18 @@ func TestCostOfAFailedLineOfAKilledRun(t *testing.T) {
 			sid := uuid.NewString()
 			playGapRuns(t, s, agent.ID, agent.OrgID, sid, c.runs(task))
 			g := readGap(t, s, agent.ID)
-			if g.rows != 0 || g.entries != 0 || g.unlinked != 0 ||
+			if c.gap == 0 && (g.rows != 0 || g.entries != 0) || g.unlinked != 0 ||
+				math.Abs(g.rowsUSD-c.gap) > 1e-6 || math.Abs(g.entryUSD-c.gap) > 1e-6 ||
 				math.Abs(g.booked-c.booked) > 1e-6 || math.Abs(g.unreported-c.unreported) > 1e-6 {
-				t.Fatalf("want %v booked, %v of it unreported, no gap: %+v", c.booked, c.unreported, g)
+				t.Fatalf("want %v booked, %v of it unreported, a gap of %v: %+v", c.booked, c.unreported, c.gap, g)
 			}
-			// F's rows, if any: the first line with F's running total.
+			// F's own rows, if any (not its gap's): the first line with F's
+			// running total.
 			var rows int
 			var unreported bool
 			if err := s.pool.QueryRow(ctx, `SELECT count(mu.id), COALESCE(bool_and(c.basis = 'unreported'), false)
 				FROM model_usage mu LEFT JOIN cost_entries c ON c.id = mu.cost_entry_id
-				WHERE mu.event_id = (SELECT min(r.id) FROM recording_events r
+				WHERE mu.basis <> 'gap' AND mu.event_id = (SELECT min(r.id) FROM recording_events r
 					WHERE r.agent_id = $1 AND r.kind = 'runtime' AND (r.payload->>'total_cost_usd')::numeric = $2)`,
 				agent.ID, c.f).Scan(&rows, &unreported); err != nil {
 				t.Fatal(err)
@@ -893,5 +925,54 @@ func TestCostOfAFailedLineOfAKilledRun(t *testing.T) {
 				t.Errorf("F filed again: want %v, F has %d rows (all on the unreported entry: %v)", c.refiled, rows, unreported)
 			}
 		})
+	}
+}
+
+// A failure ends the refiling of its own session only. A sub-run's line (a
+// session of its own) whose filing fails again leaves the main session's
+// failed line to be filed; the sub-run's later line stays unfiled, or it
+// would subtract the failed one as its run's and lose it.
+func TestFileFailedLinesGoesOnWithTheOtherSessions(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	agent := s.newSupportAgent("nachgereicht-sitzungen")
+	task := uuid.New()
+	sub, main := uuid.NewString(), uuid.NewString()
+	record := func(raw string) int64 {
+		t.Helper()
+		if err := s.obs.Record(ctx, agent.OrgID, agent.ID, &task, observability.KindRuntime, json.RawMessage(raw)); err != nil {
+			t.Fatal(err)
+		}
+		var id int64
+		if err := s.pool.QueryRow(ctx, `SELECT max(id) FROM recording_events WHERE agent_id=$1`, agent.ID).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	if err := s.obs.Record(ctx, agent.OrgID, agent.ID, &task, observability.KindLifecycle, map[string]string{"status": "working"}); err != nil {
+		t.Fatal(err)
+	}
+	// A token count beyond bigint: its rows cannot be filed, again.
+	var line map[string]any
+	if err := json.Unmarshal([]byte(gapLine(0.3, 0.3).json(sub, 0, true)), &line); err != nil {
+		t.Fatal(err)
+	}
+	line["model_usage_since_last_result"].(map[string]any)[opus].(map[string]any)["outputTokens"] = 1e30
+	broken, _ := json.Marshal(line)
+	record(string(broken))
+	later := record(gapLine(0.6, 0.3).json(sub, 1, true))
+	other := record(gapLine(0.8, 0.8).json(main, 0, true))
+
+	n, err := s.obs.FileFailedLines(ctx, agent.ID, task, observability.CredentialRef{})
+	if err == nil || n != 1 {
+		t.Fatalf("want the main session's line filed and the sub-run's failure returned: %d filed, err %v", n, err)
+	}
+	rows := func(id int64) int {
+		var n int
+		_ = s.pool.QueryRow(ctx, `SELECT count(*) FROM model_usage WHERE event_id=$1`, id).Scan(&n)
+		return n
+	}
+	if rows(other) != 1 || rows(later) != 0 {
+		t.Errorf("the main session's line has %d rows (want 1), the sub-run's later line %d (want 0)", rows(other), rows(later))
 	}
 }
