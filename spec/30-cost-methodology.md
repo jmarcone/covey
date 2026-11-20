@@ -383,7 +383,7 @@ FROM m LEFT JOIN prices p ON p.id = m.priced_as
 GROUP BY 1 ORDER BY 1;
 ```
 
-**The bill of one API key per UTC day.** This reads daily rows only, so it is complete for days the daily re-read has covered. The page reads hourly rows for the last two days, where only they exist (`billedHourlyReach`, `billing.go:852`), and for a day on which one API key maps to several credentials (`chosenRows`, `billing.go:405`); for those days compare against the hourly rows summed per UTC day.
+**The bill of one API key per UTC day.** This reads daily rows only, so it is complete for days the daily re-read has covered. The page reads, per UTC day, the width fetched last (hourly on a tie; `chosenRows`, `billing.go:381`); the hourly sync reaches back 48 hours to a UTC midnight (`billedHourlyReach`, `billing.go:852`), so for the last two or three days compare against the hourly rows summed per UTC day. Do the same for a day on which one API key maps to several credentials (`chosenRows`, `billing.go:405`): once that day's hours are complete the page reads its hourly rows.
 
 ```sql
 SELECT (bucket_start AT TIME ZONE 'UTC')::date AS day, SUM(amount_cents) / 100 AS billed_usd,
