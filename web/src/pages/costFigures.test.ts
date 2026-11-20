@@ -16,6 +16,7 @@ import {
   multipleOf,
   perCredentialTotals,
   periodMultiple,
+  pickMeter,
   pricePerPoint,
   realCost,
   realFromWeeks,
@@ -175,6 +176,34 @@ describe("the meter and the multiple", () => {
     expect(reset).toEqual(multipleOf(8, { value: 4 * PP, low: 2 * PP, high: 6 * PP, points: 4 }));
     // points without a plan price: no figure
     expect(periodMultiple(8, [step(P, 4, { usd: 2 * PP, unpriced_points: 2 })])).toBeNull();
+  });
+});
+
+// #165, finding 31: pickMeter is the rule of pickCoverage
+// (internal/observability/external.go): the source with the most readings,
+// usage_cmd before manual before inband on a tie, whatever the order. The
+// cases are the ones of TestPickCoverageTieBreak.
+describe("pickMeter", () => {
+  const cov = (source: string, readings: number, over: Partial<MeterCoverage> = {}) =>
+    coverage({ source, readings, ...over });
+  const permutations = <T,>(xs: T[]): T[][] =>
+    xs.length <= 1 ? [xs] : xs.flatMap((x, i) => permutations([...xs.slice(0, i), ...xs.slice(i + 1)]).map((r) => [x, ...r]));
+  const cases: [string, MeterCoverage[], string][] = [
+    ["usage_cmd over inband on equal readings", [cov("inband", 8), cov("usage_cmd", 8)], "usage_cmd"],
+    ["manual over inband on equal readings", [cov("inband", 8), cov("manual", 8)], "manual"],
+    ["usage_cmd over manual on equal readings", [cov("manual", 8), cov("usage_cmd", 8)], "usage_cmd"],
+    ["all three tied", [cov("inband", 8), cov("manual", 8), cov("usage_cmd", 8)], "usage_cmd"],
+    ["more readings beat the rank", [cov("usage_cmd", 7), cov("inband", 8)], "inband"],
+    ["an unknown source ranks last", [cov("other", 8), cov("inband", 8)], "inband"],
+  ];
+  it.each(cases)("%s, in every order", (_name, input, want) => {
+    for (const order of permutations(input)) expect(pickMeter(order, SEAT, 0)?.source).toBe(want);
+  });
+  it("takes no coverage of another credential or window", () => {
+    const foreign = [cov("usage_cmd", 99, { secret_key: "another" }), cov("usage_cmd", 99, { secret_slot: 1 }),
+      cov("usage_cmd", 99, { window_kind: "five_hour" })];
+    expect(pickMeter([...foreign, cov("inband", 1)], SEAT, 0)?.source).toBe("inband");
+    expect(pickMeter(foreign, SEAT, 0)).toBeNull();
   });
 });
 

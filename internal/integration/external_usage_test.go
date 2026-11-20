@@ -1766,3 +1766,135 @@ func TestExternalUsageLeadPriceAndUnmeteredSides(t *testing.T) {
 			m.UnmeteredCoveyBeforeLeadUSD, m.FloorLeadUSD)
 	}
 }
+
+// #165, finding 29: a covey line counts in the whole span of its reading
+// step, not in the last hour before the reading. The meter is read at 0:10
+// and 2:10 (+10 points); covey's lines are $2.00 at 0:50 (1 h 20 before the
+// reading, inside the span) and $0.10 at 2:05; the outside calls are $50 at
+// 1:00–1:49. L_cov is $2.10, L_out $50, and the reading's real cost r splits
+// as R_cov = r × L_cov ÷ (L_cov + L_out), R_out = r × L_out ÷ (L_cov +
+// L_out). A span cut to the last hour (m.created_at > s.t - interval '1
+// hour') leaves the 0:50 line out: L_cov $0.10 and R_cov a twentieth of the
+// split.
+func TestExternalUsageCoveyLineEarlyInTheSpanCounts(t *testing.T) {
+	base := time.Now().UTC().Truncate(time.Hour).Add(-6 * time.Hour)
+	_, admin, f, cred, pp := meterSeatFixture(t, "spanne-frueh", base, []struct {
+		at  time.Time
+		pct float64
+	}{{base.Add(10 * time.Minute), 10}, {base.Add(2*time.Hour + 10*time.Minute), 20}})
+	f.line(t, cred, base.Add(50*time.Minute), 100_000)
+	f.line(t, cred, base.Add(2*time.Hour+5*time.Minute), 5_000)
+	var rows []map[string]any
+	for i, min := range []int{60, 70, 80, 90, 109} {
+		r := extRow(fmt.Sprintf("o%d", i), base.Add(time.Duration(min)*time.Minute), "claude-opus-5-5", 500_000)
+		r["input"], r["cache_read"], r["cache_write_1h"] = 0, 0, 0
+		rows = append(rows, r)
+	}
+	up := extUpload("operator: home", rows...)
+	up["meter_credential"] = map[string]any{"secret_key": "claude_code_oauth_token", "secret_slot": 0}
+	up["reported_through"] = map[string]any{"laptop": base.Add(2*time.Hour + 30*time.Minute)}
+	admin.expect(http.MethodPost, externalPath, up, http.StatusOK)
+
+	m := cellsExternal(t, admin, "days=1&bucket=hour").Meter
+	if len(m.Steps) != 1 {
+		t.Fatalf("steps %+v, want the one step at 2:10", m.Steps)
+	}
+	r, lOut, lCov := 10*pp, 50.0, 2.10
+	near := func(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
+	st := m.Steps[0]
+	if !st.Split || !near(st.CoveyListUSD, lCov) || !near(st.ExternalListUSD, lOut) ||
+		!near(*st.CoveyRealUSD, r*lCov/(lCov+lOut)) || !near(*st.ExternalRealUSD, r*lOut/(lCov+lOut)) {
+		t.Errorf("step = %+v, want L_cov %v (the 0:50 line included), L_out %v, R_cov %v, R_out %v", st, lCov, lOut,
+			r*lCov/(lCov+lOut), r*lOut/(lCov+lOut))
+	}
+	if !near(m.CoveyRealUSD, r*lCov/(lCov+lOut)) || !near(m.ExternalRealUSD, r*lOut/(lCov+lOut)) {
+		t.Errorf("seat covey %v, outside %v; want the step's split %v / %v", m.CoveyRealUSD, m.ExternalRealUSD,
+			r*lCov/(lCov+lOut), r*lOut/(lCov+lOut))
+	}
+}
+
+// #165, finding 30: deleting a source removes its hosts' watermarks too, so
+// a push after it that sends none answers reported_through: null, not the
+// watermark of the deleted source.
+func TestExternalUsageDeleteClearsHostWatermarks(t *testing.T) {
+	s := newStack(t)
+	admin := login(t, s, "admin@test.local", "admin-passwort")
+	at := time.Now().UTC().Add(-time.Hour)
+	laptop := func(through any) map[string]any {
+		up := extUpload("operator: home", extRow("d1", at, "claude-opus-5-5", 100))
+		if through != nil {
+			up["reported_through"] = map[string]any{"laptop": through}
+		}
+		return up
+	}
+	through := func(res map[string]any) any {
+		t.Helper()
+		hosts, _ := res["hosts"].([]any)
+		if len(hosts) != 1 {
+			t.Fatalf("hosts = %v, want the laptop alone", hosts)
+		}
+		h, _ := hosts[0].(map[string]any)
+		if h["host"] != "laptop" {
+			t.Fatalf("host = %v, want laptop", h["host"])
+		}
+		return h["reported_through"]
+	}
+	if got := through(admin.expect(http.MethodPost, externalPath, laptop(at), http.StatusOK)); got == nil {
+		t.Fatal("the first push has no watermark; want one to clear")
+	}
+	// Without the delete, a push that sends none keeps the old watermark.
+	if got := through(admin.expect(http.MethodPost, externalPath, laptop(nil), http.StatusOK)); got == nil {
+		t.Fatal("a push without a watermark cleared it; want it kept until the source is deleted")
+	}
+	admin.expect(http.MethodDelete, externalPath+"?source=operator%3A%20home", nil, http.StatusOK)
+	if got := through(admin.expect(http.MethodPost, externalPath, laptop(nil), http.StatusOK)); got != nil {
+		t.Errorf("after the delete: reported_through = %v, want null", got)
+	}
+	var n int
+	if err := s.pool.QueryRow(context.Background(), `SELECT count(*) FROM external_usage_hosts WHERE org_id = $1`,
+		s.orgID).Scan(&n); err != nil || n != 1 {
+		t.Errorf("host rows after the delete and one push: %d (%v), want 1", n, err)
+	}
+}
+
+// #165, finding 32: hostMarks keeps a host that has rows but is not in the
+// hosts table. No push writes rows without their host in one transaction
+// and DELETE removes both, but the cells read the hosts and, a query later,
+// the rows, and a push in between adds a machine to the second read only —
+// the branch is reachable by that skew, so it stays. The test stands in for
+// it by removing the host row, as the "raced" insert above stands in for the
+// other race. A source whose laptop sent watermarks from h1 - 1 h: a call of
+// the unlisted desktop after that date is a machine still sending without a
+// watermark, and holds the reading unsplit; one before it is a name from
+// before the uploader claimed watermarks, and is left out.
+func TestExternalUsageHostMissingFromTheHostsTable(t *testing.T) {
+	h1 := time.Now().UTC().Truncate(time.Hour).Add(-4 * time.Hour)
+	_, admin, f, cred, pp := meterSeatFixture(t, "ohne-tabelle", h1, []struct {
+		at  time.Time
+		pct float64
+	}{{h1.Add(-30 * time.Hour), 10}, {h1.Add(40 * time.Minute), 12}})
+	f.line(t, cred, h1.Add(10*time.Minute), 50_000)
+	out := func(id, host string, at time.Time) map[string]any {
+		r := extRow(id, at, "claude-opus-5-5", 50_000)
+		r["input"], r["cache_read"], r["cache_write_1h"], r["host"] = 0, 0, 0, host
+		return r
+	}
+	up := extUpload("operator: home", out("a", "laptop", h1.Add(5*time.Minute)), out("b", "desktop", h1.Add(6*time.Minute)))
+	up["meter_credential"] = map[string]any{"secret_key": "claude_code_oauth_token", "secret_slot": 0}
+	up["reported_through"] = map[string]any{"laptop": time.Now().UTC()}
+	admin.expect(http.MethodPost, externalPath, up, http.StatusOK)
+	f.exec(t, `DELETE FROM external_usage_hosts WHERE org_id = $1 AND host = 'desktop'`, f.org)
+
+	// The laptop's first watermark is dated after the desktop's call: the
+	// desktop is a name from before it, left out; the reading is split.
+	m := cellsExternal(t, admin, "days=2&bucket=hour").Meter
+	if len(m.Steps) != 1 || !m.Steps[0].Reported || !m.Steps[0].Split || math.Abs(m.CoveyRealUSD-2*pp/3) > 1e-6 {
+		t.Errorf("a call before the first watermark: steps %+v, covey %v; want reported and split", m.Steps, m.CoveyRealUSD)
+	}
+	// Dated before the desktop's call: it may still be sending, and holds it.
+	f.exec(t, `UPDATE external_usage_hosts SET first_reported_at = $2 WHERE org_id = $1 AND host = 'laptop'`, f.org, h1.Add(-time.Hour))
+	m = cellsExternal(t, admin, "days=2&bucket=hour").Meter
+	if len(m.Steps) != 1 || m.Steps[0].Reported || m.Steps[0].Split || math.Abs(m.UnsplitRealUSD-2*pp) > 1e-6 {
+		t.Errorf("a call after the first watermark: steps %+v, unsplit %v; want not reported, %v unsplit", m.Steps, m.UnsplitRealUSD, 2*pp)
+	}
+}
