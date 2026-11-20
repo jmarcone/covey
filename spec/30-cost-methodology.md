@@ -45,6 +45,7 @@ Token prices are never real cost. That covers the reported price, the recomputed
   - A point no plan prices stays *unpriced*. It is never $0.
   - A point read while the basis was *usage* belongs to the usage charges, not the plan.
 - **Points.** Code: `meterQueryTemplate`, `stacked.go:643`. Readings are taken per credential, reading source and window.
+  - Each source's series is counted on its own (`meterSteps`, `stacked.go:743`). A credential's real cost, however, is read from **one** source only: its `seven_day` series with the most readings, with `usage_cmd` before `manual` before `inband` on a tie (`pickCoverage`, `external.go:1324`; on the web `pickMeter`, `costFigures.ts:222`). Two sources read the same meter, so their points are never added.
   - Stale and unsupported readings are dropped.
   - A late reading is dropped: one whose reset time lies more than an hour before the latest reset time any earlier reading gave. A run of late readings is dropped as a whole.
   - A new week starts:
@@ -56,14 +57,18 @@ Token prices are never real cost. That covers the reported price, the recomputed
   - Only the `seven_day` all-models window is priced. The 5-hour and per-model windows count the same work again.
 - **Seat range.** The meter shows whole percents, so each stretch of one week is known only to ±1 point (`meterPartition`, `stacked.go:821`). Example: 12 points at $0.4615 is $5.54, with a range of $5.08 to $6.00.
 - **Monthly limit (pay-per-token seat).** Code: `meterLimitCharges`, `internal/observability/limitcharges.go:236`. Spend at a reading = utilisation × the limit valid at that reading. A step is the rise in spend within the month. So a limit changed mid-month is priced as Δ(u × L), not Δu × L (H16). The money stays in the limit's currency. Its range is ±1 point of the limit per month segment.
+  - Unlike the weekly meter, all sources of a credential and window are merged into one series (`monthlySeries`, `limitcharges.go:125`).
+  - A reading with no limit in force names no money. Where the reading before had no limit (a limit entered mid-month), its spend is read at this reading's limit, so the month's spend before the limit is not this limit's step.
+  - A step's span starts no earlier than the limit row's `valid_from` (a step across a limit change, or from a reading without a limit, belongs to the new row) and no earlier than the month's start (a new month's money lies after the reset). The part of a span before the range is cut off pro rata by time.
+  - The money counts only for the share of the span a usage basis held (`usageShare`), as a hand-entered charge does.
 - **The bill (API key).** `billed_cost.amount_cents` is after discounts and before credits, and is exact (NUMERIC from the API's decimal strings).
   - A reader takes one bucket width per UTC day, never both (`chosenRows`, `internal/observability/billing.go:381`).
   - The bill is complete only up to `data_refreshed_at`. It lands 4 to 24 hours late.
   - An empty answer with no refresh time has *not landed*. It is not zero.
 
 **Status.**
-- *Holds* for seats and for the bill.
-- The monthly-limit meter becomes money only as usage charges. The page has no headline or multiple for a pay-per-token credential yet ([#167](https://github.com/jmarcone/covey/issues/167)).
+- *Holds* for seats, and for the bill once it has landed.
+- **Not built for pay-per-token before the bill lands: [#167](https://github.com/jmarcone/covey/issues/167).** The code has no fallback to the monthly meter. Until the bill lands, *Billed* says *not landed* (`billedFigure`, `costFigures.ts:438`), not Δ(u × L). The monthly-limit meter becomes money only as usage charges, in their own tile. The page has no headline or multiple for a pay-per-token credential yet.
 - Readings arrive only while covey's agents run, so a paused fleet reads no meter ([#153](https://github.com/jmarcone/covey/issues/153)).
 
 ### R2 — The multiple, over metered windows only
@@ -83,9 +88,18 @@ Token prices are never real cost. That covers the reported price, the recomputed
   - Estimate = metered list ÷ R.
   - Floor = floor list ÷ (R + slack).
   - The floor list leaves out lines that began before the range, and outside calls from before the range in the first step's span (`floorCovExcludedBy`, `external.go:1730`).
-  - Slack = 2 points × (1 + number of resets) per seat, at the plan's price per point (`meterSlack`, `costFigures.ts:913`).
+  - Slack = 2 points × (1 + number of resets) per seat (`meterSlack`, `costFigures.ts:913`).
+    - Steps read under the usage basis are left out, both from the resets counted and from the test for list.
+    - A seat whose every step was read under the usage basis has no slack.
+    - A seat with no points, no list and no reset in the range has no slack either.
+    - A point is priced at the dearest plan price the server gave a step of that seat. Without one, it uses the plan valid now (else the seat's latest plan), else the whole meter's dearest price (`slackRate`, `costFigures.ts:896`).
   - Code: `headline` (`costFigures.ts:1595`) and `everythingOnMeter` (`costFigures.ts:1025`).
-- **When there is no multiple.** None is shown below 3 points of movement, with any unpriced point, or with less than $0.01 of metered list. The page says which of these applies.
+- **When there is no multiple.** The page says which of these applies, checked in this order:
+  - *usage*: every reading was taken under the usage basis, so the meter is not the money. For the headline, this applies when no seat has a priced reading and none is unpriced.
+  - *unpriced*: any point has no plan price. For the headline, this also applies when no seat has a priced reading at all.
+  - *movement*: fewer than 3 points. With plan prices that differ between seats (`point_rate_mixed`), the headline cannot add points. It then gates on real ÷ the dearest price per point < 3 instead.
+  - *list*: less than $0.01 of metered list, or a real cost that is not above 0.
+  - Code: `headline` (`costFigures.ts:1595`) for the page's headline, and `everythingOnMeter` (`costFigures.ts:1025`) for one seat.
 - **covey's list alone.** Where outside sessions share a seat, covey's list alone over the whole movement would understate the multiple. The seat then shows only the multiple of everything on the meter. With no source linked, covey's own multiple is shown as a floor ("at least").
 
 **Status.**
@@ -109,20 +123,23 @@ Token prices are never real cost. That covers the reported price, the recomputed
 1. **Build the chunks.** Walk a seat's steps in time order. A step joins the open chunk, and the chunk closes at the reading where its points reach 5 (`chunkMinPoints`, `external.go:2139`).
    - Some steps close the chunk before themselves and stay out of every chunk:
      - a step that is not yet reported;
-     - a step with unpriced outside calls;
+     - a step whose outside calls are *all* unpriced (`outside_unpriced`, `stepReason`, `external.go:2112`);
      - an unpriced step;
      - a step read under the usage basis.
    - A reset closes the chunk, and so does a change of plan price.
    - So the last chunk, and a chunk closed early, can hold fewer than 5 points. A meter lag of up to 1 point right after a full chunk is folded into it.
+   - A step where only *some* outside calls are unpriced stays split on the priced ones and joins the chunk. Its unpriced calls make the chunk *incomplete* (`meterChunk.incomplete`, `external.go:2199`). So do covey bookings that have no line.
 2. **Per chunk.** P<sub>c</sub> is the points, L<sub>c</sub> the list, Lo<sub>c</sub> and Lc<sub>c</sub> the outside and covey parts of it, and S<sub>c</sub> = 2 points of slack (whole percents at both ends, one point of lag).
-3. **The rate k.** For each plan price, k = the lowest (P<sub>c</sub> + S<sub>c</sub>) ÷ L<sub>c</sub> over chunks, or stretches of adjacent chunks, that meet all of these:
-   - at least 10 points;
-   - every call priced;
-   - reset steps left out.
+3. **The rate k.** For each plan price, k = the lowest (P + S<sub>c</sub>) ÷ L over chunks, or stretches of adjacent chunks, that meet all of these:
+   - *Adjacent* means each chunk was opened right after the one before closed at its size. Nothing (a reset, an unsplit step, a change of plan price) closed it early. So a stretch has one plan price.
+   - No chunk in it is incomplete. That means no unpriced outside call, and no covey booking without a line. The stretch ends at the first incomplete chunk.
+   - P is at least 10 points, and L is above 0.
+   - Reset steps are left out of P and L.
+   - A covey line spread over several spans counts at its whole list when it began inside the stretch (not in a reset step). Otherwise it does not count.
 4. **Unattributed points.**
-   - With k known: U<sub>c</sub> = max(0, P<sub>c</sub> − S<sub>c</sub> − k·L<sub>c</sub>).
+   - With k known: U<sub>c</sub> = max(0, P<sub>c</sub> − S<sub>c</sub> − k·L<sub>c</sub>). Here L<sub>c</sub> counts every spread line that ran in the chunk at its whole list (`chunkListHigh`, `external.go:2548`), so U<sub>c</sub> is at most the true unattributed points.
    - A chunk with no list at all: U<sub>c</sub> = P<sub>c</sub>, because the meter moved and nobody reported a call.
-   - No k, or the chunk is incomplete (covey bookings without a line, or unpriced outside calls): U<sub>c</sub> = 0.
+   - No k, or the chunk is incomplete (covey bookings without a line, or unpriced outside calls): U<sub>c</sub> = 0. The chunk's whole movement is then split by the priced list share in step 5, including movement nobody's calls explain. See R4 and [#196](https://github.com/jmarcone/covey/issues/196).
 5. **Split each step of a chunk.**
    - R<sub>un</sub> = R × U<sub>c</sub> ÷ P<sub>c</sub>.
    - R<sub>out</sub> = (R − R<sub>un</sub>) × Lo<sub>c</sub> ÷ L<sub>c</sub>.
@@ -130,11 +147,16 @@ Token prices are never real cost. That covers the reported price, the recomputed
    - covey's part goes to its agents by their share of Lc<sub>c</sub>. The outside part goes to the sources by their share of Lo<sub>c</sub>.
 6. **Ranges.**
    - The whole meter: the floor's slack of R2, 2 points per seat plus 2 per reset.
-   - Each part: 2 points per chunk, weighted by the part's share (`SplitExternalSlack*`, `SplitCoveySlack*`). Its multiple is shown only as a floor, list ÷ (part + its slack) (`subscriptionDent`, `costFigures.ts:1676`).
+   - Each part (`SplitExternalSlack*`, `SplitCoveySlack*`, summed in `splitSeatSince`), one term per split chunk with a step in the range. With s the chunk's outside share (1 − s for covey):
+     - S<sub>c</sub> = 2 points × the part's share. In dollars, that is 2 × ½·TV of the chunk's steps' plan prices (`rateTV`, `external.go:2605`).
+     - A chunk that began before the range adds its attributed points outside the range, *extra* = max(0, (P<sub>c</sub> − U<sub>c</sub>) − (P<sub>in</sub> − U<sub>in</sub>)), times the part's share (`sinceCuts`, `external.go:2651`). Without it, a part's figure for the range would not bound its true use.
+     - The share's own range. A spread line's list is placed by time, which may put it in the wrong chunk, so the true outside share lies in [s<sub>lo</sub>, s<sub>hi</sub>] (`chunkShareRange`, `external.go:2575`). With b = the chunk's attributed points in the range + *extra* + S<sub>c</sub>, the outside part adds b × (s<sub>hi</sub> − s) and covey's part adds b × (s − s<sub>lo</sub>).
+   - A part's multiple is shown only as a floor, list ÷ (part + its slack) (`subscriptionDent`, `costFigures.ts:1676`).
 
-**Status.** *Holds*, with one difference from the plain rule and one inherited defect.
+**Status.** *Holds*, with one difference from the plain rule and two defects.
 - **The difference.** A part's range is 2 points *per chunk*, which is wider than "±2 plus 2 per reset" as soon as there are several chunks. That is deliberate and safe: the share changes from chunk to chunk, so one range for the whole would not bound a part.
 - **The inherited defect.** Through #185, a reset step's old-week list takes part in its chunk's share.
+- **Incomplete chunks:** their parts can hold movement nobody's calls explain ([#196](https://github.com/jmarcone/covey/issues/196), under R4).
 - The remaining edge cases are listed in [#158](https://github.com/jmarcone/covey/issues/158).
 
 ### R4 — Parts sum to the total, and the rest stays visible
@@ -149,14 +171,26 @@ Token prices are never real cost. That covers the reported price, the recomputed
 - **Lists:** range = metered + before + after + unpriced + usage, for each party (`seatLists`).
 
 What each of the rest means:
-- *Unattributed*: movement nobody's calls explain. It goes to nobody, never to covey.
-- *Not split*: movement in steps the outside sessions had not reported yet, or whose outside calls had no price.
+- *Unattributed*: movement nobody's calls explain, beyond what the rate k accounts for (R3 step 4). In a complete chunk it goes to nobody. An incomplete chunk has none; see below.
+- *Not split*: movement in steps the outside sessions had not reported yet, or whose outside calls were *all* unpriced (`outside_unpriced`).
 - *Unpriced*: points with no plan price, or tokens of a model the table does not know. They are counted and named, never $0.
 - *Before / after the readings*: list with no metered real cost.
 
 The page shows unattributed and not split in the collapsed section *How the real cost splits (estimate)*.
 
-**Status.** *Holds.* Once #185 is fixed, the list identity gains a *before the reset* part.
+**Incomplete chunks: what the code does.** A chunk is incomplete when it holds outside calls with no price next to priced ones, or covey bookings without a line (`meterChunk.incomplete`, `external.go:2199`).
+- It has no unattributed part: U<sub>c</sub> = 0 (`chunkUnattributed`, `external.go:2519`).
+- Its whole movement is split by the *priced* list share. That includes the unpriced calls' movement and any movement nobody's calls explain. So covey's part takes covey's list share of both. Covey bookings without a line work the other way: covey's unlisted use goes partly to the outside part.
+- The only signal is the count `IncompleteChunks` (`external.go:750`). The page shows it as one line under the split (`costs.dent.incompleteNote`): the parts "are approximate and may hold use that is not theirs". The parts' ranges (R3 step 6) do not cover the folded movement.
+- Example (hand-computed, then run through `splitSeat`). The plan is $200 a month, so a point is $0.4615. An earlier chunk set k = 14 ÷ 12 points per $. This chunk is 10 points, R = $4.62, with covey list $2 and outside priced list $1.
+  - Complete: U<sub>c</sub> = 10 − 2 − 3.5 = 4.5 points. That is $2.08 unattributed, covey $1.69, outside $0.85.
+  - Add **one** unpriced outside call, of any size. Unattributed becomes $0, covey $3.08, outside $1.54.
+- A step whose outside calls are *all* unpriced is the contrast. It is not split at all, because "booking R to covey would bill it the outside sessions' work" (`stepReason`, `external.go:2112`).
+
+**Status.**
+- *Holds* for the sums. Every identity above adds up, incomplete chunks included. Once #185 is fixed, the list identity gains a *before the reset* part.
+- **Breaks the rule for incomplete chunks: [#196](https://github.com/jmarcone/covey/issues/196).** Movement nobody's calls explain is folded into covey's part and the outside part. It is not kept as a part of its own, and it is not inside those parts' ranges.
+- Until #196 is fixed, a report must name the number of incomplete chunks next to covey's part. It must not call covey's part a bound while that number is above 0.
 
 ### R5 — Currencies and exchange rates are dated
 
@@ -167,7 +201,9 @@ The page shows unattributed and not split in the collapsed section *How the real
 - A monthly limit changed mid-month is priced as Δ(u × L), not Δu × L (H16, see R1).
 
 **How covey computes it.**
-- **Usage charges and monthly limits (0151, 0152).** They carry `fx_to_usd` and `fx_date` both or neither (CHECK `credential_usage_charges_fx_chk`, `credential_usage_limits_fx_chk`). A dollar figure exists only with both (`limitcharges.go`, `credcost.go`). The page lists charges per currency and adds them to the seat's real cost only in USD, in the single tile *Real cost, seat + usage*.
+- **Usage charges and monthly limits (0151, 0152).** They carry `fx_to_usd` and `fx_date` both or neither (CHECK `credential_usage_charges_fx_chk`, `credential_usage_limits_fx_chk`). A USD row must carry neither, by the same CHECK.
+  - A USD amount is its own dollar figure.
+  - An amount in another currency has a dollar figure only with both the rate and its date (`limitcharges.go:352-358`, `credcost.go:316-322`). Without them it stays in its currency. The page lists charges per currency and adds them to the seat's real cost only in USD, in the single tile *Real cost, seat + usage*.
 - **The bill.** USD only (CHECK `currency = 'USD'` on `billed_cost`).
 - **Plans (0145).**
   - A plan in another currency must carry a rate (`Plan.validate`, `internal/runtimes/store.go:532`).
@@ -181,7 +217,7 @@ The page shows unattributed and not split in the collapsed section *How the real
 
 **How covey computes it.** Today only parts of this exist, each in its own place:
 - A step not reported by every active machine of a linked source is *not split*. It is never booked to covey (`stepReported`, `external.go:1893`).
-- A chunk with unpriced outside calls, or with covey bookings without a line, is *incomplete* (`IncompleteChunks`). It sets no k and has no unattributed part.
+- A chunk with unpriced outside calls, or with covey bookings without a line, is *incomplete* (`IncompleteChunks`). It sets no k and has no unattributed part. Its parts are marked only by that count, and they keep a smaller unattributed figure (R4, [#196](https://github.com/jmarcone/covey/issues/196)).
 - *Billed* says why instead of $0.00 (no admin key, not mapped, sync failed, not landed). A bill bucket after `data_refreshed_at` is not complete.
 - No multiple is shown when points are unpriced, or when there are fewer than 3 points.
 
@@ -402,16 +438,18 @@ GROUP BY 1 ORDER BY 1;
 - every host that pushed in the last 7 days has pushed in the last 75 minutes (`external_usage_hosts.pushed_at`);
 - the meter has a reading in the last hour of the period;
 - every model in `model_usage` and `external_usage` has a list price;
-- no reset falls inside a step that the report's multiple divides (#185).
+- no reset falls inside a step that the report's multiple divides (#185);
+- `.external.meter.credentials[].incomplete_chunks` is 0 for every seat whose split the report quotes. Where it is not, name the count next to covey's part (#196).
 
 ## Open points
 
 | Issue | Rule | What is missing |
 |---|---|---|
 | [#185](https://github.com/jmarcone/covey/issues/185) | R2, R3 | a reset step's old-week list is in the multiple and the split |
+| [#196](https://github.com/jmarcone/covey/issues/196) | R4, R3 | an incomplete chunk's unexplained movement is folded into covey's and the outside part |
 | [#186](https://github.com/jmarcone/covey/issues/186) | R5 | a plan's exchange rate needs no date |
 | [#178](https://github.com/jmarcone/covey/issues/178) | R6 | data checks and the *incomplete* mark |
-| [#167](https://github.com/jmarcone/covey/issues/167) | R1 | headline and multiple for pay-per-token credentials |
+| [#167](https://github.com/jmarcone/covey/issues/167) | R1 | headline and multiple for pay-per-token credentials; real cost from the monthly meter until the bill lands |
 | [#153](https://github.com/jmarcone/covey/issues/153) | R1, R2 | readings only while covey runs |
 | [#177](https://github.com/jmarcone/covey/issues/177) | R2 | list per point varies about 10× with the workload mix (unexplained) |
 | [#154](https://github.com/jmarcone/covey/issues/154) | R1 | models without a list price |
