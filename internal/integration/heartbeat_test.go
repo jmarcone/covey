@@ -20,6 +20,9 @@ var heartbeatSignatureState struct {
 	// delay slows the work check down, so a completion path that checks AFTER
 	// the task turned done is observable instead of a race of microseconds.
 	delay time.Duration
+	// entered is signalled (non-blocking) each time a delayed work check starts,
+	// so a test can act while the check sleeps instead of guessing at a moment.
+	entered chan struct{}
 }
 
 func init() {
@@ -42,8 +45,14 @@ func (heartbeatSignatureTestSystem) HasWork(context.Context, target.Credential) 
 }
 func (heartbeatSignatureTestSystem) HasWorkSigned(context.Context, target.Credential, string) (bool, string, error) {
 	heartbeatSignatureState.Lock()
-	sig, delay := heartbeatSignatureState.sig, heartbeatSignatureState.delay
+	sig, delay, entered := heartbeatSignatureState.sig, heartbeatSignatureState.delay, heartbeatSignatureState.entered
 	heartbeatSignatureState.Unlock()
+	if entered != nil && delay > 0 {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+	}
 	time.Sleep(delay)
 	return true, sig, nil
 }
@@ -365,6 +374,89 @@ func TestHeartbeatSignatureAdvancesAfterASuccessfulRun(t *testing.T) {
 	if got != "issue15!23@42" {
 		t.Fatalf("successful run must advance the handled watermark, got %q", got)
 	}
+}
+
+// A heartbeat task discarded while its completion check runs: the run wrote, so
+// the watermark was advanced before Complete; Complete then fails (cancelled →
+// done) and the advance must not stand, or the state it was moved past — which
+// may hold foreign work — would never wake the heartbeat again.
+//
+// Cancelling the task does not cancel the run, so this is the one way to reach
+// the release branch from outside: the refresh advances, Complete refuses.
+func TestHeartbeatWatermarkReleasedWhenTheTaskIsDiscardedDuringTheCheck(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+
+	agent, err := s.registry.Create(ctx, s.orgID, "puls-verworfen", "Puls verworfen", "mock", &s.adminID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.registry.SaveConfig(ctx, agent.ID, map[string]string{
+		"SOUL.md":   "# Puls verworfen",
+		"ACCESS.md": "- system: heartbeatsigtest scope: write,read",
+		"HEARTBEAT.md": "- alle: 1h nur-wenn: heartbeatsigtest titel: Abnahme " +
+			"aufgabe: Nimm ab. [mock:action heartbeatsigtest/write {}] [mock:result abgenommen]",
+	}, &s.adminID); err != nil {
+		t.Fatal(err)
+	}
+	// Activation is opt-in (fail-closed), for the test plugin too.
+	if _, err := s.pool.Exec(ctx, `INSERT INTO target_plugins (org_id, name, kind, enabled)
+		VALUES ($1,'heartbeatsigtest','builtin',TRUE) ON CONFLICT DO NOTHING`, s.orgID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(ctx,
+		"UPDATE agent_heartbeats SET last_work_sig='issue15!23@41' WHERE agent_id=$1 AND name='Abnahme'",
+		agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{}, 1)
+	heartbeatSignatureState.Lock()
+	heartbeatSignatureState.sig = "issue15!23@42"
+	heartbeatSignatureState.delay = 800 * time.Millisecond
+	heartbeatSignatureState.entered = entered
+	heartbeatSignatureState.Unlock()
+	t.Cleanup(func() {
+		heartbeatSignatureState.Lock()
+		heartbeatSignatureState.delay = 0
+		heartbeatSignatureState.entered = nil
+		heartbeatSignatureState.Unlock()
+	})
+
+	admin := login(t, s, "admin@test.local", "admin-passwort")
+	admin.expect(http.MethodPost,
+		"/api/v1/agents/"+agent.ID.String()+"/heartbeats/Abnahme/fire", nil, http.StatusOK)
+
+	// The check is running: the run is over and the watermark is about to move,
+	// the task still reads in_progress. Discard it in exactly that window.
+	select {
+	case <-entered:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the completion check never ran")
+	}
+	tasks, err := s.backlog.ListByAgent(ctx, agent.ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var taskID string
+	for _, task := range tasks {
+		if task.Title == "Abnahme" {
+			taskID = task.ID.String()
+		}
+	}
+	if taskID == "" {
+		t.Fatal("no heartbeat task while the check runs")
+	}
+	admin.expect(http.MethodPost, "/api/v1/tasks/"+taskID+"/cancel", nil, http.StatusOK)
+
+	var got string
+	waitFor(t, "advance released", 10*time.Second, func() bool {
+		if err := s.pool.QueryRow(ctx,
+			"SELECT last_work_sig FROM agent_heartbeats WHERE agent_id=$1 AND name='Abnahme'",
+			agent.ID).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		return got == ""
+	})
 }
 
 // The counterpart to the advance: a run that wrote NOTHING in the target system

@@ -3264,10 +3264,10 @@ func (o *Orchestrator) handleDaemonMessage(ctx context.Context, agent agents.Age
 			//
 			// The window is between the advance and Complete, and a kill or a
 			// shutdown cancels exactly ctx there — so the release runs without
-			// it, as the failure above does. And Complete can fail after its
-			// commit (its follow-up read): a task that is done ended as
-			// reported, and its advance stands. Decided from the row, not from
-			// the error.
+			// it, as runAgent's Complete(StateFailed) does when this error comes
+			// back up. And Complete can fail after its commit (its follow-up
+			// read): a task that is done ended as reported, and its advance
+			// stands. Decided from the row, not from the error.
 			if advanced {
 				rctx := context.WithoutCancel(ctx)
 				if cur, getErr := o.Backlog.Get(rctx, taskID); getErr != nil || cur.State != backlog.StateDone {
