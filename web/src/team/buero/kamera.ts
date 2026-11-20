@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import type { Plan, Punkt } from "./typen";
-import { START_DREHUNG } from "./szene";
+import { BAU_HOEHE, START_DREHUNG } from "./szene";
 
 /* The camera and its controls: orthographic, so it stays a plan.
  *
@@ -17,6 +17,17 @@ import { START_DREHUNG } from "./szene";
    model one admires. */
 export { START_DREHUNG };
 export const START_NEIGUNG = 0.7;
+
+/** The air around the building, as a share of what it needs: 6 % on the
+ *  side that sets the scale. */
+export const RAND = 0.06;
+
+/** The point the camera looks at in the start view: the middle of the
+ *  building, in the plan's own origin and half way up. Looking at the floor
+ *  instead left the lower half of the picture empty — the building stands
+ *  above that point, not around it, and the fit measured both sides as if
+ *  it did. */
+const MITTE = Object.freeze(new THREE.Vector3(0, BAU_HOEHE / 2, 0));
 
 export type Steuerung = {
   kamera: THREE.OrthographicCamera;
@@ -53,7 +64,7 @@ export function erschaffeKamera(buehne: HTMLElement, ruhig = false): Steuerung {
   /* Where the camera looks. With a fixed origin one could turn and zoom but
      not move the view, and every corner of a large building was reachable
      only by way of a rotation. */
-  const blick = new THREE.Vector3(0, 0, 0);
+  const blick = MITTE.clone();
 
   const breite = () => Math.max(1, buehne.clientWidth);
   const hoehe = () => Math.max(1, buehne.clientHeight);
@@ -74,23 +85,24 @@ export function erschaffeKamera(buehne: HTMLElement, ruhig = false): Steuerung {
       Math.sin(neigung),
       Math.cos(drehung) * Math.cos(neigung));
     const grob = Math.max(plan.breite, plan.hoehe) * 3;
-    kamera.position.copy(richtung).multiplyScalar(grob);
-    kamera.lookAt(0, 0, 0);
+    kamera.position.copy(richtung).multiplyScalar(grob).add(MITTE);
+    kamera.lookAt(MITTE);
     kamera.updateMatrixWorld(true);
 
     /* The corners in world coordinates: the building stands around its own
-       middle because the world is offset accordingly. 150 is the height of
-       the outer wall plus whatever sticks out above it. */
+       middle because the world is offset accordingly, and it is BAU_HOEHE
+       high. Looking at the middle of that box, it projects point-symmetric
+       about the picture's centre — the margin is the same on both sides. */
     const hx = plan.breite / 2, hz = plan.hoehe / 2;
     let mx = 1, my = 1;
     const sicht = new THREE.Matrix4().copy(kamera.matrixWorld).invert();
     const e = new THREE.Vector3();
-    for (const x of [-hx, hx]) for (const y of [0, 150]) for (const z of [-hz, hz]) {
+    for (const x of [-hx, hx]) for (const y of [0, BAU_HOEHE]) for (const z of [-hz, hz]) {
       e.set(x, y, z).applyMatrix4(sicht);
       mx = Math.max(mx, Math.abs(e.x));
       my = Math.max(my, Math.abs(e.y));
     }
-    const d = (Math.max(mx / a, my) * 1.06) / zoom;
+    const d = (Math.max(mx / a, my) * (1 + RAND)) / zoom;
     kamera.left = -d * a; kamera.right = d * a; kamera.top = d; kamera.bottom = -d;
     const abstand = Math.max(plan.breite, plan.hoehe) * 3;
     kamera.near = -abstand * 3; kamera.far = abstand * 3;
@@ -119,6 +131,10 @@ export function erschaffeKamera(buehne: HTMLElement, ruhig = false): Steuerung {
     stellen();
   }
   function zaeumen(): void {
+    /* At the scale of the start view or below, the whole building is in the
+       picture and there is nothing to pan to. The view stays in the middle,
+       and a wheel turn finds nothing to move and goes on to the page. */
+    if (zoom <= 1) { blick.copy(MITTE); return; }
     const hx = plan.breite / 2, hz = plan.hoehe / 2;
     blick.x = Math.max(-hx, Math.min(hx, blick.x));
     blick.z = Math.max(-hz, Math.min(hz, blick.z));
@@ -141,33 +157,64 @@ export function erschaffeKamera(buehne: HTMLElement, ruhig = false): Steuerung {
       schieben(-mx * k, -my * k);
       return;
     }
+    /* Zoomed back out to the start scale, the view is the middle again. */
+    zaeumen();
     stellen();
   }
 
   function drehen(richtung: 1 | -1): void {
+    gedreht = true;
     drehZiel += (richtung * Math.PI) / 2;
   }
 
   function zentrieren(p: Punkt, zoomAuf: number): void {
     if (!plan) return;
-    blick.set(p.x - plan.breite / 2, 0, p.y - plan.hoehe / 2);
+    /* At the height the start view looks at (`MITTE`), so the room one is
+       taken to sits where the building's middle sits there — not half a
+       building height above the picture's centre. */
+    blick.set(p.x - plan.breite / 2, MITTE.y, p.y - plan.hoehe / 2);
     zoom = Math.max(0.6, Math.min(4.5, zoomAuf));
     zaeumen();
     stellen();
   }
 
   function zurueck(): void {
-    const warGedreht = drehung !== START_DREHUNG;
-    drehung = drehZiel = START_DREHUNG;
+    anfang = anfangsDrehung();
+    const warGedreht = drehung !== anfang;
+    drehung = drehZiel = anfang;
+    gedreht = false;
     neigung = START_NEIGUNG;
     zoom = 1;
-    blick.set(0, 0, 0);
+    blick.copy(MITTE);
     stellen();
     /* A reset across a quarter view changes which walls face the camera; the
        next tick reports it like a completed turn. */
     if (warGedreht) zurueckGedreht = true;
   }
   let zurueckGedreht = false;
+
+  /* The start view for the stage as it is now. A long building on a tall,
+     narrow stage — a phone — would stand in the middle with an empty band
+     above and below it. A quarter turn lays it along the tall side instead,
+     and the building uses the stage the way it uses a wide one. */
+  const anfangsDrehung = () => START_DREHUNG + (breite() < hoehe() ? Math.PI / 2 : 0);
+  let anfang = START_DREHUNG;
+  /* Somebody turned the view by hand since the last reset. Not derived from
+     `drehZiel === anfang`: a turn can land on the other format's start by
+     coincidence (a quarter on a wide stage is the start of a tall one). */
+  let gedreht = false;
+
+  /* The stage changed its size. The camera fits again; and a view that is
+     still the start view follows the stage's format (see `anfangsDrehung`),
+     one that somebody turned or zoomed stays as they left it. */
+  function angepasst(): void {
+    const neu = anfangsDrehung();
+    if (neu !== anfang) {
+      if (!gedreht && zoom === 1) drehZiel = neu;
+      anfang = neu;
+    }
+    stellen();
+  }
 
   /* The ride to the next side: exponential, not linear, so it sets off fast
      and arrives softly — and it runs on wall-clock time, not on the pace of
@@ -197,14 +244,16 @@ export function erschaffeKamera(buehne: HTMLElement, ruhig = false): Steuerung {
    * does not find one of them takes the view for nailed down.
    *
    *   Pan     drag · two fingers · wheel · arrow keys · double-click on the
-   *           spot
+   *           spot — all of them once zoomed in
    *   Scale   ⌘/Ctrl+wheel · + and − · the two buttons
    *   Turn    ↺ ↻ · Q/E — in quarter turns, never on the pointer
    *
-   * Dragging pans, always. The first draft turned on drag and panned only
-   * with Shift or the right button — the gesture everyone makes first did
-   * what one wants least, and tilted the building too. A floor plan is a
-   * map: what one grabs stays under the finger.
+   * Dragging pans once zoomed in — at the start scale the whole building is
+   * in the picture and there is nothing to pan to (`zaeumen`). The first
+   * draft turned on drag and panned only with Shift or the right button —
+   * the gesture everyone makes first did what one wants least, and tilted
+   * the building too. A floor plan is a map: what one grabs stays under the
+   * finger.
    *
    * The wheel does not pan and zoom at once, because both would sit on the
    * same event and the pointer would do one thing one time and the other the
@@ -281,21 +330,30 @@ export function erschaffeKamera(buehne: HTMLElement, ruhig = false): Steuerung {
         zoomen(Math.pow(0.99, d), e.clientX, e.clientY);
         return;
       }
-      /* Pan — but the page is not locked in. The stage is almost as tall as
-         the window; whoever wants to scroll past it would have no way down
-         left and would first have to move the pointer out. So: as long as
-         panning moves something, the wheel belongs to the stage. At the stop
-         it hands the wheel back and the page scrolls on — the same handover a
-         text field makes at the end of its content. */
+      /* Pan — but the page is not locked in. Whoever wants to scroll past the
+         stage would have no way down left and would first have to move the
+         pointer out. So: as long as panning moves something, the wheel belongs
+         to the stage. At the stop it hands the wheel back and the page scrolls
+         on — the same handover a text field makes at the end of its content.
+         In the start view there is nothing to pan (`zaeumen`), so the wheel
+         always scrolls the page there; it used to push the whole building
+         towards a corner while one scrolled down to the stage's neighbours.
+         A sideways swipe is the exception: the page has nothing to scroll
+         sideways, so an unconsumed one would reach the browser as "back" (the
+         history swipe on a trackpad) and take the person off the page. */
       vorRad.copy(blick);
       schieben(-e.deltaX, -e.deltaY);
-      if (!blick.equals(vorRad)) e.preventDefault();
+      if (!blick.equals(vorRad) || (zoom <= 1 && Math.abs(e.deltaX) > Math.abs(e.deltaY))) e.preventDefault();
     };
 
-    /* A double-click moves the clicked spot to the middle. For a building
+    /* A double-click moves the clicked spot to the middle. The spot is where
+       the click ray meets the plane at the start view's height (`MITTE`): that
+       point is on the ray and is the look point, so the clicked pixel is the
+       picture's centre. (Meeting the floor and lifting the point afterwards
+       would leave the spot below the middle.) For a building
        longer than the stage is wide that is the shortest way into a corner —
        panning would take several strokes. */
-    const strahl = new THREE.Raycaster(), boden = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const strahl = new THREE.Raycaster(), boden = new THREE.Plane(new THREE.Vector3(0, 1, 0), -MITTE.y);
     const doppel = (e: MouseEvent) => {
       const r = buehne.getBoundingClientRect();
       strahl.setFromCamera(new THREE.Vector2(
@@ -323,7 +381,12 @@ export function erschaffeKamera(buehne: HTMLElement, ruhig = false): Steuerung {
         "0": zurueck,
       };
       const t = taten[e.key] || taten[e.key.toLowerCase()];
-      if (t) { e.preventDefault(); t(); }
+      if (!t) return;
+      /* An arrow key that finds nothing to pan (the start view) goes on to the
+         page, which scrolls with it — the same handover the wheel makes. */
+      vorRad.copy(blick);
+      t();
+      if (!e.key.startsWith("Arrow") || !blick.equals(vorRad)) e.preventDefault();
     };
 
     buehne.addEventListener("pointerdown", runter);
@@ -347,6 +410,7 @@ export function erschaffeKamera(buehne: HTMLElement, ruhig = false): Steuerung {
     };
   }
 
+  drehung = drehZiel = anfang = anfangsDrehung();
   stellen();
   return {
     zentrieren,
@@ -360,7 +424,7 @@ export function erschaffeKamera(buehne: HTMLElement, ruhig = false): Steuerung {
     tick,
     get drehung() { return drehung; },
     anbinden,
-    groesse: stellen,
+    groesse: angepasst,
   };
 }
 

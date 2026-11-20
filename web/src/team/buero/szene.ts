@@ -66,6 +66,14 @@ type Zone = "wand" | "ecke" | "frei";
  *  counted from here. */
 export const START_DREHUNG = 0.38;
 
+/** How high the building stands, in centimetres: the outer wall is 120, and
+ *  the tallest things on the floors — a wall unit on the left wall, the
+ *  larger plants — reach 160 to 178 (szene.test.ts builds houses and holds
+ *  every mesh to this). The camera fits a box of exactly this height; with
+ *  a smaller number the tops of the tallest pieces leave the picture, with a
+ *  larger one a band of empty stage stays above the roof. */
+export const BAU_HOEHE = 180;
+
 /* ── The shells ───────────────────────────────────────────────────────────
  * The catalogue draws, the shell places: it picks the kind from a key,
  * builds into a group of its own when the piece has to be turned, and passes
