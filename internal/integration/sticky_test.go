@@ -139,7 +139,7 @@ func TestStickyFixRoundResumesSession(t *testing.T) {
 	if !strings.Contains(vb.Prompt, "## Wiki pages that match this task") || !strings.Contains(vb.Prompt, "three attempts") {
 		t.Fatalf("the new task's wiki hit goes into the resume message: %q", vb.Prompt)
 	}
-	if !strings.Contains(vb.Prompt, "## For this task") || !strings.Contains(vb.Prompt, "helper-bot") {
+	if !strings.Contains(vb.Prompt, "## For this task") || !strings.Contains(vb.Prompt, "Helper Bot") {
 		t.Fatalf("the new task's own prompt sections (the stopped colleague it names) go into the resume message: %q", vb.Prompt)
 	}
 	if vb.Resume != mockSessionID(a.ID) {
@@ -304,9 +304,7 @@ func TestStickyFreshCases(t *testing.T) {
 	}
 
 	// Stickiness off.
-	if err := s.registry.SetSticky(ctx, dev.ID, agents.StickyFresh, 55, 200000); err != nil {
-		t.Fatal(err)
-	}
+	s.setStickyAtRest(dev.ID, agents.StickyFresh)
 	f, vf := s.runTopic(dev, "Round 4", "pr:42", "")
 	if vf.Resume != "" || !strings.Contains(vf.Prompt, "## Handover (pr:42)") || vf.WorkDir == va.WorkDir {
 		t.Fatalf("off: fresh with handover in its own dir, got %+v", vf)
@@ -369,12 +367,13 @@ func TestStickyCredentialAndBusy(t *testing.T) {
 		t.Fatalf("busy: %s/%s", d, r)
 	}
 
+	// The busy round B is no predecessor (it ran beside the session); A is.
 	// A session that ran on another credential.
-	if _, err := s.pool.Exec(ctx, `UPDATE backlog_tasks SET session_credential='secret:someone-else:0' WHERE id=$1`, b.ID); err != nil {
+	if _, err := s.pool.Exec(ctx, `UPDATE backlog_tasks SET session_credential='secret:someone-else:0' WHERE id=$1`, a.ID); err != nil {
 		t.Fatal(err)
 	}
 	pred, ok, err := s.backlog.LastOnTopic(ctx, s.orgID, dev.ID, "issue:5", uuid.New())
-	if err != nil || !ok || pred.TaskID != b.ID || pred.Credential != "secret:someone-else:0" {
+	if err != nil || !ok || pred.TaskID != a.ID || pred.Credential != "secret:someone-else:0" {
 		t.Fatalf("LastOnTopic: %+v %v %v", pred, ok, err)
 	}
 	// LastOnTopic never crosses organisations, whatever the caller passes.
@@ -657,18 +656,14 @@ func TestStickyBusyBesideBlockedRound(t *testing.T) {
 	s.runTopic(dev, "Round 1", "pr:4", "")
 	// Round 2 runs fresh (the mock never blocks on a resume) and blocks on a
 	// question, holding its own session.
-	if err := s.registry.SetSticky(ctx, dev.ID, agents.StickyFresh, 55, 200000); err != nil {
-		t.Fatal(err)
-	}
+	s.setStickyAtRest(dev.ID, agents.StickyFresh)
 	blocked, err := s.backlog.CreateWithTopic(ctx, s.orgID, dev.ID, "Round 2",
 		"[mock:block key=ext:pr-4 question=which?]", "manual", 3, "pr:4")
 	if err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, "round 2 blocked", 30*time.Second, func() bool { return s.taskState(blocked.ID) == backlog.StateBlocked })
-	if err := s.registry.SetSticky(ctx, dev.ID, agents.StickyAlways, 55, 200000); err != nil {
-		t.Fatal(err)
-	}
+	s.setStickyAtRest(dev.ID, agents.StickyAlways)
 	// Round 1's session is unclaimed: only the open round can stop a resume.
 	c, vc := s.runTopic(dev, "Round 3", "pr:4", "")
 	if vc.Resume != "" {
@@ -719,23 +714,96 @@ func TestStickyBusyRoundHasItsOwnDir(t *testing.T) {
 	ctx := context.Background()
 	dev := s.stickyAgent("own-dir-dev", agents.StickyAlways)
 	s.runTopic(dev, "Round 1", "pr:5", "")
-	if err := s.registry.SetSticky(ctx, dev.ID, agents.StickyFresh, 55, 200000); err != nil {
-		t.Fatal(err)
-	}
+	s.setStickyAtRest(dev.ID, agents.StickyFresh)
 	blocked, err := s.backlog.CreateWithTopic(ctx, s.orgID, dev.ID, "Round 2",
 		"[mock:block key=ext:pr-5 question=which?]", "manual", 3, "pr:5")
 	if err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, "round 2 blocked", 30*time.Second, func() bool { return s.taskState(blocked.ID) == backlog.StateBlocked })
-	if err := s.registry.SetSticky(ctx, dev.ID, agents.StickyAlways, 55, 200000); err != nil {
-		t.Fatal(err)
-	}
+	s.setStickyAtRest(dev.ID, agents.StickyAlways)
 	c, vc := s.runTopic(dev, "Round 3", "pr:5", "")
 	if d, r := s.decision(c.ID); d != backlog.DecisionFresh || r != backlog.ReasonBusy {
 		t.Fatalf("decision %s/%s", d, r)
 	}
 	if !strings.HasSuffix(vc.WorkDir, "/scratch/"+c.ID.String()) {
 		t.Fatalf("a busy round works in its own directory, is %q", vc.WorkDir)
+	}
+}
+
+// A busy round that runs into the turn limit: its continuation resumes the
+// busy round's session where it lies, in the busy round's own directory —
+// not in the topic's, which holds the blocked round's work. And the busy
+// chain is no predecessor for the next round.
+func TestStickyBusyRoundContinuation(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	dev := s.stickyAgent("busy-cont-dev", agents.StickyAlways)
+	first, _ := s.runTopic(dev, "Round 1", "pr:6", "")
+	s.setStickyAtRest(dev.ID, agents.StickyFresh)
+	blocked, err := s.backlog.CreateWithTopic(ctx, s.orgID, dev.ID, "Round 2",
+		"[mock:block key=ext:pr-6 question=which?]", "manual", 3, "pr:6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "round 2 blocked", 30*time.Second, func() bool { return s.taskState(blocked.ID) == backlog.StateBlocked })
+	s.setStickyAtRest(dev.ID, agents.StickyAlways)
+	busy, err := s.backlog.CreateWithTopic(ctx, s.orgID, dev.ID, "Round 3",
+		"[mock:maxturns ## Next step\nfinish]\n[mock:session]", "manual", 3, "pr:6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "round 3 cut off", 30*time.Second, func() bool { return s.taskState(busy.ID) == backlog.StateFailed })
+	if d, r := s.decision(busy.ID); d != backlog.DecisionFresh || r != backlog.ReasonBusy {
+		t.Fatalf("round 3: %s/%s", d, r)
+	}
+	child := childOf(t, s, dev.ID, busy.ID)
+	waitFor(t, "continuation done", 30*time.Second, func() bool { return s.taskState(child.ID) == backlog.StateDone })
+	child, _ = s.backlog.Get(ctx, child.ID)
+	var vc sessionView
+	if err := json.Unmarshal([]byte(*child.Result), &vc); err != nil {
+		t.Fatalf("continuation result %q", *child.Result)
+	}
+	if vc.Resume != mockSessionID(busy.ID) || !strings.HasSuffix(vc.WorkDir, "/scratch/"+busy.ID.String()) {
+		t.Fatalf("the busy round's continuation resumes in the busy round's directory: resume %q dir %q", vc.Resume, vc.WorkDir)
+	}
+	pred, ok, err := s.backlog.LastOnTopic(ctx, s.orgID, dev.ID, "pr:6", uuid.New())
+	if err != nil || !ok || pred.TaskID != first.ID {
+		t.Fatalf("the busy chain is no predecessor; want round 1, got %v (%v %v)", pred.TaskID, ok, err)
+	}
+}
+
+// A turn-limit continuation of a task without a topic resumes in the
+// directory its chain's first task started the session in.
+func TestContinuationResumesInTheChainRootDir(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	agent := s.newSupportAgent("root-dir-agent")
+	task, err := s.backlog.Create(ctx, s.orgID, agent.ID, "Long work",
+		"[mock:maxturns ## Next step\nfinish]\n[mock:session]", "manual", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "cut off", 30*time.Second, func() bool { return s.taskState(task.ID) == backlog.StateFailed })
+	child := childOf(t, s, agent.ID, task.ID)
+	waitFor(t, "continuation done", 30*time.Second, func() bool { return s.taskState(child.ID) == backlog.StateDone })
+	child, _ = s.backlog.Get(ctx, child.ID)
+	var vc sessionView
+	if err := json.Unmarshal([]byte(*child.Result), &vc); err != nil {
+		t.Fatalf("continuation result %q", *child.Result)
+	}
+	if !strings.HasSuffix(vc.WorkDir, "/scratch/"+task.ID.String()) {
+		t.Fatalf("the continuation resumes in the first task's directory %s, is %q", task.ID, vc.WorkDir)
+	}
+}
+
+// setStickyAtRest changes the agent's policy once its session has ended: a
+// running session keeps the agent as it loaded it and would claim the next
+// task under the old policy.
+func (s *stack) setStickyAtRest(agentID uuid.UUID, policy string) {
+	s.t.Helper()
+	waitFor(s.t, "agent at rest", 30*time.Second, func() bool { return s.agentStatus(agentID) == agents.StatusSleeping })
+	if err := s.registry.SetSticky(context.Background(), agentID, policy, 55, 200000); err != nil {
+		s.t.Fatal(err)
 	}
 }

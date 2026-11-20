@@ -94,6 +94,10 @@ func (s *Store) LastOnTopic(ctx context.Context, orgID, agentID uuid.UUID, topic
 		FROM backlog_tasks
 		WHERE org_id=$1 AND agent_id=$2 AND topic_key=$3 AND state='done'
 		  AND session_finished_at IS NOT NULL AND id<>$4
+		  -- A busy round ran beside the topic's session, not in it.
+		  AND COALESCE(sticky_reason,'') <> 'busy'
+		  AND NOT EXISTS (SELECT 1 FROM backlog_tasks r WHERE r.id = backlog_tasks.parent_task_id
+		    AND backlog_tasks.origin LIKE 'continuation:%' AND r.sticky_reason = 'busy')
 		ORDER BY session_finished_at DESC, id DESC LIMIT 1`, orgID, agentID, topic, exclude).Scan(
 		&p.TaskID, &p.SessionID, &p.FinishedAt, &p.ContextTokens, &p.Credential, &p.Prompt,
 		&p.Memory, &p.Basis, &p.Result, &p.Decision)
@@ -276,4 +280,21 @@ func (s *Store) StickyState(ctx context.Context, id uuid.UUID) (StickyState, err
 		return st, ErrNotFound
 	}
 	return st, err
+}
+
+// ChainRoot is the first task of a turn-limit continuation chain: the task
+// itself when it is no continuation. A continuation resumes the session its
+// chain's first task started, in that task's directory.
+func (s *Store) ChainRoot(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	var root uuid.UUID
+	err := s.pool.QueryRow(ctx, `WITH RECURSIVE up(id, parent, origin, depth) AS (
+			SELECT id, parent_task_id, origin, 0 FROM backlog_tasks WHERE id=$1
+			UNION ALL
+			SELECT t.id, t.parent_task_id, t.origin, up.depth + 1 FROM up JOIN backlog_tasks t ON t.id = up.parent
+			WHERE up.origin LIKE 'continuation:%' AND up.depth < 100)
+		SELECT id FROM up ORDER BY depth DESC LIMIT 1`, id).Scan(&root)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, ErrNotFound
+	}
+	return root, err
 }

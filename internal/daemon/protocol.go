@@ -138,6 +138,11 @@ type AssignTask struct {
 	// session started by one is found by the next. Empty = the task's own
 	// directory, as before.
 	WorkDirKey string `json:"work_dir_key,omitempty"`
+	// ScratchOf names the task whose directory under ~/scratch the run uses
+	// instead of its own: for a turn-limit continuation, the first task of
+	// its chain, whose run started the session it resumes there. --resume
+	// finds a transcript only under the directory it was written in.
+	ScratchOf string `json:"scratch_of,omitempty"`
 	// StickySessionID asks the daemon to resume the session of the agent's
 	// previous task on the topic, with StickyInput as the message — if the
 	// runtime holds that session in WorkDirKey. If it does not, the run starts

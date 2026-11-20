@@ -133,10 +133,11 @@ func (o *Orchestrator) planSticky(ctx context.Context, agent agents.Agent, task 
 	// was started in and runs under the prompt it was started with. Nothing
 	// to decide.
 	if task.RuntimeSessionID != nil && task.ResumeInput != nil {
-		if state.Policy != "" && state.Policy != agents.StickyFresh {
-			plan.workDirKey = topicWorkDir(agent.ID, topic)
-		}
+		// A session prompt is recorded exactly for the sessions started in
+		// the topic's directory; a busy round and a fresh-policy agent start
+		// theirs in the task's own (orchestrator: ScratchOf).
 		if state.Prompt != nil {
+			plan.workDirKey = topicWorkDir(agent.ID, topic)
 			plan.pinned = &sessionPrompt{*state.Prompt, state.Memory, ""}
 		}
 		return plan
@@ -377,7 +378,7 @@ func assistantUsage(payload []byte) (u backlog.FirstTurn, ok bool) {
 	// 5-minute write would put a 1-hour write in the wrong column of the
 	// split the window default is tuned from (AC 9).
 	u = backlog.FirstTurn{Input: us.Input, CacheRead: us.CacheRead, CacheWrite: us.CacheCreation}
-	if us.Split != nil {
+	if us.Split != nil && (us.Split.W5m+us.Split.W1h > 0 || us.CacheCreation == 0) {
 		w5m, w1h := us.Split.W5m, us.Split.W1h
 		u.CacheWrite5m, u.CacheWrite1h = &w5m, &w1h
 		if w5m+w1h > 0 {

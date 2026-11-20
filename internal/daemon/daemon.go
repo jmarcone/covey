@@ -677,6 +677,15 @@ func (c *Client) runTask(ctx context.Context, task AssignTask) {
 			}
 		}
 	}
+	// A continuation resumes in the directory its chain's first task
+	// started the session in, unless the session lies in its own.
+	if scratch == "" && task.ScratchOf != "" && task.ScratchOf != task.TaskID {
+		if of := taskScratchPath(c.homeDir, task.ScratchOf); of != "" {
+			if own := taskScratchPath(c.homeDir, task.TaskID); resumeDir(runtime, c.homeDir, of, own, task.ResumeSessionID) == of {
+				scratch = scratchDir(c.homeDir, task.ScratchOf)
+			}
+		}
+	}
 	if scratch == "" {
 		scratch = scratchDir(c.homeDir, task.TaskID)
 	}

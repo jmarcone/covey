@@ -2814,6 +2814,15 @@ func (o *Orchestrator) processTask(ctx context.Context, agent agents.Agent, link
 		// blocked→working: resumption through the native runtime session (spec/12).
 		assign.ResumeSessionID = *task.RuntimeSessionID
 		assign.ResumeInput = *task.ResumeInput
+		// A turn-limit continuation is a task of its own with a directory of
+		// its own, while the session it resumes was written in its chain's
+		// first task's: the run goes there (a topic's sessions live in the
+		// topic's directory and need no help).
+		if plan.workDirKey == "" && strings.HasPrefix(task.Origin, originContinuation+":") {
+			if root, err := o.Backlog.ChainRoot(ctx, taskID); err == nil && root != taskID {
+				assign.ScratchOf = root.String()
+			}
+		}
 	} else if plan.sessionID != "" {
 		assign.StickySessionID = plan.sessionID
 		assign.StickyInput = plan.input
