@@ -362,11 +362,7 @@ func (c *ClaudeCode) buildArgs(spec RunSpec) ([]string, string) {
 	if spec.ResumeSessionID != "" {
 		args = append(args, "--resume", spec.ResumeSessionID)
 	}
-	systemPrompt := spec.SystemPrompt
-	if spec.MemoryContext != "" {
-		systemPrompt += "\n\n" + spec.MemoryContext
-	}
-	if systemPrompt != "" {
+	if systemPrompt := appendedSystemPrompt(spec); systemPrompt != "" {
 		args = append(args, "--append-system-prompt", systemPrompt)
 	}
 	// The action proxy as an MCP server. Its tools have to stand in the SAME

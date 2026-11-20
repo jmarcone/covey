@@ -112,6 +112,13 @@ type Agent struct {
 	// (opt-in): dev servers and caches survive, the next run starts without a
 	// cold build-up. Default false → ephemeral like everyone else (spec/01).
 	WarmSandbox bool `json:"warm_sandbox"`
+	// StickyPolicy says whether a task on a topic resumes the session of the
+	// agent's last finished task on it (#130): fresh, conditional, always or
+	// ab (sticky.go). StickyWindowMinutes and StickyContextCap bound
+	// conditional.
+	StickyPolicy        string `json:"sticky_policy"`
+	StickyWindowMinutes int    `json:"sticky_window_minutes"`
+	StickyContextCap    int64  `json:"sticky_context_cap"`
 	// HiredAt is the agent's first day. nil = a draft: it exists and can be
 	// configured, but it is not dispatched, has no heartbeat, no live webhook,
 	// no sandbox and no cost (spec/20). Hiring is a human act — no action of the
@@ -165,13 +172,14 @@ type Registry struct {
 
 func NewRegistry(pool *pgxpool.Pool) *Registry { return &Registry{pool: pool} }
 
-const agentCols = "id, org_id, slug, display_name, runtime, model, effort, max_turns, status, owner_id, supervisor_id, department_id, job_title, identities, phone, responsibilities, custom, killed, budget_usd, runtime_id, voice_id, webhook_token, COALESCE(recording_level,''), recording_retention_days, sandbox_image, runner_tags, services, warm_sandbox, hired_at, created_at, updated_at"
+const agentCols = "id, org_id, slug, display_name, runtime, model, effort, max_turns, status, owner_id, supervisor_id, department_id, job_title, identities, phone, responsibilities, custom, killed, budget_usd, runtime_id, voice_id, webhook_token, COALESCE(recording_level,''), recording_retention_days, sandbox_image, runner_tags, services, warm_sandbox, hired_at, created_at, updated_at, sticky_policy, sticky_window_minutes, sticky_context_cap"
 
 func scanAgent(row pgx.Row) (Agent, error) {
 	var a Agent
 	err := row.Scan(&a.ID, &a.OrgID, &a.Slug, &a.DisplayName, &a.Runtime, &a.Model, &a.Effort, &a.MaxTurns, &a.Status,
 		&a.OwnerID, &a.SupervisorID, &a.DepartmentID, &a.JobTitle, &a.Identities, &a.Phone, &a.Responsibilities, &a.Custom,
-		&a.Killed, &a.BudgetUSD, &a.RuntimeID, &a.VoiceID, &a.WebhookToken, &a.RecordingLevel, &a.RecordingRetentionDays, &a.SandboxImage, &a.RunnerTags, &a.Services, &a.WarmSandbox, &a.HiredAt, &a.CreatedAt, &a.UpdatedAt)
+		&a.Killed, &a.BudgetUSD, &a.RuntimeID, &a.VoiceID, &a.WebhookToken, &a.RecordingLevel, &a.RecordingRetentionDays, &a.SandboxImage, &a.RunnerTags, &a.Services, &a.WarmSandbox, &a.HiredAt, &a.CreatedAt, &a.UpdatedAt,
+		&a.StickyPolicy, &a.StickyWindowMinutes, &a.StickyContextCap)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return a, ErrNotFound
 	}
@@ -233,9 +241,9 @@ func (r *Registry) create(ctx context.Context, orgID uuid.UUID, slug, displayNam
 	if draft {
 		hired = "NULL"
 	}
-	row := r.pool.QueryRow(ctx, `INSERT INTO agents (id, org_id, slug, display_name, runtime, owner_id, hired_at)
-		VALUES ($1,$2,$3,$4,$5,$6,`+hired+`) RETURNING `+agentCols,
-		uuid.New(), orgID, slug, displayName, runtime, ownerID)
+	row := r.pool.QueryRow(ctx, `INSERT INTO agents (id, org_id, slug, display_name, runtime, owner_id, hired_at, sticky_policy)
+		VALUES ($1,$2,$3,$4,$5,$6,`+hired+`,$7) RETURNING `+agentCols,
+		uuid.New(), orgID, slug, displayName, runtime, ownerID, DefaultStickyPolicy(slug))
 	return scanAgent(row)
 }
 

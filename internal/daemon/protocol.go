@@ -132,6 +132,35 @@ type AssignTask struct {
 	MemoryContext   string `json:"memory_context,omitempty"`
 	ResumeSessionID string `json:"resume_session_id,omitempty"`
 	ResumeInput     string `json:"resume_input,omitempty"`
+	// WorkDirKey names the run's working directory under ~/scratch when the
+	// task belongs to a topic its agent keeps a session on (#130):
+	// "topic-<agent>-<pr|issue>-<n>". Every task of the topic uses it, so a
+	// session started by one is found by the next. Empty = the task's own
+	// directory, as before.
+	WorkDirKey string `json:"work_dir_key,omitempty"`
+	// StickySessionID asks the daemon to resume the session of the agent's
+	// previous task on the topic, with StickyInput as the message — if the
+	// runtime holds that session in WorkDirKey. If it does not, the run starts
+	// fresh with Title/Body (which carry the handover) under the fallback
+	// prompt and memory context, and the daemon says so in a "sticky" event.
+	// A field of its own and not ResumeSessionID: a daemon that predates it
+	// ignores it and starts fresh with the handover, instead of failing on a
+	// session it cannot find.
+	StickySessionID       string `json:"sticky_session_id,omitempty"`
+	StickyInput           string `json:"sticky_input,omitempty"`
+	FallbackSystemPrompt  string `json:"fallback_system_prompt,omitempty"`
+	FallbackMemoryContext string `json:"fallback_memory_context,omitempty"`
+}
+
+// EventKindSticky is the daemon's answer to a sticky resume (payload
+// StickyOutcome): resumed, or fresh because the runtime does not hold the
+// session.
+const EventKindSticky = "sticky"
+
+// StickyOutcome is the payload of an EventKindSticky event.
+type StickyOutcome struct {
+	Decision string `json:"decision"` // sticky_resumed | fresh
+	Reason   string `json:"reason,omitempty"`
 }
 
 type InjectCredentials struct {
@@ -493,6 +522,9 @@ type RequestCreateTask struct {
 	Title     string `json:"title"`
 	Body      string `json:"body"`
 	Priority  int    `json:"priority,omitempty"`
+	// Topic is the pull request or issue the task belongs to ("pr:<n>",
+	// "issue:<n>", #130). Empty = none.
+	Topic string `json:"topic,omitempty"`
 	// ApprovalID is the approval the daemon's guard-rail check consumed for
 	// this request, if a rule required one. The control plane checks the rule
 	// again itself and accepts the request only with that approval (#703).

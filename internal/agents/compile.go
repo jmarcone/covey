@@ -50,7 +50,8 @@ const CoveyActionsDoc = `The platform's own actions — your board, your memory,
    files a DRAFT: nothing of it acts until a person releases it on the voices page. Say so.
    create_task {"title":"...","body":"<assignment with all names>","agent":"<slug, optional>"} —
    a task of your own for the rest, or a delegation to a colleague. The assignment is a
-   handover to somebody without your context.
+   handover to somebody without your context. "topic":"pr:<n>" or "issue:<n>" (optional) names the
+   pull request or issue it is about; a developer's next round on the same topic continues its session.
    list_tasks {"scope":"own|created|all","state":"open" or ["open","blocked"],"archived":false,"limit":50} —
    your own tasks and the ones you created, with state, column and the start of the result
    (all parameters optional). get_task {"id":"<full id or its first 8 characters>"} — one of

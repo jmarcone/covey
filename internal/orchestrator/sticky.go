@@ -1,0 +1,425 @@
+package orchestrator
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/google/uuid"
+
+	"covey/internal/agents"
+	"covey/internal/backlog"
+	"covey/internal/daemon"
+	"covey/internal/observability"
+)
+
+// Sticky sessions per topic (#130).
+//
+// Every task used to start a cold runtime session — a developer's second fix
+// round on the same pull request included. It read the code and the review
+// again, and paid the cache write for its whole context again. A task can now
+// name its topic (pr:<n>, issue:<n>), and a developer whose policy allows it
+// resumes the session of its last finished task on that topic: same working
+// directory, same system prompt byte for byte (or the cache would not be read),
+// and the new task's title and body as the message.
+//
+// When it may not — outside the window, over the context cap, another
+// credential, the session already continued by another round, stickiness off —
+// the task starts fresh, with a handover: the previous report and the latest
+// review on the topic. The decision is recorded on the task either way.
+
+// stickyHandoverCap bounds the handover put in front of a fresh task's body.
+const stickyHandoverCap = 4000
+
+// sessionPrompt is what a session was started with: the compiled system prompt
+// and the memory context. A resume sends the same pair.
+type sessionPrompt struct{ prompt, memory string }
+
+// stickyPlan is what the dispatch of one task does about its topic.
+type stickyPlan struct {
+	// workDirKey: the topic's directory, "" = the task's own.
+	workDirKey string
+	// decision is recorded on the task; zero = nothing to record.
+	decision backlog.StickyDecision
+	// pinned replaces the compiled prompt and memory context: the session's
+	// own, for a resume of it (sticky, or the task's own after a block or at
+	// the turn limit).
+	pinned *sessionPrompt
+	// record stores the run's prompt as the task's session prompt (a fresh
+	// start of a session that later rounds may resume).
+	record *sessionPrompt
+	// A sticky resume: the session, the message, the fallback.
+	sessionID string
+	input     string
+	fallback  *sessionPrompt
+	// handover goes in front of the body of a fresh task (and of the
+	// fallback, which is fresh as well).
+	handover string
+}
+
+// effectiveStickyPolicy resolves ab to the arm the topic falls in: odd pull
+// requests always, even ones and issues conditional. The arm is a function of
+// the number, so a pull request stays in its arm for its whole life.
+func effectiveStickyPolicy(policy, topic string) string {
+	if policy != agents.StickyAB {
+		if policy == "" {
+			return agents.StickyFresh
+		}
+		return policy
+	}
+	kind, number := backlog.TopicParts(topic)
+	if kind == "pr" && number != "" && strings.ContainsAny(number[len(number)-1:], "13579") {
+		return agents.StickyAlways
+	}
+	return agents.StickyConditional
+}
+
+// topicWorkDir is the topic's directory name under ~/scratch:
+// topic-<agent>-<kind>-<n>, with everything outside [a-z0-9-] in the slug
+// replaced. The daemon accepts no other form (daemon/sticky.go).
+func topicWorkDir(slug, topic string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(slug) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	s := strings.Trim(b.String(), "-")
+	if len(s) > 80 {
+		s = strings.TrimRight(s[:80], "-")
+	}
+	if s == "" {
+		s = "agent"
+	}
+	kind, number := backlog.TopicParts(topic)
+	return "topic-" + s + "-" + kind + "-" + number
+}
+
+// credentialKey names the pool value a session runs on, for the comparison
+// with the one its predecessor ran on: the prompt cache belongs to an account,
+// and a resume under another one reads nothing from it.
+func credentialKey(s *session) string {
+	c := s.credential()
+	switch {
+	case c.SecretKey != "":
+		return fmt.Sprintf("secret:%s:%d", c.SecretKey, c.SecretSlot)
+	case c.RuntimeID != uuid.Nil:
+		return fmt.Sprintf("runtime:%s:%d", c.RuntimeID, c.Ord)
+	}
+	return ""
+}
+
+// planSticky decides how a task's run starts with regard to its topic. It
+// does not write anything; applyStickyPlan records the decision.
+func (o *Orchestrator) planSticky(ctx context.Context, agent agents.Agent, task backlog.Task, s *session,
+	compiled, memCtx, hits string, now time.Time) stickyPlan {
+	var plan stickyPlan
+	if task.TopicKey == nil || !backlog.IsStickyTopic(*task.TopicKey) {
+		return plan
+	}
+	topic := *task.TopicKey
+	state, err := o.Backlog.StickyState(ctx, task.ID)
+	if err != nil {
+		o.Log.Warn("sticky: task state not readable — starting fresh", "task", task.ID, "err", err)
+		return plan
+	}
+
+	// The task resumes its OWN session (after a block, or as the
+	// continuation at the turn limit): that session lies in the directory it
+	// was started in and runs under the prompt it was started with. Nothing
+	// to decide.
+	if task.RuntimeSessionID != nil && task.ResumeInput != nil {
+		if state.Policy != "" && state.Policy != agents.StickyFresh {
+			plan.workDirKey = topicWorkDir(agent.Slug, topic)
+		}
+		if state.Prompt != nil {
+			plan.pinned = &sessionPrompt{*state.Prompt, state.Memory}
+		}
+		return plan
+	}
+	// A task dispatched again after its run was lost (a requeue) keeps the
+	// decision it was dispatched with the first time — and its directory.
+	policy := effectiveStickyPolicy(agent.StickyPolicy, topic)
+	if state.Policy != "" {
+		policy = state.Policy
+	}
+	plan.decision.Policy = policy
+
+	pred, found, err := o.Backlog.LastOnTopic(ctx, agent.OrgID, agent.ID, topic, task.ID)
+	if err != nil {
+		o.Log.Warn("sticky: previous task on the topic not readable — starting fresh", "task", task.ID, "err", err)
+		found = false
+	}
+	fresh := func(reason string) stickyPlan {
+		plan.decision.Decision = backlog.DecisionFresh
+		plan.decision.Reason = reason
+		if policy != agents.StickyFresh {
+			plan.workDirKey = topicWorkDir(agent.Slug, topic)
+			plan.record = &sessionPrompt{compiled, memCtx}
+		}
+		if found {
+			plan.handover = o.stickyHandover(ctx, agent, topic, pred)
+		}
+		return plan
+	}
+	if found {
+		plan.decision.From = &pred.TaskID
+		gap := int64(now.Sub(pred.FinishedAt) / time.Second)
+		plan.decision.GapS = &gap
+		if pred.ContextTokens > 0 {
+			c := pred.ContextTokens
+			plan.decision.Context = &c
+		}
+	}
+	if reason := stickyVerdict(policy, found, pred, now, agent.StickyWindowMinutes, agent.StickyContextCap,
+		credentialKey(s)); reason != "" {
+		return fresh(reason)
+	}
+	claimed, err := o.Backlog.ClaimSession(ctx, pred.TaskID, task.ID)
+	if err != nil || !claimed {
+		if err != nil {
+			o.Log.Warn("sticky: claiming the session failed — starting fresh", "task", task.ID, "err", err)
+		}
+		return fresh(backlog.ReasonBusy)
+	}
+
+	// Resume: the predecessor's session, under the predecessor's prompt, in
+	// the topic's directory. The new task's wiki hits go into the message:
+	// in the system prompt they would change the prefix and turn the whole
+	// resumed context into a cache write.
+	plan.decision.Decision = backlog.DecisionPending
+	plan.workDirKey = topicWorkDir(agent.Slug, topic)
+	plan.pinned = &sessionPrompt{*pred.Prompt, pred.Memory}
+	plan.record = plan.pinned
+	plan.sessionID = pred.SessionID
+	plan.input = stickyInput(task, hits)
+	plan.fallback = &sessionPrompt{compiled, memCtx}
+	plan.handover = o.stickyHandover(ctx, agent, topic, pred)
+	return plan
+}
+
+// stickyInput is the message a resumed session gets: the new task, and the
+// wiki pages its text found.
+func stickyInput(task backlog.Task, hits string) string {
+	in := "New task on the same topic — your earlier work on it is above in this session.\n\n" +
+		task.Title + "\n\n" + task.Body
+	if strings.TrimSpace(hits) != "" {
+		in += "\n\n## Wiki pages that match this task\n\n" + strings.TrimSpace(hits)
+	}
+	return in
+}
+
+// stickyHandover is what a fresh task on the topic is told of the previous
+// one: its final report, and on a pull request the latest review on it.
+// Capped, and marked as a handover so the run does not take it for its own
+// memory of the work.
+func (o *Orchestrator) stickyHandover(ctx context.Context, agent agents.Agent, topic string, pred backlog.Predecessor) string {
+	report := strings.TrimSpace(pred.Result)
+	review := ""
+	if kind, _ := backlog.TopicParts(topic); kind == "pr" {
+		var err error
+		if review, err = o.Backlog.LatestReview(ctx, agent.OrgID, agent.ID, topic); err != nil {
+			o.Log.Warn("sticky: latest review not readable", "topic", topic, "err", err)
+		}
+	}
+	if report == "" && review == "" {
+		return ""
+	}
+	head := "## Handover (" + topic + ")\n\n" +
+		"This run starts a fresh session. What follows is a handover from your previous task on " + topic +
+		", not your own memory of it — check what it says against the code.\n\n"
+	const tail = "\n\n## The new task\n\n"
+	var parts []string
+	if report != "" {
+		parts = append(parts, "### Your previous report\n\n"+report)
+	}
+	if review != "" {
+		parts = append(parts, "### The latest review\n\n"+review)
+	}
+	// Counted in characters, the separators between the parts included.
+	budget := stickyHandoverCap - utf8.RuneCountInString(head) - utf8.RuneCountInString(tail) - 2*(len(parts)-1)
+	// Each part gets an even share of what is left; a short one leaves its
+	// rest to the other. truncateRunes appends " …", hence the 2 kept back.
+	out := make([]string, 0, len(parts))
+	for i, p := range parts {
+		share := budget / (len(parts) - i)
+		if utf8.RuneCountInString(p) > share {
+			p = truncateRunes(p, max(share-2, 0))
+		}
+		budget -= utf8.RuneCountInString(p)
+		out = append(out, p)
+	}
+	return head + strings.Join(out, "\n\n") + tail
+}
+
+// applyStickyPlan records the decision and the session prompt on the task.
+// Best effort: a record that fails must not cost the run.
+func (o *Orchestrator) applyStickyPlan(ctx context.Context, agent agents.Agent, taskID uuid.UUID, plan stickyPlan, s *session) {
+	if plan.decision.Decision != "" {
+		if err := o.Backlog.RecordSticky(ctx, taskID, plan.decision); err != nil {
+			o.Log.Warn("sticky: decision not recorded", "task", taskID, "err", err)
+		}
+		fields := map[string]string{"status": "sticky_" + plan.decision.Decision, "policy": plan.decision.Policy}
+		if plan.decision.Decision == backlog.DecisionFresh {
+			fields = map[string]string{"status": "sticky_fresh", "reason": plan.decision.Reason, "policy": plan.decision.Policy}
+		}
+		if plan.decision.From != nil {
+			fields["from_task"] = plan.decision.From.String()
+		}
+		_ = o.Obs.Record(ctx, agent.OrgID, agent.ID, &taskID, observability.KindLifecycle, fields)
+	}
+	if plan.record != nil {
+		if err := o.Backlog.SetSessionPrompt(ctx, taskID, plan.record.prompt, plan.record.memory); err != nil {
+			o.Log.Warn("sticky: session prompt not recorded", "task", taskID, "err", err)
+		}
+	}
+	s.stickyFallback = plan.fallback
+}
+
+// settleSticky takes the daemon's answer to a sticky resume.
+func (o *Orchestrator) settleSticky(ctx context.Context, agent agents.Agent, taskID uuid.UUID, payload json.RawMessage, s *session) {
+	var out daemon.StickyOutcome
+	if json.Unmarshal(payload, &out) != nil {
+		return
+	}
+	switch out.Decision {
+	case backlog.DecisionResumed, backlog.DecisionFresh:
+	default:
+		return
+	}
+	if err := o.Backlog.SettleSticky(ctx, taskID, out.Decision, out.Reason); err != nil {
+		o.Log.Warn("sticky: daemon's answer not recorded", "task", taskID, "err", err)
+	}
+	// Fresh after all: the session this task runs is its own, started under
+	// the fallback prompt — the one a later round has to resume it with.
+	if out.Decision == backlog.DecisionFresh && s.stickyFallback != nil {
+		if err := o.Backlog.SetSessionPrompt(ctx, taskID, s.stickyFallback.prompt, s.stickyFallback.memory); err != nil {
+			o.Log.Warn("sticky: session prompt not recorded", "task", taskID, "err", err)
+		}
+	}
+	s.stickyFallback = nil
+	fields := map[string]string{"status": "sticky_" + out.Decision}
+	if out.Decision == backlog.DecisionFresh {
+		fields = map[string]string{"status": "sticky_fresh", "reason": out.Reason}
+	}
+	_ = o.Obs.Record(ctx, agent.OrgID, agent.ID, &taskID, observability.KindLifecycle, fields)
+}
+
+// turnTracker follows a run's assistant turns as their lines pass: the cache
+// figures of the first (was the resume read from the cache, or written?) and
+// the context size of the last (is the session still small enough to resume?).
+type turnTracker struct {
+	task    uuid.UUID
+	seen    bool
+	context int64
+}
+
+func (t *turnTracker) reset(task uuid.UUID) { *t = turnTracker{task: task} }
+
+// assistantUsage is the usage of a main-thread assistant line; ok is false for
+// any other line, and for a sub-agent's line (parent_tool_use_id set), whose
+// context is the sub-agent's and not the session's.
+func assistantUsage(payload []byte) (u backlog.FirstTurn, ok bool) {
+	var line struct {
+		Type   string           `json:"type"`
+		Parent *json.RawMessage `json:"parent_tool_use_id"`
+		Msg    struct {
+			Usage *struct {
+				Input         int64 `json:"input_tokens"`
+				CacheRead     int64 `json:"cache_read_input_tokens"`
+				CacheCreation int64 `json:"cache_creation_input_tokens"`
+				Split         *struct {
+					W5m int64 `json:"ephemeral_5m_input_tokens"`
+					W1h int64 `json:"ephemeral_1h_input_tokens"`
+				} `json:"cache_creation"`
+			} `json:"usage"`
+		} `json:"message"`
+	}
+	if json.Unmarshal(payload, &line) != nil || line.Type != "assistant" || line.Msg.Usage == nil {
+		return u, false
+	}
+	if line.Parent != nil && string(*line.Parent) != "null" {
+		return u, false
+	}
+	us := line.Msg.Usage
+	u = backlog.FirstTurn{Input: us.Input, CacheRead: us.CacheRead, CacheWrite5m: us.CacheCreation}
+	if us.Split != nil && us.Split.W5m+us.Split.W1h > 0 {
+		u.CacheWrite5m, u.CacheWrite1h = us.Split.W5m, us.Split.W1h
+	}
+	return u, true
+}
+
+// observeTurn takes one runtime line of the current run.
+func (o *Orchestrator) observeTurn(ctx context.Context, taskID uuid.UUID, payload []byte, s *session) {
+	u, ok := assistantUsage(payload)
+	if !ok {
+		return
+	}
+	t := &s.turns
+	if t.task != taskID {
+		t.reset(taskID)
+	}
+	t.context = u.Input + u.CacheRead + u.CacheWrite5m + u.CacheWrite1h
+	if !t.seen {
+		t.seen = true
+		if err := o.Backlog.RecordFirstTurn(ctx, taskID, u); err != nil {
+			o.Log.Warn("sticky: first turn not recorded", "task", taskID, "err", err)
+		}
+	}
+}
+
+// lastContext is the current run's last-turn context, 0 when none was seen.
+func (s *session) lastContext(taskID uuid.UUID) int64 {
+	if s.turns.task != taskID {
+		return 0
+	}
+	return s.turns.context
+}
+
+// stickyVerdict is the rule, without the store: "" when the predecessor's
+// session may be resumed, otherwise the reason for a fresh start. The order is
+// the order of the questions — is stickiness on, is there anything to resume,
+// is it recent and small enough, was it the same account, is the session
+// there at all. Whether another round already continues it (busy) is asked
+// of the store afterwards, atomically.
+func stickyVerdict(policy string, found bool, pred backlog.Predecessor, now time.Time,
+	windowMinutes int, contextCap int64, credential string) string {
+	switch {
+	case policy == agents.StickyFresh || policy == "":
+		return backlog.ReasonOff
+	case !found:
+		return backlog.ReasonNoPrevious
+	}
+	window := time.Duration(windowMinutes) * time.Minute
+	if window <= 0 {
+		window = agents.DefaultStickyWindowMinutes * time.Minute
+	}
+	if contextCap <= 0 {
+		contextCap = agents.DefaultStickyContextCap
+	}
+	if policy == agents.StickyConditional {
+		// An unknown size (0: a daemon or engine that reported no turn) is
+		// not held against the session; the window still bounds it.
+		if now.Sub(pred.FinishedAt) >= window {
+			return backlog.ReasonWindow
+		}
+		if pred.ContextTokens >= contextCap {
+			return backlog.ReasonCap
+		}
+	}
+	// The prompt cache belongs to an account: under another credential a
+	// resume reads nothing from it, and the conversation would be carried
+	// to an account it was not held under.
+	if pred.Credential != "" && credential != "" && pred.Credential != credential {
+		return backlog.ReasonCredential
+	}
+	if pred.SessionID == "" || pred.Prompt == nil {
+		return backlog.ReasonNoSession
+	}
+	return ""
+}

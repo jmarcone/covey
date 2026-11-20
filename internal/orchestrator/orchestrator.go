@@ -498,6 +498,13 @@ type session struct {
 	// sandbox went down was dropped on the session all the same. A daemon
 	// loss stays quiet (endQuiet).
 	taskError bool
+	// turns follows the current run's assistant turns (#130): the first
+	// one's cache figures and the context size of the last. Written and read
+	// on the session's own goroutine.
+	turns turnTracker
+	// stickyFallback is the prompt the current run falls back to when the
+	// daemon cannot resume the session it was asked to (#130).
+	stickyFallback *sessionPrompt
 }
 
 // Run starts the dispatch loop: cheap, permanent, no LLM (spec/03).
@@ -2575,6 +2582,9 @@ func (o *Orchestrator) processTask(ctx context.Context, agent agents.Agent, link
 	if entries, err := o.Memory.Query(ctx, agent.ID, task.Title+" "+task.Body, 5); err == nil {
 		memCtx = memory.FormatForPrompt(entries)
 	}
+	// The task's own hits, apart: a sticky resume carries them in its message
+	// rather than in the session's system prompt (#130).
+	hits := memCtx
 	// The index deliberately reaches further than the 40 pages it used to: it
 	// only carries slugs now (FormatIndexForPrompt), so full coverage costs less
 	// than the truncated list with titles did — and coverage is the point, a
@@ -2755,8 +2765,18 @@ func (o *Orchestrator) processTask(ctx context.Context, agent agents.Agent, link
 	if maxTurns <= 0 {
 		maxTurns = agents.DefaultMaxTurns
 	}
+	// The topic (#130): resume the agent's last session on it, or start fresh
+	// (with a handover) — and either way record why. A resumed session runs
+	// under the prompt it was started with, byte for byte.
+	s.turns.reset(taskID)
+	plan := o.planSticky(ctx, agent, task, s, compiled, memCtx, hits, time.Now())
+	o.applyStickyPlan(ctx, agent, taskID, plan, s)
+	systemPrompt, assignMemory := compiled, memCtx
+	if plan.pinned != nil {
+		systemPrompt, assignMemory = plan.pinned.prompt, plan.pinned.memory
+	}
 	if err := o.sendMsg(ctx, link, daemon.TypeInjectConfig, daemon.InjectConfig{
-		SystemPrompt: compiled,
+		SystemPrompt: systemPrompt,
 		Runtime:      agent.Runtime,
 		Model:        agent.Model,
 		Effort:       agent.Effort,
@@ -2774,12 +2794,21 @@ func (o *Orchestrator) processTask(ctx context.Context, agent agents.Agent, link
 		Title:         task.Title,
 		Body:          task.Body,
 		Priority:      task.Priority,
-		MemoryContext: memCtx,
+		MemoryContext: assignMemory,
+		WorkDirKey:    plan.workDirKey,
+	}
+	if plan.handover != "" {
+		assign.Body = plan.handover + task.Body
 	}
 	if task.RuntimeSessionID != nil && task.ResumeInput != nil {
 		// blocked→working: resumption through the native runtime session (spec/12).
 		assign.ResumeSessionID = *task.RuntimeSessionID
 		assign.ResumeInput = *task.ResumeInput
+	} else if plan.sessionID != "" {
+		assign.StickySessionID = plan.sessionID
+		assign.StickyInput = plan.input
+		assign.FallbackSystemPrompt = plan.fallback.prompt
+		assign.FallbackMemoryContext = plan.fallback.memory
 	}
 	if err := o.sendMsg(ctx, link, daemon.TypeAssignTask, assign); err != nil {
 		return err
@@ -2981,6 +3010,12 @@ func (o *Orchestrator) handleDaemonMessage(ctx context.Context, agent agents.Age
 			o.recordHTTP(ctx, agent, taskID, ev.Payload)
 			return false, nil
 		}
+		// The daemon's answer to a sticky resume (#130) is a decision on the
+		// task, not a line of the run.
+		if ev.Kind == daemon.EventKindSticky {
+			o.settleSticky(ctx, agent, taskID, ev.Payload, s)
+			return false, nil
+		}
 		kind := observability.KindRuntime
 		payload := json.RawMessage(ev.Payload)
 		if ev.Kind == daemon.EventKindAction {
@@ -2992,6 +3027,7 @@ func (o *Orchestrator) handleDaemonMessage(ctx context.Context, agent agents.Age
 			o.noteTargetRejection(ctx, agent, payload)
 		}
 		if kind == observability.KindRuntime {
+			o.observeTurn(ctx, taskID, payload, s)
 			// A Claude Code `result` line also files its usage per model
 			// (cost insights, migrations 0142/0144), booked against the
 			// credential of this phase. The line itself is filed even when
@@ -3197,6 +3233,13 @@ func (o *Orchestrator) handleDaemonMessage(ctx context.Context, agent agents.Age
 			result = "ESCALATED: " + result
 			if name, err := o.Registry.SupervisorName(ctx, agent.ID); err == nil && name != "" {
 				result += " (to " + name + ")"
+			}
+		}
+		// What the next task on the topic resumes (#130): written before the
+		// task turns done, so a done task never lacks it.
+		if state == backlog.StateDone && d.Status == "done" {
+			if err := o.Backlog.RecordSessionEnd(ctx, taskID, d.SessionID, s.lastContext(taskID), credentialKey(s)); err != nil {
+				o.Log.Warn("sticky: session end not recorded", "task", taskID, "err", err)
 			}
 		}
 		if _, err := o.Backlog.Complete(ctx, taskID, state, result, d.Error); err != nil {
@@ -3615,6 +3658,10 @@ func (o *Orchestrator) CreateAgentTask(ctx context.Context, agent agents.Agent, 
 	if title == "" {
 		return fail("title is missing")
 	}
+	topic, err := backlog.NormalizeTopic(req.Topic)
+	if err != nil {
+		return fail(err.Error())
+	}
 	subject := "covey:create_task"
 	if strings.TrimSpace(req.Agent) != "" {
 		subject += guardrails.ForeignSuffix
@@ -3700,12 +3747,16 @@ func (o *Orchestrator) CreateAgentTask(ctx context.Context, agent agents.Agent, 
 		Body:     req.Body,
 		Origin:   originAgentTask + ":" + agent.Slug,
 		Priority: req.Priority,
+		Topic:    topic,
 	})
 	if err != nil {
 		return fail(err.Error())
 	}
 	fields := map[string]string{"status": "task_created", "created_task": created.ID.String(),
 		"target_agent": targetAgent.Slug, "title": title}
+	if topic != "" {
+		fields["topic"] = topic
+	}
 	if targetAgent.Killed {
 		// Written down because the task then lies still for a reason that is not
 		// visible on it: whoever asks later why it waited finds the answer here.

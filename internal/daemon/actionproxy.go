@@ -503,9 +503,15 @@ func (p *actionProxy) createTask(ctx context.Context, params json.RawMessage) an
 		Body     string `json:"body"`
 		Agent    string `json:"agent"`
 		Priority int    `json:"priority"`
+		Topic    string `json:"topic"`
 	}
 	if err := json.Unmarshal(params, &in); err != nil || strings.TrimSpace(in.Title) == "" {
 		return map[string]string{"status": "error", "error": "title missing"}
+	}
+	// Checked here as well as in the control plane, so that a malformed topic
+	// is refused before the guard rails spend an approval on it.
+	if in.Topic = strings.TrimSpace(in.Topic); in.Topic != "" && !ValidTopic(in.Topic) {
+		return map[string]string{"status": "error", "error": "topic must be " + TopicFormat}
 	}
 	subject := "covey:create_task"
 	if strings.TrimSpace(in.Agent) != "" {
@@ -528,7 +534,7 @@ func (p *actionProxy) createTask(ctx context.Context, params json.RawMessage) an
 
 	resp, err := p.client.createTask(ctx, RequestCreateTask{
 		TaskID: p.taskID, Agent: in.Agent, Title: in.Title, Body: in.Body, Priority: in.Priority,
-		ApprovalID: dec.ApprovalID,
+		Topic: in.Topic, ApprovalID: dec.ApprovalID,
 	})
 	if err != nil {
 		return map[string]string{"status": "error", "error": err.Error()}
