@@ -255,9 +255,11 @@ func TestMigration0147CostGap(t *testing.T) {
 			}
 		}
 	}
+	// The agent comes first: the registry reads the columns of today
+	// (sticky_sessions, 0154), which the schema rolled back has not.
+	agent := s.newSupportAgent("vor-0147")
 	down()
 
-	agent := s.newSupportAgent("vor-0147")
 	task := uuid.New()
 	sid := uuid.NewString()
 	sonnet := "claude-sonnet-5-5"

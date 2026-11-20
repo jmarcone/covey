@@ -38,13 +38,15 @@ func TestMigration0144CostDeltas(t *testing.T) {
 		}
 		return v
 	}
+	// The agents come first: the registry reads the columns of today
+	// (sticky_sessions, 0154), which the schema rolled back has not.
+	agent := s.newSupportAgent("vor-0144")
 	for version() > 143 {
 		if err := db.MigrateDown(ctx, s.pool, migrations.FS); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	agent := s.newSupportAgent("vor-0144")
 	rt, err := s.runtimes.Create(ctx, s.orgID, "claude-code", "Claude", "")
 	if err != nil {
 		t.Fatal(err)
@@ -234,14 +236,16 @@ func TestMigration0145MeterReadings(t *testing.T) {
 		}
 		return v
 	}
+	// The agents come first: the registry reads the columns of today
+	// (sticky_sessions, 0154), which the schema rolled back has not.
+	agent := s.newSupportAgent("vor-0145")
+	stranger := s.newSupportAgent("ohne-sitz")
 	for version() > 144 {
 		if err := db.MigrateDown(ctx, s.pool, migrations.FS); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	agent := s.newSupportAgent("vor-0145")
-	stranger := s.newSupportAgent("ohne-sitz")
 	rt, err := s.runtimes.Create(ctx, s.orgID, "claude-code", "Claude", "")
 	if err != nil {
 		t.Fatal(err)
