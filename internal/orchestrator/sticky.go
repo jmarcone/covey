@@ -2,6 +2,8 @@ package orchestrator
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -36,7 +38,15 @@ const stickyHandoverCap = 4000
 
 // sessionPrompt is what a session was started with: the compiled system prompt
 // and the memory context. A resume sends the same pair.
-type sessionPrompt struct{ prompt, memory string }
+type sessionPrompt struct{ prompt, memory, basis string }
+
+// promptBasis is the hash a session's prompt is compared by: the part of the
+// compiled prompt that does not depend on the task (configuration, platform
+// protocol, target systems, team directory).
+func promptBasis(taskIndependent string) string {
+	sum := sha256.Sum256([]byte(taskIndependent))
+	return hex.EncodeToString(sum[:])
+}
 
 // stickyPlan is what the dispatch of one task does about its topic.
 type stickyPlan struct {
@@ -117,7 +127,7 @@ func credentialKey(s *session) string {
 // planSticky decides how a task's run starts with regard to its topic. It
 // does not write anything; applyStickyPlan records the decision.
 func (o *Orchestrator) planSticky(ctx context.Context, agent agents.Agent, task backlog.Task, s *session,
-	compiled, memCtx, hits string, now time.Time) stickyPlan {
+	compiled, memCtx, hits, basis string, now time.Time) stickyPlan {
 	var plan stickyPlan
 	if task.TopicKey == nil || !backlog.IsStickyTopic(*task.TopicKey) {
 		return plan
@@ -138,7 +148,7 @@ func (o *Orchestrator) planSticky(ctx context.Context, agent agents.Agent, task 
 			plan.workDirKey = topicWorkDir(agent.Slug, topic)
 		}
 		if state.Prompt != nil {
-			plan.pinned = &sessionPrompt{*state.Prompt, state.Memory}
+			plan.pinned = &sessionPrompt{*state.Prompt, state.Memory, ""}
 		}
 		return plan
 	}
@@ -160,7 +170,7 @@ func (o *Orchestrator) planSticky(ctx context.Context, agent agents.Agent, task 
 		plan.decision.Reason = reason
 		if policy != agents.StickyFresh {
 			plan.workDirKey = topicWorkDir(agent.Slug, topic)
-			plan.record = &sessionPrompt{compiled, memCtx}
+			plan.record = &sessionPrompt{compiled, memCtx, basis}
 		}
 		if found {
 			plan.handover = o.stickyHandover(ctx, agent, topic, pred)
@@ -177,8 +187,17 @@ func (o *Orchestrator) planSticky(ctx context.Context, agent agents.Agent, task 
 		}
 	}
 	if reason := stickyVerdict(policy, found, pred, now, agent.StickyWindowMinutes, agent.StickyContextCap,
-		credentialKey(s)); reason != "" {
+		credentialKey(s), basis); reason != "" {
 		return fresh(reason)
+	}
+	// Another round on the topic is still in play (blocked on its own
+	// session, say): it holds newer work than the predecessor, and resuming
+	// the older session beside it would fork the topic's line of work.
+	if open, err := o.Backlog.OpenSessionOnTopic(ctx, agent.OrgID, agent.ID, topic, task.ID); err != nil || open {
+		if err != nil {
+			o.Log.Warn("sticky: open rounds on the topic not readable — starting fresh", "task", task.ID, "err", err)
+		}
+		return fresh(backlog.ReasonBusy)
 	}
 	claimed, err := o.Backlog.ClaimSession(ctx, pred.TaskID, task.ID)
 	if err != nil || !claimed {
@@ -194,11 +213,11 @@ func (o *Orchestrator) planSticky(ctx context.Context, agent agents.Agent, task 
 	// resumed context into a cache write.
 	plan.decision.Decision = backlog.DecisionPending
 	plan.workDirKey = topicWorkDir(agent.Slug, topic)
-	plan.pinned = &sessionPrompt{*pred.Prompt, pred.Memory}
+	plan.pinned = &sessionPrompt{*pred.Prompt, pred.Memory, pred.Basis}
 	plan.record = plan.pinned
 	plan.sessionID = pred.SessionID
 	plan.input = stickyInput(task, hits)
-	plan.fallback = &sessionPrompt{compiled, memCtx}
+	plan.fallback = &sessionPrompt{compiled, memCtx, basis}
 	plan.handover = o.stickyHandover(ctx, agent, topic, pred)
 	return plan
 }
@@ -223,7 +242,7 @@ func (o *Orchestrator) stickyHandover(ctx context.Context, agent agents.Agent, t
 	review := ""
 	if kind, _ := backlog.TopicParts(topic); kind == "pr" {
 		var err error
-		if review, err = o.Backlog.LatestReview(ctx, agent.OrgID, agent.ID, topic); err != nil {
+		if review, err = o.Backlog.LatestReview(ctx, agent.OrgID, agent.ID, topic, pred.FinishedAt); err != nil {
 			o.Log.Warn("sticky: latest review not readable", "topic", topic, "err", err)
 		}
 	}
@@ -264,7 +283,7 @@ func (o *Orchestrator) applyStickyPlan(ctx context.Context, agent agents.Agent, 
 		if err := o.Backlog.RecordSticky(ctx, taskID, plan.decision); err != nil {
 			o.Log.Warn("sticky: decision not recorded", "task", taskID, "err", err)
 		}
-		fields := map[string]string{"status": "sticky_" + plan.decision.Decision, "policy": plan.decision.Policy}
+		fields := map[string]string{"status": plan.decision.Decision, "policy": plan.decision.Policy}
 		if plan.decision.Decision == backlog.DecisionFresh {
 			fields = map[string]string{"status": "sticky_fresh", "reason": plan.decision.Reason, "policy": plan.decision.Policy}
 		}
@@ -274,7 +293,7 @@ func (o *Orchestrator) applyStickyPlan(ctx context.Context, agent agents.Agent, 
 		_ = o.Obs.Record(ctx, agent.OrgID, agent.ID, &taskID, observability.KindLifecycle, fields)
 	}
 	if plan.record != nil {
-		if err := o.Backlog.SetSessionPrompt(ctx, taskID, plan.record.prompt, plan.record.memory); err != nil {
+		if err := o.Backlog.SetSessionPrompt(ctx, taskID, plan.record.prompt, plan.record.memory, plan.record.basis); err != nil {
 			o.Log.Warn("sticky: session prompt not recorded", "task", taskID, "err", err)
 		}
 	}
@@ -298,12 +317,12 @@ func (o *Orchestrator) settleSticky(ctx context.Context, agent agents.Agent, tas
 	// Fresh after all: the session this task runs is its own, started under
 	// the fallback prompt — the one a later round has to resume it with.
 	if out.Decision == backlog.DecisionFresh && s.stickyFallback != nil {
-		if err := o.Backlog.SetSessionPrompt(ctx, taskID, s.stickyFallback.prompt, s.stickyFallback.memory); err != nil {
+		if err := o.Backlog.SetSessionPrompt(ctx, taskID, s.stickyFallback.prompt, s.stickyFallback.memory, s.stickyFallback.basis); err != nil {
 			o.Log.Warn("sticky: session prompt not recorded", "task", taskID, "err", err)
 		}
 	}
 	s.stickyFallback = nil
-	fields := map[string]string{"status": "sticky_" + out.Decision}
+	fields := map[string]string{"status": out.Decision}
 	if out.Decision == backlog.DecisionFresh {
 		fields = map[string]string{"status": "sticky_fresh", "reason": out.Reason}
 	}
@@ -328,7 +347,10 @@ func assistantUsage(payload []byte) (u backlog.FirstTurn, ok bool) {
 	var line struct {
 		Type   string           `json:"type"`
 		Parent *json.RawMessage `json:"parent_tool_use_id"`
-		Msg    struct {
+		// covey_sub_agent marks the lines of a sub-run the daemon started
+		// itself (daemon/subagent.go): its context is not the session's.
+		Sub *json.RawMessage `json:"covey_sub_agent"`
+		Msg struct {
 			Usage *struct {
 				Input         int64 `json:"input_tokens"`
 				CacheRead     int64 `json:"cache_read_input_tokens"`
@@ -343,7 +365,7 @@ func assistantUsage(payload []byte) (u backlog.FirstTurn, ok bool) {
 	if json.Unmarshal(payload, &line) != nil || line.Type != "assistant" || line.Msg.Usage == nil {
 		return u, false
 	}
-	if line.Parent != nil && string(*line.Parent) != "null" {
+	if line.Parent != nil && string(*line.Parent) != "null" || line.Sub != nil && string(*line.Sub) != "null" {
 		return u, false
 	}
 	us := line.Msg.Usage
@@ -388,7 +410,7 @@ func (s *session) lastContext(taskID uuid.UUID) int64 {
 // there at all. Whether another round already continues it (busy) is asked
 // of the store afterwards, atomically.
 func stickyVerdict(policy string, found bool, pred backlog.Predecessor, now time.Time,
-	windowMinutes int, contextCap int64, credential string) string {
+	windowMinutes int, contextCap int64, credential, basis string) string {
 	switch {
 	case policy == agents.StickyFresh || policy == "":
 		return backlog.ReasonOff
@@ -418,8 +440,17 @@ func stickyVerdict(policy string, found bool, pred backlog.Predecessor, now time
 	if pred.Credential != "" && credential != "" && pred.Credential != credential {
 		return backlog.ReasonCredential
 	}
-	if pred.SessionID == "" || pred.Prompt == nil {
+	// A predecessor whose own resume was never answered ran on a daemon that
+	// predates sticky sessions: fresh, under a prompt pinned for a resume
+	// that did not happen. Its session is not one to build on.
+	if pred.SessionID == "" || pred.Prompt == nil || pred.Decision == backlog.DecisionPending {
 		return backlog.ReasonNoSession
+	}
+	// The agent's instructions changed since the session started (SOUL,
+	// ACCESS, the platform protocol after a deploy): a resume would carry
+	// the old ones on, and miss the cache anyway.
+	if pred.Basis != "" && basis != "" && pred.Basis != basis {
+		return backlog.ReasonPromptChanged
 	}
 	return ""
 }

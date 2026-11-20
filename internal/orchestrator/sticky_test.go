@@ -46,10 +46,36 @@ func TestStickyVerdict(t *testing.T) {
 		{"no session id", agents.StickyConditional, true, backlog.Predecessor{FinishedAt: now, Prompt: &prompt}, "", backlog.ReasonNoSession},
 		{"no recorded prompt", agents.StickyConditional, true, backlog.Predecessor{FinishedAt: now, SessionID: "s"}, "", backlog.ReasonNoSession},
 	}
+	pending := pred(time.Minute, 1)
+	pending.Decision = backlog.DecisionPending
+	cases = append(cases, struct {
+		name   string
+		policy string
+		found  bool
+		p      backlog.Predecessor
+		cred   string
+		want   string
+	}{"predecessor's resume never answered (old daemon)", agents.StickyConditional, true, pending, "", backlog.ReasonNoSession})
 	for _, c := range cases {
-		if got := stickyVerdict(c.policy, c.found, c.p, now, 55, 200000, c.cred); got != c.want {
+		if got := stickyVerdict(c.policy, c.found, c.p, now, 55, 200000, c.cred, ""); got != c.want {
 			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
 		}
+	}
+}
+
+func TestStickyVerdictPromptChanged(t *testing.T) {
+	now := time.Now()
+	prompt := "p"
+	p := backlog.Predecessor{SessionID: "s", FinishedAt: now, Prompt: &prompt, Basis: "aaa"}
+	if got := stickyVerdict(agents.StickyAlways, true, p, now, 55, 200000, "", "bbb"); got != backlog.ReasonPromptChanged {
+		t.Fatalf("a changed basis must start fresh, got %q", got)
+	}
+	if got := stickyVerdict(agents.StickyAlways, true, p, now, 55, 200000, "", "aaa"); got != "" {
+		t.Fatalf("the same basis resumes, got %q", got)
+	}
+	p.Basis = ""
+	if got := stickyVerdict(agents.StickyAlways, true, p, now, 55, 200000, "", "bbb"); got != "" {
+		t.Fatalf("an unrecorded basis is not held against the session, got %q", got)
 	}
 }
 
@@ -117,6 +143,11 @@ func TestAssistantUsage(t *testing.T) {
 	sub := `{"type":"assistant","parent_tool_use_id":"toolu_1","message":{"usage":{"input_tokens":1,"cache_read_input_tokens":900000}}}`
 	if _, ok := assistantUsage([]byte(sub)); ok {
 		t.Fatal("a sub-agent's turn must not count")
+	}
+	// Nor is the line of a sub-run the daemon started itself.
+	covey := `{"type":"assistant","parent_tool_use_id":null,"covey_sub_agent":{"name":"x"},"message":{"usage":{"input_tokens":1,"cache_read_input_tokens":900000}}}`
+	if _, ok := assistantUsage([]byte(covey)); ok {
+		t.Fatal("a covey sub-run's turn must not count")
 	}
 	for _, other := range []string{`{"type":"result","usage":{"input_tokens":1}}`, `{"type":"assistant","message":{}}`, `not json`} {
 		if _, ok := assistantUsage([]byte(other)); ok {

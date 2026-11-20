@@ -669,7 +669,7 @@ func (c *Client) runTask(ctx context.Context, task AssignTask) {
 	// there, and the directory's name in the prompt stays the same.
 	if task.WorkDirKey != "" {
 		if dir := topicScratchDir(c.homeDir, task.WorkDirKey); dir != "" {
-			scratch = dir
+			scratch = resumeDir(runtime, c.homeDir, dir, scratch, task.ResumeSessionID)
 		}
 	}
 	if n, err := sweepScratch(c.homeDir, time.Now(), scratch); err != nil {

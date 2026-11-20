@@ -234,10 +234,10 @@ func (s *Store) CreateChatAnswer(ctx context.Context, orgID, agentID uuid.UUID, 
 }
 
 // CreateWithTopic creates a task that belongs to a topic (#130): "pr:<n>" or
-// "issue:<n>", checked with NormalizeTopic. An empty topic is a task without
+// "issue:<n>", checked with CheckTopic. An empty topic is a task without
 // one, as Create.
 func (s *Store) CreateWithTopic(ctx context.Context, orgID, agentID uuid.UUID, title, body, origin string, priority int, topic string) (Task, error) {
-	key, err := NormalizeTopic(topic)
+	key, err := CheckTopic(topic)
 	if err != nil {
 		return Task{}, err
 	}
@@ -307,7 +307,7 @@ func (s *Store) CreateChild(ctx context.Context, parentID uuid.UUID, spec ChildS
 	   nowhere unless somebody gives it a conversation. */
 	var conversationID *uuid.UUID
 	chatAnswer, saidInCall := false, false
-	topic, err := NormalizeTopic(spec.Topic)
+	topic, err := CheckTopic(spec.Topic)
 	if err != nil {
 		return Task{}, err
 	}

@@ -29,9 +29,9 @@ const maxTopicLen = 64
 
 var topicPattern = regexp.MustCompile(`^(pr|issue):[1-9][0-9]*$`)
 
-// NormalizeTopic checks an explicit topic. Surrounding blanks are dropped; an
+// CheckTopic checks an explicit topic. Surrounding blanks are dropped; an
 // empty topic is no topic ("", nil); anything else must be TopicFormat exactly.
-func NormalizeTopic(s string) (string, error) {
+func CheckTopic(s string) (string, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return "", nil
@@ -72,9 +72,15 @@ type Predecessor struct {
 	// ran before its agent kept sessions).
 	Prompt *string
 	Memory string
+	// Basis is the hash of the prompt the platform compiled for the
+	// session's first task ("" = not recorded).
+	Basis  string
 	Result string
-	// Successor is the task that already continues this session, if any.
-	Successor *uuid.UUID
+	// Decision is how the predecessor itself was started. sticky_pending
+	// means the daemon never answered the resume it was asked for — a daemon
+	// that predates sticky sessions, which ran fresh under a prompt it was
+	// not meant to use.
+	Decision string
 }
 
 // LastOnTopic returns the agent's most recently finished (done) task on the
@@ -84,17 +90,29 @@ func (s *Store) LastOnTopic(ctx context.Context, orgID, agentID uuid.UUID, topic
 	var p Predecessor
 	err := s.pool.QueryRow(ctx, `SELECT id, COALESCE(runtime_session_id,''), session_finished_at,
 			COALESCE(session_context_tokens,0), COALESCE(session_credential,''), session_prompt,
-			COALESCE(session_memory,''), COALESCE(result,''), session_successor
+			COALESCE(session_memory,''), COALESCE(session_basis,''), COALESCE(result,''), COALESCE(sticky_decision,'')
 		FROM backlog_tasks
 		WHERE org_id=$1 AND agent_id=$2 AND topic_key=$3 AND state='done'
 		  AND session_finished_at IS NOT NULL AND id<>$4
 		ORDER BY session_finished_at DESC, id DESC LIMIT 1`, orgID, agentID, topic, exclude).Scan(
 		&p.TaskID, &p.SessionID, &p.FinishedAt, &p.ContextTokens, &p.Credential, &p.Prompt,
-		&p.Memory, &p.Result, &p.Successor)
+		&p.Memory, &p.Basis, &p.Result, &p.Decision)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return p, false, nil
 	}
 	return p, err == nil, err
+}
+
+// OpenSessionOnTopic says whether another task of the agent on the topic is
+// still in play (in progress, or blocked waiting to resume its session). A new
+// round must not resume an older session beside it: the open one holds the
+// newer work, and the two would write into one topic directory at once.
+func (s *Store) OpenSessionOnTopic(ctx context.Context, orgID, agentID uuid.UUID, topic string, exclude uuid.UUID) (bool, error) {
+	var open bool
+	err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM backlog_tasks
+		WHERE org_id=$1 AND agent_id=$2 AND topic_key=$3 AND id<>$4 AND state IN ('in_progress','blocked'))`,
+		orgID, agentID, topic, exclude).Scan(&open)
+	return open, err
 }
 
 // ClaimSession makes successor the one task that continues predecessor's
@@ -102,37 +120,29 @@ func (s *Store) LastOnTopic(ctx context.Context, orgID, agentID uuid.UUID, topic
 // one topic must never resume the same session at once, and the second would
 // branch the conversation the first is still writing. A task that claims again
 // (a requeue after a lost sandbox) keeps its claim.
+//
+// A claim whose holder ended failed or cancelled is free again — unless the
+// holder was cut off at the turn limit and its continuation still carries the
+// session on. Otherwise one failed round would turn every later one on the
+// topic away as busy until a fresh round finished.
 func (s *Store) ClaimSession(ctx context.Context, predecessor, successor uuid.UUID) (bool, error) {
-	tag, err := s.pool.Exec(ctx, `UPDATE backlog_tasks SET session_successor=$2
-		WHERE id=$1 AND (session_successor IS NULL OR session_successor=$2)`, predecessor, successor)
+	tag, err := s.pool.Exec(ctx, `UPDATE backlog_tasks p SET session_successor=$2
+		WHERE p.id=$1 AND (p.session_successor IS NULL OR p.session_successor=$2 OR EXISTS (
+			SELECT 1 FROM backlog_tasks h WHERE h.id=p.session_successor AND h.state IN ('failed','cancelled')
+			  AND NOT EXISTS (SELECT 1 FROM backlog_tasks c WHERE c.parent_task_id=h.id
+			    AND c.origin LIKE 'continuation:%' AND c.state IN ('open','in_progress','blocked'))))`,
+		predecessor, successor)
 	if err != nil {
 		return false, err
 	}
 	return tag.RowsAffected() == 1, nil
 }
 
-// SessionPrompt is the system prompt and memory context a task's session was
-// started with, recorded so that every resume of the session sends the same
-// bytes. ok is false when the task recorded none.
-func (s *Store) SessionPrompt(ctx context.Context, id uuid.UUID) (prompt, memory string, ok bool, err error) {
-	var p, m *string
-	err = s.pool.QueryRow(ctx, "SELECT session_prompt, session_memory FROM backlog_tasks WHERE id=$1", id).Scan(&p, &m)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", false, ErrNotFound
-	}
-	if err != nil || p == nil {
-		return "", "", false, err
-	}
-	if m != nil {
-		memory = *m
-	}
-	return *p, memory, true, nil
-}
-
-// SetSessionPrompt records the prompt the task's session runs under.
-func (s *Store) SetSessionPrompt(ctx context.Context, id uuid.UUID, prompt, memory string) error {
-	_, err := s.pool.Exec(ctx, "UPDATE backlog_tasks SET session_prompt=$2, session_memory=$3 WHERE id=$1",
-		id, prompt, memory)
+// SetSessionPrompt records the prompt the task's session runs under, and the
+// hash of the prompt compiled for the task that started it.
+func (s *Store) SetSessionPrompt(ctx context.Context, id uuid.UUID, prompt, memory, basis string) error {
+	_, err := s.pool.Exec(ctx, "UPDATE backlog_tasks SET session_prompt=$2, session_memory=$3, session_basis=NULLIF($4,'') WHERE id=$1",
+		id, prompt, memory, basis)
 	return err
 }
 
@@ -161,6 +171,10 @@ const (
 	ReasonNoPrevious = "no_previous"
 	ReasonCredential = "credential"
 	ReasonBusy       = "busy"
+	// ReasonPromptChanged: the platform now compiles another prompt for the
+	// agent than the one the session was started under (a changed SOUL,
+	// ACCESS or platform protocol); resuming would carry the old one on.
+	ReasonPromptChanged = "prompt_changed"
 )
 
 // RecordSticky writes the dispatch decision onto the task.
@@ -205,28 +219,28 @@ func (s *Store) RecordFirstTurn(ctx context.Context, id uuid.UUID, f FirstTurn) 
 	return err
 }
 
-// reviewHeading marks the review round in a reviewer's report.
-const reviewHeading = "## Review round"
-
-// LatestReview returns the latest review round on the topic: the most recent
-// finished report of another agent of the organisation that carries a
-// "## Review round" heading, from that heading on. "" when there is none.
+// LatestReview returns the latest review round on the topic that came after
+// since (the end of the predecessor's work): the most recent finished report
+// of another agent of the organisation with a "## Review round" heading at the
+// start of a line, from that heading on. "" when there is none.
 //
 // The source is covey's own record of the review, not the pull request: the
 // dispatch has no read path into the code host, and the reviewer's report is
 // what its review comment was written from.
-func (s *Store) LatestReview(ctx context.Context, orgID, agentID uuid.UUID, topic string) (string, error) {
+func (s *Store) LatestReview(ctx context.Context, orgID, agentID uuid.UUID, topic string, since time.Time) (string, error) {
 	var result string
 	err := s.pool.QueryRow(ctx, `SELECT result FROM backlog_tasks
-		WHERE org_id=$1 AND agent_id<>$2 AND topic_key=$3 AND state='done' AND strpos(result, $4) > 0
-		ORDER BY COALESCE(session_finished_at, updated_at) DESC LIMIT 1`, orgID, agentID, topic, reviewHeading).Scan(&result)
+		WHERE org_id=$1 AND topic_key=$2 AND state='done' AND agent_id<>$3
+		  AND COALESCE(session_finished_at, updated_at) > $4 AND result ~ '(^|\n)## Review round'
+		ORDER BY COALESCE(session_finished_at, updated_at) DESC LIMIT 1`, orgID, topic, agentID, since).Scan(&result)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
 	if err != nil {
 		return "", err
 	}
-	if i := strings.LastIndex(result, reviewHeading); i >= 0 {
+	// From the last heading that starts a line.
+	if i := strings.LastIndex("\n"+result, "\n## Review round"); i >= 0 {
 		result = result[i:]
 	}
 	return strings.TrimSpace(result), nil

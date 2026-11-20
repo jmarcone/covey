@@ -140,3 +140,28 @@ type noSessions struct{ Mock }
 func (noSessions) HasSession() {} // shadows nothing: noSessions is not a SessionHolder
 
 var _ Runtime = noSessions{}
+
+// A topic task resuming its own session that lies in the task's own
+// directory (started by an older daemon) resumes there, not in the topic's.
+func TestResumeDirFallsBackToTheTaskDir(t *testing.T) {
+	home := t.TempDir()
+	topicDir := topicScratchDir(home, "topic-dev-pr-1")
+	taskDir := scratchDir(home, "22222222-2222-2222-2222-222222222222")
+	if got := resumeDir(Mock{}, home, topicDir, taskDir, ""); got != topicDir {
+		t.Fatalf("no resume: topic dir, got %q", got)
+	}
+	if _, err := (Mock{}).Run(context.Background(), RunSpec{TaskID: "t", HomeDir: home, WorkDir: taskDir,
+		ResumeSessionID: "old"}, func(string, json.RawMessage) {}); err != nil {
+		t.Fatal(err)
+	}
+	if got := resumeDir(Mock{}, home, topicDir, taskDir, "old"); got != taskDir {
+		t.Fatalf("the session lies in the task dir: got %q", got)
+	}
+	if _, err := (Mock{}).Run(context.Background(), RunSpec{TaskID: "t", HomeDir: home, WorkDir: topicDir,
+		ResumeSessionID: "old"}, func(string, json.RawMessage) {}); err != nil {
+		t.Fatal(err)
+	}
+	if got := resumeDir(Mock{}, home, topicDir, taskDir, "old"); got != topicDir {
+		t.Fatalf("in both: the topic dir wins, got %q", got)
+	}
+}

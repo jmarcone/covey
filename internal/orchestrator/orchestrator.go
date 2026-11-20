@@ -2746,6 +2746,9 @@ func (o *Orchestrator) processTask(ctx context.Context, agent agents.Agent, link
 	if section := o.OrgSections(ctx, agent); section != "" {
 		compiled += "\n\n" + section
 	}
+	// What follows depends on the task; what stands so far is the agent's
+	// (#130: a resumed session starts fresh once this has changed).
+	basis := promptBasis(compiled)
 	if stopped != "" {
 		compiled += "\n\n" + stopped
 	}
@@ -2769,7 +2772,7 @@ func (o *Orchestrator) processTask(ctx context.Context, agent agents.Agent, link
 	// (with a handover) — and either way record why. A resumed session runs
 	// under the prompt it was started with, byte for byte.
 	s.turns.reset(taskID)
-	plan := o.planSticky(ctx, agent, task, s, compiled, memCtx, hits, time.Now())
+	plan := o.planSticky(ctx, agent, task, s, compiled, memCtx, hits, basis, time.Now())
 	o.applyStickyPlan(ctx, agent, taskID, plan, s)
 	systemPrompt, assignMemory := compiled, memCtx
 	if plan.pinned != nil {
@@ -3658,7 +3661,7 @@ func (o *Orchestrator) CreateAgentTask(ctx context.Context, agent agents.Agent, 
 	if title == "" {
 		return fail("title is missing")
 	}
-	topic, err := backlog.NormalizeTopic(req.Topic)
+	topic, err := backlog.CheckTopic(req.Topic)
 	if err != nil {
 		return fail(err.Error())
 	}

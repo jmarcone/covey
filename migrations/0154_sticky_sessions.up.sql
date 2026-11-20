@@ -21,6 +21,11 @@ ALTER TABLE backlog_tasks
     ADD COLUMN session_credential     TEXT,
     ADD COLUMN session_prompt         TEXT,
     ADD COLUMN session_memory         TEXT,
+    -- A hash of the prompt the platform would compile for the session's
+    -- first task: when a later round compiles another one (a changed SOUL,
+    -- ACCESS or platform protocol), its session starts fresh rather than
+    -- carrying the old instructions on.
+    ADD COLUMN session_basis          TEXT,
     -- The one task that continues this task's session. Claimed with a
     -- conditional UPDATE, so two rounds on one topic never resume the same
     -- session at once.
@@ -51,6 +56,17 @@ ALTER TABLE backlog_tasks
 CREATE INDEX IF NOT EXISTS idx_backlog_tasks_sticky
     ON backlog_tasks (agent_id, topic_key, session_finished_at DESC)
     WHERE state = 'done' AND topic_key IS NOT NULL;
+-- The handover's review: the latest finished report on a topic in an
+-- organisation, by any agent.
+CREATE INDEX IF NOT EXISTS idx_backlog_tasks_topic_done
+    ON backlog_tasks (org_id, topic_key)
+    WHERE state = 'done' AND topic_key IS NOT NULL;
+-- The two new references are ON DELETE SET NULL: without an index every
+-- deleted task would scan the table for each of them.
+CREATE INDEX IF NOT EXISTS idx_backlog_tasks_session_successor
+    ON backlog_tasks (session_successor) WHERE session_successor IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_backlog_tasks_sticky_from
+    ON backlog_tasks (sticky_from) WHERE sticky_from IS NOT NULL;
 
 -- (5) The policy per agent. fresh = never resume; conditional = resume inside the
 -- window and under the context cap; always = resume whatever the gap and size;

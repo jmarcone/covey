@@ -100,3 +100,24 @@ func appendedSystemPrompt(spec RunSpec) string {
 
 // HasSession: seven-code keeps its sessions under the home, whatever the cwd.
 func (s *SevenCode) HasSession(spec RunSpec, id string) bool { return sevencodeHasSession(spec, id) }
+
+// resumeDir picks the working directory of a topic task: the topic's, unless
+// the task resumes its own session and that session lies in the task's own
+// directory instead — it was started there by a daemon that predates topic
+// directories, or when the topic's could not be made. --resume finds a
+// transcript only under the directory it was written in, and a resume that
+// finds nothing fails the task.
+func resumeDir(rt Runtime, home, topicDir, taskDir, resumeID string) string {
+	if resumeID == "" || taskDir == "" {
+		return topicDir
+	}
+	holder, ok := rt.(SessionHolder)
+	if !ok {
+		return topicDir
+	}
+	if !holder.HasSession(RunSpec{HomeDir: home, WorkDir: topicDir}, resumeID) &&
+		holder.HasSession(RunSpec{HomeDir: home, WorkDir: taskDir}, resumeID) {
+		return taskDir
+	}
+	return topicDir
+}

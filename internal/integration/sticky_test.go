@@ -360,7 +360,7 @@ func TestStickyCredentialAndBusy(t *testing.T) {
 	x, y := uuid.New(), uuid.New()
 	for _, id := range []uuid.UUID{x, y} {
 		if _, err := s.pool.Exec(ctx, `INSERT INTO backlog_tasks (id, org_id, agent_id, title, body, origin, priority, state)
-			VALUES ($1,$2,$3,'claim','', 'manual', 9, 'cancelled')`, id, s.orgID, dev.ID); err != nil {
+			VALUES ($1,$2,$3,'claim','', 'manual', 9, 'blocked')`, id, s.orgID, dev.ID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -372,6 +372,13 @@ func TestStickyCredentialAndBusy(t *testing.T) {
 	}
 	if ok, _ := s.backlog.ClaimSession(ctx, b.ID, x); !ok {
 		t.Fatal("the holder may claim again")
+	}
+	// A holder that ended without carrying the session on frees it.
+	if _, err := s.pool.Exec(ctx, `UPDATE backlog_tasks SET state='cancelled' WHERE id=$1`, x); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := s.backlog.ClaimSession(ctx, b.ID, y); !ok {
+		t.Fatal("a cancelled holder must free the session")
 	}
 }
 
@@ -556,5 +563,87 @@ func TestStickyDefaults(t *testing.T) {
 		if err := s.registry.SetSticky(ctx, a.ID, bad.p, bad.w, bad.c); err == nil {
 			t.Errorf("SetSticky(%+v) accepted", bad)
 		}
+	}
+}
+
+// agentBelowSchema creates a test agent with plain SQL, for a migration test
+// that has rolled the schema back below the registry's column list (0154 added
+// the sticky settings to it). Same agent as newSupportAgent, without its config.
+func (s *stack) agentBelowSchema(slug string) agents.Agent {
+	s.t.Helper()
+	a := agents.Agent{ID: uuid.New(), OrgID: s.orgID, Slug: slug, DisplayName: "Support-Agent", Runtime: "mock"}
+	if _, err := s.pool.Exec(context.Background(), `INSERT INTO agents (id, org_id, slug, display_name, runtime, owner_id, hired_at)
+		VALUES ($1,$2,$3,$4,$5,$6,now())`, a.ID, a.OrgID, a.Slug, a.DisplayName, a.Runtime, s.adminID); err != nil {
+		s.t.Fatal(err)
+	}
+	return a
+}
+
+// taskBelowSchema creates an open task with plain SQL, likewise.
+func (s *stack) taskBelowSchema(agentID uuid.UUID, title string, priority int) uuid.UUID {
+	s.t.Helper()
+	id := uuid.New()
+	if _, err := s.pool.Exec(context.Background(), `INSERT INTO backlog_tasks (id, org_id, agent_id, title, body, origin, priority)
+		VALUES ($1,$2,$3,$4,'','manual',$5)`, id, s.orgID, agentID, title, priority); err != nil {
+		s.t.Fatal(err)
+	}
+	return id
+}
+
+// A changed configuration ends the session line: the next round starts fresh
+// (prompt_changed) instead of carrying the old instructions on.
+func TestStickyPromptChanged(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	dev := s.stickyAgent("prompt-dev", agents.StickyAlways)
+	s.runTopic(dev, "Round 1", "pr:3", "")
+	if _, err := s.registry.SaveConfig(ctx, dev.ID, map[string]string{
+		"SOUL.md":   "# Support-Agent\n\n## Role\nSupport, and now also reviews its own diff first.",
+		"ACCESS.md": "- system: zammad scope: read,write",
+	}, &s.adminID); err != nil {
+		t.Fatal(err)
+	}
+	b, vb := s.runTopic(dev, "Round 2", "pr:3", "")
+	if vb.Resume != "" || !strings.Contains(vb.SystemPrompt, "reviews its own diff first") {
+		t.Fatalf("after a config change: fresh under the new prompt, resumed %q", vb.Resume)
+	}
+	if d, r := s.decision(b.ID); d != backlog.DecisionFresh || r != backlog.ReasonPromptChanged {
+		t.Fatalf("decision %s/%s", d, r)
+	}
+	// And the round after that resumes the new session.
+	_, vc := s.runTopic(dev, "Round 3", "pr:3", "")
+	if vc.Resume != mockSessionID(b.ID) || vc.SystemPrompt != vb.SystemPrompt {
+		t.Fatalf("round 3 resumes round 2's session: %q", vc.Resume)
+	}
+}
+
+// A round blocked on its own session holds the newer work: a new round beside
+// it does not resume the older finished session (busy).
+func TestStickyBusyBesideBlockedRound(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	dev := s.stickyAgent("beside-dev", agents.StickyAlways)
+	s.runTopic(dev, "Round 1", "pr:4", "")
+	// Round 2 runs fresh (the mock never blocks on a resume) and blocks on a
+	// question, holding its own session.
+	if err := s.registry.SetSticky(ctx, dev.ID, agents.StickyFresh, 55, 200000); err != nil {
+		t.Fatal(err)
+	}
+	blocked, err := s.backlog.CreateWithTopic(ctx, s.orgID, dev.ID, "Round 2",
+		"[mock:block key=ext:pr-4 question=which?]", "manual", 3, "pr:4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "round 2 blocked", 30*time.Second, func() bool { return s.taskState(blocked.ID) == backlog.StateBlocked })
+	if err := s.registry.SetSticky(ctx, dev.ID, agents.StickyAlways, 55, 200000); err != nil {
+		t.Fatal(err)
+	}
+	// Round 1's session is unclaimed: only the open round can stop a resume.
+	c, vc := s.runTopic(dev, "Round 3", "pr:4", "")
+	if vc.Resume != "" {
+		t.Fatalf("a round beside a blocked one must not resume the older session, resumed %q", vc.Resume)
+	}
+	if d, r := s.decision(c.ID); d != backlog.DecisionFresh || r != backlog.ReasonBusy {
+		t.Fatalf("decision %s/%s", d, r)
 	}
 }

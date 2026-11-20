@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestNormalizeTopic(t *testing.T) {
+func TestCheckTopic(t *testing.T) {
 	ok := map[string]string{
 		"pr:42":         "pr:42",
 		"  issue:7 ":    "issue:7",
@@ -15,17 +15,17 @@ func TestNormalizeTopic(t *testing.T) {
 		"pr:1234567890": "pr:1234567890",
 	}
 	for in, want := range ok {
-		got, err := NormalizeTopic(in)
+		got, err := CheckTopic(in)
 		if err != nil || got != want {
-			t.Errorf("NormalizeTopic(%q) = %q, %v; want %q", in, got, err, want)
+			t.Errorf("CheckTopic(%q) = %q, %v; want %q", in, got, err, want)
 		}
 	}
 	bad := []string{"../x", "pr:../x", "pr:", "pr:0", "pr:042", "PR:42", "pr: 42", "mr:42",
 		"issue:4a", "pr:42/1", "#42", "pr:" + strings.Repeat("9", 62), "cost page headline"}
 	for _, in := range bad {
-		_, err := NormalizeTopic(in)
+		_, err := CheckTopic(in)
 		if !errors.Is(err, ErrInvalidTopic) {
-			t.Errorf("NormalizeTopic(%q) must be refused, got %v", in, err)
+			t.Errorf("CheckTopic(%q) must be refused, got %v", in, err)
 		}
 	}
 	if !strings.Contains(ErrInvalidTopic.Error(), `"pr:<n>" or "issue:<n>"`) {
