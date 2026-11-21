@@ -7,6 +7,7 @@ import { bucketForSpan, customWindow, isCustom, readRange, windowQuery, writeRan
 import { bucketOptions, rangeOptions } from "./outsideFigures";
 import { RangePanel } from "./RangePanel";
 import { Seg } from "./Seg";
+import { BasisControl, BasisPrunedNote } from "./BasisControl";
 import { useUsageReadings } from "./StackedCostChart";
 
 /* The cost pages' window, shared by the home (/costs) and the details page
@@ -90,10 +91,12 @@ export type CostRange = ReturnType<typeof useCostRange>;
 
 /** The range and bucket switches, and the custom range's panel when it is open or in force. rangeError: the page's
  *  refusal (the address's own, or the server's code), said in the panel. */
-export function CostRangeControls({ r, rangeError, bucketSwitch = true, leading, trailing, part = "both" }: {
+export function CostRangeControls({ r, rangeError, bucketSwitch = true, basisSwitch = false, leading, trailing, part = "both" }: {
   r: CostRange; rangeError: RangeCode | "unknown" | null;
   /** The bucket matters only where a chart draws periods: the home leaves it out. */
   bucketSwitch?: boolean;
+  /** The Basis switch (cost home PR 9): on in the filter bar of every cost view. */
+  basisSwitch?: boolean;
   /** Controls at the start of the row (the filter bar's Who), and at its end (Share). */
   leading?: ReactNode;
   trailing?: ReactNode;
@@ -107,6 +110,7 @@ export function CostRangeControls({ r, rangeError, bucketSwitch = true, leading,
     <>
       {part !== "panel" && <div className="flex flex-wrap items-center gap-3 mb-4">
         {leading}
+        {basisSwitch && <BasisControl />}
         <div style={{ flex: 1 }} />
         <Seg<number | "custom"> value={r.custom || r.panelOpen || r.badRange ? "custom" : r.days} onChange={r.setRange}
           options={[...rangeOptions(t), { v: "custom", label: t("costs.range.custom") }]} />
@@ -182,7 +186,8 @@ export function CostFilterBar(props: Parameters<typeof CostRangeControls>[0]) {
   return (
     <>
       <div className="cost-filterbar" role="region" aria-label={t("costs.bar.label")} data-filterbar>
-        <CostRangeControls {...props} part="row" />
+        <CostRangeControls basisSwitch {...props} part="row" />
+        <BasisPrunedNote />
       </div>
       <CostRangeControls {...props} part="panel" />
     </>

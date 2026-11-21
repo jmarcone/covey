@@ -1076,6 +1076,70 @@
       "coveyOnlyLocked": "Agents are selected: the sessions outside covey are not part of a selection of agents.",
       "banner": "Changed: selecting agents now counts exactly those agents. The sessions outside covey are no longer added to a selection. What cannot follow a selection is marked “whole organization”.",
       "bannerOk": "Got it"
+    },
+    "basisSwitch": {
+      "label": "Basis",
+      "option": {
+        "token": "Token price",
+        "capacity": "Plan capacity used (est.)",
+        "billed": "Billed (API keys)",
+        "cash": "Cash (plan, pro-rated)"
+      },
+      "desc": {
+        "token": "The work at token prices: Claude Code's own price where it reported one, else covey's list price.",
+        "capacity": "Meter points moved × the plan's price per point. An estimate, for the whole account.",
+        "billed": "What Anthropic billed the pay-per-token API keys. Whole keys, not seats.",
+        "cash": "Awaits sign-off: the plan's price spread over the metered span is not shown yet."
+      },
+      "tag": {
+        "token": "Token price",
+        "capacity": "≈ Plan capacity (est.)",
+        "billed": "Billed"
+      },
+      "lock": {
+        "notPerRun": "plan capacity belongs to a meter, not to a run.",
+        "noCredentialOnRun": "a run carries no credential, so no bill.",
+        "notPerModel": "plan capacity is not split by model yet.",
+        "billedPerKey": "bills are per API key, not per agent or model.",
+        "answerIsTokenOverCapacity": "the answer is always token price ÷ plan capacity used.",
+        "perPeriodAgent": "per period, capacity and bills belong to a credential, not to agents."
+      },
+      "lockChip": "{{basis}} not applied here: {{reason}} Shown at token price.",
+      "toToken": "Switch to token price",
+      "pruned": {
+        "cash": "Cash (plan, pro-rated) awaits sign-off: showing token price.",
+        "unknown": "The link names a basis this page does not know: showing token price."
+      }
+    },
+    "noFigure": {
+      "short": {
+        "pending": "pending",
+        "beforeMeter": "before the meter",
+        "afterMeter": "after the last reading",
+        "notSplit": "not split",
+        "unpricedExcluded": "no list price",
+        "notAtThisLevel": "not at this level",
+        "usageBasis": "billed by usage",
+        "accountWide": "account-wide",
+        "noReported": "not reported",
+        "noData": "no data",
+        "bucketTooFine": "too fine",
+        "noBilledKeys": "no API keys"
+      },
+      "long": {
+        "pending": "Pending: its share follows the next meter reading.",
+        "beforeMeter": "No figure: this work is before the meter's first reading{{detail}}.",
+        "afterMeter": "No figure yet: this work is after the meter's last reading.",
+        "notSplit": "No figure: the readings over this work were not split between the parts.",
+        "unpricedExcluded": "No figure: no list price for these tokens{{detail}}.",
+        "notAtThisLevel": "No figure at this level: it exists per credential, not per part.",
+        "usageBasis": "No figure: billed by usage, not by a plan.",
+        "accountWide": "Account-wide: not split below the whole account.",
+        "noReported": "No figure: Claude Code reported no price for these calls.",
+        "noData": "No data in this window.",
+        "bucketTooFine": "No figure at 10 minutes: plan capacity and bills come per hour at the finest. Pick hourly or coarser.",
+        "noBilledKeys": "No figure: no API key is mapped to a bill in this window."
+      }
     }
   },
   "lang": {
