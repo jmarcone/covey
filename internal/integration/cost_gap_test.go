@@ -906,6 +906,17 @@ func TestCostOfAFailedLineOfAKilledRun(t *testing.T) {
 					failed: map[int]bool{0: true, 1: true}, resent: map[int]bool{2: true}, end: "killed"},
 			}
 		}, 1.7, 0.8, 1.3, false, 0.4},
+		// A copy without a uuid of L0 after F moves no bound (L0 stays L2's,
+		// the lower id wins a tie), so L2's gap subtracted F and F is
+		// refiled. The copy's own 0.5 is booked twice, as on main: a copy
+		// without a uuid is not this PR's.
+		{"a late copy that moves no bound", func(task uuid.UUID) []gapRun {
+			return []gapRun{
+				{task: task, lines: []recordedLine{gapLine(0.5, 0.5)}, end: "booked"},
+				{task: task, lines: []recordedLine{gapLine(1.3, 0.8), gapLine(0.5, 0.5), gapLine(1.7, 0.4)},
+					failed: map[int]bool{0: true}, resent: map[int]bool{1: true}, end: "killed"},
+			}
+		}, 2.2, 1.7, 1.3, true, 0},
 		// A process without a line before F (0.2 of 1.5 - 0.5 - 0.8). Where
 		// a later line of F's session was filed, its gap measured over F from
 		// the same bound and holds the 0.2: F is filed without a gap of its
