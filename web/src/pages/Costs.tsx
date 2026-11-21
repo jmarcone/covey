@@ -8,7 +8,7 @@ import { PriceList } from "../components/PriceList";
 import { CostInsights } from "./CostInsights";
 import { CostAnswer } from "./CostAnswer";
 import { answerTable } from "./costAnswerModel";
-import { credentialFigures, headline, payPerTokenHeadline, subscriptionDent } from "./costFigures";
+import { coveyElsewhere, credentialFigures, headline, payPerTokenHeadline, subscriptionDent } from "./costFigures";
 import { PayPerTokenRow, SubscriptionDentRow } from "./SubscriptionDent";
 import { canSetPlan } from "./PlanPrice";
 import { OutsideOverview } from "./OutsideSessions";
@@ -389,7 +389,7 @@ export default function Costs({ me }: { me?: Principal }) {
       {sourcesListed.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 mb-4" data-inclusion>
           <Chip on={coveyOnly} onClick={() => setCoveyOnly(!coveyOnly)} title={t("costs.incl.coveyOnlyTitle")}>{t("costs.incl.coveyOnly")}</Chip>
-          {(!hasAnswer || coveyOnly) && (
+          {(!hasAnswer || coveyOnly || filtered) && (
             <span className="muted text-xs" data-inclusion-note style={{ maxWidth: 760 }}>
               {t(coveyOnly ? "costs.incl.coveyOnlyNote" : filtered ? "costs.incl.includedNoteSelected" : "costs.incl.includedNote",
                 { sources: sourcesListed.map((s) => s.source).join(", ") })}
@@ -399,9 +399,8 @@ export default function Costs({ me }: { me?: Principal }) {
       )}
     </>
   );
-  // covey's own work no row of the page covers: the headline's, less the credentials the pay-per-token row shows.
-  const elsewhere = head ? Object.entries(head.coveyElsewhereBy).reduce((acc, [id, v]) =>
-    acc + (ppt?.credentials.some((c) => c.id === id) ? 0 : v), 0) : 0;
+  // covey's own work no row of the page covers: the headline's, less what the pay-per-token row shows of each credential.
+  const elsewhere = head ? coveyElsewhere(head.coveyElsewhereBy, ppt) : 0;
   return (
     <div>
       <div className="flex items-baseline gap-3 mb-1">

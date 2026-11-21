@@ -159,7 +159,9 @@ const lines = (label: string) => [...kpi(label).querySelectorAll("[data-parts] [
 const answerReady = () => waitFor(() => expect(document.querySelector("[data-answer-total]")).not.toBeNull());
 const openHow = () => { if (!document.querySelector("[data-answer-drawer]")) fireEvent.click(document.querySelector("[data-answer-how]")!); };
 const howNote = (k: string) => { openHow(); return document.querySelector(`[data-answer-note="${k}"]`); };
-const rowList = (key: string) => document.querySelector(`[data-answer-row="${key}"] [data-answer-list]`)!.textContent;
+/** The visible text: without the screen-reader-only words. */
+const visible = (e: Element | null) => { const c = e!.cloneNode(true) as Element; c.querySelectorAll(".sr-only").forEach((x) => x.remove()); return c.textContent; };
+const rowList = (key: string) => visible(document.querySelector(`[data-answer-row="${key}"] [data-answer-list]`));
 const rowKeys = () => [...document.querySelectorAll("[data-answer-row]")].map((e) => e.getAttribute("data-answer-row"));
 const answerTotal = () => document.querySelector("[data-answer-total] [data-answer-list]")!.textContent;
 const usd = (text: string | null | undefined) => Number((text ?? "").match(/\$([\d,.]+)/)?.[1].replace(/,/g, ""));

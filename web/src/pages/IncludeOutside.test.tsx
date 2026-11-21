@@ -157,7 +157,9 @@ const kpiParts = (label: string) => kpi(label).querySelector("[data-parts]")?.te
 const t = (k: string, o: Record<string, unknown> = {}) => i18n.t(k, o) as string;
 /** The answer table (#195): a row's cells, its token price and its real share. */
 const answerRow = (key: string) => document.querySelector<HTMLElement>(`[data-answer-row="${key}"]`);
-const rowList = (key: string) => answerRow(key)!.querySelector("[data-answer-list]")!.textContent;
+/** The visible text: without the screen-reader-only words. */
+const visible = (e: Element | null) => { const c = e!.cloneNode(true) as Element; c.querySelectorAll(".sr-only").forEach((x) => x.remove()); return c.textContent; };
+const rowList = (key: string) => visible(answerRow(key)!.querySelector("[data-answer-list]"));
 const rowReal = (key: string) => answerRow(key)!.querySelector("[data-answer-real]")!.textContent;
 /** The explanations live in the drawer (#204): open "How is this computed" once, then read one of its notes by key. */
 const openHow = () => { if (!document.querySelector("[data-answer-drawer]")) fireEvent.click(document.querySelector("[data-answer-how]")!); };
@@ -224,8 +226,9 @@ describe("the sessions outside covey on the cost page, included by default (#120
     serve(cells());
     fireEvent.click(await screen.findByRole("button", { name: /^Coordinator/ }));
     await waitFor(() => expect(kpiParts(t("costs.inputTokens"))).toMatch(/^selected agents/));
-    // With the answer table its rows name the outside sessions: no inclusion note above or beside it (#204).
-    expect(document.querySelector("[data-inclusion-note]")).toBeNull();
+    // With agents selected the note stays: the outside sessions are not agents and stay in the KPIs and chart below (#204 re-review).
+    expect(document.querySelector("[data-inclusion-note]")!.textContent).toBe(
+      t("costs.incl.includedNoteSelected", { sources: document.querySelector("[data-inclusion-note]")!.textContent!.match(/\(([^)]*)\)/)![1] }));
     expect(document.querySelector("[data-answer] [data-org-wide]")).toBeTruthy();
     expect(rowList("covey")).toBe(fmtUSD(9));
   });
@@ -946,7 +949,7 @@ describe("the answer table, review round 1 (#204)", () => {
     await answerReady();
     expect(document.querySelector("[data-answer-total] [data-answer-list]")!.textContent).toBe(fmtUSD(h.list));
     // Under the table only the work after the last reading; the rest of the list's parts are explained in the drawer (#204).
-    expect(document.querySelector("[data-answer-note]")).toBeNull();
+    expect(document.querySelector('[data-answer-note]:not([data-answer-note="recomputed"])')).toBeNull();
     expect(howNote("usage")!.textContent).toBe(
       t("costs.dent.head.usageOut", { seats: h.usageSeats.join(", "), n: "3", list: fmtUSD(h.usage) }));
     expect(howNote("usage-charges")).not.toBeNull();
@@ -1100,12 +1103,13 @@ describe("the answer table, review round 2 (#204)", () => {
     expect(a.metered).toBeLessThan(a.list);
     serve(data);
     await answerReady();
-    // The numerator is named once, in the sentence; the Difference row says what the multiple divides in words (#204).
-    const numerator = a.metered;
-    expect(document.querySelector("[data-answer-multiple-from]")!.textContent).toBe(t("costs.answer.fromDifference"));
+    // The Difference row names its numerator where it is less than the Total's figure (#204 re-review): read it there.
+    const from = document.querySelector("[data-answer-multiple-from]")!.textContent!;
+    expect(from).toBe(t("costs.answer.fromDifferenceOf", { metered: fmtUSD(a.metered) }));
+    const numerator = dollars(from);
     const total = dollars(document.querySelector("[data-answer-total] [data-answer-real]")!.textContent);
     const shown = Number(document.querySelector("[data-answer-multiple]")!.textContent!.match(/≈ ([\d.]+)×/)![1]);
-    expect(numerator).toBeCloseTo(a.metered, 2);
+    expect(numerator).not.toBeCloseTo(dollars(document.querySelector("[data-answer-total] [data-answer-list]")!.textContent), 2);
     expect(numerator / total).toBeCloseTo(shown, 0);
     expect(Math.abs(numerator / total - shown)).toBeLessThan(0.1);
     // The sentence does not pair the Total list with the multiple.
@@ -1173,5 +1177,111 @@ describe("the answer table, review round 2 (#204)", () => {
     expect(answerRow("outsideRest")!.textContent).toContain(t("costs.answer.rowOutsideOver"));
     const val = (sel: string) => [...document.querySelectorAll(sel)].reduce((x, el) => x + (el.textContent!.includes("-") ? -1 : 1) * dollars(el.textContent), 0);
     expect(val("[data-answer-row] [data-answer-real]")).toBeCloseTo(val("[data-answer-total] [data-answer-real]"), 1);
+  });
+});
+
+/** Extra projects on SEAT, each with one priced cell at H19. */
+function withProjects(data: CostCells, xs: { source: string; list: number; firstAt?: string }[]): CostCells {
+  const e = data.external!;
+  for (const x of xs) {
+    const base = e.sources.find((s) => s.source === SY)!;
+    e.sources.push({ ...base, source: x.source, meter_credential: { secret_key: SEAT, secret_slot: 0 }, calls: 1, list_usd: x.list,
+      reported_usd: null, unpriced_tokens: 0, unpriced_calls: 0, unpriced_models: [], first_at: x.firstAt ?? H18, last_at: x.firstAt ?? H19 });
+    e.cells.push({ ...e.cells.find((c) => c.source === SY)!, source: x.source, calls: 1, list_usd: x.list, measured: { output: x.list },
+      reported_usd: null, reported_calls: 0 });
+    e.meter.credentials[0].sources = [...e.meter.credentials[0].sources, x.source].sort();
+  }
+  return data;
+}
+
+describe("the answer table, re-review (#204)", () => {
+  beforeEach(async () => { await i18n.changeLanguage("en"); });
+  const tableOf = (data: CostCells) => answerTable(headline(data)!, subscriptionDent(data.external)!, data.external!, data.meter ?? [], new Set());
+
+  it("a source whose calls all come after its own seat's last reading is pending, though another seat was read later", async () => {
+    const data = twoSeats();
+    const e = data.external!;
+    // seat_b is read two hours after SEAT's last reading (19:40); the operator, on SEAT only, starts in between.
+    const b = e.meter.steps.find((x) => x.secret_key === "seat_b")!;
+    Object.assign(b, { at: "2026-11-17T21:40:00Z", from: "2026-11-17T20:40:00Z" });
+    e.sources = e.sources.map((s) => (s.source === OP ? { ...s, first_at: "2026-11-17T20:00:00Z", last_at: "2026-11-17T20:30:00Z" } : s));
+    const a = tableOf(data);
+    const op = a.rows.find((r) => r.kind === "operator")!;
+    expect(op.pending).toBe(true);
+    expect(op.real).toBeNull();
+    // sylius started before seat_b's reading: not pending.
+    expect(a.rows.find((r) => r.source === SY)!.pending).toBe(false);
+    serve(data);
+    await answerReady();
+    expect(answerRow("operator")!.querySelector("[data-answer-pending]")!.textContent).toBe(t("costs.answer.pending"));
+    expect(rowReal("operator")).not.toContain("$");
+  });
+
+  it("a source that started before its seat's last reading is not pending", () => {
+    const a = tableOf(cells());
+    expect(a.rows.some((r) => r.pending)).toBe(false);
+  });
+
+  it("folds two or more projects under $1 into one row whose figures are their sums; a lone small one keeps its row", async () => {
+    const data = withProjects(cells(), [{ source: "projects-a", list: 0.3 }, { source: "projects-b", list: 0.4 }, { source: "projects-c", list: 0.2 }]);
+    const a = tableOf(data);
+    const small = a.rows.find((r) => r.kind === "small")!;
+    expect(small.folded).toEqual(["projects-a", "projects-b", "projects-c"]);
+    expect(small.list).toBeCloseTo(0.9, 9);
+    for (const x of small.folded) expect(a.rows.some((r) => r.source === x)).toBe(false);
+    // sylius has tokens with no price: never folded.
+    expect(a.rows.some((r) => r.source === SY)).toBe(true);
+    // The total still adds up the rows.
+    expect(a.list).toBeCloseTo(a.rows.reduce((acc, r) => acc + (r.list ?? 0), 0), 9);
+    serve(data);
+    await answerReady();
+    expect(answerRow("small")!.querySelector("th")!.textContent).toContain(t("costs.answer.rowSmall", { count: 3 }));
+    expect(answerRow("small")!.querySelector("td.cost-answer-from")!.textContent).toBe("projects-a, projects-b, projects-c");
+    expect(rowList("small")).toBe(`${fmtUSD(0.9)}*`);
+    cleanup();
+    const one = tableOf(withProjects(cells(), [{ source: "projects-a", list: 0.3 }]));
+    expect(one.rows.some((r) => r.kind === "small")).toBe(false);
+    expect(one.rows.some((r) => r.source === "projects-a")).toBe(true);
+  });
+
+  it("a pending small project keeps its own row instead of being folded", () => {
+    const late = "2026-11-17T20:00:00Z";
+    const a = tableOf(withProjects(cells(), [{ source: "projects-a", list: 0.3 }, { source: "projects-b", list: 0.4 },
+      { source: "projects-late", list: 0.2, firstAt: late }]));
+    expect(a.rows.find((r) => r.kind === "small")!.folded).toEqual(["projects-a", "projects-b"]);
+    expect(a.rows.find((r) => r.source === "projects-late")!.pending).toBe(true);
+  });
+
+  it("each row's 'where it comes from' is in the column and, for phones, under the part, the same text", async () => {
+    serve(cells());
+    await answerReady();
+    for (const r of document.querySelectorAll("[data-answer-row]")) {
+      const col = r.querySelector("td.cost-answer-from")!.textContent;
+      expect(col).not.toBe("");
+      expect(r.querySelector(".cost-answer-from-inline")!.textContent).toBe(col);
+    }
+    expect(answerRow("covey")!.querySelector("td.cost-answer-from")!.textContent).toBe(t("costs.answer.fromCovey"));
+  });
+
+  it("the * mark is explained under the table, always, and read out to screen readers", async () => {
+    serve(cells());
+    await answerReady();
+    expect(document.querySelector("[data-answer-drawer]")).toBeNull();
+    expect(document.querySelector('[data-answer-note="recomputed"]')!.textContent).toBe(`* ${t("costs.answer.recomputedMark")}`);
+    const mark = document.querySelector("[data-answer-recomputed]")!;
+    expect(mark.getAttribute("aria-hidden")).toBe("true");
+    expect(mark.parentElement!.querySelector(".sr-only")!.textContent).toContain(t("costs.answer.recomputedMark"));
+  });
+
+  it("with the answer table the filters come after it, once; under 'covey only' the inclusion note is back", async () => {
+    serve(cells());
+    await answerReady();
+    const table = document.querySelector("[data-answer]")!;
+    const chips = document.querySelectorAll("[data-inclusion]");
+    expect(chips.length).toBe(1);
+    expect(table.compareDocumentPosition(chips[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(document.querySelector("[data-inclusion-note]")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "covey only" }));
+    await waitFor(() => expect(document.querySelector("[data-inclusion-note]")).not.toBeNull());
   });
 });

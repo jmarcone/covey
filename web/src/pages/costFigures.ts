@@ -1829,6 +1829,14 @@ function unionSpans(spans: readonly [number, number][]): [number, number][] {
  *  API key with a measured bill counts by its bill (a charge entered beside
  *  it would be the same money); any other credential by its counted usage
  *  charges where it was billed by usage all through the range. */
+/** covey's own work no row of the page covers, at token prices: the headline's per credential, less what the
+ *  pay-per-token row shows of it. That row covers a credential only over its bill's window or its counted spans, so the
+ *  rest of the credential's work stays here; never below 0. */
+export function coveyElsewhere(byCred: Readonly<Record<string, number>>, ppt: Pick<PayPerTokenHeadline, "credentials"> | null | undefined): number {
+  return Object.entries(byCred).reduce((acc, [id, v]) =>
+    acc + Math.max(0, v - (ppt?.credentials.find((c) => c.id === id)?.coveyList ?? 0)), 0);
+}
+
 export function payPerTokenHeadline(cells: CostCells | null | undefined, figures: readonly CredentialFigures[], bucketMs: number,
   windowEnd: Date): PayPerTokenHeadline | null {
   if (!cells) return null;

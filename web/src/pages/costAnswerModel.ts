@@ -120,13 +120,28 @@ export function answerTable(h: Headline, d: SubscriptionDent, ext: ExternalUsage
   // A row whose every call came after the meter's last reading has no share yet: it is pending, not 0 (its real cost
   // follows at the next reading). Decided from the calls' times, never from a part of 0: a part can be 0 for other
   // reasons (no split step: "not split yet").
-  const lastReading = m.steps.reduce((a, x) => Math.max(a, Date.parse(x.at)), -Infinity);
+  // The last reading is the seat's own: seats are read at different times, and a source's share comes only from the
+  // steps of the seats that name it. A source no seat names keeps the meter's last reading.
+  const lastAt = new Map<string, number>();
+  for (const x of m.steps) {
+    const id = credId(x.secret_key, x.secret_slot);
+    lastAt.set(id, Math.max(lastAt.get(id) ?? -Infinity, Date.parse(x.at)));
+  }
+  const meterLast = Math.max(-Infinity, ...lastAt.values());
+  const lastReadingOf = (source: string) => {
+    const cs = m.credentials.filter((c) => c.sources.includes(source));
+    return cs.length > 0 ? Math.max(-Infinity, ...cs.map((c) => lastAt.get(credId(c.secret_key, c.secret_slot)) ?? -Infinity)) : meterLast;
+  };
   const firstAt = new Map(ext.sources.map((x) => [x.source, x.first_at]));
-  const pendingOf = (xs: typeof shown, list: number | null) =>
-    priced && Number.isFinite(lastReading) && (list ?? 0) >= 0.005 && xs.length > 0 &&
-    xs.every((s) => { const f = firstAt.get(s.source); return f != null && Date.parse(f) > lastReading; });
+  const sourcePending = (s: (typeof shown)[number]) => {
+    const f = firstAt.get(s.source), last = lastReadingOf(s.source);
+    return f != null && Number.isFinite(last) && Date.parse(f) > last;
+  };
+  // Something to show: a price, or tokens with none (a row of unpriced calls is pending too, never "≈ $0.00").
+  const pendingOf = (xs: typeof shown) => priced && xs.length > 0 && xs.every(sourcePending) &&
+    (xs.reduce((a, s) => a + (s.list ?? 0), 0) >= 0.005 || xs.some((s) => s.unpricedTokens > 0));
   const withPending = (r: AnswerRow, xs: typeof shown): AnswerRow =>
-    pendingOf(xs, r.list) ? { ...r, real: null, notSplit: false, partlySplit: false, pending: true } : r;
+    pendingOf(xs) ? { ...r, real: null, notSplit: false, partlySplit: false, pending: true } : r;
   const rows: AnswerRow[] = [row({ key: "covey", kind: "covey", list: h.coveyList, real: priced && coveyState !== "none" ? d.covey.real : null,
     ...flags(coveyState) })];
   const operator = shown.filter((s) => isOperatorSource(s.source));
@@ -136,10 +151,11 @@ export function answerTable(h: Headline, d: SubscriptionDent, ext: ExternalUsage
       unpricedTokens: operator.reduce((a, s) => a + s.unpricedTokens, 0), before: operator.every((s) => s.before), real: real(operator),
       ...flags(st) }), operator));
   }
-  // Other projects: each its own row, except the small ones (under SMALL_USD, with a price, not before the range),
+  // Other projects: each its own row, except the small ones (under SMALL_USD, with a price, not before the range, not pending),
   // which share one row. Folding changes no total: the row's list and real are its sources' sums.
   const projects = shown.filter((x) => !isOperatorSource(x.source));
-  const isSmall = (s: (typeof shown)[number]) => s.list != null && s.list < SMALL_USD && !s.before && s.unpricedTokens === 0;
+  // A pending project keeps its own row: folded, its "pending" would be lost in the row's partial real figure.
+  const isSmall = (s: (typeof shown)[number]) => s.list != null && s.list < SMALL_USD && !s.before && s.unpricedTokens === 0 && !sourcePending(s);
   const small = projects.filter(isSmall);
   for (const s of projects.filter((x) => small.length < 2 || !isSmall(x))) {
     rows.push(withPending(row({ key: `project:${s.source}`, kind: "project", source: s.source, list: s.list, recomputed: s.recomputed > 0,

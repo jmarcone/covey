@@ -7,6 +7,7 @@ import {
   billedStatus,
   billedWholeDays,
   bucketStart,
+  coveyElsewhere,
   credentialFigures,
   isSeat,
   meterCrossings,
@@ -21,6 +22,7 @@ import {
   realCost,
   realFromWeeks,
   type CredentialFigures,
+  type PayPerTokenHeadline,
 } from "./costFigures";
 
 // The figures the Costs page shows are argued with, so every rule that turns
@@ -545,5 +547,24 @@ describe("per credential", () => {
     const seat = figs.find((f) => f.id === `${SEAT}#0`)!;
     expect(seat.multiple).toBeNull();
     expect(seat.noMultiple).toBe("movement");
+  });
+});
+
+describe("coveyElsewhere (#204 re-review)", () => {
+  const cred = (id: string, coveyList: number) => ({ id, coveyList }) as PayPerTokenHeadline["credentials"][number];
+  it("keeps every credential the pay-per-token row does not show", () => {
+    expect(coveyElsewhere({ "key#0": 3, "seat#0": 2 }, null)).toBe(5);
+    expect(coveyElsewhere({ "key#0": 3 }, { credentials: [cred("other#0", 3)] })).toBe(3);
+  });
+  it("keeps the part of a shown credential outside the row's window, not 0", () => {
+    // covey worked $5 on the key; its bill compares only $3 of it: $2 stays in "not in the table".
+    expect(coveyElsewhere({ "key#0": 5 }, { credentials: [cred("key#0", 3)] })).toBeCloseTo(2, 9);
+  });
+  it("never goes below 0 where the row shows more than the headline", () => {
+    expect(coveyElsewhere({ "key#0": 2 }, { credentials: [cred("key#0", 3)] })).toBe(0);
+  });
+  it("sums to the headline's coveyElsewhere with no pay-per-token row", () => {
+    const by = { a: 1.25, b: 0.5 };
+    expect(coveyElsewhere(by, undefined)).toBeCloseTo(Object.values(by).reduce((x, y) => x + y, 0), 9);
   });
 });

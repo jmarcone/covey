@@ -29,7 +29,8 @@ function listCell(t: TFunction, r: AnswerRow): ReactNode {
   if (r.list == null) return r.unpricedTokens > 0 ? t("costs.incl.noListTokens", { n: fmtCount(r.unpricedTokens) }) : t("costs.incl.noList");
   const usd = r.unpricedTokens > 0 ? t("costs.incl.listUnpriced", { usd: fmtUSD(r.list), n: fmtCount(r.unpricedTokens) }) : fmtUSD(r.list);
   return r.recomputed
-    ? <>{usd}<sup className="muted" title={t("costs.answer.recomputedMark")} aria-label={t("costs.answer.recomputedMark")} data-answer-recomputed>{MARK}</sup></>
+    ? <>{usd}<sup className="muted" title={t("costs.answer.recomputedMark")} aria-hidden="true" data-answer-recomputed>{MARK}</sup>
+      <span className="sr-only"> ({t("costs.answer.recomputedMark")})</span></>
     : usd;
 }
 
@@ -109,8 +110,10 @@ export function CostAnswer({ a, h, filtered, drawer, elsewhere: elsewhereUsd }: 
     ? t("costs.dent.incompleteNote", { n: fmtNumber(a.incompleteChunks, 0) }) : null;
   const check = hidden ? undefined : priceTableLine(t, h.list, h.table);
   const recomputed = a.rows.some((r) => r.recomputed && r.list != null && !r.before);
+  // The multiple divides only the work within the meter's readings: where that is less than the total, the label says so.
+  const diffFrom = a.multiple != null && a.list - a.metered >= 0.005
+    ? t("costs.answer.fromDifferenceOf", { metered: fmtUSD(a.metered) }) : t("costs.answer.fromDifference");
   const notes: [string, ReactNode][] = ([
-    ["recomputed", recomputed ? `${MARK} ${t("costs.answer.recomputedMark")}` : null],
     ["incomplete", incomplete], ["before", before], ["unpriced", unpriced], ["usage", usage], ["usage-charges", usageCharges],
     ["per-use", perUse], ["elsewhere", elsewhere], ["price-check", check],
   ] as [string, ReactNode][]).filter(([, v]) => v != null && v !== "");
@@ -120,6 +123,7 @@ export function CostAnswer({ a, h, filtered, drawer, elsewhere: elsewhereUsd }: 
         {t("costs.answer.title")}
         {filtered && <OrgWide />}
       </div>
+      <div style={{ overflowX: "auto" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }} data-answer-table>
         <thead>
           <tr className="muted" style={{ textAlign: "left" }}>
@@ -140,7 +144,9 @@ export function CostAnswer({ a, h, filtered, drawer, elsewhere: elsewhereUsd }: 
                   <div className="muted text-xs cost-answer-from-inline" style={{ fontWeight: 400 }}>{l.from}</div>
                 </th>
                 <td className="muted cost-answer-from" style={cell}>{l.from}</td>
-                <td style={num} data-answer-list>{remainder(r) ? "" : listCell(t, r)}</td>
+                <td style={r.list == null || r.unpricedTokens > 0 || r.before ? { ...num, whiteSpace: "normal" } : num} data-answer-list>
+                  {remainder(r) ? "" : listCell(t, r)}
+                </td>
                 <td style={{ ...num, paddingRight: 0 }} data-answer-real>{realCell(t, r)}</td>
               </tr>
             );
@@ -157,9 +163,9 @@ export function CostAnswer({ a, h, filtered, drawer, elsewhere: elsewhereUsd }: 
           <tr style={{ borderTop: "1px solid var(--border)" }} data-answer-difference>
             <th scope="row" style={{ ...cell, textAlign: "left", fontWeight: 600 }}>
               {t("costs.answer.rowDifference")}
-              <div className="muted text-xs cost-answer-from-inline" style={{ fontWeight: 400 }}>{t("costs.answer.fromDifference")}</div>
+              <div className="muted text-xs cost-answer-from-inline" style={{ fontWeight: 400 }}>{diffFrom}</div>
             </th>
-            <td className="muted cost-answer-from" style={cell} data-answer-multiple-from>{t("costs.answer.fromDifference")}</td>
+            <td className="muted cost-answer-from" style={cell} data-answer-multiple-from>{diffFrom}</td>
             <td style={num} />
             <td style={{ ...num, paddingRight: 0 }} data-answer-multiple>
               {a.multiple != null ? (
@@ -172,10 +178,12 @@ export function CostAnswer({ a, h, filtered, drawer, elsewhere: elsewhereUsd }: 
           </tr>
         </tbody>
       </table>
+      </div>
       <p className="text-sm mt-3 mb-1" style={{ fontWeight: 600 }} data-answer-sentence>{sentence}</p>
       {a.multiple == null && a.real != null && <p className="muted text-xs mb-1" data-answer-no-multiple>{noMultiple}</p>}
       {hidden && <p className="muted text-xs mb-1" data-answer-hidden>{t("costs.answer.hidden", { sources: a.hidden.join(", "), count: a.hidden.length })}</p>}
       {after && <p className="muted text-xs mb-1" data-answer-after>{after}</p>}
+      {recomputed && <p className="muted text-xs mb-1" data-answer-note="recomputed">{`${MARK} ${t("costs.answer.recomputedMark")}`}</p>}
       {(drawer != null || notes.length > 0) && (
         <div className="mt-2">
           <button type="button" className="text-sm" aria-expanded={open} aria-controls={open ? drawerId : undefined} data-answer-how

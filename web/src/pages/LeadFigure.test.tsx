@@ -165,7 +165,9 @@ const kpi = (label: string) => document.querySelector<HTMLElement>(`[data-kpi="$
 const answerRow = (key: string) => document.querySelector<HTMLElement>(`[data-answer-row="${key}"]`);
 const openHow = () => { if (!document.querySelector("[data-answer-drawer]")) fireEvent.click(document.querySelector("[data-answer-how]")!); };
 const howNote = (k: string) => { openHow(); return document.querySelector(`[data-answer-note="${k}"]`); };
-const rowList = (key: string) => answerRow(key)!.querySelector("[data-answer-list]")!.textContent;
+/** The visible text: without the screen-reader-only words. */
+const visible = (e: Element | null) => { const c = e!.cloneNode(true) as Element; c.querySelectorAll(".sr-only").forEach((x) => x.remove()); return c.textContent; };
+const rowList = (key: string) => visible(answerRow(key)!.querySelector("[data-answer-list]"));
 const answerReady = () => waitFor(() => expect(document.querySelector("[data-answer-total]")).not.toBeNull());
 const answerTotal = () => document.querySelector("[data-answer-total] [data-answer-list]")!.textContent;
 const block = () => document.querySelector<HTMLElement>(`[data-credential="${SEAT}#0"]`);
@@ -220,7 +222,7 @@ describe("the lead figure per source (#120)", () => {
     expect(answerRow(`project:${WORK}`)).toBeNull();
     expect(howNote("per-use")!.textContent).toContain(`(${fmtUSD(1)})`);
     // covey's price table: $15 against $14.50 — $0.50 apart, silent.
-    expect(document.querySelector("[data-answer] [data-price-check]")).toBeNull();
+    expect(howNote("price-check")).toBeNull();
     // Not two figures: no tile above the table.
     expect(kpi("Reported by Claude Code")).toBeNull();
     expect(kpi("Recomputed from tokens")).toBeNull();
@@ -232,9 +234,18 @@ describe("the lead figure per source (#120)", () => {
     serve(cells(external(), [5.6, 4]), "/costs?only=covey");
     await answerReady();
     expect(rowList("covey")).toBe(fmtUSD(9.6));
-    expect(document.querySelector("[data-answer] [data-price-check]")).toBeNull();
+    expect(howNote("price-check")).toBeNull();
     // The seat has no tile of its own for it: the table holds it.
     expect(within(block()!).queryByRole("group", { name: LEAD })).toBeNull();
+  });
+
+  it("says covey's price table in the drawer where it differs beyond the threshold", async () => {
+    // Claude Code's $4 for covey: the table's $9.50 against covey's price table's $15, 58 % apart.
+    serve(cells(external(), [2, 2]));
+    await answerReady();
+    expect(rowList("covey")).toBe(fmtUSD(4));
+    expect(answerTotal()).toBe(fmtUSD(9.5));
+    expect(howNote("price-check")!.textContent).toBe(t("costs.lead.checkMore", { usd: fmtUSD(15), pct: "58" }));
   });
 
   it("the seat's tile, chart, tooltip and table carry one list-price figure; the check only where it differs", async () => {
@@ -245,7 +256,7 @@ describe("the lead figure per source (#120)", () => {
     // The answer table holds covey $9 + op $3.50 + sylius $2, against the price table's $15: $0.50 apart, silent.
     await answerReady();
     expect(answerTotal()).toBe(fmtUSD(14.5));
-    expect(document.querySelector("[data-answer] [data-price-check]")).toBeNull();
+    expect(howNote("price-check")).toBeNull();
     expect(within(b).queryByRole("group", { name: LEAD })).toBeNull();
     expect(within(b).queryByRole("group", { name: "Recomputed from tokens" })).toBeNull();
     // The chips: the lead figure, real, billed; covey's price table is the toggle.

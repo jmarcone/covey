@@ -787,7 +787,7 @@
       "totalSubShown": "the rows shown, of {{pts}} meter points",
       "rowDifference": "Difference",
       "fromDifference": "pay-per-token price ÷ the real cost",
-      "fromDifferenceOf": "{{metered}} of this work lies within the meter's readings, ÷ what the flat plan really cost",
+      "fromDifferenceOf": "the part within the meter's readings ({{metered}}) ÷ the real cost",
       "floor": "a floor: at least {{floor}}",
       "sentence": "On the flat plan this range cost ≈ {{real}} ({{pts}} meter points). At pay-per-token prices the same work would cost {{list}}; the {{metered}} of it within the meter's readings is ≈ {{x}} the real cost.",
       "sentenceNoPoints": "On the flat plan this range cost ≈ {{real}}. At pay-per-token prices the same work would cost {{list}}; the {{metered}} of it within the meter's readings is ≈ {{x}} the real cost.",
