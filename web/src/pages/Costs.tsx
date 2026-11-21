@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import { asEnum, asSet, useParamState } from "./costView";
 import { Seg } from "./Seg";
-import { CostRangeControls, useCostRange } from "./costRangeState";
+import { CostFilterBar, ShareButton, WhoSummary, useCostRange } from "./costRangeState";
 import { CostTabs } from "./CostTabs";
 import { isRangeCode, type RangeCode } from "./costRange";
 import { api, ApiError, type IndicatorReport, type Principal, type RunCost } from "../api";
@@ -370,17 +370,11 @@ export default function Costs({ me }: { me?: Principal }) {
       </div>
       {/* The sessions outside covey: in every figure below by default, each
           figure naming its parts; "covey only" leaves them out (#120). */}
-      {sourcesListed.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 mb-4" data-inclusion>
-          <Chip on={coveyOnly} onClick={() => setCoveyOnly(!coveyOnly)} title={t("costs.incl.coveyOnlyTitle")}>{t("costs.incl.coveyOnly")}</Chip>
-          <IncompleteMark checks={outsideMark} part="outside" />
-          {(!hasAnswer || coveyOnly || filtered) && (
-            <span className="muted text-xs" data-inclusion-note style={{ maxWidth: 760 }}>
-              {t(coveyOnly ? "costs.incl.coveyOnlyNote" : filtered ? "costs.incl.includedNoteSelected" : "costs.incl.includedNote",
-                { sources: sourcesListed.map((s) => s.source).join(", ") })}
-            </span>
-          )}
-        </div>
+      {sourcesListed.length > 0 && (!hasAnswer || coveyOnly || filtered) && (
+        <p className="muted text-xs mb-4" data-inclusion-note style={{ maxWidth: 760 }}>
+          {t(coveyOnly ? "costs.incl.coveyOnlyNote" : filtered ? "costs.incl.includedNoteSelected" : "costs.incl.includedNote",
+            { sources: sourcesListed.map((s) => s.source).join(", ") })}
+        </p>
       )}
     </>
   );
@@ -397,7 +391,17 @@ export default function Costs({ me }: { me?: Principal }) {
       <p className="muted text-sm mb-4" style={{ maxWidth: 620 }}>{t("costs.subtitle")}</p>
 
       {/* Controls */}
-      <CostRangeControls r={r} rangeError={rangeError} />
+      {/* The filter bar (PR 6): who, covey only, the range and its bucket, and a link that opens this view. */}
+      <CostFilterBar r={r} rangeError={rangeError} trailing={<ShareButton />} leading={<>
+        <WhoSummary names={agentList.filter((a) => selected.has(a.id)).map((a) => a.label)} onClear={() => setSelected(new Set())} />
+        {sourcesListed.length > 0 && (
+          // The sessions outside covey: in every figure by default, each figure naming its parts; "covey only" leaves them out (#120).
+          <span className="flex items-center gap-2" data-inclusion>
+            <Chip on={coveyOnly} onClick={() => setCoveyOnly(!coveyOnly)} title={t("costs.incl.coveyOnlyTitle")}>{t("costs.incl.coveyOnly")}</Chip>
+            <IncompleteMark checks={outsideMark} part="outside" />
+          </span>
+        )}
+      </>} />
       {refused && <p className="muted text-sm" data-range-refused>{t("costs.range.refused")}</p>}
 
       {!refused && (

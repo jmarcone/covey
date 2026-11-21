@@ -899,6 +899,18 @@
       "loadErrorStale": "Nie udało się ponownie uruchomić kontroli. Poniżej: wynik z {{when}}, być może nieaktualny.",
       "unnamedModel": "(bez nazwy modelu)"
     },
+    "bar": {
+      "label": "Filtry kosztów",
+      "who": "Kto:",
+      "whoAll": "wszyscy",
+      "whoSome": "wybrano: {{count}}",
+      "clear": "Pokaż wszystkich",
+      "whoLocked": "Całe konto",
+      "whoLockedTitle": "Odpowiedź obejmuje całe konto: wybór agentów nie działa tutaj. Strona Szczegóły zawęża do agentów.",
+      "share": "Udostępnij",
+      "copied": "Link skopiowany: otwiera ten widok.",
+      "copyFailed": "Skopiuj zamiast tego adres z paska przeglądarki."
+    },
     "home": {
       "title": "Koszty",
       "tabsLabel": "Widoki kosztów",

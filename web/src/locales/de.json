@@ -899,6 +899,18 @@
       "loadErrorStale": "Die Prüfungen konnten nicht erneut laufen. Unten: das Ergebnis von {{when}}, womöglich veraltet.",
       "unnamedModel": "(kein Modellname)"
     },
+    "bar": {
+      "label": "Kostenfilter",
+      "who": "Wer:",
+      "whoAll": "alle",
+      "whoSome": "{{count}} ausgewählt",
+      "clear": "Alle zeigen",
+      "whoLocked": "Gesamtes Konto",
+      "whoLockedTitle": "Die Antwort umfasst das gesamte Konto: Eine Agentenauswahl gilt hier nicht. Die Seite Details grenzt auf Agenten ein.",
+      "share": "Teilen",
+      "copied": "Link kopiert: Er öffnet diese Ansicht.",
+      "copyFailed": "Kopieren Sie stattdessen die Adresse aus der Browserleiste."
+    },
     "home": {
       "title": "Kosten",
       "tabsLabel": "Kostenansichten",

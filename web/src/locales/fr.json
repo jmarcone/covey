@@ -899,6 +899,18 @@
       "loadErrorStale": "Les contrôles n'ont pas pu être relancés. Ci-dessous : le résultat du {{when}}, peut-être périmé.",
       "unnamedModel": "(sans nom de modèle)"
     },
+    "bar": {
+      "label": "Filtres des coûts",
+      "who": "Qui :",
+      "whoAll": "tout le monde",
+      "whoSome": "{{count}} sélectionnés",
+      "clear": "Afficher tout le monde",
+      "whoLocked": "Tout le compte",
+      "whoLockedTitle": "La réponse couvre tout le compte : une sélection d'agents ne s'applique pas ici. La page Détails filtre par agents.",
+      "share": "Partager",
+      "copied": "Lien copié : il ouvre cette vue.",
+      "copyFailed": "Copiez plutôt l'adresse depuis la barre du navigateur."
+    },
     "home": {
       "title": "Coûts",
       "tabsLabel": "Vues des coûts",

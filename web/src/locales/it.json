@@ -899,6 +899,18 @@
       "loadErrorStale": "Non è stato possibile ripetere i controlli. Sotto: il risultato del {{when}}, forse non aggiornato.",
       "unnamedModel": "(nessun nome di modello)"
     },
+    "bar": {
+      "label": "Filtri dei costi",
+      "who": "Chi:",
+      "whoAll": "tutti",
+      "whoSome": "{{count}} selezionati",
+      "clear": "Mostra tutti",
+      "whoLocked": "Tutto l'account",
+      "whoLockedTitle": "La risposta copre tutto l'account: qui una selezione di agenti non si applica. La pagina Dettagli filtra per agenti.",
+      "share": "Condividi",
+      "copied": "Link copiato: apre questa vista.",
+      "copyFailed": "Copia invece l'indirizzo dalla barra del browser."
+    },
     "home": {
       "title": "Costi",
       "tabsLabel": "Viste dei costi",

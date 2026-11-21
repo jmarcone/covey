@@ -899,6 +899,18 @@
       "loadErrorStale": "De controles konden niet opnieuw draaien. Hieronder: het resultaat van {{when}}, mogelijk verouderd.",
       "unnamedModel": "(geen modelnaam)"
     },
+    "bar": {
+      "label": "Kostenfilters",
+      "who": "Wie:",
+      "whoAll": "iedereen",
+      "whoSome": "{{count}} geselecteerd",
+      "clear": "Iedereen tonen",
+      "whoLocked": "Hele account",
+      "whoLockedTitle": "Het antwoord gaat over de hele account: een selectie van agenten geldt hier niet. De pagina Details filtert op agenten.",
+      "share": "Delen",
+      "copied": "Link gekopieerd: hij opent deze weergave.",
+      "copyFailed": "Kopieer in plaats daarvan het adres uit de adresbalk van de browser."
+    },
     "home": {
       "title": "Kosten",
       "tabsLabel": "Kostenweergaven",

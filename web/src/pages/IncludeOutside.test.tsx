@@ -1385,16 +1385,31 @@ describe("the answer table, re-review (#204)", () => {
     expect(mark.parentElement!.querySelector(".sr-only")!.textContent).toContain(t("costs.answer.recomputedMark"));
   });
 
-  it("with the answer table the filters come after it, once; under 'covey only' the inclusion note is back", async () => {
+  it("the filter bar holds covey only, once, above the answer; under 'covey only' the inclusion note is back (PR 6)", async () => {
     serve(cells());
     await answerReady();
-    const table = document.querySelector("[data-answer]")!;
+    const bar = document.querySelector("[data-filterbar]")!;
     const chips = document.querySelectorAll("[data-inclusion]");
     expect(chips.length).toBe(1);
-    expect(table.compareDocumentPosition(chips[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(bar.contains(chips[0])).toBe(true);
+    expect(bar.compareDocumentPosition(document.querySelector("[data-answer]")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(bar.querySelector("[data-who]")!.textContent).toContain(t("costs.bar.whoAll"));
     expect(document.querySelector("[data-inclusion-note]")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "covey only" }));
     await waitFor(() => expect(document.querySelector("[data-inclusion-note]")).not.toBeNull());
+  });
+
+  it("the Who summary names the selection and clears it in one click; the home says Who is not applied (PR 6)", async () => {
+    serve(cells());
+    await answerReady();
+    fireEvent.click(await screen.findByRole("button", { name: /^Coordinator/ }));
+    await waitFor(() => expect(document.querySelector("[data-who]")!.textContent).toContain("Coordinator"));
+    fireEvent.click(screen.getByRole("button", { name: t("costs.bar.clear") }));
+    await waitFor(() => expect(document.querySelector("[data-who]")!.textContent).toContain(t("costs.bar.whoAll")));
+    cleanup();
+    serve(cells(), "/costs?tz=utc", undefined, true);
+    await waitFor(() => expect(document.querySelector("[data-who-locked]")).not.toBeNull());
+    expect(document.querySelector("[data-share]")).not.toBeNull();
   });
 });
 
