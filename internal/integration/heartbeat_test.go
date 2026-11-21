@@ -23,6 +23,10 @@ var heartbeatSignatureState struct {
 	// entered is signalled (non-blocking) each time a delayed work check starts,
 	// so a test can act while the check sleeps instead of guessing at a moment.
 	entered chan struct{}
+	// proceed, when set, replaces the delay: the check holds until the test
+	// closes it, so what the test does "during the check" cannot race the
+	// check's end on a slow machine.
+	proceed chan struct{}
 }
 
 func init() {
@@ -45,7 +49,8 @@ func (heartbeatSignatureTestSystem) HasWork(context.Context, target.Credential) 
 }
 func (heartbeatSignatureTestSystem) HasWorkSigned(context.Context, target.Credential, string) (bool, string, error) {
 	heartbeatSignatureState.Lock()
-	sig, delay, entered := heartbeatSignatureState.sig, heartbeatSignatureState.delay, heartbeatSignatureState.entered
+	sig, delay, entered, proceed := heartbeatSignatureState.sig, heartbeatSignatureState.delay,
+		heartbeatSignatureState.entered, heartbeatSignatureState.proceed
 	heartbeatSignatureState.Unlock()
 	if entered != nil && delay > 0 {
 		select {
@@ -53,7 +58,14 @@ func (heartbeatSignatureTestSystem) HasWorkSigned(context.Context, target.Creden
 		default:
 		}
 	}
-	time.Sleep(delay)
+	if proceed != nil && delay > 0 {
+		select {
+		case <-proceed:
+		case <-time.After(30 * time.Second):
+		}
+	} else {
+		time.Sleep(delay)
+	}
 	return true, sig, nil
 }
 
@@ -440,16 +452,22 @@ func discardHeartbeatDuringTheCheck(t *testing.T, slug string, whileChecking fun
 		agent.ID); err != nil {
 		t.Fatal(err)
 	}
-	entered := make(chan struct{}, 1)
+	entered, proceed := make(chan struct{}, 1), make(chan struct{})
 	heartbeatSignatureState.Lock()
 	heartbeatSignatureState.sig = "issue15!23@42"
-	heartbeatSignatureState.delay = 800 * time.Millisecond
+	heartbeatSignatureState.delay = time.Millisecond // non-zero: the check signals and holds
 	heartbeatSignatureState.entered = entered
+	heartbeatSignatureState.proceed = proceed
 	heartbeatSignatureState.Unlock()
+	released := false
 	t.Cleanup(func() {
+		if !released {
+			close(proceed)
+		}
 		heartbeatSignatureState.Lock()
 		heartbeatSignatureState.delay = 0
 		heartbeatSignatureState.entered = nil
+		heartbeatSignatureState.proceed = nil
 		heartbeatSignatureState.Unlock()
 	})
 
@@ -481,6 +499,10 @@ func discardHeartbeatDuringTheCheck(t *testing.T, slug string, whileChecking fun
 		t.Fatal("no heartbeat task while the check runs")
 	}
 	admin.expect(http.MethodPost, "/api/v1/tasks/"+taskID+"/cancel", nil, http.StatusOK)
+	// The task is discarded while the check holds: now let the check end,
+	// the advance land and Complete refuse.
+	close(proceed)
+	released = true
 
 	var got string
 	waitFor(t, "advance released", 10*time.Second, func() bool {

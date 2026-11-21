@@ -985,18 +985,21 @@ func (o *Orchestrator) releaseWorkSignature(ctx context.Context, agentID uuid.UU
 // effort: if it fails, the next tick wakes the agent at most once too often —
 // which is more harmless than a missed run.
 //
-// Reports whether the watermark MAY have moved: false only when nothing was
-// sent. An error does not prove the write did not land — a kill or shutdown
-// that cancels ctx while the autocommit UPDATE is in flight aborts the read,
-// and the server may already have committed it. The caller's release must
-// then still run; releasing a write that did not land only wakes once more.
+// Reports whether the watermark MAY have moved: false only when the UPDATE
+// answered that it hit no row (the heartbeat is gone, nothing to release). An
+// error does not prove the write did not land — a kill or shutdown that
+// cancels ctx while the autocommit UPDATE is in flight aborts the read, and
+// the server may already have committed it. The caller's release must then
+// still run; releasing a write that did not land only wakes once more.
 func (o *Orchestrator) rememberWorkSignature(ctx context.Context, agentID uuid.UUID, name, sig string) bool {
-	if _, err := o.Pool.Exec(ctx,
+	tag, err := o.Pool.Exec(ctx,
 		"UPDATE agent_heartbeats SET last_work_sig=$3 WHERE agent_id=$1 AND name=$2",
-		agentID, name, sig); err != nil {
+		agentID, name, sig)
+	if err != nil {
 		o.Log.Warn("advance heartbeat signature", "agent", agentID, "name", name, "err", err)
+		return true
 	}
-	return true
+	return tag.RowsAffected() > 0
 }
 
 // refreshWorkSignature advances a successful heartbeat run to the target
