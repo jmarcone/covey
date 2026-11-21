@@ -166,9 +166,17 @@ export function answerTable(h: Headline, d: SubscriptionDent, ext: ExternalUsage
     priced && r.real != null && r.real < 0.005 && xs.length > 0 && xs.every((s) => !((partList.get(s.source) ?? 0) > 0)) &&
       ((r.list ?? 0) >= 0.005 || r.unpricedTokens > 0)
       ? { ...r, real: null, notSplit: true, partlySplit: false } : r;
+  // A row of several sources where most of its work (by token price) lies in no split reading: its figure holds only the
+  // sources with a part, so it says it may be too low instead of standing as a bare ≈ $0.00 (#212 verify).
+  const mostlyUnassigned = (r: AnswerRow, xs: typeof shown): AnswerRow => {
+    if (r.real == null || r.partlySplit || xs.length < 2) return r;
+    const all = xs.reduce((a, s) => a + (s.list ?? 0), 0);
+    const assigned = xs.filter((s) => (partList.get(s.source) ?? 0) > 0).reduce((a, s) => a + (s.list ?? 0), 0);
+    return all >= 0.005 && assigned < all / 2 ? { ...r, partlySplit: true } : r;
+  };
   const finish = (r: AnswerRow, xs: typeof shown): AnswerRow => {
     const out = withBefore(withPending(r, xs), xs);
-    return out.pending || out.beforeMeter ? out : noSplitWork(out, xs);
+    return out.pending || out.beforeMeter ? out : mostlyUnassigned(noSplitWork(out, xs), xs);
   };
   const sourcePending = (s: (typeof shown)[number]) => {
     const f = firstAt.get(s.source), last = lastReadingOf(s.source);

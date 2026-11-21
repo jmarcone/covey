@@ -1285,11 +1285,6 @@ describe("the answer table, re-review (#204)", () => {
     if (h.after >= 0.005) expect(recon).toContain(t("costs.answer.reconAfter", { usd: fmtUSD(h.after) }));
   });
 
-  it("no reconciliation line while a source is switched off: its parts would not add up to the rows shown", () => {
-    const data = cells();
-    const a = answerTable(headline(data)!, subscriptionDent(data.external)!, data.external!, data.meter ?? [], new Set([SY]));
-    expect(a.multiple).toBeNull();
-  });
 
   it("a project whose work all came before the meter's first reading says so, never ≈ $0.00", async () => {
     // SEAT's first reading starts 17:40 on 11/17; this project's calls are at 10:00 that morning.
@@ -1332,6 +1327,23 @@ describe("the answer table, re-review (#204)", () => {
     expect(rowReal("project:projects-gap")).not.toContain("$0.00");
     // A row with work in a split reading keeps its figure, however small.
     expect(rowReal(`project:${SY}`)).toMatch(/^≈ \$/);
+  });
+
+  it("a row of several sources whose work lies mostly in no split reading says it may be too low, not a bare figure", async () => {
+    // Two small projects fold into one row: a ($0.40, all of it in a split reading) and b ($0.90, none of it).
+    const data = withProjects(cells(), [{ source: "projects-a", list: 0.4 }, { source: "projects-b", list: 0.9 }]);
+    data.external!.meter.source_parts = [...data.external!.meter.source_parts!, { source: "projects-a", list_usd: 0.4, real_usd: 0.001 }];
+    const small = tableOf(data).rows.find((r) => r.kind === "small")!;
+    expect(small.folded).toEqual(["projects-a", "projects-b"]);
+    expect(small.real).toBeCloseTo(0.001, 9);
+    expect(small.partlySplit).toBe(true);
+    serve(data);
+    await answerReady();
+    expect(answerRow("small")!.querySelector("[data-answer-partly]")!.textContent).toBe(t("costs.answer.partlyNotSplit"));
+    // With most of the row's work in a split reading, no note.
+    const most = withProjects(cells(), [{ source: "projects-a", list: 0.9 }, { source: "projects-b", list: 0.4 }]);
+    most.external!.meter.source_parts = [...most.external!.meter.source_parts!, { source: "projects-a", list_usd: 0.9, real_usd: 0.02 }];
+    expect(tableOf(most).rows.find((r) => r.kind === "small")!.partlySplit).toBe(false);
   });
 
   it("hides the reconciliation line while a source is switched off: its parts would not add up to the rows shown", () => {
