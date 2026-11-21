@@ -761,6 +761,42 @@
       "byCharges": "addebiti d'uso",
       "hint": "I prezzi per token valgono sugli intervalli coperti dal denaro reale: la finestra di fatturazione di una chiave API e gli intervalli degli addebiti d'uso conteggiati (periodi di confine pro rata nel tempo). Separato dal contatore dell'abbonamento e mai sommato a esso.",
       "rates": "In USD solo ai cambi inseriti da una persona: {{rates}}."
+    },
+    "fixRounds": {
+      "title": "Giri di correzione (sessioni persistenti)",
+      "hint": "Attività di sviluppo su una pull request o issue su cui lo stesso agente ha già lavorato, concluse nel periodo. Ogni cifra mostra n, il numero di attività dietro; cifre del primo turno solo dove è stato registrato. $ è il prezzo di listino misurato delle esecuzioni dell'attività.",
+      "byDecision": "Per decisione di dispatch",
+      "byPolicy": "A/B per criterio, per agente",
+      "perPR": "Giri per pull request",
+      "colDecision": "Decisione",
+      "colPolicy": "Criterio",
+      "colAgent": "Agente",
+      "colRounds": "Giri",
+      "colUsd": "$ per giro",
+      "colWrite": "Scrittura cache 1° turno",
+      "colWrite5m": "di cui 5 min",
+      "colWrite1h": "di cui 1 h",
+      "colRead": "Lettura cache 1° turno",
+      "colGap": "Minuti dall'ultima esecuzione",
+      "colContext": "Contesto alla ripresa",
+      "colPRs": "PR",
+      "colPerPR": "Giri per PR",
+      "decision": {
+        "sticky_resumed": "ripresa",
+        "fresh": "nuova",
+        "unknown": "sconosciuta"
+      },
+      "policy": {
+        "always": "sempre",
+        "conditional": "condizionale",
+        "fresh": "nuova",
+        "mixed": "misto",
+        "unknown": "sconosciuto"
+      },
+      "noData": "nessun dato",
+      "none": "Nessun giro di correzione in questo periodo.",
+      "error": "Impossibile caricare i giri di correzione.",
+      "offNote": "Per agente. I giri degli agenti che ripartono da zero per impostazione (motivo \"off\", ad es. il revisore) sono esclusi qui: {{n}} in questo periodo. Contano come \"nuova\" nell'A/B qui sotto."
     }
   },
   "lang": {
@@ -1439,6 +1475,16 @@
       "maxTurns": "Turni massimi per esecuzione",
       "maxTurnsPlaceholder": "0 = predefinito (30)",
       "maxTurnsHint": "Freno alla fuga in avanti: interrompe un'esecuzione dopo n turni. Usa un valore più alto per compiti con copie di repository.",
+      "sticky": "Sessioni persistenti",
+      "stickyHint": "I giri di correzione di uno sviluppatore sulla stessa pull request riprendono la sessione precedente invece di partire a freddo; il revisore dovrebbe restare nuovo. Finestra e limite valgono per la ripresa condizionale.",
+      "stickyWindow": "finestra (minuti)",
+      "stickyCap": "limite di contesto (token)",
+      "stickyPolicy": {
+        "fresh": "nuova — sempre una nuova sessione",
+        "conditional": "condizionale — entro la finestra e sotto il limite",
+        "always": "sempre — qualunque siano intervallo e dimensione",
+        "ab": "A/B per numero di PR — dispari sempre, pari condizionale"
+      },
       "recordingLevel": "Profondità della registrazione",
       "recordingInherit": "Eredita il minimo dell'organizzazione",
       "recordingMinimal": "minima (solo ciclo di vita e varchi)",

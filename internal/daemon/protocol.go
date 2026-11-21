@@ -132,6 +132,40 @@ type AssignTask struct {
 	MemoryContext   string `json:"memory_context,omitempty"`
 	ResumeSessionID string `json:"resume_session_id,omitempty"`
 	ResumeInput     string `json:"resume_input,omitempty"`
+	// WorkDirKey names the run's working directory under ~/scratch when the
+	// task belongs to a topic its agent keeps a session on (#130):
+	// "topic-<agent id>-<pr|issue>-<n>-<hash of the key>". Every task of the topic uses it, so a
+	// session started by one is found by the next. Empty = the task's own
+	// directory, as before.
+	WorkDirKey string `json:"work_dir_key,omitempty"`
+	// ScratchOf names the task whose directory under ~/scratch the run uses
+	// instead of its own: for a turn-limit continuation, the first task of
+	// its chain, whose run started the session it resumes there. --resume
+	// finds a transcript only under the directory it was written in.
+	ScratchOf string `json:"scratch_of,omitempty"`
+	// StickySessionID asks the daemon to resume the session of the agent's
+	// previous task on the topic, with StickyInput as the message — if the
+	// runtime holds that session in WorkDirKey. If it does not, the run starts
+	// fresh with Title/Body (which carry the handover) under the fallback
+	// prompt and memory context, and the daemon says so in a "sticky" event.
+	// A field of its own and not ResumeSessionID: a daemon that predates it
+	// ignores it and starts fresh with the handover, instead of failing on a
+	// session it cannot find.
+	StickySessionID       string `json:"sticky_session_id,omitempty"`
+	StickyInput           string `json:"sticky_input,omitempty"`
+	FallbackSystemPrompt  string `json:"fallback_system_prompt,omitempty"`
+	FallbackMemoryContext string `json:"fallback_memory_context,omitempty"`
+}
+
+// EventKindSticky is the daemon's answer to a sticky resume (payload
+// StickyOutcome): resumed, or fresh because the runtime does not hold the
+// session.
+const EventKindSticky = "sticky"
+
+// StickyOutcome is the payload of an EventKindSticky event.
+type StickyOutcome struct {
+	Decision string `json:"decision"` // sticky_resumed | fresh
+	Reason   string `json:"reason,omitempty"`
 }
 
 type InjectCredentials struct {
@@ -499,6 +533,9 @@ type RequestCreateTask struct {
 	// onto that task as a note instead of creating a second one, so an agent
 	// that starts a separate item of the same issue on purpose names its own
 	// topic ("#17 part 3").
+	// The structured forms "pr:<owner>/<repo>#<n>" and
+	// "issue:<owner>/<repo>#<n>" also make a developer's session sticky
+	// across rounds on that pull request or issue (#130).
 	Topic string `json:"topic,omitempty"`
 	// ApprovalID is the approval the daemon's guard-rail check consumed for
 	// this request, if a rule required one. The control plane checks the rule

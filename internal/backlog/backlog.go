@@ -96,6 +96,14 @@ type Task struct {
 	// text from a reader who may not read the conversation it came from
 	// (spec/28, section 3). See Redact.
 	Redacted bool `json:"redacted,omitempty"`
+	// TopicKey is the topic the task belongs to (#130): "pr:<owner>/<repo>#<n>" or
+	// "issue:<owner>/<repo>#<n>" when its creator named one, else free-form (#45). A developer's fix round resumes
+	// the session of its last finished task on the same topic (sticky.go).
+	TopicKey *string `json:"topic_key,omitempty"`
+	// StickyDecision/StickyReason record how the task's run was started:
+	// sticky_resumed, fresh (with its reason) or sticky_pending (#130).
+	StickyDecision *string `json:"sticky_decision,omitempty"`
+	StickyReason   *string `json:"sticky_reason,omitempty"`
 }
 
 // RedactedTitle stands in the place of a withheld title, for a client that
@@ -176,14 +184,16 @@ func NewStore(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
 const taskCols = `id, org_id, agent_id, title, body, state, priority, origin,
 	correlation_key, runtime_session_id, resume_input, result, error, stage_id, parent_task_id,
-	archived_at, daemon_retries, created_at, updated_at, conversation_id, chat_answer, said_in_call`
+	archived_at, daemon_retries, created_at, updated_at, conversation_id, chat_answer, said_in_call,
+	topic_key, sticky_decision, sticky_reason`
 
 // scanDest lists where the columns of taskCols land, in their order — for a
 // query that selects more than the task (see agentview.go).
 func (t *Task) scanDest() []any {
 	return []any{&t.ID, &t.OrgID, &t.AgentID, &t.Title, &t.Body, &t.State, &t.Priority, &t.Origin,
 		&t.CorrelationKey, &t.RuntimeSessionID, &t.ResumeInput, &t.Result, &t.Error, &t.StageID, &t.ParentTaskID,
-		&t.ArchivedAt, &t.DaemonRetries, &t.CreatedAt, &t.UpdatedAt, &t.ConversationID, &t.ChatAnswer, &t.SaidInCall}
+		&t.ArchivedAt, &t.DaemonRetries, &t.CreatedAt, &t.UpdatedAt, &t.ConversationID, &t.ChatAnswer, &t.SaidInCall,
+		&t.TopicKey, &t.StickyDecision, &t.StickyReason}
 }
 
 func scanTask(row pgx.Row) (Task, error) {
@@ -223,7 +233,27 @@ func (s *Store) CreateChatAnswer(ctx context.Context, orgID, agentID uuid.UUID, 
 	return s.create(ctx, orgID, agentID, title, body, origin, 0, &conversationID, true, false)
 }
 
+// CreateWithTopic creates a task with the topic its creator named, brought
+// to its key by NormalizeTopic; an empty topic is the one its title names, as
+// Create. A topic "pr:<owner>/<repo>#<n>" or "issue:<owner>/<repo>#<n>" also
+// makes a developer's session sticky (#130).
+func (s *Store) CreateWithTopic(ctx context.Context, orgID, agentID uuid.UUID, title, body, origin string, priority int, topic string) (Task, error) {
+	return s.createTopic(ctx, orgID, agentID, title, body, origin, priority, nil, false, false, NormalizeTopic(topic))
+}
+
+// topicOr is the explicit topic, or the one the title names (TopicKey).
+func topicOr(topic, title string) string {
+	if topic != "" {
+		return topic
+	}
+	return TopicKey(title)
+}
+
 func (s *Store) create(ctx context.Context, orgID, agentID uuid.UUID, title, body, origin string, priority int, conversationID *uuid.UUID, chatAnswer, saidInCall bool) (Task, error) {
+	return s.createTopic(ctx, orgID, agentID, title, body, origin, priority, conversationID, chatAnswer, saidInCall, "")
+}
+
+func (s *Store) createTopic(ctx context.Context, orgID, agentID uuid.UUID, title, body, origin string, priority int, conversationID *uuid.UUID, chatAnswer, saidInCall bool, topic string) (Task, error) {
 	if priority == 0 {
 		priority = 5
 	}
@@ -234,7 +264,7 @@ func (s *Store) create(ctx context.Context, orgID, agentID uuid.UUID, title, bod
 		VALUES ($1,$2,$3,$4,$5,$6,$7,
 			(SELECT id FROM agent_stages WHERE agent_id=$3 ORDER BY position, created_at LIMIT 1), $8, $9, $10, NULLIF($11,''))
 		RETURNING `+taskCols,
-		uuid.New(), orgID, agentID, title, body, origin, priority, conversationID, chatAnswer, saidInCall, TopicKey(title))
+		uuid.New(), orgID, agentID, title, body, origin, priority, conversationID, chatAnswer, saidInCall, topicOr(topic, title))
 	t, err := scanTask(row)
 	if err != nil {
 		return t, err
@@ -260,6 +290,8 @@ type ChildSpec struct {
 	ResumeInput string
 	// Topic is the topic the creator named for the task (covey/create_task's
 	// "topic"); empty means the one its title names (TopicKey).
+	// A continuation inherits its parent's topic whatever this says: it is
+	// the same work, and its session lies where its parent's does (#130).
 	Topic string
 }
 
@@ -295,23 +327,36 @@ func createChild(ctx context.Context, q querier, parentID uuid.UUID, spec ChildS
 	   nowhere unless somebody gives it a conversation. */
 	var conversationID *uuid.UUID
 	chatAnswer, saidInCall := false, false
-	if strings.HasPrefix(spec.Origin, "continuation:") && agentID == parent.AgentID {
-		conversationID = parent.ConversationID
-		chatAnswer = parent.ChatAnswer
-		saidInCall = parent.SaidInCall
-	}
 	topic := TopicKey(spec.Title)
 	if strings.TrimSpace(spec.Topic) != "" {
 		topic = NormalizeTopic(spec.Topic)
 	}
+	continuation := strings.HasPrefix(spec.Origin, "continuation:") && agentID == parent.AgentID
+	if continuation {
+		conversationID = parent.ConversationID
+		chatAnswer = parent.ChatAnswer
+		saidInCall = parent.SaidInCall
+		// The same work carried on: the parent's topic, whatever the title
+		// says, and the prompt its session was started with (#130) — a
+		// resume is read from the cache only under a byte-identical prefix.
+		topic = ""
+		if parent.TopicKey != nil {
+			topic = *parent.TopicKey
+		}
+	}
 	row := q.QueryRow(ctx, `INSERT INTO backlog_tasks
 		(id, org_id, agent_id, title, body, origin, priority, parent_task_id,
-		 runtime_session_id, resume_input, stage_id, conversation_id, chat_answer, said_in_call, topic_key)
+		 runtime_session_id, resume_input, stage_id, conversation_id, chat_answer, said_in_call, topic_key,
+		 session_prompt, session_memory, session_basis, sticky_policy)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8, NULLIF($9,''), NULLIF($10,''),
-			(SELECT id FROM agent_stages WHERE agent_id=$3 ORDER BY position, created_at LIMIT 1), $11, $12, $13, NULLIF($14,''))
+			(SELECT id FROM agent_stages WHERE agent_id=$3 ORDER BY position, created_at LIMIT 1), $11, $12, $13, NULLIF($14,''),
+			(SELECT session_prompt FROM backlog_tasks WHERE id=$8 AND $15::boolean),
+			(SELECT session_memory FROM backlog_tasks WHERE id=$8 AND $15::boolean),
+			(SELECT session_basis FROM backlog_tasks WHERE id=$8 AND $15::boolean),
+			(SELECT sticky_policy FROM backlog_tasks WHERE id=$8 AND $15::boolean))
 		RETURNING `+taskCols,
 		uuid.New(), parent.OrgID, agentID, spec.Title, spec.Body, spec.Origin, spec.Priority,
-		parentID, spec.SessionID, spec.ResumeInput, conversationID, chatAnswer, saidInCall, topic)
+		parentID, spec.SessionID, spec.ResumeInput, conversationID, chatAnswer, saidInCall, topic, continuation)
 	return scanTask(row)
 }
 
@@ -786,7 +831,7 @@ func (s *Store) Block(ctx context.Context, id uuid.UUID, correlationKey, session
 		return Task{}, err
 	}
 	if err := applyTransition(ctx, tx, t, StateBlocked, "blocked: "+question,
-		"correlation_key=$3, runtime_session_id=$4, resume_input=NULL, daemon_retries=0", correlationKey, sessionID); err != nil {
+		"correlation_key=$3, runtime_session_id=$4, resume_input=NULL, daemon_retries=0, routed_wake=false", correlationKey, sessionID); err != nil {
 		return Task{}, err
 	}
 	resumed := false

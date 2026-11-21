@@ -94,7 +94,9 @@ func sweepScratch(home string, now time.Time, keep string) (int, error) {
 	for _, e := range entries {
 		// DirEntry.IsDir is false for a symlink, so a link named like a task id
 		// is not followed into wherever it points.
-		if !e.IsDir() || !isTaskID(e.Name()) {
+		// A topic's directory (#130) ages the same way: by the last run of
+		// any task on the topic that entered it.
+		if !e.IsDir() || !(isTaskID(e.Name()) || isTopicDir(e.Name())) {
 			continue
 		}
 		path := filepath.Join(root, e.Name())
@@ -128,13 +130,22 @@ func withScratch(prompt, dir string) string {
 	return prompt + "\n\n" + doc
 }
 
-func scratchDoc(taskID string) string {
-	where := "~/" + scratchRoot + "/" + taskID + "/"
-	return "## Where your files go\n\n" +
-		"This run works in `" + where + "` — it is your working directory. It belongs to this task: " +
+func scratchDoc(name string) string {
+	where := "~/" + scratchRoot + "/" + name + "/"
+	belongs := "It belongs to this task: " +
 		"parameter files, screenshots, logs, a copy you compare against, anything that serves only this " +
 		"task goes there. The same directory comes back when this task resumes, and it is removed a week " +
-		"after the last run that entered it.\n\n" +
+		"after the last run that entered it.\n\n"
+	if isTopicDir(name) {
+		// The same text for every task of the topic: it is part of the system
+		// prompt, and a resumed session is read from the cache only when the
+		// prompt is byte-identical to the run that started it (#130).
+		belongs = "It belongs to the pull request or issue this task is about, and every task of yours on it " +
+			"works here: parameter files, screenshots, logs, a copy you compare against go there. It is removed " +
+			"a week after the last run that entered it.\n\n"
+	}
+	return "## Where your files go\n\n" +
+		"This run works in `" + where + "` — it is your working directory. " + belongs +
 		"Your home (`~`) is your memory, not your desk. Put something there only when a later task will " +
 		"need it, and then under a name that says what it is: a checkout under `~/repos/`, knowledge in your " +
 		"wiki. Do not create files or directories directly in `~`."

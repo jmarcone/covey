@@ -14,8 +14,6 @@ import (
 
 	"covey/internal/agents"
 	"covey/internal/backlog"
-	"covey/internal/db"
-	"covey/migrations"
 )
 
 // The three default columns are found by key (open, in_progress, done), not by
@@ -41,14 +39,16 @@ func stageByKey(t *testing.T, s *stack, agentID uuid.UUID, key string) backlog.S
 
 func stageOf(t *testing.T, s *stack, taskID uuid.UUID) uuid.UUID {
 	t.Helper()
-	tk, err := s.backlog.Get(context.Background(), taskID)
-	if err != nil {
+	// The column itself, not the store: the migration test reads it while
+	// the schema is rolled back below the store's column list.
+	var stage *uuid.UUID
+	if err := s.pool.QueryRow(context.Background(), "SELECT stage_id FROM backlog_tasks WHERE id=$1", taskID).Scan(&stage); err != nil {
 		t.Fatal(err)
 	}
-	if tk.StageID == nil {
+	if stage == nil {
 		return uuid.Nil
 	}
-	return *tk.StageID
+	return *stage
 }
 
 // A fresh board: three keyed columns under their old German names, recorded as
@@ -392,7 +392,7 @@ func TestStageKeyMigration(t *testing.T) {
 	belowStageKeys := func() {
 		t.Helper()
 		for version() >= 148 {
-			if err := db.MigrateDown(ctx, s.pool, migrations.FS); err != nil {
+			if err := s.migrateDown(ctx); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -466,7 +466,7 @@ func TestStageKeyMigration(t *testing.T) {
 	exec(`UPDATE agent_stages s SET created_at = a.created_at + interval '3 days'
 		FROM agents a WHERE a.id = s.agent_id AND s.id = $1`, gDone)
 
-	if n, err := db.MigrateUp(ctx, s.pool, migrations.FS); err != nil || n < 1 || version() < 148 {
+	if n, err := s.migrateUp(ctx); err != nil || n < 1 || version() < 148 {
 		t.Fatalf("migrate up: %d applied, %v", n, err)
 	}
 
@@ -689,7 +689,7 @@ func TestStageKeyMigration(t *testing.T) {
 	}
 
 	// Leave the database as the stack expects it.
-	if _, err := db.MigrateUp(ctx, s.pool, migrations.FS); err != nil {
+	if _, err := s.migrateUp(ctx); err != nil {
 		t.Fatal(err)
 	}
 }
