@@ -145,7 +145,7 @@ function Search() {
   return <output data-search>{useLocation().search}</output>;
 }
 
-function serve(data: CostCells = cells(), route = "/costs") {
+function serve(data: CostCells = cells(), route = "/costs?days=1") {
   mockFetch({
     "/api/v1/cost/cells": data,
     "/api/v1/cost/billed": { bucket: "hour", points: [], sync: { configured: false, last_attempt_at: null, last_success_at: null,
@@ -303,7 +303,7 @@ describe("the lead figure per source (#120)", () => {
     serve();
     const box = await screen.findByRole("checkbox", { name: t("costs.lead.toggle") });
     fireEvent.click(box);
-    await waitFor(() => expect(search()).toBe("?prices=recomputed"));
+    await waitFor(() => expect(search()).toBe("?days=1&prices=recomputed"));
     // Both figures again, as the seat's tiles, the chips and the bars; the table stays.
     await waitFor(() => expect(within(block()!).queryByRole("group", { name: "Recomputed from tokens" })).not.toBeNull());
     expect(within(block()!).getByRole("group", { name: "Reported by Claude Code" })).toBeTruthy();
@@ -311,12 +311,12 @@ describe("the lead figure per source (#120)", () => {
     expect(document.querySelector("[data-answer-total]")).not.toBeNull();
     expect(block()!.querySelector("rect[data-seg='m']")).toBeTruthy();
     fireEvent.click(screen.getByRole("checkbox", { name: t("costs.lead.toggle") }));
-    await waitFor(() => expect(search()).toBe(""));
+    await waitFor(() => expect(search()).toBe("?days=1"));
     await waitFor(() => expect(within(block()!).queryByRole("group", { name: "Recomputed from tokens" })).toBeNull());
   });
 
   it("opens in the full view from the URL, beside “covey only”", async () => {
-    serve(cells(), "/costs?only=covey&prices=recomputed");
+    serve(cells(), "/costs?days=1&only=covey&prices=recomputed");
     await answerReady();
     expect((screen.getByRole("checkbox", { name: t("costs.lead.toggle") }) as HTMLInputElement).checked).toBe(true);
     expect(screen.getByRole("button", { name: "covey only" }).getAttribute("aria-pressed")).toBe("true");

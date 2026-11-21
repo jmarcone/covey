@@ -145,7 +145,7 @@ function cells(ext: ExternalUsage = external()): CostCells {
 const NO_BILL = { bucket: "hour", points: [], sync: { configured: false, last_attempt_at: null, last_success_at: null,
   last_daily_at: null, data_refreshed_at: null, last_status: "", last_error: "" } };
 
-function serveCosts(data: CostCells = cells(), route = "/costs") {
+function serveCosts(data: CostCells = cells(), route = "/costs?days=1") {
   mockFetch({
     "/api/v1/cost/cells": data,
     "/api/v1/cost/billed": NO_BILL,
@@ -250,7 +250,7 @@ describe("the operator sessions on the cost page (#120)", () => {
   });
 
   it("never adds the outside sessions to a selection of agents, combined mode or not (PR 7)", async () => {
-    serveCosts(cells(), "/costs?outmode=combined");
+    serveCosts(cells(), "/costs?days=1&outmode=combined");
     await screen.findByRole("group", { name: t("costs.outside.combinedTotal") });
     fireEvent.click(screen.getAllByRole("button", { name: /Coordinator/ })[0]);
     expect(screen.queryByRole("group", { name: t("costs.outside.combinedTotal") })).toBeNull();
@@ -355,7 +355,7 @@ describe("the operator sessions on the cost page (#120)", () => {
   });
 
   it("links the series to its detailed view with the page's whole view (cost home PR 2)", async () => {
-    serveCosts();
+    serveCosts(cells(), "/costs");
     await screen.findByRole("group", { name: t("costs.outside.tile") });
     // Defaults are left out of the address.
     expect(screen.getByRole("link", { name: t("costs.outside.details") }).getAttribute("href")).toBe("/costs/outside");
@@ -399,15 +399,31 @@ describe("the operator sessions on the cost page (#120)", () => {
 
   it("opens with the view the address names, and ignores what it does not know", async () => {
     // The outside card switched to combined and the series off both come from the address.
-    serveCosts(cells(), "/costs?outmode=combined");
+    serveCosts(cells(), "/costs?days=1&outmode=combined");
     await screen.findByRole("group", { name: t("costs.outside.tile") });
     expect(screen.getByRole("button", { name: t("costs.outside.modeCombined") }).getAttribute("aria-pressed")).toBe("true");
     cleanup();
     serveCosts(cells(), "/costs?outmode=sideways&days=13&bucket=10min");
     await screen.findByRole("group", { name: t("costs.outside.tile") });
-    // An unknown mode falls back to apart; an unknown range to 24 h; a bucket that does not fit to the range's own.
+    // An unknown mode falls back to apart; an unknown range to the default, 30 days; a bucket that does not fit to the range's own.
     expect(screen.getByRole("button", { name: t("costs.outside.modeApart") }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("button", { name: t("costs.range24h") }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: t("costs.rangeDays", { count: 30 }) }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: t("costs.bDay") }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("opens on 30 days by day when the address names no range, and keeps 24 h in the address once chosen (the default is 30 days)", async () => {
+    serveCosts(cells(), "/costs");
+    await screen.findByRole("group", { name: t("costs.outside.tile") });
+    const pressed = (label: string) => screen.getByRole("button", { name: label }).getAttribute("aria-pressed");
+    expect(pressed(t("costs.rangeDays", { count: 30 }))).toBe("true");
+    expect(pressed(t("costs.bDay"))).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: t("costs.range24h") }));
+    await waitFor(() => expect(pressed(t("costs.range24h"))).toBe("true"));
+    expect(pressed(t("costs.bHour"))).toBe("true");
+    expect(screen.getByRole("link", { name: t("costs.outside.details") }).getAttribute("href")).toBe("/costs/outside?days=1");
+    // Back to 30 days: the default leaves the address again.
+    fireEvent.click(screen.getByRole("button", { name: t("costs.rangeDays", { count: 30 }) }));
+    await waitFor(() => expect(screen.getByRole("link", { name: t("costs.outside.details") }).getAttribute("href")).toBe("/costs/outside"));
   });
 });
 

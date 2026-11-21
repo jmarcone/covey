@@ -55,7 +55,7 @@ const NO_BILL = { bucket: "hour", points: [], sync: { configured: false, last_at
 
 /** The page's endpoints with these cells; `over` replaces or adds routes
  *  (a pattern with a query goes first, so it wins over the plain one). */
-function serve(data: CostCells, over: Record<string, unknown> = {}, route = "/?tz=utc") {
+function serve(data: CostCells, over: Record<string, unknown> = {}, route = "/?days=1&tz=utc") {
   mockFetch({
     ...over,
     "/api/v1/cost/cells": data,
@@ -126,7 +126,7 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
       "/api/v1/cost/models": { rows: [], runs_without_breakdown: 0, usd_without_breakdown: 0 },
       "/api/v1/cost/usage-readings": [],
     });
-    const { container } = renderWithProviders(<Costs />, { route: "/?tz=utc" });
+    const { container } = renderWithProviders(<Costs />, { route: "/?days=1&tz=utc" });
     const block = await waitFor(() => {
       const b = container.querySelector<HTMLElement>(`[data-credential="${KEY}#0"]`);
       if (!b) throw new Error("no block for the API key yet");

@@ -197,7 +197,7 @@ describe("Kosten — eigener Zeitraum", () => {
   });
 
   it("sagt bei den schnellen Zeiträumen nichts davon", async () => {
-    serve(`/costs?tz=utc`, false);
+    serve(`/costs?days=1&tz=utc`, false);
     await screen.findAllByText("20.11., 16:00 UTC");
     expect(document.querySelector("[data-no-meter]")).toBeNull();
   });
@@ -217,7 +217,7 @@ describe("Kosten — eigener Zeitraum", () => {
     const m = mockFetch(routes());
     const to30 = "/costs?days=30&tz=utc";
     const to3d = "/costs?from=2026-11-15T00:00:00Z&to=2026-11-18T00:00:00Z&tz=utc";
-    renderWithProviders(<><Costs /><Probe /><GoTo to={to30} /><GoTo to={to3d} /></>, { route: "/costs?tz=utc" });
+    renderWithProviders(<><Costs /><Probe /><GoTo to={to30} /><GoTo to={to3d} /></>, { route: "/costs?days=1&tz=utc" });
     fireEvent.click(await screen.findByRole("button", { name: "10 Min." }));
     await waitFor(() => expect(m.calls.some((c) => /cost\/cells.*bucket=10min/.test(c))).toBe(true));
     for (const to of [to30, to3d]) {
@@ -237,7 +237,7 @@ describe("Kosten — eigener Zeitraum", () => {
     const GoTo = ({ to }: { to: string }) => { const nav = useNavigate(); return <button onClick={() => nav(to)}>{`gehe ${to}`}</button>; };
     const m = mockFetch(routes());
     const custom = `/costs?from=${FROM}&to=${TO}&tz=utc`;
-    renderWithProviders(<><Costs /><Probe /><GoTo to={custom} /><Back /></>, { route: "/costs?tz=utc" });
+    renderWithProviders(<><Costs /><Probe /><GoTo to={custom} /><Back /></>, { route: "/costs?days=1&tz=utc" });
     // Open the panel, then the range arrives in the address (as Apply writes it).
     fireEvent.click(await screen.findByRole("button", { name: "Eigener Zeitraum…" }));
     fireEvent.click(screen.getByRole("button", { name: `gehe ${custom}` }));
