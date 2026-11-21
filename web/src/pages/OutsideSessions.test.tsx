@@ -383,6 +383,21 @@ describe("the operator sessions on the cost page (#120)", () => {
     await waitFor(() => expect(pressed(t("costs.bWeek"))).toBe("true"));
   });
 
+  it("a range's own bucket is not carried to the next range: 24 h after 30 days is hourly again (#215 review)", async () => {
+    serveCosts();
+    await screen.findByRole("group", { name: t("costs.outside.tile") });
+    const pressed = (label: string) => screen.getByRole("button", { name: label }).getAttribute("aria-pressed");
+    expect(pressed(t("costs.bHour"))).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: t("costs.rangeDays", { count: 30 }) }));
+    await waitFor(() => expect(pressed(t("costs.bDay"))).toBe("true"));
+    fireEvent.click(screen.getByRole("button", { name: t("costs.range24h") }));
+    await waitFor(() => expect(pressed(t("costs.bHour"))).toBe("true"));
+    fireEvent.click(screen.getByRole("button", { name: t("costs.rangeDays", { count: 90 }) }));
+    await waitFor(() => expect(pressed(t("costs.bWeek"))).toBe("true"));
+    // No bucket was chosen, so the address names none.
+    expect(screen.getByRole("link", { name: t("costs.outside.details") }).getAttribute("href")).toBe("/costs/outside?days=90");
+  });
+
   it("opens with the view the address names, and ignores what it does not know", async () => {
     // The outside card switched to combined and the series off both come from the address.
     serveCosts(cells(), "/costs?outmode=combined");

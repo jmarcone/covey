@@ -277,14 +277,13 @@ export default function Costs({ me }: { me?: Principal }) {
 
   // A new range can lose agents the selection still names: they would narrow
   // every figure to nothing while no chip shows them. Drop them.
+  // Writes the address only when it drops someone: a write is a navigation, and the data refetches every 30 s.
   useEffect(() => {
     if (!cells.data) return;
     const ids = new Set(cells.data.agents.map((a) => a.id));
-    setSelected((s) => {
-      const kept = [...s].filter((id) => ids.has(id));
-      return kept.length === s.size ? s : new Set(kept);
-    });
-  }, [cells.data]);
+    const kept = [...selected].filter((id) => ids.has(id));
+    if (kept.length !== selected.size) setSelected(new Set(kept));
+  }, [cells.data, selected, setSelected]);
 
   // The most expensive runs of the period — org-wide or for the chosen agent.
   const runs = useQuery({

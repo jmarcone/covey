@@ -1796,8 +1796,11 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
   const [sharedScale, setSharedScale] = useState(true);
   const [asTable, setAsTable] = useParamState("table", false, asBool.parse, asBool.show);
   const [hiddenSrc, setHiddenSrc] = useParamState<ReadonlySet<string>>("hide", NO_HIDDEN, asSet.parse, asSet.show);
-  const src = useMemo<Record<Source, boolean>>(() => ({ reported: !hiddenSrc.has("reported"), recomputed: !hiddenSrc.has("recomputed"),
-    real: !hiddenSrc.has("real"), billed: !hiddenSrc.has("billed") }), [hiddenSrc]);
+  // A link that would hide every source the chips can show (a hand edit) falls back to all of them, as toggleSrc keeps one.
+  const src = useMemo<Record<Source, boolean>>(() => {
+    const s = { reported: !hiddenSrc.has("reported"), recomputed: !hiddenSrc.has("recomputed"), real: !hiddenSrc.has("real"), billed: !hiddenSrc.has("billed") };
+    return s.reported || (full && s.recomputed) || s.real || s.billed ? s : { reported: true, recomputed: true, real: true, billed: true };
+  }, [hiddenSrc, full]);
   const setSrc = (f: (v: Record<Source, boolean>) => Record<Source, boolean>) =>
     setHiddenSrc((h) => { const cur = { reported: !h.has("reported"), recomputed: !h.has("recomputed"), real: !h.has("real"), billed: !h.has("billed") };
       const n = f(cur); return new Set((Object.keys(n) as Source[]).filter((k) => !n[k])); });

@@ -56,8 +56,8 @@ export function bucketFits(days: number, bucket: string): boolean {
 }
 
 /** The range and bucket of the cost pages, shared by /costs and /costs/outside (same keys, so a link between them
- *  keeps both). A bucket that does not fit the range falls back to the range's own; a new range keeps the chosen
- *  bucket where it still fits (it used to reset it). */
+ *  keeps both). A bucket that does not fit the range falls back to the range's own; a new range keeps a bucket the
+ *  user chose (one the address names) where it still fits, else takes its own default. */
 export function useCostWindow(): { days: number; bucket: string; setDays: (d: number) => void; setBucket: (b: string) => void } {
   const [params, setParams] = useSearchParams();
   const d = Number(params.get("days"));
@@ -70,7 +70,8 @@ export function useCostWindow(): { days: number; bucket: string; setDays: (d: nu
     if (nb === defaultBucket(nd)) p.delete("bucket"); else p.set("bucket", nb);
     return p;
   }, { replace: true }), [setParams]);
-  const setDays = useCallback((nd: number) => write(nd, bucketFits(nd, bucket) ? bucket : defaultBucket(nd)), [write, bucket]);
+  // Only a bucket the address names was chosen: the old range's own default is not carried to the new one (#215 review).
+  const setDays = useCallback((nd: number) => write(nd, want != null && bucketFits(nd, want) ? want : defaultBucket(nd)), [write, want]);
   const setBucket = useCallback((nb: string) => write(days, bucketFits(days, nb) ? nb : defaultBucket(days)), [write, days]);
   return { days, bucket, setDays, setBucket };
 }
