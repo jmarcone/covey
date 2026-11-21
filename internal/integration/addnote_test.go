@@ -607,3 +607,152 @@ func TestAnOldDaemonsNoteOnAnotherTask(t *testing.T) {
 		t.Fatalf("an old daemon's note wakes nothing: %s", st)
 	}
 }
+
+// TestAddNoteChecksTheOrganisationBeforeAnApprovalIsAsked: with an approval
+// required for covey:add_note, a note on another organisation's task or on an
+// id that names no task is denied by the control plane's first look, through
+// the action proxy as an agent calls it, and no approval is put in front of a
+// person — it would tell them the id was tried, for a note that fails anyway.
+// A note on a task of the same organisation still asks.
+func TestAddNoteChecksTheOrganisationBeforeAnApprovalIsAsked(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	fremdeOrg, fremderAgent := nachbar(t, s)
+	fremd, err := s.backlog.Create(ctx, fremdeOrg, fremderAgent.ID, "fremde Aufgabe", "", "manual", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	colleague := s.newSupportAgent("kollegin")
+	s.ohneLaeufe(colleague.ID)
+	mine, err := s.backlog.Create(ctx, s.orgID, colleague.ID, "Rollout", "", "manual", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.rails.Create(ctx, railRule(s.orgID, "require_approval", "covey:add_note")); err != nil {
+		t.Fatal(err)
+	}
+	approvals := func() int {
+		var n int
+		if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM approvals WHERE action = 'covey:add_note'`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	for _, c := range []struct{ name, target string }{
+		{"another organisation", fremd.ID.String()},
+		{"unknown id", uuid.NewString()},
+	} {
+		name, target := c.name, c.target
+		writer := s.newSupportAgent("schreiber-" + strings.ReplaceAll(name, " ", "-"))
+		own, err := s.backlog.Create(ctx, s.orgID, writer.ID, "Notiz woanders",
+			fmt.Sprintf(`[mock:action covey/add_note {"task_id":"%s","content":"from outside"}]`, target),
+			"manual", 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.orch.EnsureRunning(writer.ID)
+		waitForOr(t, name+": the writer's run ends", 15*time.Second, func() bool {
+			return s.taskState(own.ID) == backlog.StateDone
+		}, func() string { return s.recordingSummary(writer.ID) })
+		var outcome string
+		if err := s.pool.QueryRow(ctx, `SELECT coalesce(payload->>'text', '') FROM recording_events
+			WHERE agent_id=$1 AND payload->>'text' LIKE 'Action covey/add_note%'`, writer.ID).Scan(&outcome); err != nil {
+			t.Fatalf("%s: the action's outcome is not in the recording: %v — %s", name, err, s.recordingSummary(writer.ID))
+		}
+		if outcome != "Action covey/add_note → denied" {
+			t.Fatalf("%s: the proxy has to answer denied, not ask: %q", name, outcome)
+		}
+		if n := approvals(); n != 0 {
+			t.Fatalf("%s: no approval may be asked for a note that cannot land: %d", name, n)
+		}
+		// The refusal is a guard-rail event of the rule "organisation", from
+		// the first look and only once: NoteOnTask never ran.
+		var events int
+		if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM recording_events
+			WHERE agent_id=$1 AND kind='guardrail' AND payload->>'rule'='organisation'
+			  AND payload->>'action'='covey:add_note' AND payload->>'decision'='denied'`, writer.ID).Scan(&events); err != nil {
+			t.Fatal(err)
+		}
+		if events != 1 {
+			t.Fatalf("%s: the refusal has to be recorded once as a guard-rail event: %d", name, events)
+		}
+	}
+
+	// A task of the same organisation is asked about, as before.
+	asker := s.newSupportAgent("fragerin")
+	_, err = s.backlog.Create(ctx, s.orgID, asker.ID, "Notiz im Haus",
+		fmt.Sprintf(`[mock:action covey/add_note {"task_id":"%s","content":"go"}]`, mine.ID), "manual", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.orch.EnsureRunning(asker.ID)
+	waitForOr(t, "a note on a task of the same organisation asks for approval", 15*time.Second, func() bool {
+		return approvals() == 1
+	}, func() string { return s.recordingSummary(asker.ID) })
+}
+
+// TestAddNoteWithoutAToolAssignmentIsNotReadOnTheTask: an agent that may not
+// write notes at all is refused by the tool assignment, as before; the
+// organisation check comes after it and so reads no task and records no
+// "organisation" event for it.
+func TestAddNoteWithoutAToolAssignmentIsNotReadOnTheTask(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	fremdeOrg, fremderAgent := nachbar(t, s)
+	fremd, err := s.backlog.Create(ctx, fremdeOrg, fremderAgent.ID, "fremde Aufgabe", "", "manual", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := s.newSupportAgent("schreiber-ohne-werkzeug")
+	if err := s.targets.SetAgentTools(ctx, writer.ID, "covey", []string{"message"}); err != nil {
+		t.Fatal(err)
+	}
+	own, err := s.backlog.Create(ctx, s.orgID, writer.ID, "Notiz woanders",
+		fmt.Sprintf(`[mock:action covey/add_note {"task_id":"%s","content":"from outside"}]`, fremd.ID), "manual", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.orch.EnsureRunning(writer.ID)
+	waitForOr(t, "the writer's run ends", 15*time.Second, func() bool {
+		return s.taskState(own.ID) == backlog.StateDone
+	}, func() string { return s.recordingSummary(writer.ID) })
+	count := func(rule string) int {
+		var n int
+		if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM recording_events
+			WHERE agent_id=$1 AND kind='guardrail' AND payload->>'rule'=$2`, writer.ID, rule).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if n := count("tool_not_assigned"); n != 1 {
+		t.Fatalf("the tool assignment has to refuse the note: %d — %s", n, s.recordingSummary(writer.ID))
+	}
+	if n := count("organisation"); n != 0 {
+		t.Fatalf("the organisation check must not run for a tool that is not assigned: %d", n)
+	}
+}
+
+// TestAddNoteWithAMalformedIdIsAnErrorNotADenial: an id that is no task id is
+// not an authorisation answer. With no rail at all the agent gets the error
+// the control plane's NoteOnTask gives, the one it can act on (the platform
+// tells an agent to give up on "denied"), also for an id of only blanks,
+// which the action proxy sends on to the control plane as it is.
+func TestAddNoteWithAMalformedIdIsAnErrorNotADenial(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	for i, target := range []string{"abc12345", "  "} {
+		writer := s.newSupportAgent(fmt.Sprintf("schreiber-%d", i))
+		_, err := s.backlog.Create(ctx, s.orgID, writer.ID, "Notiz mit falscher Id",
+			fmt.Sprintf(`[mock:action covey/add_note {"task_id":"%s","content":"x"}]`, target), "manual", 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.orch.EnsureRunning(writer.ID)
+		// The error reaches the recording after the run has ended; a denial
+		// would never produce it.
+		waitForOr(t, fmt.Sprintf("id %q: the agent gets the error that names the id", target), 15*time.Second, func() bool {
+			return strings.Contains(s.recordingSummary(writer.ID), "task_id is not a task id")
+		}, func() string { return s.recordingSummary(writer.ID) })
+	}
+}

@@ -184,6 +184,11 @@ type Server struct {
 	// storeSizes caches the store's fill level per organisation — walking the
 	// block directory is a disk pass, and the dashboard asks on every visit.
 	storeSizes storeSizeCache
+	// costHealth keeps each organisation's cost checks for five minutes
+	// (costhealth.go); CostHealthNow is the instant they are made at — nil
+	// is time.Now, tests set a fixture clock.
+	costHealth    costHealthCache
+	CostHealthNow func() time.Time
 
 	Templates *templates.Store
 
@@ -748,6 +753,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/cost/billing-sync", s.rbac(anyRole, s.handleGetBillingSync))
 	mux.Handle("POST /api/v1/cost/billing-sync", s.rbac(securityRoles, s.handlePostBillingSync))
 	mux.Handle("GET /api/v1/cost/billing-keys", s.rbac(anyRole, s.handleBillingKeys))
+	// Whether the cost figures can be trusted right now (#178): read-only
+	// checks over the same tables, for anyone who sees the cost page.
+	mux.Handle("GET /api/v1/cost/health", s.rbac(anyRole, s.handleCostHealth))
 	// Usage outside covey (0150): token counts of sessions that run on an
 	// operator's machine, uploaded by `covey usage push`. Written with the
 	// rights of the billing sync; read through /cost/cells (its `external`).

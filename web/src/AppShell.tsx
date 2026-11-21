@@ -63,6 +63,7 @@ const Templates = lazy(() => import("./pages/Templates"));
 const Setup = lazy(() => import("./pages/Setup"));
 const Costs = lazy(() => import("./pages/Costs"));
 const OutsideCosts = lazy(() => import("./pages/OutsideCosts"));
+const CostHealth = lazy(() => import("./pages/CostHealth"));
 
 
 function NavItem({
@@ -410,6 +411,7 @@ export default function AppShell({ me, onLogout }: { me: Principal; onLogout: ()
             <Route path="/org" element={<Org me={me} />} />
             <Route path="/costs" element={<Costs me={me} />} />
             <Route path="/costs/outside" element={<OutsideCosts />} />
+            <Route path="/costs/health" element={<CostHealth />} />
             <Route path="/people/:id" element={<PersonPage me={me} />} />
             <Route path="/profile" element={<Navigate to={`/people/${me.ID}`} replace />} />
             <Route path="/inbox" element={me.TeamSurface ? <Navigate to="/team" replace /> : <Inbox me={me} />} />

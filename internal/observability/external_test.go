@@ -2077,3 +2077,59 @@ func TestUnmeteredSpan(t *testing.T) {
 		t.Errorf("%+v", u)
 	}
 }
+
+// #165, finding 31: pickCoverage takes the source with the most readings and
+// breaks a tie usage_cmd before manual before inband, whatever the order the
+// coverages come in; pickMeter (web/src/pages/costFigures.ts) is the same
+// rule and has the same cases in costFigures.test.ts. Another credential's
+// coverage and a window other than the weekly one never take part.
+func TestPickCoverageTieBreak(t *testing.T) {
+	cov := func(src string, readings int) MeterCoverage {
+		return MeterCoverage{SecretKey: "seat", SecretSlot: 0, Source: src, WindowKind: WindowSevenDay, Readings: readings}
+	}
+	cases := []struct {
+		name string
+		in   []MeterCoverage
+		want string
+	}{
+		{"usage_cmd over inband on equal readings", []MeterCoverage{cov("inband", 8), cov("usage_cmd", 8)}, "usage_cmd"},
+		{"manual over inband on equal readings", []MeterCoverage{cov("inband", 8), cov("manual", 8)}, "manual"},
+		{"usage_cmd over manual on equal readings", []MeterCoverage{cov("manual", 8), cov("usage_cmd", 8)}, "usage_cmd"},
+		{"all three tied", []MeterCoverage{cov("inband", 8), cov("manual", 8), cov("usage_cmd", 8)}, "usage_cmd"},
+		{"more readings beat the rank", []MeterCoverage{cov("usage_cmd", 7), cov("inband", 8)}, "inband"},
+		{"an unknown source ranks last", []MeterCoverage{cov("other", 8), cov("inband", 8)}, "inband"},
+	}
+	for _, c := range cases {
+		// Every order of the input gives the same pick.
+		perms := [][]int{{0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0}}
+		for _, p := range perms {
+			var in []MeterCoverage
+			for _, i := range p {
+				if i < len(c.in) {
+					in = append(in, c.in[i])
+				}
+			}
+			if len(in) != len(c.in) {
+				continue
+			}
+			got, ok := pickCoverage(in, "seat", 0)
+			if !ok || got.Source != c.want {
+				t.Errorf("%s, order %v: picked %q (%v), want %q", c.name, p, got.Source, ok, c.want)
+			}
+		}
+	}
+	// Foreign credentials and windows are not candidates, however many readings.
+	other := cov("usage_cmd", 99)
+	other.SecretKey = "another"
+	slot := cov("usage_cmd", 99)
+	slot.SecretSlot = 1
+	week5 := cov("usage_cmd", 99)
+	week5.WindowKind = "five_hour"
+	got, ok := pickCoverage([]MeterCoverage{other, slot, week5, cov("inband", 1)}, "seat", 0)
+	if !ok || got.Source != "inband" || got.Readings != 1 {
+		t.Errorf("picked %+v (%v), want the seat's own weekly inband coverage", got, ok)
+	}
+	if _, ok := pickCoverage([]MeterCoverage{other, slot, week5}, "seat", 0); ok {
+		t.Error("picked a coverage of another credential or window")
+	}
+}

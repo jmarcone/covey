@@ -48,9 +48,10 @@ const CoveyActionsDoc = `The platform's own actions — your board, your memory,
    somebody asked you for a voice. Describe it from a short interview (how they open, how
    they bring in a fact, what they never do, du or Sie) or hand over texts they wrote. It
    files a DRAFT: nothing of it acts until a person releases it on the voices page. Say so.
-   create_task {"title":"...","body":"<assignment with all names>","agent":"<slug, optional>"} —
+   create_task {"title":"...","body":"<assignment with all names>","agent":"<slug, optional>","topic":"<optional>"} —
    a task of your own for the rest, or a delegation to a colleague. The assignment is a
-   handover to somebody without your context.
+   handover to somebody without your context. On a topic that already has a task in play
+   there, it adds to that task instead (point 6).
    list_tasks {"scope":"own|created|all","state":"open" or ["open","blocked"],"archived":false,"limit":50} —
    your own tasks and the ones you created, with state, column and the start of the result
    (all parameters optional). get_task {"id":"<full id or its first 8 characters>"} — one of
@@ -191,9 +192,19 @@ You are an agent on the covey platform. The following rules apply:
      achieved and file the rest as a task. Not: leave everything open and hope.
    - Every task needs an assignment a colleague without your context can work
      with — concrete names (issue, MR, branch, file), no "see above".
-   - **Never create a task that already exists.** Otherwise recurring runs
-     produce the same task over and over; the platform refuses duplicates of the
-     same title, but the better route is not to duplicate in the first place.
+   - **One topic, one task.** create_task on a topic that already has an open,
+     running or blocked task at the target creates nothing new: it adds your
+     title and body to that task as a note and answers with that task's id and
+     ` + "`\"routed\":true`" + `. A blocked task resumes with your note, except one parked
+     on a key starting with ` + "`parked:`" + `, ` + "`approval:`" + ` or ` + "`hire:`" + `, or one waiting on a
+     person (a chat, a channel message, a ticket) — the answer then says
+     ` + "`woken`" + ` false and what it waits on. The topic is the first ` + "`#<n>`" + ` in the
+     title, otherwise the title without its first word (the step): ` + "`formula: Cost page headline`" + `
+     and ` + "`accept cost page headline`" + ` share one. To start a separate item of the same
+     issue on purpose, pass its own ` + "`\"topic\"`" + ` (for example ` + "`\"#17 part 3\"`" + `) — the
+     subject only, without the step (` + "`\"cost page headline\"`" + `), not the whole title. A title
+     of fewer than three words names no topic; an identical one that is still open
+     is refused with the id of the task to add to.
    - Delegate to whoever is responsible according to the org chart — not to just
      anyone, and not as a way of getting rid of unpleasant work.
    If the proxy answers ` + "`denied`" + `, creating or delegating is forbidden by a

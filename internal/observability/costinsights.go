@@ -601,6 +601,9 @@ const (
 	SourceUsageCmd = "usage_cmd"
 	SourceInband   = "inband"
 	SourceManual   = "manual"
+	// SourceMerged labels the plan's weekly and five-hour meter built from every
+	// source's readings at once (meterQueryTemplate): one meter, one timeline.
+	SourceMerged = "merged"
 	// WindowSevenDay is the weekly all-models window. Other weekly windows
 	// (seven_day_opus, …) are sub-limits of the same allowance: their points
 	// are shown, never priced — that would count the same work twice.

@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import Costs from "./Costs";
 import type { CostCells, CredentialBasis, ExternalMeterSums, ExternalMeterTotal, ExternalUsage, MeterStep, WindowCharge } from "../api";
 import i18n from "../i18n";
-import { mockFetch, renderWithProviders, testPrincipal, useGerman } from "../test/render";
+import { mockFetch, renderWithProviders, testPrincipal, useGerman, openDentRow } from "../test/render";
 import { basisAt, credentialFigures, headline, perCredentialTotals, usageFigure, type CredentialFigures } from "./costFigures";
 import { chargeLine, CostBasisPanel, usageList } from "./CostBasis";
 
@@ -376,11 +376,8 @@ describe("Kostengrundlage — Seite", () => {
     const usd = charge({ id: "c2", currency: "USD", amount: 8, counted_amount: 8, counted_usd: 8, from: "2026-11-16T00:00:00Z", to: "2026-11-17T00:00:00Z" });
     const data = { ...onUsage([eur, usd]), external: usageMeter(["operator: home"]) };
     serve(data);
-    const line = await waitFor(() => {
-      const l = document.querySelector("[data-head-usage-charges]");
-      if (!l) throw new Error("no headline yet");
-      return l;
-    });
+    await openDentRow();
+    const line = document.querySelector("[data-head-usage-charges]")!;
     expect(line.textContent).toBe(i18n.t("costs.dent.head.usageCharges", { list: usageList(i18n.t.bind(i18n), headline(data)!.usageCharges!) }));
     expect(line.textContent).toMatch(/180,00 EUR \(kein USD-Betrag: kein Kurs angegeben\) · 8,00 \$/);
     expect(line.textContent).not.toMatch(/188/);

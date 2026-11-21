@@ -17,12 +17,25 @@ type ListPriceModel struct {
 const WebSearchUSD = 0.01
 
 // listPrices: Anthropic API pricing (2026-11). Cache writes are 1.25× (5 min)
-// and 2× (1 h) the input price. Haiku 5.5's cache read is not published
-// separately; 0.1× input is assumed.
+// and 2× (1 h) the input price. Cache reads are 0.025× input on Fable 5.1/5.2
+// (and Mythos 5.1/5.2), 0.05× on Opus 5.5 and Sonnet 5.5, and 0.1× on every
+// other model (Anthropic's pricing, #154). Haiku 5.5 is priced at its
+// ≤100K-prompt tier ($0.50 / $2.50 above it is not modelled here); Haiku 4.5 is
+// $1 / $5 at any prompt length.
 var listPrices = map[string]ListPriceModel{
 	"claude-opus-5-5":   {Input: 4, Output: 20, CacheRead: 0.20, CacheWrite5m: 5, CacheWrite1h: 8},
 	"claude-sonnet-5-5": {Input: 2, Output: 10, CacheRead: 0.10, CacheWrite5m: 2.5, CacheWrite1h: 4},
 	"claude-haiku-5-5":  {Input: 0.10, Output: 0.50, CacheRead: 0.01, CacheWrite5m: 0.125, CacheWrite1h: 0.20},
+	// Earlier and other current models seen in covey's data (#154).
+	"claude-fable-5-2":  {Input: 8, Output: 40, CacheRead: 0.20, CacheWrite5m: 10, CacheWrite1h: 16},
+	"claude-mythos-5-2": {Input: 8, Output: 40, CacheRead: 0.20, CacheWrite5m: 10, CacheWrite1h: 16},
+	"claude-fable-5-1":  {Input: 10, Output: 50, CacheRead: 0.25, CacheWrite5m: 12.5, CacheWrite1h: 20},
+	"claude-mythos-5-1": {Input: 10, Output: 50, CacheRead: 0.25, CacheWrite5m: 12.5, CacheWrite1h: 20},
+	"claude-fable-5":    {Input: 10, Output: 50, CacheRead: 1, CacheWrite5m: 12.5, CacheWrite1h: 20},
+	"claude-mythos-5":   {Input: 10, Output: 50, CacheRead: 1, CacheWrite5m: 12.5, CacheWrite1h: 20},
+	"claude-opus-5":     {Input: 5, Output: 25, CacheRead: 0.50, CacheWrite5m: 6.25, CacheWrite1h: 10},
+	"claude-sonnet-5":   {Input: 2, Output: 10, CacheRead: 0.20, CacheWrite5m: 2.5, CacheWrite1h: 4},
+	"claude-haiku-4-5":  {Input: 1, Output: 5, CacheRead: 0.10, CacheWrite5m: 1.25, CacheWrite1h: 2},
 }
 
 // ListPrice looks a model up; dated or suffixed ids ("claude-opus-5-5[1m]")
@@ -35,12 +48,28 @@ func ListPrice(model string) (ListPriceModel, bool) {
 	if p, ok := listPrices[m]; ok {
 		return p, true
 	}
-	for id, p := range listPrices {
-		if strings.HasPrefix(m, id+"-") {
+	// A dated id ("claude-haiku-4-5-20251001") resolves to its base id. Only a
+	// date extends an id: "claude-sonnet-5-7" is a different model, not a dated
+	// Sonnet 5, and stays unpriced rather than borrowing Sonnet 5's price.
+	if j := strings.LastIndexByte(m, '-'); j > 0 && isDate(m[j+1:]) {
+		if p, ok := listPrices[m[:j]]; ok {
 			return p, true
 		}
 	}
 	return ListPriceModel{}, false
+}
+
+// isDate: an id's date suffix, eight digits (YYYYMMDD).
+func isDate(s string) bool {
+	if len(s) != 8 {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // Cost prices tokens. Output already includes thinking tokens, as Claude Code reports them.

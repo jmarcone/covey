@@ -145,7 +145,8 @@ describe("Kosten — eigener Zeitraum", () => {
     expect(field(/^Bis/)).toHaveValue("2026-11-20T16:00");
     expect(document.querySelector("[data-range-window]")).toBeNull(); // no range is in force
     expect(document.querySelector("[data-range-refused]")).not.toBeNull();
-    expect(m.calls.filter((c) => /\/cost\//.test(c)).every((c) => c.includes("days=8"))).toBe(true);
+    // Only the picker's helper readings are asked (days=8); the data checks (#179) take no window.
+    expect(m.calls.filter((c) => /\/cost\//.test(c) && !/\/cost\/health/.test(c)).every((c) => c.includes("days=8"))).toBe(true);
     expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument(); // the page, not a blank
   });
 
@@ -173,7 +174,9 @@ describe("Kosten — eigener Zeitraum", () => {
       if (url.includes("/cost/cells")) {
         return new Response(JSON.stringify({ error: "the range may span at most 31 days", code: "range_span" }), { status: 400, headers: { "Content-Type": "application/json" } });
       }
-      return new Response(JSON.stringify(url.includes("/cost/billed") ? NO_BILL : url.includes("/cost/models") ? { rows: [] } : []), { status: 200 });
+      const body = url.includes("/cost/billed") ? NO_BILL : url.includes("/cost/models") ? { rows: [] }
+        : url.includes("/cost/health") ? { status: "pass", checked_at: FROM, checks: [] } : [];
+      return new Response(JSON.stringify(body), { status: 200 });
     });
     vi.stubGlobal("fetch", fn);
     renderWithProviders(<><Costs /><Probe /></>, { route: `/costs?from=${FROM}&to=${TO}&tz=utc` });

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import type { CostCells } from "../api";
@@ -13,6 +13,9 @@ import {
   type Unattributed,
   type Unsplit,
 } from "./outsideFigures";
+import { asBool, asEnum, useCostQuery, useParamState } from "./costView";
+
+const OUTMODE = asEnum<"apart" | "combined">(["apart", "combined"]);
 
 /* The Claude Code sessions outside covey on the overview (#120, part C): a
  * consumer next to the agents, never a fifth money source and never folded
@@ -28,8 +31,10 @@ export const OUTSIDE_COLOR = "var(--cost-outside)";
 const pct = (v: number) => `${fmtNumber(v * 100, 1)} %`;
 
 /** A figure with its lines, in the style of the credential tiles. */
-export function FigureTile({ label, value, lines, color, hatched, test }: {
+export function FigureTile({ label, value, lines, color, hatched, test, mark }: {
   label: string; value: string; lines?: (string | false | undefined)[]; color?: string; hatched?: boolean; test?: string;
+  /** A failed data check's mark beside the label (#178): the figure is short. */
+  mark?: ReactNode;
 }) {
   return (
     <div role="group" aria-label={label} data-figure={test}
@@ -37,6 +42,7 @@ export function FigureTile({ label, value, lines, color, hatched, test }: {
       <div className="muted text-xs" style={{ display: "flex", alignItems: "center", gap: 6 }}>
         {color && <Swatch color={color} hatched={hatched} />}
         {label}
+        {mark}
       </div>
       <div data-value style={{ fontSize: 20, fontWeight: 600, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>{value}</div>
       {(lines ?? []).filter(Boolean).map((l, i) => <div key={i} className="muted text-xs" style={{ marginTop: 2 }}>{l}</div>)}
@@ -116,18 +122,23 @@ export function outsideLines(t: T, o: OutsideTotals): string[] {
   return lines;
 }
 
-export function OutsideOverview({ data, selected, days, bucket, fmtPeriod, detailLink = true }: {
+export function OutsideOverview({ data, selected, days, bucket, fmtPeriod, incomplete, detailLink = true }: {
   data: CostCells | undefined; selected: Set<string>; days: number; bucket: string; fmtPeriod: (p: string, utc?: boolean) => string;
+  /** A failed data check's mark (#178): the uploads behind these figures stopped. */
+  incomplete?: React.ReactNode;
   /** False where the detailed view cannot show the window (a custom range). */
   detailLink?: boolean;
 }) {
   const { t } = useTranslation();
   const filtered = selected.size > 0;
   // On by default, narrowed to agents or not: one rule for the whole page.
-  const [on, setOn] = useState(true);
-  const [mode, setMode] = useState<"apart" | "combined">("apart");
+  const [on, setOn] = useParamState("outside", true, asBool.parse, asBool.show);
+  const [mode, setMode] = useParamState<"apart" | "combined">("outmode", "apart", OUTMODE.parse, OUTMODE.show);
   const [asTable, setAsTable] = useState(false);
 
+  // The detailed view opens with this page's whole view (range, bucket, agents, chips), and its back link keeps it.
+  // A hook: above the early return below.
+  const query = useCostQuery();
   const totals = useMemo(() => outsideTotals(data?.external), [data]);
   const outside = useMemo(() => outsidePerPeriod(data?.external), [data]);
   const agents = useMemo(() => agentsPerPeriod(data, selected), [data, selected]);
@@ -154,13 +165,13 @@ export function OutsideOverview({ data, selected, days, bucket, fmtPeriod, detai
   // Its two parts, named as on the rest of the page: narrowed to agents,
   // "selected agents $X · plus outside sessions $Y" (L2).
   const combinedSub = inclLine(t, filtered, fmtUSD(agentsList), outsideMoney(t, totals, "list"));
-  const detail = `/costs/outside?days=${days}&bucket=${bucket}`;
+  const detail = `/costs/outside${query}`;
 
   return (
     <section className="card mb-4" aria-label={seriesLabel} data-outside>
       <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
         <div style={{ fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 6 }}>
-          <Swatch color={OUTSIDE_COLOR} /> {seriesLabel}
+          <Swatch color={OUTSIDE_COLOR} /> {seriesLabel}{incomplete}
         </div>
         {detailLink && <Link to={detail} className="text-sm" data-outside-detail>{t("costs.outside.details")}</Link>}
       </div>

@@ -2,26 +2,31 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link, useSearchParams } from "react-router";
-import { api, ApiError, type IndicatorReport, type Principal, type RunCost } from "../api";
-import { exact, fmtBucket, fmtCount, fmtUSD, setDisplayTz } from "../format";
-import { PriceList } from "../components/PriceList";
-import { CostInsights } from "./CostInsights";
-import { credentialFigures, headline, payPerTokenHeadline, subscriptionDent } from "./costFigures";
-import { PayPerTokenRow, SubscriptionDentRow } from "./SubscriptionDent";
-import { canSetPlan } from "./PlanPrice";
-import { OutsideOverview } from "./OutsideSessions";
+import { asEnum, asSet, bucketFits, useCostWindow, useParamState } from "./costView";
 import { RangePanel } from "./RangePanel";
 import { Seg } from "./Seg";
 import { bucketForSpan, customWindow, isCustom, isRangeCode, readRange, windowQuery, writeRange,
   type CostWindow, type RangeCode } from "./costRange";
-import { COVEY_ONLY_PARAM, COVEY_ONLY_VALUE, PRICES_PARAM, PRICES_RECOMPUTED, RANGES, beforeRange, bucketOptions, kpiLead, listedSources,
-  outsideKpis, outsideSplit, rangeOptions, sourceRealParts, type OutsideKpis } from "./outsideFigures";
+import { api, ApiError, type IndicatorReport, type Principal, type RunCost } from "../api";
+import { exact, fmtBucket, fmtCount, fmtUSD, setDisplayTz } from "../format";
+import { PriceList } from "../components/PriceList";
+import { CostInsights } from "./CostInsights";
+import { CostAnswer } from "./CostAnswer";
+import { answerTable } from "./costAnswerModel";
+import { coveyElsewhere, credentialFigures, headline, payPerTokenHeadline, subscriptionDent } from "./costFigures";
+import { PayPerTokenRow, SubscriptionDentRow } from "./SubscriptionDent";
+import { canSetPlan } from "./PlanPrice";
+import { OutsideOverview } from "./OutsideSessions";
+import { CostHealthBadge, IncompleteMark, credentialIncomplete, incompleteParts, useCostHealth } from "./CostHealth";
+import { COVEY_ONLY_PARAM, COVEY_ONLY_VALUE, PRICES_PARAM, PRICES_RECOMPUTED, beforeRange, bucketOptions, kpiLead, listedSources,
+  outsideKpis, outsideSplit, rangeOptions, seatSources, sourceRealParts, type OutsideKpis } from "./outsideFigures";
 import {
   AgentFilter,
   BUCKET_MS,
   Chip,
   CostExplorer,
   CustomRangeContext,
+  type CredentialMarks,
   OrgWide,
   SOURCE_COLOR,
   Swatch,
@@ -48,6 +53,7 @@ import {
 // booking-check says when it differs in kind.
 
 type Metric = "cost" | "tokens";
+const METRIC = asEnum<Metric>(["cost", "tokens"]);
 
 
 // --- KPI tiles ---------------------------------------------------------------
@@ -68,6 +74,8 @@ function Kpi({ label, value, sub, color, parts, check }: { label: string; value:
     </div>
   );
 }
+
+// --- Segmented switches ------------------------------------------------------
 
 export { Seg };
 
@@ -174,14 +182,18 @@ function ExpensiveRuns({ runs }: { runs: RunCost[] }) {
   );
 }
 
+/** No outside source switched off: the chips are gone in "covey only", and so is what they switched off. */
+const NO_SOURCES: ReadonlySet<string> = new Set();
+
 export default function Costs({ me }: { me?: Principal }) {
   const { t } = useTranslation();
 
-  // The range is in the address: ?days= for the quick ranges, or ?from=&to=
-  // (RFC 3339, [from, to)) with ?tz= for a custom one, so a segment can be
-  // shared, reloaded and walked back to. Without any, 24 hours, hourly: the
-  // window in which the cost per hour can actually be read.
+  // The whole view lives in the address (cost home PR 2): a link opens what its sender saw. A new range keeps the
+  // chosen bucket where it still fits.
   const [params, setParams] = useSearchParams();
+  // A quick range and its bucket are in the address (PR 2, useCostWindow); a custom range is ?from=&to= (RFC 3339,
+  // [from, to)) with ?tz= (#193), so a segment can be shared, reloaded and walked back to.
+  const { days, bucket: quickBucket, setBucket: setQuickBucket } = useCostWindow();
   const range = useMemo(() => readRange(params, Date.now()), [params]);
   const tz = range.tz;
   // One clock for every label of the page (the tiles, the axis, the tables).
@@ -193,8 +205,6 @@ export default function Costs({ me }: { me?: Principal }) {
     setDisplayTz(tz);
     return () => setDisplayTz("utc");
   }, [tz]);
-  const dp = Number(params.get("days"));
-  const days = RANGES.some((r) => r.v === dp) ? dp : 1;
   const customOk = range.from != null && range.to != null && range.error == null;
   // from/to given but not usable: no query is asked, the panel says why.
   const badRange = range.error != null;
@@ -207,22 +217,21 @@ export default function Costs({ me }: { me?: Principal }) {
   const win: CostWindow = customOk ? customWindow(range.from!, range.to!) : { days };
   const custom = isCustom(win);
   const [panelOpen, setPanelOpen] = useState(false);
-  // The bucket the reader chose belongs to the range it was chosen in: a range
-  // that changes from the address (Back, Forward, a pasted link) starts over at
-  // its own default, as a click on a range does. A pick the range does not
-  // allow (10 minutes over more than 2 days) is dropped too: the server would
-  // quietly cut the window to fit it.
   const wq = windowQuery(win);
-  const [pick, setPick] = useState<{ wq: string; bucket: string } | null>(null);
-  const bucketPick = pick != null && pick.wq === wq
-    && !bucketOptions(t, win.days).find((o) => o.v === pick.bucket)?.disabled ? pick.bucket : null;
-  const setBucketPick = (b: string | null) => setPick(b == null ? null : { wq, bucket: b });
-  const bucket = bucketPick ?? (custom ? bucketForSpan(range.to! - range.from!) : RANGES.find((r) => r.v === days)!.bucket);
-  const [metric, setMetric] = useState<Metric>("cost");
+  // A custom range's bucket: the one the address names where it fits the span, else the span's own.
+  const spanDays = custom ? Math.max(1, Math.ceil((range.to! - range.from!) / 86_400_000)) : days;
+  const want = params.get("bucket");
+  const bucket = custom ? (want != null && bucketFits(spanDays, want) ? want : bucketForSpan(range.to! - range.from!)) : quickBucket;
+  const setBucket = (b: string) => (custom
+    ? setParams((prev) => { const p = new URLSearchParams(prev); p.set("bucket", b); return p; }, { replace: true })
+    : setQuickBucket(b));
+  const [metric, setMetric] = useParamState<Metric>("metric", "cost", METRIC.parse, METRIC.show);
   // The agent filter replaces the scope tabs: none selected = the whole
   // organisation, any combination for the charts and the KPIs; exactly one
   // also narrows the cards below to that agent.
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selectedRO, setSelectedRO] = useParamState<ReadonlySet<string>>("agents", NO_SOURCES, asSet.parse, asSet.show);
+  const selected = selectedRO as Set<string>;
+  const setSelected = setSelectedRO as (v: Set<string> | ((prev: Set<string>) => Set<string>)) => void;
   // The sessions outside covey are included by default and labelled
   // everywhere (#120); ?only=covey shows covey's agents alone, as before.
   const coveyOnly = params.get(COVEY_ONLY_PARAM) === COVEY_ONLY_VALUE;
@@ -242,6 +251,10 @@ export default function Costs({ me }: { me?: Principal }) {
     else n.delete(PRICES_PARAM);
     return n;
   }, { replace: true });
+  // The outside sources switched off in the chart's chips: the answer table's
+  // rows follow them (#195).
+  const [offSources, setOffSources] = useParamState<ReadonlySet<string>>("off", NO_SOURCES, asSet.parse, asSet.show);
+  const toggleSource = (n: string) => setOffSources((v) => { const x = new Set(v); if (x.has(n)) x.delete(n); else x.add(n); return x; });
   const scope = selected.size === 1 ? [...selected][0] : "org";
   const cells = useCostCells(win, bucket, !badRange);
   const billed = useBilled(win, bucket, !badRange);
@@ -258,14 +271,13 @@ export default function Costs({ me }: { me?: Principal }) {
 
   // A new range can lose agents the selection still names: they would narrow
   // every figure to nothing while no chip shows them. Drop them.
+  // Writes the address only when it drops someone: a write is a navigation, and the data refetches every 30 s.
   useEffect(() => {
     if (!cells.data) return;
     const ids = new Set(cells.data.agents.map((a) => a.id));
-    setSelected((s) => {
-      const kept = [...s].filter((id) => ids.has(id));
-      return kept.length === s.size ? s : new Set(kept);
-    });
-  }, [cells.data]);
+    const kept = [...selected].filter((id) => ids.has(id));
+    if (kept.length !== selected.size) setSelected(new Set(kept));
+  }, [cells.data, selected, setSelected]);
 
   // The most expensive runs of the period — org-wide or for the chosen agent.
   const runs = useQuery({
@@ -302,20 +314,26 @@ export default function Costs({ me }: { me?: Principal }) {
   // than "you do not see them".
   const indicatorsForbidden = indicators.error instanceof ApiError && indicators.error.status === 403;
 
-  // A change of range is a step in the history: Back returns to the one before.
+  // A change of range is a step in the history: Back returns to the one before. A quick range keeps a chosen bucket
+  // where it fits (PR 2); a custom range starts at its span's own.
   const setRange = (v: number | "custom") => {
     if (v === "custom") {
       setPanelOpen(true);
       return;
     }
     setPanelOpen(false);
-    setBucketPick(null);
-    setParams((prev) => writeRange(prev, { days: v }, tz));
+    setParams((prev) => {
+      const p = writeRange(prev, { days: v }, tz);
+      const b = p.get("bucket");
+      if (b != null && !bucketFits(v, b)) p.delete("bucket");
+      return p;
+    });
   };
-  const applyCustom = (from: number, to: number) => {
-    setBucketPick(null);
-    setParams((prev) => writeRange(prev, customWindow(from, to), tz));
-  };
+  const applyCustom = (from: number, to: number) => setParams((prev) => {
+    const p = writeRange(prev, customWindow(from, to), tz);
+    p.delete("bucket");
+    return p;
+  });
   const setTz = (next: typeof tz) => setParams((prev) => {
     const n = new URLSearchParams(prev);
     n.set("tz", next);
@@ -335,6 +353,9 @@ export default function Costs({ me }: { me?: Principal }) {
   // and the sessions outside covey (#120): null until a source names a meter.
   const dent = useMemo(() => subscriptionDent(cells.data?.external), [cells.data]);
   const head = useMemo(() => headline(cells.data), [cells.data]);
+  // The answer table (#195): the headline's and the dent's figures as rows.
+  const answer = useMemo(() => (head && dent && cells.data?.external ? answerTable(head, dent, cells.data.external, cells.data.meter ?? [], coveyOnly ? NO_SOURCES : offSources) : null),
+    [head, dent, cells.data, offSources, coveyOnly]);
   const ppt = useMemo(() => payPerTokenHeadline(cells.data, orgFigures, BUCKET_MS[bucket] ?? BUCKET_MS.day, end),
     [cells.data, orgFigures, bucket, end]);
 
@@ -377,12 +398,57 @@ export default function Costs({ me }: { me?: Principal }) {
         ? agentList.find((a) => a.id === scope)?.label ?? ""
         : t("costs.filter.nSelected", { count: selected.size });
   const fmtPeriod = (p: string, utc?: boolean) => fmtBucket(p, bucket, utc ? "utc" : tz);
+  // A failed data check marks the part it affects "incomplete" (#178); the
+  // figure stays as it is.
+  // The token-price checks count where the page holds the calls they
+  // concern: covey's lines always, the outside sessions where included.
+  const health = useCostHealth();
+  const incomplete = incompleteParts(health.data, { agents: true, outside: included != null });
+  const outsideMark = coveyOnly ? [] : incomplete.outside;
+  // The answer card is the whole dent under "covey only" too (#195): its operator and project rows stand, so their
+  // marks do as well, whatever the chips and tiles leave out (#179 merge review).
+  const cardMarks = incompleteParts(health.data, { agents: true, outside: true });
+  // Per credential: a reset nobody recorded on its meter, and a stopped
+  // uploader of a source on its seat while the outside part is included,
+  // leave its own real cost and multiples short — its block and its meter
+  // in the insights say so where those figures stand.
+  const credentialMarks = (key: string, slot: number): CredentialMarks => {
+    const m = credentialIncomplete(health.data, `${key} #${slot}`, included ? seatSources(included, key, slot).map((x) => x.source) : null);
+    return { multiple: <IncompleteMark checks={m.multiple} part="multiple" />, outside: <IncompleteMark checks={m.outside} part="outside" /> };
+  };
 
+  // The agent filter and the "covey only" chip. With the answer table they stand under it, next to the chart they
+  // drive; its rows name the outside sources, so the inclusion note is only said where there is no table (#204).
+  const hasAnswer = !!(answer && head && dent);
+  const filters = (
+    <>
+      <div className="mb-4">
+        <AgentFilter agents={agentList} selected={selected} onChange={setSelected} />
+      </div>
+      {/* The sessions outside covey: in every figure below by default, each
+          figure naming its parts; "covey only" leaves them out (#120). */}
+      {sourcesListed.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 mb-4" data-inclusion>
+          <Chip on={coveyOnly} onClick={() => setCoveyOnly(!coveyOnly)} title={t("costs.incl.coveyOnlyTitle")}>{t("costs.incl.coveyOnly")}</Chip>
+          <IncompleteMark checks={outsideMark} part="outside" />
+          {(!hasAnswer || coveyOnly || filtered) && (
+            <span className="muted text-xs" data-inclusion-note style={{ maxWidth: 760 }}>
+              {t(coveyOnly ? "costs.incl.coveyOnlyNote" : filtered ? "costs.incl.includedNoteSelected" : "costs.incl.includedNote",
+                { sources: sourcesListed.map((s) => s.source).join(", ") })}
+            </span>
+          )}
+        </div>
+      )}
+    </>
+  );
+  // covey's own work no row of the page covers: the headline's, less what the pay-per-token row shows of each credential.
+  const elsewhere = head ? coveyElsewhere(head.coveyElsewhereBy, ppt) : 0;
   return (
     <div>
       <div className="flex items-baseline gap-3 mb-1">
         <h1 className="text-[22px]">{t("costs.title")}</h1>
         <span className="muted">{scopeName}</span>
+        <CostHealthBadge />
       </div>
       <p className="muted text-sm mb-4" style={{ maxWidth: 620 }}>{t("costs.subtitle")}</p>
 
@@ -391,7 +457,7 @@ export default function Costs({ me }: { me?: Principal }) {
         <div style={{ flex: 1 }} />
         <Seg<number | "custom"> value={custom || panelOpen || badRange ? "custom" : days} onChange={setRange}
           options={[...rangeOptions(t), { v: "custom", label: t("costs.range.custom") }]} />
-        <Seg value={bucket} onChange={setBucketPick} options={bucketOptions(t, win.days)} />
+        <Seg value={bucket} onChange={setBucket} options={bucketOptions(t, win.days)} />
       </div>
       {(custom || panelOpen || badRange) && (
         // Re-made when the range changes from outside (Back, a pasted link), so the fields hold what the address says.
@@ -401,110 +467,130 @@ export default function Costs({ me }: { me?: Principal }) {
       {refused && <p className="muted text-sm" data-range-refused>{t("costs.range.refused")}</p>}
 
       {!refused && (
-        <CustomRangeContext.Provider value={custom}>
-          <div className="mb-4">
-            <AgentFilter agents={agentList} selected={selected} onChange={setSelected} />
-          </div>
+      <CustomRangeContext.Provider value={custom}>
 
-          {/* The sessions outside covey: in every figure below by default, each
-              figure naming its parts; "covey only" leaves them out (#120). */}
-          {sourcesListed.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2 mb-4" data-inclusion>
-              <Chip on={coveyOnly} onClick={() => setCoveyOnly(!coveyOnly)} title={t("costs.incl.coveyOnlyTitle")}>{t("costs.incl.coveyOnly")}</Chip>
-              <span className="muted text-xs" data-inclusion-note style={{ maxWidth: 760 }}>
-                {t(coveyOnly ? "costs.incl.coveyOnlyNote" : filtered ? "costs.incl.includedNoteSelected" : "costs.incl.includedNote",
-                  { sources: sourcesListed.map((s) => s.source).join(", ") })}
-              </span>
-            </div>
-          )}
+      {/* Without an answer table the filters lead, as before; with one they follow it (#204: the answer first). */}
+      {!(answer && head && dent) && filters}
 
-          {/* The headline: what the subscription really paid, and for whom. */}
-          {dent && <SubscriptionDentRow d={dent} filtered={selected.size > 0} h={head}
+      {/* The answer, first (#195): one row per consumer of the subscription at
+          token prices and its share of the real cost, the total, the multiple
+          and one sentence. What explains it is in the drawer. */}
+      {answer && head && dent && (
+        <CostAnswer a={answer} h={head} filtered={selected.size > 0} elsewhere={elsewhere}
+          marks={cardMarks.multiple.length + cardMarks.outside.length + cardMarks.tokenPrice.length > 0 && <>
+            <IncompleteMark checks={cardMarks.multiple} part="multiple" />
+            <IncompleteMark checks={cardMarks.outside} part="outside" />
+            <IncompleteMark checks={cardMarks.tokenPrice} part="tokenPrice" />
+          </>}
+          drawer={<SubscriptionDentRow d={dent} filtered={selected.size > 0} h={head}
             sourceParts={(cells.data?.external?.meter.source_parts ?? []).flatMap((p) => {
               const s = sourcesListed.find((x) => x.source === p.source);
               return s ? [{ ...p, before: beforeRange(s, realParts) }] : [];
-            })} />}
-          {/* Pay per token (0152): an API key's bill, usage charges and the
-              monthly meter — its own headline, never added to the seats'. */}
-          {ppt && <PayPerTokenRow h={ppt} filtered={selected.size > 0} />}
+            })} />} />
+      )}
 
-          {/* KPIs: over every credential, dollars and tokens of the same lines.
-              One list-price figure leads (#120): Claude Code's price of each
-              call, covey's list price where it reported none (marked), and
-              covey's price table under it only where it differs; the toggle
-              shows the two apart. */}
-          <div className="flex flex-wrap gap-3 mb-4">
-            {fullPrices ? <>
-              <Kpi label={t("costs.fig.reported")} value={fmtUSD(totals.reported + (outside?.reported ?? 0))} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.reported}
-                parts={parts(fmtUSD(totals.reported), (o) => outsideMoney(t, o, "reported"))} />
-              <Kpi label={t("costs.fig.recomputed")} value={fmtUSD(totals.recomputed + (outside?.list ?? 0))} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.recomputed}
-                parts={parts(fmtUSD(totals.recomputed), (o) => outsideMoney(t, o, "list"))} />
-            </> : (
-              <Kpi label={t("costs.lead.label")} value={fmtUSD(lead)} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.reported}
-                parts={outside && split ? <SplitParts stacked lines={leadLines(t, filtered, fmtUSD(totals.reported), split)} /> : undefined}
-                check={priceTableLine(t, lead, totals.recomputed + (outside?.list ?? 0))} />
-            )}
-            <Kpi
-              label={t("costs.inputTokens")}
-              value={fmtCount(input)}
-              sub={t("costs.cachedShare", { pct: input > 0 ? Math.round((cached / input) * 100) : 0 })}
-              parts={tokParts(inputOf)}
-            />
-            <Kpi label={t("costs.outputTokens")} value={fmtCount(output)} sub={exact(output)} parts={tokParts((x) => x.output ?? 0)} />
-            <Kpi label={t("costs.totalTokens")} value={fmtCount(input + output)} parts={tokParts((x) => inputOf(x) + (x.output ?? 0))} />
+      {/* Pay per token (0152): an API key's bill, usage charges and the
+          monthly meter — its own headline, never added to the seats'. Where
+          the money is per token this is the answer, so it stays directly
+          under the answer table (#195). */}
+      {ppt && <PayPerTokenRow h={ppt} filtered={selected.size > 0} />}
+
+      {incomplete.tokenPrice.length > 0 && !answer && <div className="mb-2" data-kpi-incomplete><IncompleteMark checks={incomplete.tokenPrice} part="tokenPrice" /></div>}
+      {answer && head && dent && filters}
+
+      {/* Without a subscription meter there is no answer table: the lead
+          figure stands as a tile, as before. One list-price figure leads
+          (#120); the toggle shows covey's price table apart. */}
+      {!answer && (
+        <div className="flex flex-wrap gap-3 mb-4">
+          {fullPrices ? <>
+            <Kpi label={t("costs.fig.reported")} value={fmtUSD(totals.reported + (outside?.reported ?? 0))} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.reported}
+              parts={parts(fmtUSD(totals.reported), (o) => outsideMoney(t, o, "reported"))} />
+            <Kpi label={t("costs.fig.recomputed")} value={fmtUSD(totals.recomputed + (outside?.list ?? 0))} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.recomputed}
+              parts={parts(fmtUSD(totals.recomputed), (o) => outsideMoney(t, o, "list"))} />
+          </> : (
+            <Kpi label={t("costs.lead.label")} value={fmtUSD(lead)} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.reported}
+              parts={outside && split ? <SplitParts stacked lines={leadLines(t, filtered, fmtUSD(totals.reported), split)} /> : undefined}
+              check={priceTableLine(t, lead, totals.recomputed + (outside?.list ?? 0))} />
+          )}
+        </div>
+      )}
+
+      {/* Chart */}
+      <div className="card mb-4">
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <div style={{ fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 6 }} data-chart-title>
+            {metric === "cost" ? t("costs.chartCost") : t("costs.chartTokens")}
+            {/* A missing list price leaves the token counts whole; a call booked twice does not. */}
+            <IncompleteMark checks={metric === "cost" ? incomplete.tokenPrice : incomplete.tokenPrice.filter((c) => c.id === "c4")} part="tokenPrice" />
           </div>
+          <Seg
+            value={metric}
+            onChange={setMetric}
+            options={[{ v: "cost", label: t("costs.mCost") }, { v: "tokens", label: t("costs.mTokens") }]}
+          />
+        </div>
+        {metric === "cost" ? (
+          <CostExplorer data={cells.data} billed={billed.data} readings={readings.data ?? []} canSetPlan={canSetPlan(me?.Role ?? "")} selected={selected} bucket={bucket} fmtPeriod={fmtPeriod}
+            outside={included} full={fullPrices} onFull={setFullPrices} off={offSources} onToggleSource={toggleSource} answered={answer?.covers}
+            marks={credentialMarks} />
+        ) : (
+          <TokenExplorer data={cells.data} selected={selected} fmtPeriod={fmtPeriod} outside={included} />
+        )}
+      </div>
 
-          {/* Chart */}
-          <div className="card mb-4">
-            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-              <div style={{ fontWeight: 600 }}>{metric === "cost" ? t("costs.chartCost") : t("costs.chartTokens")}</div>
-              <Seg
-                value={metric}
-                onChange={setMetric}
-                options={[{ v: "cost", label: t("costs.mCost") }, { v: "tokens", label: t("costs.mTokens") }]}
-              />
-            </div>
-            {metric === "cost" ? (
-              <CostExplorer data={cells.data} billed={billed.data} readings={readings.data ?? []} canSetPlan={canSetPlan(me?.Role ?? "")} selected={selected} bucket={bucket} fmtPeriod={fmtPeriod}
-                outside={included} full={fullPrices} onFull={setFullPrices} />
-            ) : (
-              <TokenExplorer data={cells.data} selected={selected} fmtPeriod={fmtPeriod} outside={included} />
-            )}
-          </div>
+      {/* The sessions outside covey (#120): apart or combined, never folded in unannounced. */}
+      <OutsideOverview data={cells.data} selected={selected} days={days} bucket={bucket} fmtPeriod={fmtPeriod} detailLink={!custom}
+        incomplete={<IncompleteMark checks={incomplete.outside} part="outside" />} />
 
-          {/* The sessions outside covey (#120): apart or combined, never folded in unannounced. */}
-          <OutsideOverview data={cells.data} selected={selected} days={days} bucket={bucket} fmtPeriod={fmtPeriod} detailLink={!custom} />
+      {/* The token counts: collapsed, they answer another question (#195). */}
+      <details className="card mb-4" data-tokens>
+        <summary style={{ fontWeight: 600, cursor: "pointer" }}>
+          {t("costs.answer.tokens")}
+          {/* A call booked twice (c4) inflates the token counts: marked where they stand (#179 merge review). */}
+          <span data-tokens-incomplete style={{ marginLeft: 8, fontWeight: 400 }}><IncompleteMark checks={incomplete.tokenPrice.filter((c) => c.id === "c4")} part="tokenPrice" /></span>
+        </summary>
+        <div className="flex flex-wrap gap-3 mt-3 mb-4">
+          <Kpi
+            label={t("costs.inputTokens")}
+            value={fmtCount(input)}
+            sub={t("costs.cachedShare", { pct: input > 0 ? Math.round((cached / input) * 100) : 0 })}
+            parts={tokParts(inputOf)}
+          />
+          <Kpi label={t("costs.outputTokens")} value={fmtCount(output)} sub={exact(output)} parts={tokParts((x) => x.output ?? 0)} />
+          <Kpi label={t("costs.totalTokens")} value={fmtCount(input + output)} parts={tokParts((x) => inputOf(x) + (x.output ?? 0))} />
+        </div>
+        <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.mix.title")}</div>
+        <p className="muted text-xs mb-3" style={{ maxWidth: 620 }}>{t("costs.mix.hint")}</p>
+        <TokenMix tokens={tok} split={tokParts((x) => inputOf(x) + (x.output ?? 0))} />
+      </details>
 
-          {/* Price list + token types + priciest runs: they hold for every scope */}
-          <div className="grid gap-4 mb-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(320px, 100%), 1fr))" }}>
-            <div className="card">
-              <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.indicators.title")}{scope === "org" && selected.size > 0 && <OrgWide />}</div>
-              <p className="muted text-xs mb-3">{t("costs.indicators.hint")}</p>
-              {custom ? (
-                <p className="muted text-xs" data-indicators-custom>{t("costs.range.indicatorsCustom")}</p>
-              ) : indicatorsForbidden ? (
-                <p className="muted text-xs">{t("costs.indicators.restricted")}</p>
-              ) : (
-                <PriceList rep={indicators.data} />
-              )}
-            </div>
-            <div className="card">
-              <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.mix.title")}</div>
-              <p className="muted text-xs mb-3">{t("costs.mix.hint")}</p>
-              <TokenMix tokens={tok} split={tokParts((x) => inputOf(x) + (x.output ?? 0))} />
-            </div>
-            <div className="card" style={{ gridColumn: "span 1" }}>
-              <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.runs.title")}{scope === "org" && selected.size > 0 && <OrgWide />}</div>
-              <p className="muted text-xs mb-3">{t("costs.runs.hint")}</p>
-              <ExpensiveRuns runs={runs.data ?? []} />
-            </div>
-          </div>
+      {/* Price list + token types + priciest runs: they hold for every scope */}
+      <div className="grid gap-4 mb-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(320px, 100%), 1fr))" }}>
+        <div className="card">
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.indicators.title")}{scope === "org" && selected.size > 0 && <OrgWide />}</div>
+          <p className="muted text-xs mb-3">{t("costs.indicators.hint")}</p>
+          {custom ? (
+            <p className="muted text-xs" data-indicators-custom>{t("costs.range.indicatorsCustom")}</p>
+          ) : indicatorsForbidden ? (
+            <p className="muted text-xs">{t("costs.indicators.restricted")}</p>
+          ) : (
+            <PriceList rep={indicators.data} />
+          )}
+        </div>
+        <div className="card" style={{ gridColumn: "span 1" }}>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.runs.title")}{scope === "org" && selected.size > 0 && <OrgWide />}</div>
+          <p className="muted text-xs mb-3">{t("costs.runs.hint")}</p>
+          <ExpensiveRuns runs={runs.data ?? []} />
+        </div>
+      </div>
 
-          {/* Cost insights: per model as Claude Code reported it, and the
-              subscription meter per credential. The model lines follow the agent
-              filter; what is per credential stays org-wide and says so. */}
-          <CostInsights days={win.days} win={custom ? win : undefined} figures={orgFigures} agents={selected} outside={included} />
-        </CustomRangeContext.Provider>
+      {/* Cost insights: per model as Claude Code reported it, and the
+          subscription meter per credential. The model lines follow the agent
+          filter; what is per credential stays org-wide and says so. */}
+      <CostInsights days={win.days} win={custom ? win : undefined} figures={orgFigures} agents={selected} outside={included} answered={answer?.covers}
+        incomplete={<IncompleteMark checks={incomplete.tokenPrice} part="tokenPrice" />} marks={credentialMarks} />
+      </CustomRangeContext.Provider>
       )}
     </div>
   );

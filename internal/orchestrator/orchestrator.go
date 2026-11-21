@@ -171,6 +171,12 @@ type Upstream interface {
 type Orchestrator struct {
 	Options
 
+	// BeforeRouteHook is for tests only and nil in production: create_task
+	// calls it with the id of the task it found for a topic, just before it
+	// writes the note onto it, so a test can make that task leave play in
+	// between (#45).
+	BeforeRouteHook func(taskID uuid.UUID)
+
 	mu sync.Mutex
 	// laufend counts what the orchestrator started of its own concurrency: the
 	// sessions of the agents and his endless loops. Without them "cancelled"
@@ -3600,10 +3606,18 @@ const (
 //     station: how often has THIS agent extended THIS chain.
 //   - Length (maxAgentTaskChain) — the backstop under it, for a relay across
 //     many stations.
-//   - Width (maxAgentTasksPerRun) — a run spins off a limited amount.
-//   - Duplicates — if an open task with the same title already exists at the
-//     target agent, no second one is created. That is exactly where loops fail
-//     in which every run creates the same task again.
+//   - Width (maxAgentTasksPerRun) — a run spins off a limited amount, the
+//     requests it routed onto existing tasks counted with the ones it created.
+//   - Duplicates — one topic, one open task (#45). A request whose topic
+//     (backlog.TopicKey of the title, or the "topic" the agent names) already
+//     has an open, running or blocked task at the target agent creates no
+//     second task: it is added to that task as a note, and a blocked one is
+//     resumed with it unless it waits on a decision or a person (routedAnswer,
+//     backlog.Store.RouteNote). Where routing finds nothing, the old check
+//     stands: an identical title open at the target is refused, naming the
+//     task. The lookup and the note or the new task are one transaction under
+//     a lock per target and topic (backlog.Store.WithTopicLock). That is
+//     exactly where loops fail in which every run creates the same task again.
 //
 // The delegation stays within the organization: the target agent is resolved by
 // its slug **within the sender's org**.
@@ -3683,26 +3697,117 @@ func (o *Orchestrator) CreateAgentTask(ctx context.Context, agent agents.Agent, 
 	if err != nil {
 		return fail("subtasks cannot be counted")
 	}
-	if children >= maxAgentTasksPerRun {
-		return fail(fmt.Sprintf("this run has already created %d tasks — that is the limit", children))
-	}
-	dup, err := o.Backlog.OpenWithTitle(ctx, targetAgent.ID, title)
+	// A routed request creates no child, so it is counted by its note: without
+	// it two parked tasks could wake each other with notes for ever, each run
+	// staying under every limit.
+	routed, err := o.Backlog.CountRouted(ctx, taskID)
 	if err != nil {
-		return fail("duplicate check failed")
+		return fail("subtasks cannot be counted")
 	}
-	if dup {
-		return fail(fmt.Sprintf("there is already an open task %q at %s — no second one created", title, targetAgent.Slug))
+	if children+routed >= maxAgentTasksPerRun {
+		return fail(fmt.Sprintf("this run has already created %d tasks (%d of them added to existing tasks as notes) — "+
+			"that is the limit", children+routed, routed))
 	}
 
-	created, err := o.Backlog.CreateChild(ctx, taskID, backlog.ChildSpec{
-		AgentID:  targetAgent.ID,
-		Title:    title,
-		Body:     req.Body,
-		Origin:   originAgentTask + ":" + agent.Slug,
-		Priority: req.Priority,
+	topic := backlog.TopicKey(title)
+	if strings.TrimSpace(req.Topic) != "" {
+		topic = backlog.NormalizeTopic(req.Topic)
+		if topic == "" {
+			// Routing off and the title's topic stored after all (the lookup
+			// keys a row without a key from its title) is not what was asked.
+			return fail(`topic names nothing — leave it out or name the subject (e.g. "#17 part 3")`)
+		}
+	}
+	// The lookup and the note or the new task are one decision, taken under
+	// a lock per target and topic: two runs asking for the same new topic at
+	// once would otherwise both miss and both create. A title without a topic
+	// is locked by the title, which its identical-title check goes by.
+	lockKey := topic
+	if topic == "" {
+		lockKey = "title:" + title
+	}
+	author := "agent:" + agent.Slug
+	content := title
+	if body := strings.TrimSpace(req.Body); body != "" {
+		content += "\n\n" + body
+	}
+	input := "Note from agent " + agent.Slug + " (task " + taskID.String() + ") on topic \"" + topic + "\":\n" + content
+	var (
+		routedTo  *backlog.Routed
+		created   backlog.Task
+		refusal   string
+		failedAt  string
+		createErr error
+	)
+	err = o.Backlog.WithTopicLock(ctx, targetAgent.ID, lockKey, func(tt *backlog.TopicTx) error {
+		// Twice at most: when the task found has left play since the lookup,
+		// an older task of the same topic may still be open, and the request
+		// belongs there rather than beside it. Past the second try the
+		// request is created as if there had been no match, not lost.
+		for try := 0; topic != "" && try < 2; try++ {
+			match, found, err := tt.OpenByTopic(ctx, agent.OrgID, targetAgent.ID, topic, taskID)
+			if err != nil {
+				failedAt = "duplicate check failed"
+				return err
+			}
+			if !found {
+				break
+			}
+			if o.BeforeRouteHook != nil {
+				o.BeforeRouteHook(match.ID)
+			}
+			r, err := tt.RouteNote(ctx, match.ID, taskID, author, content, input, routeKeepsParked)
+			if errors.Is(err, backlog.ErrNotRoutable) || errors.Is(err, backlog.ErrNotFound) {
+				continue // finished, archived or deleted since the lookup
+			}
+			if err != nil {
+				failedAt = "the note was not written"
+				return err
+			}
+			routedTo = &r
+			return nil
+		}
+		// Routing finds no task with the same title when that title names no
+		// topic, and it skips the asking run's own task; an identical title
+		// open at the target is still the loop this check has always stopped.
+		dupID, dup, err := tt.OpenWithTitle(ctx, targetAgent.ID, title)
+		if err != nil {
+			failedAt = "duplicate check failed"
+			return err
+		}
+		if dup {
+			refusal = fmt.Sprintf("there is already an open task %q at %s (%s) — no second one created; "+
+				"add to it with covey/add_note", title, targetAgent.Slug, dupID)
+			return nil
+		}
+		created, err = tt.CreateChild(ctx, taskID, backlog.ChildSpec{
+			AgentID:  targetAgent.ID,
+			Title:    title,
+			Body:     req.Body,
+			Origin:   originAgentTask + ":" + agent.Slug,
+			Priority: req.Priority,
+			Topic:    req.Topic,
+		})
+		if err != nil {
+			createErr = err
+		}
+		return err
 	})
-	if err != nil {
-		return fail(err.Error())
+	switch {
+	case createErr != nil:
+		return fail(createErr.Error())
+	case err != nil:
+		// The store's own words name tables and SQL states; the agent gets
+		// the fact, the log keeps the cause.
+		if failedAt == "" {
+			failedAt = "duplicate check failed"
+		}
+		o.Log.Warn("create_task: "+failedAt, "task", taskID, "err", err)
+		return fail(failedAt)
+	case refusal != "":
+		return fail(refusal)
+	case routedTo != nil:
+		return o.routedAnswer(ctx, agent, taskID, targetAgent, *routedTo, topic, title, input, req)
 	}
 	fields := map[string]string{"status": "task_created", "created_task": created.ID.String(),
 		"target_agent": targetAgent.Slug, "title": title}
@@ -3717,7 +3822,7 @@ func (o *Orchestrator) CreateAgentTask(ctx context.Context, agent agents.Agent, 
 		o.EnsureRunning(targetAgent.ID) // delegation wakes the colleague
 	}
 	resp := daemon.InjectCreateTask{RequestID: req.RequestID, OK: true,
-		TaskID: created.ID.String(), Agent: targetAgent.Slug}
+		TaskID: created.ID.String(), Agent: targetAgent.Slug, Topic: topic}
 	if targetAgent.ID != agent.ID && targetAgent.Killed {
 		// Created, as #202 wants — but the delegating agent is told, so that it
 		// can tell "delivered" from "waiting for a person" (#556).
@@ -4088,6 +4193,30 @@ func (o *Orchestrator) decideAction(ctx context.Context, agent agents.Agent, tas
 				map[string]any{"rule": "access_scope", "action": req.Action, "scope": need, "decision": "denied"})
 			return daemon.ApprovalDecision{RequestID: req.RequestID, Status: "denied",
 				Reason: req.Do + " needs the scope " + need + " on " + system + ", which ACCESS.md does not grant"}
+		}
+	}
+	// A note on another task is held to the agent's organisation before the
+	// guard rails: they can put an approval in front of a person, and a note on
+	// a task of another organisation, or on an id that does not exist, would
+	// only fail afterwards — the request would still tell them the id was tried.
+	// It comes after the tool assignment and the scope, so an agent that may not
+	// write notes at all causes no read and no organisation event.
+	//
+	// Only that refusal returns here. An id that is no task id, or a task the
+	// store cannot read, is not an authorisation answer: it falls through to the
+	// rails as it did before, and NoteOnTask fails it with an error the agent
+	// can act on (a malformed id under require_approval asks a person, which
+	// tells them nothing about another organisation). The id is tested as the
+	// action proxy tests it (not empty, untrimmed), so a blank one reaches
+	// noteTarget too. A note on the running task carries no task_id.
+	if req.Action == "covey:add_note" {
+		var in struct {
+			TaskID string `json:"task_id"`
+		}
+		if json.Unmarshal(req.Params, &in) == nil && in.TaskID != "" {
+			if _, _, denied, reason := o.noteTarget(ctx, agent, taskID, in.TaskID); denied {
+				return daemon.ApprovalDecision{RequestID: req.RequestID, Status: "denied", Reason: reason}
+			}
 		}
 	}
 	rules, err := o.Rails.List(ctx, agent.OrgID)
