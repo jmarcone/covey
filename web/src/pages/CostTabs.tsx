@@ -9,6 +9,8 @@ export function CostTabs() {
   const q = useCostQuery(["source"]);
   const tabs: [string, string][] = [
     ["/costs", t("costs.home.tabOverview")],
+    ["/costs/models", t("costs.home.tabModels")],
+    ["/costs/work", t("costs.home.tabWork")],
     ["/costs/details", t("costs.home.tabDetails")],
     ["/costs/outside", t("costs.home.tabOutside")],
     ["/costs/health", t("costs.home.tabHealth")],

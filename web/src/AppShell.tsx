@@ -63,6 +63,8 @@ const Templates = lazy(() => import("./pages/Templates"));
 const Setup = lazy(() => import("./pages/Setup"));
 const Costs = lazy(() => import("./pages/Costs"));
 const CostHome = lazy(() => import("./pages/CostHome"));
+const CostModels = lazy(() => import("./pages/CostModels"));
+const CostWork = lazy(() => import("./pages/CostWork"));
 const OutsideCosts = lazy(() => import("./pages/OutsideCosts"));
 const CostHealth = lazy(() => import("./pages/CostHealth"));
 
@@ -413,6 +415,8 @@ export default function AppShell({ me, onLogout }: { me: Principal; onLogout: ()
             {/* The cost home (cost home PR 5); the full page with the chart, agents, models and runs is "Details". */}
             <Route path="/costs" element={<CostHome />} />
             <Route path="/costs/details" element={<Costs me={me} />} />
+            <Route path="/costs/models" element={<CostModels />} />
+            <Route path="/costs/work" element={<CostWork />} />
             <Route path="/costs/outside" element={<OutsideCosts />} />
             <Route path="/costs/health" element={<CostHealth />} />
             <Route path="/people/:id" element={<PersonPage me={me} />} />

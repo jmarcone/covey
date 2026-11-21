@@ -209,9 +209,9 @@ export default function CostHome() {
               <Door testid="details" to={`/costs/details${q}`} label={t("costs.home.doorDetails")} value={fmtUSD(a.list)} sub={t("costs.home.doorDetailsSub")} />
               <Door testid="outside" to={`/costs/outside${q}`} label={t("costs.home.tabOutside")}
                 value={outsideShare != null ? `${fmtNumber(outsideShare * 100, 0)} %` : "–"} sub={t("costs.home.doorOutsideSub")} />
-              <Door testid="model" to={`/costs/details${q}`} label={t("costs.home.doorModel")}
+              <Door testid="model" to={`/costs/models${q}`} label={t("costs.home.doorModel")}
                 value={topModel?.model ?? "–"} sub={topModel ? t("costs.home.doorModelSub", { pct: fmtNumber(topModel.share * 100, 0) }) : undefined} />
-              <Door testid="run" to={`/costs/details${q}`} label={t("costs.home.doorRun")}
+              <Door testid="run" to={`/costs/work${q}`} label={t("costs.home.doorRun")}
                 value={topRun?.measured_usd != null ? fmtUSD(topRun.measured_usd) : "–"} sub={topRun?.title ?? t("costs.home.noRuns")} />
               <Door testid="health" to={`/costs/health${q}`} label={t("costs.home.tabHealth")}
                 value={checks.length && windowIsNow ? `${checks.filter((c) => c.status === "pass").length} / ${checks.length}` : "–"}
