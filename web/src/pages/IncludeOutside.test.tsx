@@ -1394,3 +1394,17 @@ describe("the answer table, re-review (#204)", () => {
     await waitFor(() => expect(document.querySelector("[data-inclusion-note]")).not.toBeNull());
   });
 });
+
+describe("the chart's source chips from the address (#215 review)", () => {
+  beforeEach(async () => { await i18n.changeLanguage("en"); });
+  it("a link that hides every source falls back to all of them; one that hides some keeps them hidden", async () => {
+    serve(cells(), "/costs?hide=reported,real,billed");
+    await answerReady();
+    const chip = (name: string) => screen.getAllByRole("button", { name }).find((b) => b.hasAttribute("aria-pressed"))!;
+    await waitFor(() => expect(chip(t("costs.lead.label")).getAttribute("aria-pressed")).toBe("true"));
+    cleanup();
+    serve(cells(), "/costs?hide=billed");
+    await answerReady();
+    await waitFor(() => expect(chip(t("costs.lead.label")).getAttribute("aria-pressed")).toBe("true"));
+  });
+});

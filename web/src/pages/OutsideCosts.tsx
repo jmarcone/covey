@@ -16,10 +16,6 @@ import {
   unsplitOf,
   unsplitSteps,
   unsplitUSD,
-  RANGES,
-  TEN_HOUR_MAX_DAYS,
-  TEN_MIN_MAX_DAYS,
-  HOUR_MAX_DAYS,
   TOKEN_KINDS,
   bucketOptions,
   meterPerPeriod,
@@ -32,6 +28,7 @@ import {
   hostsBehind,
   type SplitRow,
 } from "./outsideFigures";
+import { useCostQuery, useCostWindow } from "./costView";
 import { meterPriced } from "./costFigures";
 
 /* The detailed view of the Claude Code sessions outside covey (#120, the
@@ -54,28 +51,20 @@ const ORIGIN_COLOR: Record<string, string> = {
 const pct = (v: number) => `${fmtNumber(v * 100, 1)} %`;
 const fineBucket = (b: string) => b === "10min" || b === "hour" || b === "10hour";
 
-/** The range and bucket from the address, held to the page's rules. */
+/** The range and bucket from the address (shared with /costs, cost home PR 2), and the source chip. */
 function useWindow() {
   const [params, setParams] = useSearchParams();
-  const d = Number(params.get("days"));
-  const days = RANGES.some((r) => r.v === d) ? d : 1;
-  const want = params.get("bucket") ?? RANGES.find((r) => r.v === days)!.bucket;
-  const tooFine = (want === "10min" && days > TEN_MIN_MAX_DAYS) || (want === "hour" && days > HOUR_MAX_DAYS)
-    || (want === "10hour" && days > TEN_HOUR_MAX_DAYS) || !["10min", "hour", "10hour", "day", "week", "month"].includes(want);
-  const bucket = tooFine ? RANGES.find((r) => r.v === days)!.bucket : want;
+  const { days, bucket, setDays, setBucket } = useCostWindow();
   const source = params.get("source") || null;
   const set = (next: { days?: number; bucket?: string; source?: string | null }) => {
-    const p = new URLSearchParams(params);
-    if (next.days != null) {
-      p.set("days", String(next.days));
-      p.set("bucket", RANGES.find((r) => r.v === next.days)!.bucket);
-    }
-    if (next.bucket != null) p.set("bucket", next.bucket);
-    if (next.source !== undefined) {
+    if (next.days != null) setDays(next.days);
+    if (next.bucket != null) setBucket(next.bucket);
+    if (next.source !== undefined) setParams((prev) => {
+      const p = new URLSearchParams(prev);
       if (next.source) p.set("source", next.source);
       else p.delete("source");
-    }
-    setParams(p, { replace: true });
+      return p;
+    }, { replace: true });
   };
   return { days, bucket, source, set };
 }
@@ -145,6 +134,8 @@ function SplitTable({ title, rows, total, label, color, test }: {
 export default function OutsideCosts() {
   const { t } = useTranslation();
   const { days, bucket, source, set } = useWindow();
+  // Back to the overview with its whole view (agents, chips, toggles), less this page's own source chip.
+  const back = useCostQuery(["source"]);
   const q = useExternalUsage(days, bucket, source);
   const [stack, setStack] = useState<"model" | "origin">("model");
   const [asTable, setAsTable] = useState(false);
@@ -195,7 +186,7 @@ export default function OutsideCosts() {
 
   return (
     <div>
-      <div className="mb-1"><Link to={`/costs`} className="text-sm">← {t("costs.outside.back")}</Link></div>
+      <div className="mb-1"><Link to={`/costs${back}`} className="text-sm">← {t("costs.outside.back")}</Link></div>
       <div className="flex items-baseline gap-3 mb-1">
         <h1 className="text-[22px]" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><Swatch color={OUTSIDE_COLOR} /> {t("costs.outside.series")}</h1>
         <span className="muted">{source ?? t("costs.outside.sourceAll")}</span>

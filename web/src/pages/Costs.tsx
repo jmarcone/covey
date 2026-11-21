@@ -1,7 +1,8 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link, useSearchParams } from "react-router";
+import { asEnum, asSet, useCostWindow, useParamState } from "./costView";
 import { api, ApiError, type IndicatorReport, type Principal, type RunCost } from "../api";
 import { exact, fmtBucket, fmtCount, fmtUSD } from "../format";
 import { PriceList } from "../components/PriceList";
@@ -12,7 +13,7 @@ import { coveyElsewhere, credentialFigures, headline, payPerTokenHeadline, subsc
 import { PayPerTokenRow, SubscriptionDentRow } from "./SubscriptionDent";
 import { canSetPlan } from "./PlanPrice";
 import { OutsideOverview } from "./OutsideSessions";
-import { COVEY_ONLY_PARAM, COVEY_ONLY_VALUE, PRICES_PARAM, PRICES_RECOMPUTED, RANGES, beforeRange, bucketOptions, kpiLead, listedSources,
+import { COVEY_ONLY_PARAM, COVEY_ONLY_VALUE, PRICES_PARAM, PRICES_RECOMPUTED, beforeRange, bucketOptions, kpiLead, listedSources,
   outsideKpis, outsideSplit, rangeOptions, sourceRealParts, type OutsideKpis } from "./outsideFigures";
 import {
   AgentFilter,
@@ -45,6 +46,7 @@ import {
 // booking-check says when it differs in kind.
 
 type Metric = "cost" | "tokens";
+const METRIC = asEnum<Metric>(["cost", "tokens"]);
 
 
 // --- KPI tiles ---------------------------------------------------------------
@@ -234,14 +236,16 @@ const NO_SOURCES: ReadonlySet<string> = new Set();
 export default function Costs({ me }: { me?: Principal }) {
   const { t } = useTranslation();
 
-  // 24 hours, hourly: the window in which the cost per hour can actually be read.
-  const [days, setDays] = useState(1);
-  const [bucket, setBucket] = useState("hour");
-  const [metric, setMetric] = useState<Metric>("cost");
+  // The whole view lives in the address (cost home PR 2): a link opens what its sender saw. A new range keeps the
+  // chosen bucket where it still fits.
+  const { days, bucket, setDays, setBucket } = useCostWindow();
+  const [metric, setMetric] = useParamState<Metric>("metric", "cost", METRIC.parse, METRIC.show);
   // The agent filter replaces the scope tabs: none selected = the whole
   // organisation, any combination for the charts and the KPIs; exactly one
   // also narrows the cards below to that agent.
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selectedRO, setSelectedRO] = useParamState<ReadonlySet<string>>("agents", NO_SOURCES, asSet.parse, asSet.show);
+  const selected = selectedRO as Set<string>;
+  const setSelected = setSelectedRO as (v: Set<string> | ((prev: Set<string>) => Set<string>)) => void;
   // The sessions outside covey are included by default and labelled
   // everywhere (#120); ?only=covey shows covey's agents alone, as before.
   const [params, setParams] = useSearchParams();
@@ -264,7 +268,7 @@ export default function Costs({ me }: { me?: Principal }) {
   }, { replace: true });
   // The outside sources switched off in the chart's chips: the answer table's
   // rows follow them (#195).
-  const [offSources, setOffSources] = useState<Set<string>>(new Set());
+  const [offSources, setOffSources] = useParamState<ReadonlySet<string>>("off", NO_SOURCES, asSet.parse, asSet.show);
   const toggleSource = (n: string) => setOffSources((v) => { const x = new Set(v); if (x.has(n)) x.delete(n); else x.add(n); return x; });
   const scope = selected.size === 1 ? [...selected][0] : "org";
   const cells = useCostCells(days, bucket);
@@ -273,14 +277,13 @@ export default function Costs({ me }: { me?: Principal }) {
 
   // A new range can lose agents the selection still names: they would narrow
   // every figure to nothing while no chip shows them. Drop them.
+  // Writes the address only when it drops someone: a write is a navigation, and the data refetches every 30 s.
   useEffect(() => {
     if (!cells.data) return;
     const ids = new Set(cells.data.agents.map((a) => a.id));
-    setSelected((s) => {
-      const kept = [...s].filter((id) => ids.has(id));
-      return kept.length === s.size ? s : new Set(kept);
-    });
-  }, [cells.data]);
+    const kept = [...selected].filter((id) => ids.has(id));
+    if (kept.length !== selected.size) setSelected(new Set(kept));
+  }, [cells.data, selected, setSelected]);
 
   // The most expensive runs of the period — org-wide or for the chosen agent.
   const runs = useQuery({
@@ -313,11 +316,7 @@ export default function Costs({ me }: { me?: Principal }) {
   // than "you do not see them".
   const indicatorsForbidden = indicators.error instanceof ApiError && indicators.error.status === 403;
 
-  const setRange = (v: number) => {
-    setDays(v);
-    const r = RANGES.find((x) => x.v === v);
-    if (r) setBucket(r.bucket);
-  };
+  const setRange = (v: number) => setDays(v);
 
   // The credentials' figures over the whole organisation, for the meter card:
   // the same the tiles show without an agent filter.

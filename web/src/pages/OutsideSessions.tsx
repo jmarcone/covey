@@ -13,6 +13,9 @@ import {
   type Unattributed,
   type Unsplit,
 } from "./outsideFigures";
+import { asBool, asEnum, useCostQuery, useParamState } from "./costView";
+
+const OUTMODE = asEnum<"apart" | "combined">(["apart", "combined"]);
 
 /* The Claude Code sessions outside covey on the overview (#120, part C): a
  * consumer next to the agents, never a fifth money source and never folded
@@ -122,10 +125,13 @@ export function OutsideOverview({ data, selected, days, bucket, fmtPeriod }: {
   const { t } = useTranslation();
   const filtered = selected.size > 0;
   // On by default, narrowed to agents or not: one rule for the whole page.
-  const [on, setOn] = useState(true);
-  const [mode, setMode] = useState<"apart" | "combined">("apart");
+  const [on, setOn] = useParamState("outside", true, asBool.parse, asBool.show);
+  const [mode, setMode] = useParamState<"apart" | "combined">("outmode", "apart", OUTMODE.parse, OUTMODE.show);
   const [asTable, setAsTable] = useState(false);
 
+  // The detailed view opens with this page's whole view (range, bucket, agents, chips), and its back link keeps it.
+  // A hook: above the early return below.
+  const query = useCostQuery();
   const totals = useMemo(() => outsideTotals(data?.external), [data]);
   const outside = useMemo(() => outsidePerPeriod(data?.external), [data]);
   const agents = useMemo(() => agentsPerPeriod(data, selected), [data, selected]);
@@ -152,7 +158,7 @@ export function OutsideOverview({ data, selected, days, bucket, fmtPeriod }: {
   // Its two parts, named as on the rest of the page: narrowed to agents,
   // "selected agents $X · plus outside sessions $Y" (L2).
   const combinedSub = inclLine(t, filtered, fmtUSD(agentsList), outsideMoney(t, totals, "list"));
-  const detail = `/costs/outside?days=${days}&bucket=${bucket}`;
+  const detail = `/costs/outside${query}`;
 
   return (
     <section className="card mb-4" aria-label={seriesLabel} data-outside>
