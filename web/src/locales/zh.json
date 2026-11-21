@@ -1070,6 +1070,12 @@
       "reconUsage": "+ 按用量计费 {{usd}}",
       "pending": "待定",
       "pendingWhy": "在最后一次计量读数之后"
+    },
+    "who": {
+      "exactNote": "你的选择只统计这些智能体：covey 之外的会话（{{sources}}）不属于智能体的选择。",
+      "coveyOnlyLocked": "已选择智能体：covey 之外的会话不属于智能体的选择。",
+      "banner": "变更：选择智能体后，现在只统计这些智能体。covey 之外的会话不再加入选择。无法跟随选择的内容标有“整个组织”。",
+      "bannerOk": "知道了"
     }
   },
   "lang": {

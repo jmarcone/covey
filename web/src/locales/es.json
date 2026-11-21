@@ -1070,6 +1070,12 @@
       "reconUsage": "+ {{usd}} con base de uso",
       "pending": "pendiente",
       "pendingWhy": "después de la última lectura del contador"
+    },
+    "who": {
+      "exactNote": "Tu selección cuenta solo estos agentes: las sesiones fuera de covey ({{sources}}) no forman parte de una selección de agentes.",
+      "coveyOnlyLocked": "Hay agentes seleccionados: las sesiones fuera de covey no forman parte de una selección de agentes.",
+      "banner": "Cambio: seleccionar agentes ahora cuenta exactamente esos agentes. Las sesiones fuera de covey ya no se añaden a una selección. Lo que no puede seguir una selección está marcado como «toda la organización».",
+      "bannerOk": "Entendido"
     }
   },
   "lang": {

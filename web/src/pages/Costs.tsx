@@ -1,8 +1,8 @@
-import { useEffect, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
-import { asEnum, asSet, useParamState } from "./costView";
+import { asEnum, asSet, runUSD, useParamState } from "./costView";
 import { Seg } from "./Seg";
 import { CostFilterBar, ShareButton, WhoSummary, useCostRange } from "./costRangeState";
 import { CostTabs } from "./CostTabs";
@@ -132,7 +132,8 @@ function TokenMix({ tokens, split }: { tokens: Record<string, number>; split?: R
 function ExpensiveRuns({ runs }: { runs: RunCost[] }) {
   const { t } = useTranslation();
   if (runs.length === 0) return <div className="muted text-sm">{t("costs.empty")}</div>;
-  const ranked = [...runs].sort((a, b) => (b.measured_usd ?? -1) - (a.measured_usd ?? -1));
+  // Ranked on the shared basis (runUSD), as the server ranks each list and the Work view does; a merge of several agents' lists is cut again.
+  const ranked = [...runs].sort((a, b) => (runUSD(b) ?? -1) - (runUSD(a) ?? -1)).slice(0, 25);
   return (
     <div style={{ overflowX: "auto" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
@@ -182,6 +183,22 @@ function ExpensiveRuns({ runs }: { runs: RunCost[] }) {
   );
 }
 
+const WHO_BANNER_KEY = "covey.costs.whoExact.v1";
+
+/** Once per viewer (cost home PR 7): a selection of agents used to add every session outside covey; it no longer does. */
+function WhoChangedBanner() {
+  const { t } = useTranslation();
+  const [seen, setSeen] = useState(() => { try { return localStorage.getItem(WHO_BANNER_KEY) === "1"; } catch { return false; } });
+  if (seen) return null;
+  const dismiss = () => { try { localStorage.setItem(WHO_BANNER_KEY, "1"); } catch { /* private window: shown again next time */ } setSeen(true); };
+  return (
+    <div className="card mb-4 flex items-start gap-3" role="status" data-who-banner style={{ maxWidth: 900 }}>
+      <p className="text-sm" style={{ margin: 0, flex: 1 }}>{t("costs.who.banner")}</p>
+      <button type="button" className="btn sm" onClick={dismiss}>{t("costs.who.bannerOk")}</button>
+    </div>
+  );
+}
+
 /** No outside source switched off: the chips are gone in "covey only", and so is what they switched off. */
 const NO_SOURCES: ReadonlySet<string> = new Set();
 
@@ -192,9 +209,9 @@ export default function Costs({ me }: { me?: Principal }) {
   const r = useCostRange();
   const { params, setParams, days, range, badRange, win, custom, wq, bucket, tz } = r;
   const [metric, setMetric] = useParamState<Metric>("metric", "cost", METRIC.parse, METRIC.show);
-  // The agent filter replaces the scope tabs: none selected = the whole
-  // organisation, any combination for the charts and the KPIs; exactly one
-  // also narrows the cards below to that agent.
+  // The agent filter (Who): none selected = the whole organisation; a selection counts exactly those agents, in every
+  // block that follows it (cost home PR 7). The sessions outside covey are no agents: a selection never adds them.
+  // The answer card, the meters and the price list stay account-wide or per one agent, and say so.
   const [selectedRO, setSelectedRO] = useParamState<ReadonlySet<string>>("agents", NO_SOURCES, asSet.parse, asSet.show);
   const selected = selectedRO as Set<string>;
   const setSelected = setSelectedRO as (v: Set<string> | ((prev: Set<string>) => Set<string>)) => void;
@@ -222,6 +239,7 @@ export default function Costs({ me }: { me?: Principal }) {
   const [offSources, setOffSources] = useParamState<ReadonlySet<string>>("off", NO_SOURCES, asSet.parse, asSet.show);
   const toggleSource = (n: string) => setOffSources((v) => { const x = new Set(v); if (x.has(n)) x.delete(n); else x.add(n); return x; });
   const scope = selected.size === 1 ? [...selected][0] : "org";
+  const filtered = selected.size > 0;
   const cells = useCostCells(win, bucket, !badRange);
   const billed = useBilled(win, bucket, !badRange);
   const readings = useUsageReadings(win, !badRange);
@@ -242,16 +260,18 @@ export default function Costs({ me }: { me?: Principal }) {
     if (kept.length !== selected.size) setSelected(new Set(kept));
   }, [cells.data, selected, setSelected]);
 
-  // The most expensive runs of the period — org-wide or for the chosen agent.
-  const runs = useQuery({
-    queryKey: ["cost", "runs", scope, wq],
-    queryFn: () =>
-      api<RunCost[] | null>(
-        scope === "org" ? `/cost/runs?${wq}&limit=25` : `/agents/${scope}/cost/runs?${wq}&limit=25`,
-      ),
+  // The most expensive runs of the period: org-wide, or each selected agent's own (any number of them), merged.
+  const runScopes = filtered ? [...selected].sort() : ["org"];
+  const runFetches = useQueries({ queries: runScopes.map((s) => ({
+    queryKey: ["cost", "runs", s, wq],
+    queryFn: () => api<RunCost[] | null>(s === "org" ? `/cost/runs?${wq}&limit=25` : `/agents/${s}/cost/runs?${wq}&limit=25`),
     refetchInterval: 30000,
     enabled: !badRange,
-  });
+  })) });
+  // A merged list only once every agent's own is in: a missing one would read as "this agent had no expensive run".
+  // A failed fetch with no list yet says so; a failed refetch keeps the list it had (the next one tries again).
+  const runsFailed = runFetches.some((f) => f.isError && f.data === undefined);
+  const runList = runFetches.every((f) => f.data !== undefined) ? runFetches.flatMap((f) => f.data ?? []) : null;
 
   // The price list hangs on the same scope and period as everything else on
   // this page — performance is no second topic next to the costs, but the
@@ -292,8 +312,8 @@ export default function Costs({ me }: { me?: Principal }) {
   const dent = useMemo(() => subscriptionDent(cells.data?.external), [cells.data]);
   const head = useMemo(() => headline(cells.data), [cells.data]);
   // The answer table (#195): the headline's and the dent's figures as rows.
-  const answer = useMemo(() => (head && dent && cells.data?.external ? answerTable(head, dent, cells.data.external, cells.data.meter ?? [], coveyOnly ? NO_SOURCES : offSources) : null),
-    [head, dent, cells.data, offSources, coveyOnly]);
+  const answer = useMemo(() => (head && dent && cells.data?.external ? answerTable(head, dent, cells.data.external, cells.data.meter ?? [], coveyOnly || filtered ? NO_SOURCES : offSources) : null),
+    [head, dent, cells.data, offSources, coveyOnly, filtered]);
   const ppt = useMemo(() => payPerTokenHeadline(cells.data, orgFigures, BUCKET_MS[bucket] ?? BUCKET_MS.day, end),
     [cells.data, orgFigures, bucket, end]);
 
@@ -302,12 +322,16 @@ export default function Costs({ me }: { me?: Principal }) {
   // The outside sessions with calls in the range; null for covey only or none.
   const ext = cells.data?.external;
   const sourcesListed = useMemo(() => listedSources(ext), [ext]);
-  const outside = useMemo(() => (coveyOnly ? null : outsideKpis(ext)), [ext, coveyOnly]);
+  // Left out under "covey only", and under a selection of agents (they are no agents).
+  const noOutside = coveyOnly || filtered;
+  const outside = useMemo(() => (noOutside ? null : outsideKpis(ext)), [ext, noOutside]);
   // The outside part in two (#163): the covey operator and the other projects.
-  const split = useMemo(() => (coveyOnly ? null : outsideSplit(ext)), [ext, coveyOnly]);
+  const split = useMemo(() => (noOutside ? null : outsideSplit(ext)), [ext, noOutside]);
   const realParts = useMemo(() => sourceRealParts(ext), [ext]);
   const included = outside != null ? ext! : null;
-  const filtered = selected.size > 0;
+  // The account-wide blocks (the meters per credential and their marks) keep the outside part under a selection, as
+  // orgFigures does: their "everything on this meter" names its outside rows whatever the selection.
+  const orgOutside = !coveyOnly && sourcesListed.length > 0 ? ext! : null;
   const coveyTok = totals.tokens;
   const tok = useMemo(() => {
     if (!outside) return coveyTok;
@@ -347,7 +371,7 @@ export default function Costs({ me }: { me?: Principal }) {
   const windowIsNow = !custom || Date.now() - windowEndMs < 3_600_000;
   const healthData = windowIsNow ? health.data : undefined;
   const incomplete = incompleteParts(healthData, { agents: true, outside: included != null });
-  const outsideMark = coveyOnly ? [] : incomplete.outside;
+  const outsideMark = noOutside ? [] : incomplete.outside;
   // The answer card is the whole dent under "covey only" too (#195): its operator and project rows stand, so their
   // marks do as well, whatever the chips and tiles leave out (#179 merge review).
   const cardMarks = incompleteParts(healthData, { agents: true, outside: true });
@@ -356,7 +380,7 @@ export default function Costs({ me }: { me?: Principal }) {
   // leave its own real cost and multiples short — its block and its meter
   // in the insights say so where those figures stand.
   const credentialMarks = (key: string, slot: number): CredentialMarks => {
-    const m = credentialIncomplete(healthData, `${key} #${slot}`, included ? seatSources(included, key, slot).map((x) => x.source) : null);
+    const m = credentialIncomplete(healthData, `${key} #${slot}`, orgOutside ? seatSources(orgOutside, key, slot).map((x) => x.source) : null);
     return { multiple: <IncompleteMark checks={m.multiple} part="multiple" />, outside: <IncompleteMark checks={m.outside} part="outside" /> };
   };
 
@@ -370,9 +394,9 @@ export default function Costs({ me }: { me?: Principal }) {
       </div>
       {/* The sessions outside covey: in every figure below by default, each
           figure naming its parts; "covey only" leaves them out (#120). */}
-      {sourcesListed.length > 0 && (!hasAnswer || coveyOnly || filtered) && (
-        <p className="muted text-xs mb-4" data-inclusion-note style={{ maxWidth: 760 }}>
-          {t(coveyOnly ? "costs.incl.coveyOnlyNote" : filtered ? "costs.incl.includedNoteSelected" : "costs.incl.includedNote",
+      {sourcesListed.length > 0 && (!hasAnswer || noOutside) && (
+        <p className="muted text-xs mb-4" data-inclusion-note id={filtered ? "who-exact-note" : undefined} style={{ maxWidth: 760 }}>
+          {t(filtered ? "costs.who.exactNote" : coveyOnly ? "costs.incl.coveyOnlyNote" : "costs.incl.includedNote",
             { sources: sourcesListed.map((s) => s.source).join(", ") })}
         </p>
       )}
@@ -397,12 +421,15 @@ export default function Costs({ me }: { me?: Principal }) {
         {sourcesListed.length > 0 && (
           // The sessions outside covey: in every figure by default, each figure naming its parts; "covey only" leaves them out (#120).
           <span className="flex items-center gap-2" data-inclusion>
-            <Chip on={coveyOnly} onClick={() => setCoveyOnly(!coveyOnly)} title={t("costs.incl.coveyOnlyTitle")}>{t("costs.incl.coveyOnly")}</Chip>
+            {/* A selection of agents has no outside sessions in it: the chip stands on, and says why it cannot be switched. */}
+            <Chip on={noOutside} locked={filtered} describedBy={filtered ? "who-exact-note" : undefined} onClick={() => { if (!filtered) setCoveyOnly(!coveyOnly); }}
+              title={t(filtered ? "costs.who.coveyOnlyLocked" : "costs.incl.coveyOnlyTitle")}>{t("costs.incl.coveyOnly")}</Chip>
             <IncompleteMark checks={outsideMark} part="outside" />
           </span>
         )}
       </>} />
       {refused && <p className="muted text-sm" data-range-refused>{t("costs.range.refused")}</p>}
+      {filtered && <WhoChangedBanner />}
 
       {!refused && (
       <CustomRangeContext.Provider value={custom}>
@@ -477,9 +504,9 @@ export default function Costs({ me }: { me?: Principal }) {
         )}
       </div>
 
-      {/* The sessions outside covey (#120): apart or combined, never folded in unannounced. */}
-      <OutsideOverview data={cells.data} selected={selected} days={days} bucket={bucket} fmtPeriod={fmtPeriod} detailLink={!custom}
-        incomplete={<IncompleteMark checks={incomplete.outside} part="outside" />} />
+      {/* The sessions outside covey (#120): apart or combined, never folded in unannounced; not in a selection of agents. */}
+      {!filtered && <OutsideOverview data={cells.data} selected={selected} days={days} bucket={bucket} fmtPeriod={fmtPeriod} detailLink={!custom}
+        incomplete={<IncompleteMark checks={incomplete.outside} part="outside" />} />}
 
       {/* The token counts: collapsed, they answer another question (#195). */}
       <details className="card mb-4" data-tokens>
@@ -517,16 +544,17 @@ export default function Costs({ me }: { me?: Principal }) {
           )}
         </div>
         <div className="card" style={{ gridColumn: "span 1" }}>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.runs.title")}{scope === "org" && selected.size > 0 && <OrgWide />}</div>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.runs.title")}</div>
           <p className="muted text-xs mb-3">{t("costs.runs.hint")}</p>
-          <ExpensiveRuns runs={runs.data ?? []} />
+          {runsFailed ? <p className="muted text-sm" data-runs-error role="alert">{t("costs.home.loadError")}</p>
+            : runList ? <ExpensiveRuns runs={runList} /> : <p className="muted text-sm">{t("costs.home.loading")}</p>}
         </div>
       </div>
 
       {/* Cost insights: per model as Claude Code reported it, and the
           subscription meter per credential. The model lines follow the agent
           filter; what is per credential stays org-wide and says so. */}
-      <CostInsights days={win.days} win={custom ? win : undefined} figures={orgFigures} agents={selected} outside={included} answered={answer?.covers}
+      <CostInsights days={win.days} win={custom ? win : undefined} figures={orgFigures} agents={selected} outside={included} meterOutside={orgOutside} answered={answer?.covers}
         incomplete={<IncompleteMark checks={incomplete.tokenPrice} part="tokenPrice" />} marks={credentialMarks} />
       </CustomRangeContext.Provider>
       )}

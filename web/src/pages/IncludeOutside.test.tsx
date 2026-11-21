@@ -226,15 +226,56 @@ describe("the sessions outside covey on the cost page, included by default (#120
     await waitFor(() => expect(kpiParts(t("costs.inputTokens"))).not.toBeNull());
   });
 
-  it("1: with agents selected they are the operator and other projects, never agents; the table says it is organisation-wide", async () => {
+  it("1: a selection of agents counts exactly those agents: no outside sessions in it; the table says it is organisation-wide (PR 7)", async () => {
     serve(cells());
     fireEvent.click(await screen.findByRole("button", { name: /^Coordinator/ }));
-    await waitFor(() => expect(kpiParts(t("costs.inputTokens"))).toMatch(/^selected agents/));
-    // With agents selected the note stays: the outside sessions are not agents and stay in the KPIs and chart below (#204 re-review).
+    await waitFor(() => expect(document.querySelector("[data-inclusion-note]")).not.toBeNull());
+    // The tokens are the agent's own, with no outside part; the note says the outside sessions are not in the selection.
+    expect(kpiValue(t("costs.inputTokens"))).toBe(fmtCount(1000 + 10_000_000));
+    expect(kpiParts(t("costs.inputTokens"))).toBeNull();
     expect(document.querySelector("[data-inclusion-note]")!.textContent).toBe(
-      t("costs.incl.includedNoteSelected", { sources: document.querySelector("[data-inclusion-note]")!.textContent!.match(/\(([^)]*)\)/)![1] }));
+      t("costs.who.exactNote", { sources: document.querySelector("[data-inclusion-note]")!.textContent!.match(/\(([^)]*)\)/)![1] }));
+    expect(document.querySelector("[data-seg^='out:']")).toBeNull();
+    // "covey only" stands on and cannot be switched while agents are selected; it stays focusable and is described by the note.
+    const chip = screen.getByRole("button", { name: "covey only" }) as HTMLButtonElement;
+    expect(chip.getAttribute("aria-pressed")).toBe("true");
+    expect(chip.disabled).toBe(false);
+    expect(chip.getAttribute("aria-disabled")).toBe("true");
+    expect(chip.getAttribute("aria-describedby")).toBe("who-exact-note");
+    expect(document.getElementById("who-exact-note")).toBe(document.querySelector("[data-inclusion-note]"));
+    expect(chip.getAttribute("title")).toBe(t("costs.who.coveyOnlyLocked"));
+    fireEvent.click(chip);
+    expect(chip.getAttribute("aria-pressed")).toBe("true");
+    // The answer stays account-wide and says so.
     expect(document.querySelector("[data-answer] [data-org-wide]")).toBeTruthy();
     expect(rowList("covey")).toBe(fmtUSD(9));
+  });
+
+  it("1: under a selection the answer card ignores the chart's source chips, which are not on screen (PR 7 review)", async () => {
+    serve(cells(), `/costs?off=${encodeURIComponent(SY)}`);
+    await answerReady();
+    expect(answerRow(`project:${SY}`)).toBeNull();
+    cleanup();
+    serve(cells(), `/costs?off=${encodeURIComponent(SY)}&agents=a1`);
+    await answerReady();
+    expect(answerRow(`project:${SY}`)).not.toBeNull();
+  });
+
+  it("1: the change is said once per viewer, in a banner that stays dismissed", async () => {
+    localStorage.removeItem("covey.costs.whoExact.v1");
+    serve(cells());
+    await answerReady();
+    expect(document.querySelector("[data-who-banner]")).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: /^Coordinator/ }));
+    const banner = await waitFor(() => { const b = document.querySelector("[data-who-banner]"); if (!b) throw new Error("no banner"); return b; });
+    expect(banner.textContent).toContain(t("costs.who.banner"));
+    fireEvent.click(screen.getByRole("button", { name: t("costs.who.bannerOk") }));
+    expect(document.querySelector("[data-who-banner]")).toBeNull();
+    cleanup();
+    serve(cells(), "/costs?agents=a1");
+    await answerReady();
+    expect(document.querySelector("[data-who-banner]")).toBeNull();
+    localStorage.removeItem("covey.costs.whoExact.v1");
   });
 
   it("2: the chart stacks one hatched series per source on the reported and recomputed bars, named in the legend, tooltip and table", async () => {
@@ -626,15 +667,13 @@ describe("the #126 review of the cost page", () => {
     expect(total().querySelector("[data-incl-list]")!.textContent).toBe(fmtUSD(13));
   });
 
-  it("L2: under an agent filter the overview stays on, labelled, and the multiple of everything stays, org-wide", async () => {
+  it("L2: under an agent filter the outside overview is not shown (it is no part of the selection), and the multiple of everything stays, org-wide", async () => {
     serve();
     fireEvent.click(await screen.findByRole("button", { name: /^Coordinator/ }));
     await answerReady();
     expect(document.querySelector("[data-answer] [data-org-wide]")).toBeTruthy();
-    expect(screen.getByRole("button", { name: t("costs.outside.show") }).getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(screen.getByRole("button", { name: t("costs.outside.modeCombined") }));
-    const combined = screen.getByRole("group", { name: t("costs.outside.combinedTotal") });
-    expect(combined.textContent).toMatch(/selected agents .* · plus outside sessions /);
+    expect(screen.queryByRole("button", { name: t("costs.outside.show") })).toBeNull();
+    expect(screen.queryByRole("group", { name: t("costs.outside.combinedTotal") })).toBeNull();
   });
 
   it("L3: a part is ≈, never ≤ — only a multiple is a bound", async () => {
@@ -1145,17 +1184,19 @@ describe("the answer table, review round 2 (#204)", () => {
     fireEvent.click(await screen.findByRole("button", { name: /^Reviewer/ }));
     await waitFor(() => expect(document.querySelectorAll(`[data-credential^="${SEAT}"] [data-tile]`).length).toBeGreaterThan(0));
     const tiles = [...document.querySelectorAll(`[data-credential^="${SEAT}"] [data-tile]`)].map((x) => x.textContent!);
-    // The selection's lead: the two agents' list on the seat; and its share of the real cost.
-    expect(tiles.some((x) => x.includes(fmtUSD(16.5)) && x.includes(`selected agents (internal) ${fmtUSD(12)}`))).toBe(true);
+    // The selection's lead: the two agents' own figure on the seat, with no outside part (PR 7); and its share of the real cost.
+    expect(tiles.some((x) => x.includes(fmtUSD(12)) && !x.includes(fmtUSD(16.5)) && !x.includes("outside"))).toBe(true);
     expect(tiles.some((x) => x.includes("share of real"))).toBe(true);
     // The table stays organisation-wide, and holds what the seat's block no longer says under a filter either: the everything
     // tile, covey's share of the split, the sources' rows of the agent table and the notes before and after the readings.
     expect(document.querySelector("[data-answer] [data-org-wide]")).toBeTruthy();
     const seat = document.querySelector(`[data-credential^="${SEAT}"]`)!;
     expect(tiles.some((x) => x.includes(t("costs.incl.everything")))).toBe(false);
-    for (const sel of ["[data-split-share]", "[data-outside-row]", "[data-incl-total]", "[data-unmetered-note]", "[data-no-multiple]"]) {
+    for (const sel of ["[data-split-share]", "[data-outside-row]", "[data-incl-total]", "[data-unmetered-note]"]) {
       expect(seat.querySelector(sel), sel).toBeNull();
     }
+    // No multiple over a selection: the seat says why, instead of the multiple of everything (PR 7).
+    expect(seat.querySelector("[data-no-multiple]")!.textContent).toBe(t("costs.fig.noMultipleAgents"));
   });
 
   it("14: with two seats each keeps its own real cost and multiple on its card and tiles; the table adds them up", async () => {

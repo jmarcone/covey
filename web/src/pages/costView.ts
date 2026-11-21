@@ -84,3 +84,8 @@ export function useCostQuery(drop: readonly string[] = []): string {
   const s = p.toString();
   return s ? `?${s}` : "";
 }
+
+/** A run's token price on the basis the server ranks by and the cost home, Details and Work show: its lines priced with
+ * covey's list (measured), else Claude Code's price, else its booked total; null for a run with no figure at all. */
+export const runUSD = (x: { measured_usd?: number | null; engine_usd?: number | null; total_usd: number }): number | null =>
+  x.measured_usd ?? x.engine_usd ?? (x.total_usd > 0 ? x.total_usd : null);

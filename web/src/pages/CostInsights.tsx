@@ -445,13 +445,15 @@ const times = (v: number) => (Number.isFinite(v) ? `${fmtNumber(v, 1)}×` : "∞
  *  whole organisation — the same the tiles show without an agent filter —
  *  while the model table follows `agents`, the page's agent filter (empty:
  *  all agents). */
-export function CostInsights({ days, win: customWin, figures, agents = NO_AGENTS, outside = null, answered, incomplete, marks }: {
+export function CostInsights({ days, win: customWin, figures, agents = NO_AGENTS, outside = null, meterOutside, answered, incomplete, marks }: {
   days: number; /** The window when it is a custom range (days is then its span). */ win?: CostWindow;
   figures: CredentialFigures[]; agents?: ReadonlySet<string>;
   /** What the page's answer table covers (#195): the seats of its meter have their real cost and multiple there. */
   answered?: AnswerCovers;
   /** The sessions outside covey, included (#120); null: covey only. */
   outside?: ExternalUsage | null;
+  /** The same for the meters per credential, which stay account-wide under an agent filter; default: outside. */
+  meterOutside?: ExternalUsage | null;
   /** A failed data check's mark on the model table's token prices (#178). */
   incomplete?: ReactNode;
   /** The marks of failed data checks on a credential's own figures (#178), per secret and slot. */
@@ -502,7 +504,7 @@ export function CostInsights({ days, win: customWin, figures, agents = NO_AGENTS
         <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.insights.meterTitle")}{filtered && <OrgWide />}</div>
         <p className="muted text-xs mb-3">{t("costs.insights.meterHint")}</p>
         {metered.length === 0 && monthly.length === 0 && <div className="muted text-sm">{t("costs.insights.noReadings")}</div>}
-        {metered.map((f) => <MeterFigures key={f.id} f={f} readings={rs} outside={outside} answered={answersSeat(answered, f.id) && isSeat(f)}
+        {metered.map((f) => <MeterFigures key={f.id} f={f} readings={rs} outside={meterOutside === undefined ? outside : meterOutside} answered={answersSeat(answered, f.id) && isSeat(f)}
           marks={marks?.(f.meter!.secret_key, f.meter!.secret_slot)} />)}
         {/* A monthly usage limit's meter (0152): its own lines, never in the weekly seat meter's figures. */}
         {monthly.map((f) => (
