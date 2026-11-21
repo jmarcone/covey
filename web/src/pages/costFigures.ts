@@ -1270,27 +1270,131 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
 // --- The meter card ------------------------------------------------------------
 
 /** The readings of one credential and source on the weekly window that can be
- *  used: supported, fresh, with a figure; oldest first. */
-export function usableReadings(rs: readonly UsageReading[], key: string, slot: number, source: string): UsageReading[] {
-  return rs
+ *  used: supported, fresh, with a figure; oldest first. `windowKind` is the
+ *  window the readings belong to: the meter card (no `windowKind`) takes
+ *  "seven_day" and "" (older daemons) together; a chart that draws the
+ *  server's weeks passes its coverage's own kind, since the segments belong
+ *  to that one only.
+ *
+ *  A reading that lags behind into an old week is dropped, by the server's
+ *  rule (stacked.go, meterQueryTemplate): its `resets_at` lies more than an
+ *  hour before the latest one an earlier reading gave (a second daemon still
+ *  reporting the old week). The mark is the latest reset time of all earlier
+ *  readings, so a run of late ones goes as a whole. */
+export function usableReadings(rs: readonly UsageReading[], key: string, slot: number, source: string, windowKind?: string): UsageReading[] {
+  const sorted = rs
     .filter((r) => r.secret_key === key && r.secret_slot === slot && r.source === source && r.supported && !r.stale
-      && r.week_percent != null && (r.window_kind === "seven_day" || r.window_kind === ""))
+      && r.week_percent != null && (windowKind != null ? r.window_kind === windowKind : r.window_kind === "seven_day" || r.window_kind === ""))
     .sort((a, b) => Date.parse(a.fetched_at) - Date.parse(b.fetched_at));
+  let seen = NaN;
+  return sorted.filter((r) => {
+    const resets = r.resets_at ? Date.parse(r.resets_at) : NaN;
+    const late = !Number.isNaN(resets) && !Number.isNaN(seen) && resets < seen - 3600_000;
+    if (!Number.isNaN(resets) && !(resets <= seen)) seen = resets;
+    return !late;
+  });
 }
 
-/** The meter's whole-percent crossings in each period: "10 % → 11 %". */
-export function meterCrossings(cov: MeterCoverage, steps: readonly MeterStep[]): Map<string, { from: number; to: number; reset: boolean }> {
-  const own = steps
-    .filter((s) => s.secret_key === cov.secret_key && s.secret_slot === cov.secret_slot && s.source === cov.source && s.window_kind === cov.window_kind)
-    .sort((a, b) => Date.parse(a.period) - Date.parse(b.period));
-  const out = new Map<string, { from: number; to: number; reset: boolean }>();
-  let level = cov.baseline_percent;
-  for (const s of own) {
-    const reset = s.resets > 0;
-    const from = reset ? 0 : level;
-    const to = from + s.points;
-    level = to;
-    if (s.points > 0 || reset) out.set(s.period, { from, to, reset });
+/** How many readings of one credential and source on the weekly window the
+ *  meter card leaves out: stale, unsupported, without a figure, or late. The
+ *  server judges "late" per window kind (stacked.go partitions by
+ *  window_kind), so the card counts each of the weekly window's kinds
+ *  ("seven_day", and "" of older daemons) on its own, never as one run. */
+export function droppedReadings(rs: readonly UsageReading[], key: string, slot: number, source: string): number {
+  const weekly = rs.filter((r) => r.secret_key === key && r.secret_slot === slot && r.source === source
+    && (r.window_kind === "seven_day" || r.window_kind === ""));
+  return weekly.length - (["seven_day", ""] as const).reduce((n, kind) => n + usableReadings(rs, key, slot, source, kind).length, 0);
+}
+
+/** One drawn reading of the weekly meter's line. */
+export type MeterPoint = {
+  /** The reading's fetched_at, as the server sent it. */
+  at: string;
+  /** The weekly meter in percent. */
+  pct: number;
+  /** The index of the reading's bucket among the chart's periods. */
+  slot: number;
+  /** How far into its bucket the reading lies, 0 to 1. */
+  frac: number;
+  /** The line part it belongs to: a new part begins after every gap, where readings are missing. */
+  part: number;
+  /** The first reading of a new week, read right after the last of the old one
+   *  (no gap between them): the line falls from the previous point to it. */
+  reset: boolean;
+  /** The first reading of a new week, with or without a gap before it: the
+   *  details say "new week" for it. After a gap there is no fall to draw
+   *  (`reset` is false), but the week did change. */
+  newWeek: boolean;
+};
+
+/** The start of the bucket after the one that starts at `start`. */
+export function nextBucket(start: number, bucket: string): number {
+  if (bucket === "month") {
+    const d = new Date(start);
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
+  }
+  const width = { "10min": 600_000, hour: 3600_000, "10hour": 36_000_000, week: 7 * 86400_000 }[bucket] ?? 86400_000;
+  return start + width;
+}
+
+/** The y of the weekly meter on the chart's right-hand axis: 0 % on the
+ *  baseline, 100 % at the top of the plot. A reading entered by hand may lie
+ *  outside 0 to 100 % (up to 1000 %, httpapi/costinsights.go): it is drawn at
+ *  the edge, never outside the plot; the tooltip, the table and the label
+ *  keep its true value. */
+export function meterY(pct: number, padT: number, plotH: number): number {
+  return padT + plotH - (Math.min(100, Math.max(0, pct)) / 100) * plotH;
+}
+
+/** The points of the weekly meter's line: the usable readings of the
+ *  credential whose bucket is one of the chart's periods, each with its week
+ *  (the server's segment that holds its time — the server's rule, not a
+ *  second one) and its place in its bucket. A reading in no segment is not
+ *  drawn. Consecutive readings share a part only when their buckets are the
+ *  same or adjacent in calendar time, so a line never crosses an hour the
+ *  axis skips: where readings are missing it breaks. A reset between two
+ *  readings that exist stays in the part and is marked (`reset`): the line
+ *  falls from the old week's last value to the new week's first. */
+export function meterPoints(rs: readonly UsageReading[], cov: MeterCoverage, periods: readonly string[], bucket: string): MeterPoint[] {
+  const segs = (cov.segments ?? []).map((g) => [Date.parse(g.start_at), Date.parse(g.end_at)] as const);
+  if (segs.length === 0) return [];
+  const slots = new Map(periods.map((p, i) => [Date.parse(p), i]));
+  const out: MeterPoint[] = [];
+  let part = -1, lastStart = NaN;
+  // "Late" is the server's rule (stacked.go:656, :664-665), and usableReadings
+  // has applied it above to the readings the page has. Here it is applied once
+  // more inside each segment, so the line holds what the segment holds: a
+  // reading is late when its resets_at lies more than an hour before the
+  // latest one an earlier reading of the same segment gave (the running
+  // maximum, seeded with the segment's first reading). A reading whose
+  // resets_at drifts by under an hour a step is kept, as on the server: a
+  // manual weekly reading may carry any resets_at (httpapi/costinsights.go:286),
+  // so no drift can be ruled out. The page has no reading from before its range,
+  // so the first reading of a segment on it is kept, whatever its resets_at.
+  const seen = usableReadings(rs, cov.secret_key, cov.secret_slot, cov.source, cov.window_kind)
+    .map((r) => {
+      const at = Date.parse(r.fetched_at);
+      return { r, at, resets: r.resets_at ? Date.parse(r.resets_at) : NaN, seg: segs.findIndex(([a, b]) => at >= a && at <= b) };
+    });
+  const latest = new Map<number, number>();
+  for (const { r, at, seg, resets } of seen) {
+    if (seg >= 0 && !Number.isNaN(resets)) {
+      const mark = latest.get(seg);
+      if (mark !== undefined && resets < mark - 3600_000) continue;
+      if (mark === undefined || resets > mark) latest.set(seg, resets);
+    }
+    const start = bucketStart(at, bucket);
+    const slot = slots.get(start);
+    if (seg < 0 || slot == null) continue;
+    const next = nextBucket(start, bucket);
+    const gap = start !== lastStart && start !== nextBucket(lastStart, bucket);
+    if (gap) part++;
+    // The reading that opens a week the server says began with a reset (the
+    // segment's Reset flag, its start the reading's time), also when it is the
+    // first reading drawn at all: a range that starts just after the reset.
+    const newWeek = cov.segments![seg].reset && at === segs[seg][0];
+    out.push({ at: r.fetched_at, pct: r.week_percent!, slot, frac: (at - start) / (next - start), part, reset: !gap && newWeek, newWeek });
+    lastStart = start;
   }
   return out;
 }

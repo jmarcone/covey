@@ -14,7 +14,7 @@ function ticks(max: number, fmtAxis: (v: number, step: number) => string) {
     <BarChart title="t" periods={["2026-11-17T18:00:00Z"]} groups={bars(max)} fmtPeriod={(p) => p}
       fmtValue={fmtUSD} fmtAxis={fmtAxis} />,
   );
-  return [...container.querySelectorAll("svg > g[aria-hidden] text")].map((t) => t.textContent);
+  return [...container.querySelectorAll("svg[data-cost-axis] text")].map((t) => t.textContent);
 }
 
 describe("axis ticks", () => {
@@ -45,5 +45,24 @@ describe("x axis", () => {
     );
     // labels 0, 3, ... 21, and the last one
     expect(container.querySelectorAll("svg > text[aria-hidden]")).toHaveLength(9);
+  });
+});
+
+// A period without a bar says why over its slot, in the drawn chart and not only in the table (#117 review 3, finding 11).
+describe("notes over a period's slot", () => {
+  it("draws a period's note in the plot, over the slot of a period with no bar", () => {
+    const periods = ["2026-11-17T18:00:00Z", "2026-11-17T19:00:00Z"];
+    const { container } = render(
+      <BarChart title="t" periods={periods} groups={[bars(3)[0], []]} fmtPeriod={(p) => p} fmtValue={fmtUSD} fmtAxis={fmtUSDAxis}
+        notes={new Map([[1, "no list price"]])} notesLabel="Note" />,
+    );
+    const plot = container.querySelector("svg[role=group]")!;
+    const notes = [...plot.querySelectorAll("text[data-note]")];
+    expect(notes.map((n) => n.textContent)).toEqual(["no list price"]);
+    // over the second slot, not the first
+    const x = Number(notes[0].getAttribute("x"));
+    const slots = plot.querySelectorAll("g[data-period]");
+    expect(slots).toHaveLength(2);
+    expect(x).toBeGreaterThan(Number(plot.querySelector("g[data-period] rect")!.getAttribute("x")) + Number(plot.querySelector("g[data-period] rect")!.getAttribute("width")));
   });
 });

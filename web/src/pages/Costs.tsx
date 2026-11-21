@@ -442,7 +442,7 @@ export default function Costs({ me }: { me?: Principal }) {
           />
         </div>
         {metric === "cost" ? (
-          <CostExplorer data={cells.data} billed={billed.data} readings={readings.data ?? []} canSetPlan={canSetPlan(me?.Role ?? "")} selected={selected} bucket={bucket} fmtPeriod={fmtPeriod}
+          <CostExplorer data={cells.data} billed={billed.data} readings={readings.data ?? []} canSetPlan={canSetPlan(me?.Role ?? "")} selected={selected} bucket={bucket} scrollKey={`${days}:${bucket}`} fmtPeriod={fmtPeriod}
             outside={included} full={fullPrices} onFull={setFullPrices} />
         ) : (
           <TokenExplorer data={cells.data} selected={selected} fmtPeriod={fmtPeriod} outside={included} />
