@@ -6,6 +6,7 @@ import { answersSeat, type AnswerCovers } from "./costAnswerModel";
 import { api, type BilledReport, type CellAgent, type CostCell, type CostCells, type ExternalSource, type ExternalUsage, type UsageReading } from "../api";
 import { fmtBucket, fmtClockUTC, fmtCount, fmtCountAxis, fmtNumber, fmtUSD, fmtUSDAxis, fmtUSDBelow, fmtUSDFixed } from "../format";
 import { SOURCES, SOURCE_COLOR, SPLIT_COLOR, SPLIT_HATCH, sourceHint, sourceLabel, type Source } from "./costSources";
+import { asBool, asEnum, asSet, useParamState } from "./costView";
 
 export { SOURCE_COLOR };
 
@@ -73,8 +74,11 @@ import {
 
 export type Split = "type" | "none";
 type Layout = "combined" | "agents";
+const LAYOUT = asEnum<Layout>(["combined", "agents"]);
 /** "amounts": every source's bar; "vs": the list bar and the real bar of each period side by side. */
 type View = "amounts" | "vs";
+const VIEW = asEnum<View>(["amounts", "vs"]);
+const NO_HIDDEN: ReadonlySet<string> = new Set();
 
 /** Cost types: one blue family from light (cheap, plentiful) to dark (dear).
  *  Shared with the cost-types card and the token chart. */
@@ -1785,12 +1789,18 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
   const [ownFull, setOwnFull] = useState(false);
   const full = fullProp ?? ownFull;
   const setFull = onFull ?? setOwnFull;
-  const [layout, setLayout] = useState<Layout>("combined");
-  const [view, setView] = useState<View>("amounts");
+  // The chart's presentation lives in the address too (cost home PR 2), so a shared link shows the same chart.
+  const [layout, setLayout] = useParamState<Layout>("layout", "combined", LAYOUT.parse, LAYOUT.show);
+  const [view, setView] = useParamState<View>("view", "amounts", VIEW.parse, VIEW.show);
   const [split, setSplit] = useState<Split>("none");
   const [sharedScale, setSharedScale] = useState(true);
-  const [asTable, setAsTable] = useState(false);
-  const [src, setSrc] = useState<Record<Source, boolean>>({ reported: true, recomputed: true, real: true, billed: true });
+  const [asTable, setAsTable] = useParamState("table", false, asBool.parse, asBool.show);
+  const [hiddenSrc, setHiddenSrc] = useParamState<ReadonlySet<string>>("hide", NO_HIDDEN, asSet.parse, asSet.show);
+  const src = useMemo<Record<Source, boolean>>(() => ({ reported: !hiddenSrc.has("reported"), recomputed: !hiddenSrc.has("recomputed"),
+    real: !hiddenSrc.has("real"), billed: !hiddenSrc.has("billed") }), [hiddenSrc]);
+  const setSrc = (f: (v: Record<Source, boolean>) => Record<Source, boolean>) =>
+    setHiddenSrc((h) => { const cur = { reported: !h.has("reported"), recomputed: !h.has("recomputed"), real: !h.has("real"), billed: !h.has("billed") };
+      const n = f(cur); return new Set((Object.keys(n) as Source[]).filter((k) => !n[k])); });
   const [types, setTypes] = useState<Set<string>>(new Set(COST_TYPES));
 
   const figures = useMemo(() => (data ? credentialFigures({
@@ -2012,7 +2022,7 @@ export function TokenExplorer({ data, selected, fmtPeriod, outside = null }: {
   outside?: ExternalUsage | null;
 }) {
   const { t } = useTranslation();
-  const [asTable, setAsTable] = useState(false);
+  const [asTable, setAsTable] = useParamState("ttable", false, asBool.parse, asBool.show);
   const { periods, groups } = useMemo(() => {
     const by = new Map<number, { p: string; tok: Record<string, number>; out: Record<string, number> | null }>();
     for (const c of data?.cells ?? []) {
