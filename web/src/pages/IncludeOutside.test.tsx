@@ -7,6 +7,7 @@ import type { CostCells, ExternalMeterStep, ExternalMeterSums, ExternalMeterTota
 import i18n from "../i18n";
 import { fmtBucket, fmtCount, fmtNumber, fmtUSD } from "../format";
 import { mockFetch, renderWithProviders, openDentRow } from "../test/render";
+import { CostAnswer } from "./CostAnswer";
 import { credentialFigures, everythingOnMeter, headline, inRange, meterSlack, seatLists, subscriptionDent } from "./costFigures";
 import { answerTable } from "./costAnswerModel";
 import { hostsBehind, listedSources, outsideKpis, outsideModelRows, sourceRealPerPeriod, sourcesWithoutSeat } from "./outsideFigures";
@@ -1093,8 +1094,7 @@ describe("the answer table, review round 2 (#204)", () => {
     serve(data);
     await answerReady();
     expect(answerRow(`project:${GHOST}`)!.querySelector("[data-answer-partly]")).toBeNull();
-    // Its figure, and how much of its work lies within the readings ($1 of its $2): the share covers that part only.
-    expect(rowReal(`project:${GHOST}`)).toBe(`≈ ${fmtUSD(0.5 * PP)}${t("costs.answer.meteredOf", { usd: fmtUSD(1) })}`);
+    expect(rowReal(`project:${GHOST}`)).toBe(`≈ ${fmtUSD(0.5 * PP)}`);
   });
 
   it("12: the multiple is the figure above the Difference row over the Total's real cost, and the sentence names it", async () => {
@@ -1303,7 +1303,7 @@ describe("the answer table, re-review (#204)", () => {
     await answerReady();
     const cell = answerRow("project:projects-early")!.querySelector("[data-answer-real]")!;
     expect(cell.querySelector("[data-answer-before-meter]")!.textContent).toBe(t("costs.answer.beforeMeter"));
-    expect(cell.textContent).toContain(t("costs.answer.beforeMeterWhy", { date: fmtBucket("2026-11-17T17:40:00Z", "day") }));
+    expect(cell.textContent).toContain(t("costs.answer.beforeMeterWhy", { date: fmtBucket("2026-11-17T17:40:00Z", "hour") }));
     expect(cell.textContent).not.toContain("$0.00");
     // Its token price still counts in the Total: it is work at token prices, with no meter data to share.
     expect(rowList("project:projects-early")).toContain(fmtUSD(5));
@@ -1316,21 +1316,37 @@ describe("the answer table, re-review (#204)", () => {
     expect(tableOf(data).rows.find((r) => r.source === "projects-early")!.beforeMeter).toBeNull();
   });
 
-  it("says how much of a row's token price lies within the readings where that is less than all of it", async () => {
-    const data = cells();
-    // The operator: $3 of its $3 list price lies within the readings (all of it), so no line at the lead's $2.50 either.
-    const op = tableOf(data).rows.find((r) => r.kind === "operator")!;
-    expect(op.meteredList).toBeCloseTo(op.list!, 9);
-    // Move half of the operator's list outside the readings: $3 within of $6 → half of its lead figure.
+  it("a row none of whose work lies in a split reading says it is not assigned yet, never ≈ $0.00", async () => {
+    // Calls on both sides of the readings and none inside them: neither before the meter nor pending, and no part.
+    const data = withProjects(cells(), [{ source: "projects-gap", list: 4 }]);
     const e = data.external!;
-    e.sources = e.sources.map((s) => (s.source === OP ? { ...s, list_usd: 6 } : s));
-    const half = tableOf(data).rows.find((r) => r.kind === "operator")!;
-    expect(half.meteredList).toBeCloseTo(half.list! / 2, 9);
+    e.sources = e.sources.map((s) => (s.source === "projects-gap" ? { ...s, first_at: "2026-11-17T10:00:00Z", last_at: "2026-11-17T21:00:00Z" } : s));
+    const row = tableOf(data).rows.find((r) => r.source === "projects-gap")!;
+    expect(row.beforeMeter).toBeNull();
+    expect(row.pending).toBe(false);
+    expect(row.real).toBeNull();
+    expect(row.notSplit).toBe(true);
     serve(data);
     await answerReady();
-    expect(answerRow("operator")!.querySelector("[data-answer-metered]")!.textContent).toBe(t("costs.answer.meteredOf", { usd: fmtUSD(half.list! / 2) }));
-    // covey's own row: no line (its split list and its token price are on different bases).
-    expect(answerRow("covey")!.querySelector("[data-answer-metered]")).toBeNull();
+    expect(rowReal("project:projects-gap")).toContain(t("costs.answer.notSplit"));
+    expect(rowReal("project:projects-gap")).not.toContain("$0.00");
+    // A row with work in a split reading keeps its figure, however small.
+    expect(rowReal(`project:${SY}`)).toMatch(/^≈ \$/);
+  });
+
+  it("hides the reconciliation line while a source is switched off: its parts would not add up to the rows shown", () => {
+    const data = cells();
+    const h = headline(data)!;
+    const a = answerTable(h, subscriptionDent(data.external)!, data.external!, data.meter ?? [], new Set([SY]));
+    renderWithProviders(<CostAnswer a={a} h={h} filtered={false} />);
+    expect(document.querySelector("[data-answer-hero]")).not.toBeNull();
+    expect(document.querySelector("[data-answer-recon]")).toBeNull();
+    cleanup();
+    const all = tableOf(data);
+    renderWithProviders(<CostAnswer a={all} h={h} filtered={false} />);
+    expect(document.querySelector("[data-answer-recon]")).not.toBeNull();
+    // The operators are not read out; each figure keeps its label.
+    for (const op of document.querySelectorAll(".cost-answer-hero-op")) expect(op.getAttribute("aria-hidden")).toBe("true");
   });
 
   it("each row's 'where it comes from' is in the column and, for phones, under the part, the same text", async () => {

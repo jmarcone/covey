@@ -37,10 +37,6 @@ export type AnswerRow = {
    *  so it has no real share at all (not 0, not pending). The first reading's time; null otherwise. Shown as "before the
    *  first reading", never as ≈ $0.00 (cost home proposal, PR 1: the auction and ghostrobot rows read ≈ $0.00). */
   beforeMeter: string | null;
-  /** Its work at token prices (on `list`'s basis) that lies within the meter's readings, where the row has a real share:
-   *  `list` × the source's share of its own list price within the split readings. null where not known (covey's row:
-   *  its split list and its range list are on different bases). Less than `list` by the work outside the readings. */
-  meteredList: number | null;
   /** kind "small": the sources folded into the row, each under SMALL_USD at token prices. */
   folded: string[];
 };
@@ -123,7 +119,7 @@ export function answerTable(h: Headline, d: SubscriptionDent, ext: ExternalUsage
   const real = (xs: typeof shown) => (priced && sourceState(xs.map((s) => s.source)) !== "none" ? xs.reduce((a, s) => a + (parts.get(s.source) ?? 0), 0) : null);
   const row = (r: Pick<AnswerRow, "key" | "kind"> & Partial<AnswerRow>): AnswerRow => ({
     source: null, list: null, recomputed: false, unpricedTokens: 0, before: false, real: null, notSplit: false, partlySplit: false,
-    pending: false, beforeMeter: null, meteredList: null, folded: [], ...r,
+    pending: false, beforeMeter: null, folded: [], ...r,
   });
   // A row whose every call came after the meter's last reading has no share yet: it is pending, not 0 (its real cost
   // follows at the next reading). Decided from the calls' times, never from a part of 0: a part can be 0 for other
@@ -161,24 +157,18 @@ export function answerTable(h: Headline, d: SubscriptionDent, ext: ExternalUsage
     const first = Math.min(...xs.map((s) => firstReadingOf(s.source)));
     return { ...r, real: null, notSplit: false, partlySplit: false, beforeMeter: new Date(first).toISOString() };
   };
-  // The list each source has within the split readings (the server's source_parts).
+  // The list each source has within the split readings (the server's source_parts). A row none of whose work lies in a
+  // split reading has no share yet (its work is before, after or between readings, or in a reading not split so far):
+  // "not assigned yet", never ≈ $0.00. This also covers work on both sides of the readings and none inside them.
   const partList = new Map<string, number>();
   for (const p of m.source_parts ?? m.credentials.flatMap((c) => c.source_parts ?? [])) partList.set(p.source, (partList.get(p.source) ?? 0) + p.list_usd);
-  // source_parts carry the list price (recomputed from tokens); the row shows the lead price (reported where a call has it).
-  // Never compare the two: take the metered share of the source's own list price and apply it to its lead figure.
-  const listBasis = new Map(ext.sources.map((x) => [x.source, x.list_usd]));
-  const meteredOf = (xs: typeof shown) => {
-    let sum = 0;
-    for (const s of xs) {
-      const part = partList.get(s.source), all = listBasis.get(s.source);
-      if (part == null || all == null || !(all > 0) || s.list == null) return null;
-      sum += s.list * Math.min(1, part / all);
-    }
-    return xs.length > 0 ? sum : null;
-  };
+  const noSplitWork = (r: AnswerRow, xs: typeof shown): AnswerRow =>
+    priced && r.real != null && r.real < 0.005 && xs.length > 0 && xs.every((s) => !((partList.get(s.source) ?? 0) > 0)) &&
+      ((r.list ?? 0) >= 0.005 || r.unpricedTokens > 0)
+      ? { ...r, real: null, notSplit: true, partlySplit: false } : r;
   const finish = (r: AnswerRow, xs: typeof shown): AnswerRow => {
     const out = withBefore(withPending(r, xs), xs);
-    return out.real != null ? { ...out, meteredList: meteredOf(xs) } : out;
+    return out.pending || out.beforeMeter ? out : noSplitWork(out, xs);
   };
   const sourcePending = (s: (typeof shown)[number]) => {
     const f = firstAt.get(s.source), last = lastReadingOf(s.source);

@@ -56,12 +56,9 @@ function realCell(t: TFunction, r: AnswerRow): ReactNode {
     <div className="muted text-xs" style={sub}>{t("costs.answer.pendingWhy")}</div></>;
   // All of its work came before the meter's first reading: no meter data for that time, so no figure, and never ≈ $0.00.
   if (r.beforeMeter) return <><span className="muted" data-answer-before-meter>{t("costs.answer.beforeMeter")}</span>
-    <div className="muted text-xs" style={sub}>{t("costs.answer.beforeMeterWhy", { date: fmtBucket(r.beforeMeter, "day") })}</div></>;
-  // The share covers only the work within the readings: where that is less than the row's token price, say how much.
-  const metered = r.real != null && r.list != null && r.meteredList != null && r.list - r.meteredList >= 0.01 ? r.meteredList : null;
+    <div className="muted text-xs" style={sub}>{t("costs.answer.beforeMeterWhy", { date: fmtBucket(r.beforeMeter, "hour") })}</div></>;
   return <>
     {r.real != null ? `≈ ${fmtUSD(r.real)}` : "–"}
-    {metered != null && <div className="muted text-xs" style={sub} data-answer-metered>{t("costs.answer.meteredOf", { usd: fmtUSD(metered) })}</div>}
     {r.notSplit && <div className="muted text-xs" style={{ fontWeight: 400, whiteSpace: "normal" }}>{t("costs.answer.notSplit")}</div>}
     {r.partlySplit && <div className="muted text-xs" style={{ fontWeight: 400, whiteSpace: "normal" }} data-answer-partly>{t("costs.answer.partlyNotSplit")}</div>}
   </>;
@@ -148,17 +145,21 @@ export function CostAnswer({ a, h, filtered, drawer, elsewhere: elsewhereUsd }: 
           <div className="muted cost-answer-hero-label">{t(a.multiple != null ? "costs.answer.heroMetered" : "costs.answer.heroList")}</div>
           <div className="cost-answer-hero-figure" data-hero-list>{fmtUSD(a.multiple != null ? a.metered : a.list)}</div>
         </div>
-        {a.multiple != null && <div className="cost-answer-hero-op" aria-hidden="true">÷</div>}
         <div>
           <div className="muted cost-answer-hero-label">{t("costs.answer.heroCapacity")}</div>
-          <div className="cost-answer-hero-figure cost-answer-hero-capacity" data-hero-real>{a.real != null ? `≈ ${fmtUSD(a.real)}` : "–"}</div>
+          <div className="cost-answer-hero-figure cost-answer-hero-capacity">
+            {a.multiple != null && <span className="cost-answer-hero-op" aria-hidden="true">÷ </span>}
+            <span data-hero-real>{a.real != null ? `≈ ${fmtUSD(a.real)}` : "–"}</span>
+          </div>
           {a.real != null && a.points != null && <div className="muted cost-answer-hero-sub">{t("costs.answer.heroPoints", { pts: pts(a.points) })}</div>}
         </div>
-        {a.multiple != null && <div className="cost-answer-hero-op" aria-hidden="true">=</div>}
         {a.multiple != null && (
           <div>
             <div className="muted cost-answer-hero-label">{t("costs.answer.heroMultiple")}</div>
-            <div className="cost-answer-hero-figure" data-hero-multiple>≈ {times(a.multiple)}</div>
+            <div className="cost-answer-hero-figure">
+              <span className="cost-answer-hero-op" aria-hidden="true">= </span>
+              <span data-hero-multiple>≈ {times(a.multiple)}</span>
+            </div>
             {a.floor != null && <div className="muted cost-answer-hero-sub">{t("costs.answer.floor", { floor: times(a.floor) })}</div>}
           </div>
         )}
