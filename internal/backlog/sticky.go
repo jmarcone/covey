@@ -266,9 +266,12 @@ type StickyState struct {
 	Memory     string
 	Basis      string
 	RoutedWake bool
-	PausedAt   *time.Time
-	Context    int64
-	Credential string
+	// WakeDropped: a routed wake was refused and the task let go of its
+	// session; it starts fresh on every dispatch from then on.
+	WakeDropped bool
+	PausedAt    *time.Time
+	Context     int64
+	Credential  string
 }
 
 // StickyState reads it.
@@ -277,11 +280,11 @@ func (s *Store) StickyState(ctx context.Context, id uuid.UUID) (StickyState, err
 	// The pause falls back to when the task last parked: a task parked
 	// before its pause was recorded is not taken for one that just parked.
 	err := s.pool.QueryRow(ctx, `SELECT COALESCE(sticky_policy,''), session_prompt, COALESCE(session_memory,''),
-			COALESCE(session_basis,''), routed_wake,
+			COALESCE(session_basis,''), routed_wake, wake_dropped,
 			COALESCE(session_finished_at, (SELECT max(created_at) FROM task_transitions
 				WHERE task_id=backlog_tasks.id AND to_state='blocked')),
 			COALESCE(session_context_tokens,0), COALESCE(session_credential,'')
-		FROM backlog_tasks WHERE id=$1`, id).Scan(&st.Policy, &st.Prompt, &st.Memory, &st.Basis, &st.RoutedWake,
+		FROM backlog_tasks WHERE id=$1`, id).Scan(&st.Policy, &st.Prompt, &st.Memory, &st.Basis, &st.RoutedWake, &st.WakeDropped,
 		&st.PausedAt, &st.Context, &st.Credential)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return st, ErrNotFound
@@ -318,6 +321,6 @@ func (s *Store) ChainRoot(ctx context.Context, id uuid.UUID) (uuid.UUID, error) 
 // instead of resuming the refused session. note is the text to append.
 func (s *Store) DropSessionForFreshStart(ctx context.Context, id uuid.UUID, note string) error {
 	_, err := s.pool.Exec(ctx, `UPDATE backlog_tasks SET runtime_session_id=NULL, resume_input=NULL,
-		routed_wake=false, body=body || $2 WHERE id=$1`, id, note)
+		routed_wake=false, wake_dropped=true, body=body || $2 WHERE id=$1`, id, note)
 	return err
 }

@@ -591,7 +591,7 @@ func TestStickyDefaults(t *testing.T) {
 		}
 	}
 	for version() >= 154 {
-		retry("migrate down", func() error { return db.MigrateDown(ctx, s.pool, migrations.FS) })
+		retry("migrate down", func() error { return s.migrateDown(ctx) })
 	}
 	want := map[string]string{"covey-dev": "conditional", "covey-frontend": "conditional",
 		"covey-reviewer": "fresh", "covey-lead": "fresh"}
@@ -604,7 +604,7 @@ func TestStickyDefaults(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	retry("migrate up", func() error { _, err := db.MigrateUp(ctx, s.pool, migrations.FS); return err })
+	retry("migrate up", func() error { _, err := s.migrateUp(ctx); return err })
 	for slug, w := range want {
 		var p string
 		var win int
@@ -991,5 +991,76 @@ func TestStickyRoutedWakeIsChecked(t *testing.T) {
 	var wake bool
 	if err := s.pool.QueryRow(ctx, `SELECT routed_wake FROM backlog_tasks WHERE id=$1`, outside.ID).Scan(&wake); err != nil || wake {
 		t.Fatalf("the routed wake is consumed: %v %v", wake, err)
+	}
+}
+
+// migrateDown and migrateUp move the schema while the stack's dispatch keeps
+// running against it. A migration that alters two tables (0154: agents and
+// backlog_tasks) can deadlock with a dispatch query holding one of them;
+// Postgres aborts one side, and the step is retried. In production the
+// migrations run before the dispatch starts.
+func (s *stack) migrateDown(ctx context.Context) error {
+	return retryDeadlock(func() error { return db.MigrateDown(ctx, s.pool, migrations.FS) })
+}
+
+func (s *stack) migrateUp(ctx context.Context) (int, error) {
+	var n int
+	err := retryDeadlock(func() error {
+		var err error
+		n, err = db.MigrateUp(ctx, s.pool, migrations.FS)
+		return err
+	})
+	return n, err
+}
+
+func retryDeadlock(step func() error) error {
+	var err error
+	for range 8 {
+		if err = step(); err == nil || !strings.Contains(err.Error(), "40P01") {
+			return err
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	return err
+}
+
+// A task that let go of its session on a refused routed wake starts fresh on
+// every later dispatch (a requeue after a lost run): its predecessor's
+// session — the one it had continued and the wake refused — is not taken
+// back through its old claim.
+func TestStickyWakeDroppedStaysFresh(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	dev := s.stickyAgent("dropped-dev", agents.StickyAlways)
+	p, _ := s.runTopic(dev, "Round 1", "pr:example/app#40", "")
+	s.ohneLaeufe(dev.ID)
+	task, err := s.backlog.CreateWithTopic(ctx, s.orgID, dev.ID, "Round 2 (requeued after a refused wake)",
+		"[mock:session]", "manual", 3, "pr:example/app#40")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// As a refused wake leaves it: dropped, and still holding the claim on
+	// round 1's session it had continued.
+	if _, err := s.pool.Exec(ctx, `UPDATE backlog_tasks SET wake_dropped=true, sticky_policy='always' WHERE id=$1`, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE backlog_tasks SET session_successor=$2 WHERE id=$1`, p.ID, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE agents SET hired_at = now() WHERE id = $1`, dev.ID); err != nil {
+		t.Fatal(err)
+	}
+	s.orch.EnsureRunning(dev.ID)
+	waitFor(t, "requeued round done", 30*time.Second, func() bool { return s.taskState(task.ID) == backlog.StateDone })
+	got, _ := s.backlog.Get(ctx, task.ID)
+	var v sessionView
+	if err := json.Unmarshal([]byte(*got.Result), &v); err != nil {
+		t.Fatalf("result %q", *got.Result)
+	}
+	if v.Resume != "" {
+		t.Fatalf("a dropped task must not take a session back, resumed %q", v.Resume)
+	}
+	if d, r := s.decision(task.ID); d != backlog.DecisionFresh || r != "wake" {
+		t.Fatalf("decision %s/%s", d, r)
 	}
 }

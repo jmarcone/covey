@@ -168,10 +168,14 @@ func (o *Orchestrator) planSticky(ctx context.Context, agent agents.Agent, task 
 				self.FinishedAt = *state.PausedAt
 			}
 			policy := effectiveStickyPolicy(agent.StickyPolicy, topic)
+			recorded := policy
+			if state.Policy != "" {
+				recorded = state.Policy // the task's A/B arm is the one it was dispatched in
+			}
 			if reason := stickyVerdict(policy, true, self, now, agent.StickyWindowMinutes, agent.StickyContextCap,
 				credentialKey(s), basis); reason != "" {
 				plan.wake = "fresh:" + reason
-				plan.decision = backlog.StickyDecision{Decision: backlog.DecisionFresh, Reason: reason, Policy: policy}
+				plan.decision = backlog.StickyDecision{Decision: backlog.DecisionFresh, Reason: reason, Policy: recorded}
 				plan.dropResume = true
 				plan.wokenBy = *task.ResumeInput
 				plan.record = &sessionPrompt{compiled, memCtx, basis}
@@ -202,6 +206,22 @@ func (o *Orchestrator) planSticky(ctx context.Context, agent agents.Agent, task 
 	if err != nil {
 		o.Log.Warn("sticky: previous task on the topic not readable — starting fresh", "task", task.ID, "err", err)
 		found = false
+	}
+	if state.WakeDropped {
+		// Dispatched again after a routed wake was refused (a requeue): it
+		// stays fresh. Its predecessor's session may be the very one that
+		// was refused — this task had continued it — and its claim on it
+		// would let it take that session back.
+		plan.decision.Decision = backlog.DecisionFresh
+		plan.decision.Reason = "wake"
+		if policy != agents.StickyFresh {
+			plan.workDirKey = topicWorkDir(agent.ID, topic)
+			plan.record = &sessionPrompt{compiled, memCtx, basis}
+			if found {
+				plan.handover = o.stickyHandover(ctx, agent, topic, pred)
+			}
+		}
+		return plan
 	}
 	fresh := func(reason string) stickyPlan {
 		plan.decision.Decision = backlog.DecisionFresh
@@ -356,22 +376,30 @@ func (o *Orchestrator) applyStickyPlan(ctx context.Context, agent agents.Agent, 
 		fields := map[string]string{"status": "sticky_wake", "wake": "routed", "outcome": plan.wake}
 		_ = o.Obs.Record(ctx, agent.OrgID, agent.ID, &taskID, observability.KindLifecycle, fields)
 	}
+	keepPrompt := false
 	if plan.dropResume {
 		// One write, before the run: a dispatch after a lost run must
 		// start fresh again, not resume the session the checks refused.
 		if err := o.Backlog.DropSessionForFreshStart(ctx, taskID, wokenByBody(plan.wokenBy)); err != nil {
 			o.Log.Warn("sticky: refused session not dropped", "task", taskID, "err", err)
+			// The refused session is still on the task: its prompt stays
+			// as it was, neither replaced (a later resume of it would pass
+			// the prompt check under instructions it never ran with) nor
+			// cleared (its resume would look for it in the wrong place).
+			keepPrompt = true
 		}
 	} else if plan.clearWake {
 		if err := o.Backlog.ClearRoutedWake(ctx, taskID); err != nil {
 			o.Log.Warn("sticky: routed wake not cleared", "task", taskID, "err", err)
 		}
 	}
-	if plan.record != nil {
+	switch {
+	case keepPrompt:
+	case plan.record != nil:
 		if err := o.Backlog.SetSessionPrompt(ctx, taskID, plan.record.prompt, plan.record.memory, plan.record.basis); err != nil {
 			o.Log.Warn("sticky: session prompt not recorded", "task", taskID, "err", err)
 		}
-	} else if plan.decision.Decision != "" {
+	case plan.decision.Decision != "":
 		if err := o.Backlog.ClearSessionPrompt(ctx, taskID); err != nil {
 			o.Log.Warn("sticky: stale session prompt not cleared", "task", taskID, "err", err)
 		}
@@ -579,5 +607,8 @@ func (o *Orchestrator) postedReview(ctx context.Context, orgID uuid.UUID, repo, 
 // wokenByBody is what a routed wake's fresh start adds to the task's body:
 // the note that woke it.
 func wokenByBody(note string) string {
+	if strings.TrimSpace(note) == "" {
+		return ""
+	}
 	return "\n\n## What woke this task\n\n" + note
 }

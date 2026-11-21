@@ -12,9 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"covey/internal/backlog"
-	"covey/internal/db"
 	"covey/internal/observability"
-	"covey/migrations"
 )
 
 // gapFigures is what the gap rows and entries of one agent hold.
@@ -250,7 +248,7 @@ func TestMigration0147CostGap(t *testing.T) {
 	down := func() {
 		t.Helper()
 		for version() > 146 {
-			if err := db.MigrateDown(ctx, s.pool, migrations.FS); err != nil {
+			if err := s.migrateDown(ctx); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -282,7 +280,7 @@ func TestMigration0147CostGap(t *testing.T) {
 		t.Fatalf("fixture: before 0147 nothing knows the gap: %+v", g)
 	}
 
-	if _, err := db.MigrateUp(ctx, s.pool, migrations.FS); err != nil {
+	if _, err := s.migrateUp(ctx); err != nil {
 		t.Fatal(err)
 	}
 	g := readGap(t, s, agent.ID)
@@ -303,7 +301,7 @@ func TestMigration0147CostGap(t *testing.T) {
 	if g := readGap(t, s, agent.ID); g.rows != 0 || g.entries != 0 || math.Abs(g.booked-0.964362) > 1e-6 {
 		t.Errorf("down has to take the gaps away again: %+v", g)
 	}
-	if _, err := db.MigrateUp(ctx, s.pool, migrations.FS); err != nil {
+	if _, err := s.migrateUp(ctx); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -14,8 +14,6 @@ import (
 
 	"covey/internal/agents"
 	"covey/internal/backlog"
-	"covey/internal/db"
-	"covey/migrations"
 )
 
 // The three default columns are found by key (open, in_progress, done), not by
@@ -394,7 +392,7 @@ func TestStageKeyMigration(t *testing.T) {
 	belowStageKeys := func() {
 		t.Helper()
 		for version() >= 148 {
-			if err := db.MigrateDown(ctx, s.pool, migrations.FS); err != nil {
+			if err := s.migrateDown(ctx); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -468,7 +466,7 @@ func TestStageKeyMigration(t *testing.T) {
 	exec(`UPDATE agent_stages s SET created_at = a.created_at + interval '3 days'
 		FROM agents a WHERE a.id = s.agent_id AND s.id = $1`, gDone)
 
-	if n, err := db.MigrateUp(ctx, s.pool, migrations.FS); err != nil || n < 1 || version() < 148 {
+	if n, err := s.migrateUp(ctx); err != nil || n < 1 || version() < 148 {
 		t.Fatalf("migrate up: %d applied, %v", n, err)
 	}
 
@@ -691,7 +689,7 @@ func TestStageKeyMigration(t *testing.T) {
 	}
 
 	// Leave the database as the stack expects it.
-	if _, err := db.MigrateUp(ctx, s.pool, migrations.FS); err != nil {
+	if _, err := s.migrateUp(ctx); err != nil {
 		t.Fatal(err)
 	}
 }

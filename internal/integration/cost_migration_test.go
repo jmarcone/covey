@@ -11,7 +11,6 @@ import (
 	"github.com/google/uuid"
 
 	"covey/internal/daemon"
-	"covey/internal/db"
 	"covey/migrations"
 )
 
@@ -39,7 +38,7 @@ func TestMigration0144CostDeltas(t *testing.T) {
 		return v
 	}
 	for version() > 143 {
-		if err := db.MigrateDown(ctx, s.pool, migrations.FS); err != nil {
+		if err := s.migrateDown(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -132,7 +131,7 @@ func TestMigration0144CostDeltas(t *testing.T) {
 	}
 
 	// Up.
-	if _, err := db.MigrateUp(ctx, s.pool, migrations.FS); err != nil {
+	if _, err := s.migrateUp(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -198,7 +197,7 @@ func TestMigration0144CostDeltas(t *testing.T) {
 	// Down: everything as it was. Up applied what came after 0144 too; down
 	// goes back past all of it.
 	for version() > 143 {
-		if err := db.MigrateDown(ctx, s.pool, migrations.FS); err != nil {
+		if err := s.migrateDown(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -209,7 +208,7 @@ func TestMigration0144CostDeltas(t *testing.T) {
 	if ceAfter != ceBefore {
 		t.Errorf("cost_entries after down differ:\n%s", diffLines(ceBefore, ceAfter))
 	}
-	if _, err := db.MigrateUp(ctx, s.pool, migrations.FS); err != nil {
+	if _, err := s.migrateUp(ctx); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -235,7 +234,7 @@ func TestMigration0145MeterReadings(t *testing.T) {
 		return v
 	}
 	for version() > 144 {
-		if err := db.MigrateDown(ctx, s.pool, migrations.FS); err != nil {
+		if err := s.migrateDown(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -284,7 +283,7 @@ func TestMigration0145MeterReadings(t *testing.T) {
 	}
 	before := snapshot()
 
-	if _, err := db.MigrateUp(ctx, s.pool, migrations.FS); err != nil {
+	if _, err := s.migrateUp(ctx); err != nil {
 		t.Fatal(err)
 	}
 	count := func() (all, inband int) {
@@ -341,7 +340,7 @@ func TestMigration0145MeterReadings(t *testing.T) {
 
 	// Down: the readings as they were, the plans kept.
 	for version() > 144 {
-		if err := db.MigrateDown(ctx, s.pool, migrations.FS); err != nil {
+		if err := s.migrateDown(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -362,7 +361,7 @@ func TestMigration0145MeterReadings(t *testing.T) {
 	if aside0145 {
 		t.Error("usage_readings_0145_duplicates survived the down migration")
 	}
-	if _, err := db.MigrateUp(ctx, s.pool, migrations.FS); err != nil {
+	if _, err := s.migrateUp(ctx); err != nil {
 		t.Fatal(err)
 	}
 	plans("after up again")
@@ -417,14 +416,14 @@ func TestMigration0151CostBasisKeepsRows(t *testing.T) {
 	}
 
 	for version() > 150 {
-		if err := db.MigrateDown(ctx, s.pool, migrations.FS); err != nil {
+		if err := s.migrateDown(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if after := snapshot(); after != before {
 		t.Errorf("after the down migration:\n%s", diffLines(before, after))
 	}
-	if _, err := db.MigrateUp(ctx, s.pool, migrations.FS); err != nil {
+	if _, err := s.migrateUp(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if version() < 151 {

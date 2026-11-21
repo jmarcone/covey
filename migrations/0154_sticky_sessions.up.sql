@@ -33,7 +33,11 @@ ALTER TABLE backlog_tasks
     -- Set when a note routed onto the task (#45) woke it from blocked: its
     -- resume then goes through the same checks a new round's would (window,
     -- cap, credential, prompt) before it continues its session.
-    ADD COLUMN routed_wake BOOLEAN NOT NULL DEFAULT false;
+    ADD COLUMN routed_wake BOOLEAN NOT NULL DEFAULT false,
+    -- Set when such a wake was refused and the task let go of its session:
+    -- every later dispatch of the task starts fresh as well, so a requeue
+    -- can never take the refused session back, its predecessor's included.
+    ADD COLUMN wake_dropped BOOLEAN NOT NULL DEFAULT false;
 
 -- (3) The dispatch decision, recorded on the task it was made for:
 -- sticky_resumed, fresh (with its reason) or sticky_pending (asked the daemon
