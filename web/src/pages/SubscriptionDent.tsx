@@ -135,12 +135,6 @@ function HeadlineSentence({ h }: { h: Headline }) {
           {t("costs.dent.head.unmetered", { list: fmtUSD(h.list), metered: fmtUSD(h.metered), parts: outsideParts.join("; ") })}
         </p>
       )}
-      {/* Per-use sessions are on no meter: in the tiles, not in this sum (M6). */}
-      {h.perUse && h.perUse.calls > 0 && (
-        <p className="muted text-xs mb-1" data-head-per-use>
-          {t("costs.dent.head.perUse", { list: outsideMoney(t, h.perUse, "lead") })}
-        </p>
-      )}
       {check && <p className="muted text-xs mb-1" data-price-check>{check}</p>}
       {h.sources.length > 0 && (
         <ul className="muted text-xs mb-1" aria-label={t("costs.dent.head.sourcesTitle")} data-head-sources style={{ paddingLeft: 16 }}>

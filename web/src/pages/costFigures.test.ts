@@ -7,6 +7,7 @@ import {
   billedStatus,
   billedWholeDays,
   bucketStart,
+  coveyElsewhere,
   credentialFigures,
   isSeat,
   meterCrossings,
@@ -16,10 +17,12 @@ import {
   multipleOf,
   perCredentialTotals,
   periodMultiple,
+  pickMeter,
   pricePerPoint,
   realCost,
   realFromWeeks,
   type CredentialFigures,
+  type PayPerTokenHeadline,
 } from "./costFigures";
 
 // The figures the Costs page shows are argued with, so every rule that turns
@@ -175,6 +178,34 @@ describe("the meter and the multiple", () => {
     expect(reset).toEqual(multipleOf(8, { value: 4 * PP, low: 2 * PP, high: 6 * PP, points: 4 }));
     // points without a plan price: no figure
     expect(periodMultiple(8, [step(P, 4, { usd: 2 * PP, unpriced_points: 2 })])).toBeNull();
+  });
+});
+
+// #165, finding 31: pickMeter is the rule of pickCoverage
+// (internal/observability/external.go): the source with the most readings,
+// usage_cmd before manual before inband on a tie, whatever the order. The
+// cases are the ones of TestPickCoverageTieBreak.
+describe("pickMeter", () => {
+  const cov = (source: string, readings: number, over: Partial<MeterCoverage> = {}) =>
+    coverage({ source, readings, ...over });
+  const permutations = <T,>(xs: T[]): T[][] =>
+    xs.length <= 1 ? [xs] : xs.flatMap((x, i) => permutations([...xs.slice(0, i), ...xs.slice(i + 1)]).map((r) => [x, ...r]));
+  const cases: [string, MeterCoverage[], string][] = [
+    ["usage_cmd over inband on equal readings", [cov("inband", 8), cov("usage_cmd", 8)], "usage_cmd"],
+    ["manual over inband on equal readings", [cov("inband", 8), cov("manual", 8)], "manual"],
+    ["usage_cmd over manual on equal readings", [cov("manual", 8), cov("usage_cmd", 8)], "usage_cmd"],
+    ["all three tied", [cov("inband", 8), cov("manual", 8), cov("usage_cmd", 8)], "usage_cmd"],
+    ["more readings beat the rank", [cov("usage_cmd", 7), cov("inband", 8)], "inband"],
+    ["an unknown source ranks last", [cov("other", 8), cov("inband", 8)], "inband"],
+  ];
+  it.each(cases)("%s, in every order", (_name, input, want) => {
+    for (const order of permutations(input)) expect(pickMeter(order, SEAT, 0)?.source).toBe(want);
+  });
+  it("takes no coverage of another credential or window", () => {
+    const foreign = [cov("usage_cmd", 99, { secret_key: "another" }), cov("usage_cmd", 99, { secret_slot: 1 }),
+      cov("usage_cmd", 99, { window_kind: "five_hour" })];
+    expect(pickMeter([...foreign, cov("inband", 1)], SEAT, 0)?.source).toBe("inband");
+    expect(pickMeter(foreign, SEAT, 0)).toBeNull();
   });
 });
 
@@ -516,5 +547,29 @@ describe("per credential", () => {
     const seat = figs.find((f) => f.id === `${SEAT}#0`)!;
     expect(seat.multiple).toBeNull();
     expect(seat.noMultiple).toBe("movement");
+  });
+});
+
+describe("coveyElsewhere (#204 re-review)", () => {
+  const cred = (id: string, coveyLead: number) => ({ id, coveyList: coveyLead, coveyLead }) as PayPerTokenHeadline["credentials"][number];
+  it("keeps every credential the pay-per-token row does not show", () => {
+    expect(coveyElsewhere({ "key#0": 3, "seat#0": 2 }, null)).toBe(5);
+    expect(coveyElsewhere({ "key#0": 3 }, { credentials: [cred("other#0", 3)] })).toBe(3);
+  });
+  it("keeps the part of a shown credential outside the row's window, not 0", () => {
+    // covey worked $5 on the key; its bill compares only $3 of it: $2 stays in "not in the table".
+    expect(coveyElsewhere({ "key#0": 5 }, { credentials: [cred("key#0", 3)] })).toBeCloseTo(2, 9);
+  });
+  it("subtracts the row's lead-price figure, not a bill's reported-only one", () => {
+    // $100 on the key, all inside the bill's window: $70 reported, $30 recomputed. The row covers all $100.
+    const bill = { id: "key#0", coveyList: 70, coveyLead: 100 } as PayPerTokenHeadline["credentials"][number];
+    expect(coveyElsewhere({ "key#0": 100 }, { credentials: [bill] })).toBe(0);
+  });
+  it("never goes below 0 where the row shows more than the headline", () => {
+    expect(coveyElsewhere({ "key#0": 2 }, { credentials: [cred("key#0", 3)] })).toBe(0);
+  });
+  it("sums to the headline's coveyElsewhere with no pay-per-token row", () => {
+    const by = { a: 1.25, b: 0.5 };
+    expect(coveyElsewhere(by, undefined)).toBeCloseTo(Object.values(by).reduce((x, y) => x + y, 0), 9);
   });
 });

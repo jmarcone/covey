@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { fireEvent, screen, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import Costs from "./Costs";
 import OutsideCosts from "./OutsideCosts";
 import type {
@@ -261,9 +261,9 @@ describe("the operator sessions on the cost page (#120)", () => {
   it("changes the total only when combined, says so, and leaves the agents' own figure alone", async () => {
     serveCosts();
     await screen.findByRole("group", { name: t("costs.outside.tile") });
-    // the page's lead figure (#120): one list-price tile
-    const agentsKpi = () => screen.getAllByText(t("costs.lead.label"), { exact: true })
-      .map((el) => el.closest(".card")).find((c) => c?.parentElement?.className.includes("gap-3"))!.textContent;
+    // the answer table's covey row (#195): the agents' own figure, one list-price figure
+    await waitFor(() => expect(document.querySelector('[data-answer-row="covey"]')).not.toBeNull());
+    const agentsKpi = () => document.querySelector('[data-answer-row="covey"] [data-answer-list]')!.textContent;
     const before = agentsKpi();
     expect(before).toContain(fmtUSD(7));
     expect(screen.queryByRole("group", { name: t("costs.outside.combinedTotal") })).toBeNull();

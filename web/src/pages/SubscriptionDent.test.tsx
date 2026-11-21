@@ -4,7 +4,7 @@ import Costs from "./Costs";
 import type { CostCells, ExternalMeterAgent, ExternalMeterStep, ExternalMeterSums, ExternalMeterTotal, ExternalUsage } from "../api";
 import i18n from "../i18n";
 import { fmtNumber, fmtUSD } from "../format";
-import { mockFetch, renderWithProviders } from "../test/render";
+import { mockFetch, renderWithProviders, openDentRow } from "../test/render";
 import { credentialFigures, headline, perCredentialTotals, seatLists, splitPerPeriod, subscriptionDent } from "./costFigures";
 import { SubscriptionDentRow } from "./SubscriptionDent";
 
@@ -610,7 +610,7 @@ describe("Costs — the headline", () => {
     const data = cells(EXT());
     const d = subscriptionDent(data.external)!;
     serve(data);
-    const row = await screen.findByRole("region", { name: "The whole dent in the subscription" });
+    const row = await openDentRow();
     const group = (name: string) => within(row).getByRole("group", { name });
     const value = (name: string) => within(group(name)).getByText(/^≈ /).textContent;
     // covey's and the outside part are estimates (F3c): "≈", never "≤"
@@ -645,7 +645,7 @@ describe("Costs — the headline", () => {
     const data = cells(U_EXT(), [9, 21, 12]);
     const d = subscriptionDent(data.external)!;
     serve(data);
-    const row = await screen.findByRole("region", { name: "The whole dent in the subscription" });
+    const row = await openDentRow();
     const group = (name: string) => within(row).getByRole("group", { name });
     expect(within(group("Unattributed")).getByText(/^≈ /).textContent).toBe(`≈ ${fmtUSD(21 * PP)}`);
     // Beyond the rate a lower bound, the chunk with no call an estimate.
@@ -680,7 +680,7 @@ describe("Costs — the headline", () => {
 
   it("says when there is no rate yet, and still books a chunk that moved with no call to nobody (F3c)", async () => {
     serve(cells(U_EXT({ points_per_list_usd: null }), [9, 21, 12]));
-    const row = await screen.findByRole("region", { name: "The whole dent in the subscription" });
+    const row = await openDentRow();
     expect(row.querySelector("[data-dent-rate]")!.textContent).toMatch(
       /^No stretch of adjacent chunks of split readings with every call priced moved the meter 10 points or more, so there is no rate yet to measure unattributed use by/);
     expect(row.querySelector("[data-dent-rate]")!.textContent).not.toMatch(/lower bound/);
@@ -692,7 +692,7 @@ describe("Costs — the headline", () => {
 
   it("names the earlier plan price a seat's rate was measured at (F3c)", async () => {
     serve(cells(U_EXT({ points_per_list_older_plan_usd: 0.23 }), [9, 21, 12]));
-    const row = await screen.findByRole("region", { name: "The whole dent in the subscription" });
+    const row = await openDentRow();
     expect(row.querySelector("[data-dent-rate]")!.textContent).toMatch(new RegExp("^" + escapeRe(
       `1 point ≈ ${fmtUSD(10)} of list price at the earlier plan price of ${fmtUSD(0.23)} a point, ` +
       "the most list price per point seen since the start of the meter week the range begins in; the current plan price has no rate yet.")));
@@ -701,7 +701,7 @@ describe("Costs — the headline", () => {
 
   it("says how many chunks had calls of no list price or bookings without a line (F3c)", async () => {
     serve(cells(U_EXT({ incomplete_chunks: 2 }), [9, 21, 12]));
-    const row = await screen.findByRole("region", { name: "The whole dent in the subscription" });
+    const row = await openDentRow();
     expect(row.querySelector("[data-dent-incomplete]")!.textContent).toBe(
       "Chunks of readings with outside calls of no list price or covey bookings without a line: 2. They set no rate and nothing " +
       "in them counts as unattributed, so their parts are approximate and may hold use that is not theirs.");
@@ -710,7 +710,7 @@ describe("Costs — the headline", () => {
   it("says how many points have no plan price, and shows such a seat as – (finding 23)", async () => {
     const unpriced = seat([], { secret_key: "seat_c", sources: [], step_count: 1, unpriced_steps: 1, unpriced_points: 30, point_rate: 0 });
     serve(cells(external([{ steps: STEPS, total: SEAT_A() }, { steps: [], total: unpriced }])));
-    const row = await screen.findByRole("region", { name: "The whole dent in the subscription" });
+    const row = await openDentRow();
     expect(row.querySelector("[data-dent-unpriced]")!.textContent).toBe("30 points without a plan price are not in the dent.");
     expect(row.querySelector('[data-dent-seat="seat_c #0"]')!.textContent).toMatch(/^seat_c #0: – \(30 points without a plan price\) · no outside source/);
   });
@@ -721,7 +721,7 @@ describe("Costs — the headline", () => {
     expect(d.real).toBeNull();
     expect(d.noMultiple).toBe("usage");
     serve(cells(external([{ steps: [], total: alone }])));
-    const row = await screen.findByRole("region", { name: "The whole dent in the subscription" });
+    const row = await openDentRow();
     const total = row.querySelector("[data-dent=\"total\"]")!;
     expect(total.textContent).toContain(i18n.t("costs.dent.noPricedReadingUsage"));
     expect(total.textContent).not.toContain(i18n.t("costs.dent.noPricedReading"));
@@ -774,7 +774,7 @@ describe("Costs — the headline", () => {
     // Without the basis the same reading is a not-reported one, in Xm.
     expect(headline(cells(EXT()))!.metered).toBeCloseTo(343 + 455, 9);
     serve(data);
-    const row = await screen.findByRole("region", { name: "The whole dent in the subscription" });
+    const row = await openDentRow();
     expect(row.querySelector("[data-head-usage]")!.textContent).toBe(i18n.t("costs.dent.head.usageOut",
       { seats: "claude_code_oauth_token #0", n: "3.0", list: fmtUSD(40) }));
     expect(row.querySelector("[data-head-unmetered]")).toBeNull();
@@ -785,7 +785,7 @@ describe("Costs — the headline", () => {
     const mixed = seat([], { secret_key: "seat_m", sources: [], step_count: 3, usage_steps: 1, usage_points: 3,
       unpriced_steps: 2, unpriced_points: 5, point_rate: 0 });
     serve(cells(external([{ steps: STEPS, total: SEAT_A() }, { steps: [], total: still }, { steps: [], total: mixed }])));
-    const row = await screen.findByRole("region", { name: "The whole dent in the subscription" });
+    const row = await openDentRow();
     expect(row.querySelector('[data-dent-seat="seat_u #0"]')!.textContent)
       .toMatch(/^seat_u #0: – \(billed by usage: 0\.0 points, their money is the usage charges\)/);
     expect(row.querySelector('[data-dent-seat="seat_u #0"]')!.textContent).not.toMatch(/without a plan price/);
@@ -796,7 +796,7 @@ describe("Costs — the headline", () => {
   it("says how many points were billed by usage, and shows a seat on usage as – with why, not as unpriced (0151)", async () => {
     const onUsage = seat([], { secret_key: "seat_u", sources: [], step_count: 2, usage_steps: 2, usage_points: 7, point_rate: 0 });
     serve(cells(external([{ steps: STEPS, total: SEAT_A() }, { steps: [], total: onUsage }])));
-    const row = await screen.findByRole("region", { name: "The whole dent in the subscription" });
+    const row = await openDentRow();
     expect(row.querySelector("[data-dent-usage]")!.textContent)
       .toBe("7.0 points read while the seat was billed by usage are not in the dent: their money is the usage charges.");
     expect(row.querySelector("[data-dent-unpriced]")).toBeNull();
@@ -807,7 +807,7 @@ describe("Costs — the headline", () => {
   it("words a reading whose outside calls had no price apart, in the headline and the chart, with counts as numbers (#126 fix 2)", async () => {
     const steps = [STEPS[0], STEPS[1], unpricedStep(STEPS[2].at, STEPS[2].from, 3, 40)];
     serve(cells(external([{ steps, total: seat(steps, { agents: AGENTS, unpriced_calls: 1234 }) }])));
-    const row = await screen.findByRole("region", { name: "The whole dent in the subscription" });
+    const row = await openDentRow();
     const unsplit = within(row).getByRole("group", { name: "Not split" }).textContent;
     expect(unsplit).toMatch(/readings whose outside calls had no price: 1/);
     expect(unsplit).not.toMatch(/had not reported/);
@@ -825,7 +825,7 @@ describe("Costs — the headline", () => {
   it("names both reasons when the unsplit readings have both", async () => {
     const steps = [...STEPS, unpricedStep("2026-11-17T21:40:00Z", "2026-11-17T20:40:00Z", 5, 0.1)];
     serve(cells(external([{ steps, total: seat(steps, { agents: AGENTS }) }])));
-    const row = await screen.findByRole("region", { name: "The whole dent in the subscription" });
+    const row = await openDentRow();
     expect(within(row).getByRole("group", { name: "Not split" }).textContent).toMatch(
       /readings the outside sessions had not reported: 1 · readings whose outside calls had no price: 1/);
     expect(row.querySelector("[data-dent-unsplit]")!.textContent!.startsWith(`≈ ${fmtUSD(3 * PP)} of the movement`)).toBe(true);
@@ -841,7 +841,7 @@ describe("Costs — the headline", () => {
 
   it("stays with an agent filter, marked as organisation-wide: the meter is not the agents'", async () => {
     serve(cells(EXT()));
-    const row = await screen.findByRole("region", { name: "The whole dent in the subscription" });
+    const row = await openDentRow();
     expect(row.querySelector("[data-org-wide]")).toBeNull();
     fireEvent.click(await screen.findByRole("button", { name: /Coordinator/ }));
     expect(row.querySelector("[data-org-wide]")).not.toBeNull();
@@ -849,12 +849,12 @@ describe("Costs — the headline", () => {
 
   it("splits the chart's real bar, says which reading was not reported, and moves the multiple to the headline", async () => {
     serve(cells(EXT()));
-    await screen.findByRole("region", { name: "The whole dent in the subscription" });
+    await openDentRow();
     expect(document.querySelector("[data-split-note]")!.textContent).toMatch(/≈ .* in readings the outside sessions had not reported \(1\) is split to nobody/);
     // By default the seat shows the multiple of everything on its meter
     // (#120); "covey only" gives today's view: no multiple, the split ones
     // in the headline.
-    expect(screen.getByRole("group", { name: "List $ per real $ — everything on this meter" })).toBeTruthy();
+    expect(document.querySelector("[data-answer-multiple]")!.textContent).toMatch(/≈ [\d.,]+×/);
     expect(document.querySelector("[data-no-multiple]")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "covey only" }));
     expect(document.querySelector("[data-no-multiple]")!.textContent).toMatch(/The split multiples are in the headline/);
@@ -879,7 +879,7 @@ describe("Costs — the headline", () => {
     // The one source is billed per use: it names no meter.
     ext.sources[0] = { ...ext.sources[0], meter_credential: null };
     serve(cells(ext));
-    await screen.findByRole("region", { name: "The whole dent in the subscription" });
+    await openDentRow();
     expect(document.body.textContent).not.toMatch(/share this meter/);
     // The real bar is split as the server split it: covey agents (internal) and the
     // unattributed point, and the note says no outside source names the meter.
