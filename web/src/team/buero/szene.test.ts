@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { describe, expect, it } from "vitest";
 import type { Agent } from "../../api";
 import { AUSSEN, INNEN, bauplan } from "./plan";
-import { AUSSEN_VOLL, SOCKEL_H, START_DREHUNG, WAND_VOLL, amAussen, kameraSeiten, szeneBauen, wandHoch, type Lage } from "./szene";
+import { AUSSEN_VOLL, BAU_HOEHE, SOCKEL_H, START_DREHUNG, WAND_VOLL, amAussen, kameraSeiten, szeneBauen, wandHoch, type Lage } from "./szene";
 import type { Gruppe, Plan, Raum, Zustand } from "./typen";
 
 /* The scene runs in node with a real three.js and no renderer. What is worth
@@ -54,6 +54,43 @@ describe("szeneBauen", () => {
       expect(bau.koerper).toBeLessThan(4000);
     });
   }
+
+  /* The camera fits the building into the picture from the box it is told
+     about (kamera.ts). A house taller than the box loses the tops of its
+     tallest pieces at the stage's edge, and a box far taller than the house
+     leaves a band of empty stage above it — the fit was 150 where the house
+     was built up to 178. */
+  const hoehe = (n: number) => {
+    const plan = machPlan(n);
+    const szene = new THREE.Scene();
+    const bau = szeneBauen(szene, null, plan, lage("arbeitet"));
+    szene.updateMatrixWorld(true);
+    let hoch = 0;
+    bau.welt.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      const b = new THREE.Box3().setFromObject(m);
+      if (b.max.x - b.min.x > plan.breite + 20) return; // the ground slab runs beyond the building
+      expect(b.min.x).toBeGreaterThanOrEqual(-plan.breite / 2 - 8);
+      expect(b.max.x).toBeLessThanOrEqual(plan.breite / 2 + 8);
+      expect(b.min.z).toBeGreaterThanOrEqual(-plan.hoehe / 2 - 8);
+      expect(b.max.z).toBeLessThanOrEqual(plan.hoehe / 2 + 8);
+      hoch = Math.max(hoch, b.max.y);
+    });
+    return hoch;
+  };
+  let gebaut: number[] | undefined;
+  const hoehen = () => (gebaut ??= [8, 25, 60].map(hoehe));
+  for (const [i, n] of [8, 25, 60].entries()) {
+    it(`builds ${n} colleagues' house inside the box the camera fits`, () => {
+      expect(hoehen()[i]).toBeLessThanOrEqual(BAU_HOEHE);
+    });
+  }
+  it("the box is as high as the tallest piece the houses build, give or take a few cm", () => {
+    // Not every house has its tallest piece (the wall unit, the large plants);
+    // a box far above all of them leaves a band of empty stage over the roof.
+    expect(BAU_HOEHE - Math.max(...hoehen())).toBeLessThanOrEqual(5);
+  });
 
   it("stays within a sane body count for 25 colleagues", () => {
     const bau = szeneBauen(new THREE.Scene(), null, machPlan(25), lage("schlaeft"));
