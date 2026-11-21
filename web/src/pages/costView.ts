@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { useSearchParams } from "react-router";
 import { HOUR_MAX_DAYS, RANGES, TEN_HOUR_MAX_DAYS, TEN_MIN_MAX_DAYS } from "./outsideFigures";
+import { DEFAULT_DAYS } from "./costRange";
 
 /* The cost pages keep their view in the address (cost home proposal, PR 2): a
  * link opens exactly what its sender saw, the Back button returns to it, and a
@@ -40,9 +41,7 @@ export const asSet = {
   show: (v: ReadonlySet<string>) => [...v].sort().join(","),
 };
 
-/** The days the page offers, and the bucket each opens with. 24 hours until the 30-day default the human chose
- *  (2026-11-21) lands in its own change, with the page's tests moved to explicit ranges. */
-export const DEFAULT_DAYS = 1;
+export { DEFAULT_DAYS };
 export const BUCKETS = ["10min", "hour", "10hour", "day", "week", "month"] as const;
 export const defaultBucket = (days: number) => RANGES.find((r) => r.v === days)?.bucket ?? "day";
 

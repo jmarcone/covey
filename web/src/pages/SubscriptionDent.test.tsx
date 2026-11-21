@@ -203,7 +203,7 @@ function serve(data: CostCells) {
     "/api/v1/cost/usage-readings": [],
     "/api/v1/cost/indicators": null,
   });
-  return renderWithProviders(<Costs />);
+  return renderWithProviders(<Costs />, { route: "/?days=1" });
 }
 
 describe("subscriptionDent", () => {

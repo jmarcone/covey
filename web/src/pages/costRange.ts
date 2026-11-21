@@ -115,8 +115,13 @@ export function readRange(p: URLSearchParams, nowMs: number): RangeParams {
   return { tz, from, to, error: validRange(from, to, nowMs) };
 }
 
+/** The range the cost pages open with: 30 days, the human's choice (2026-11-21, cost home proposal), so a link to
+ *  C-level opens on a month, not on today. A range left out of the address is this one; both writers of the address
+ *  (writeRange here, useCostWindow in costView) leave out exactly this one. */
+export const DEFAULT_DAYS = 30;
+
 /** The URL's range parameters for a window and a zone — the quick range
- *  (days, left out for the default day) or the custom one. Other parameters
+ *  (days, left out for the default range) or the custom one. Other parameters
  *  stay as they are. */
 export function writeRange(prev: URLSearchParams, w: CostWindow, tz: DisplayTz): URLSearchParams {
   const n = new URLSearchParams(prev);
@@ -124,7 +129,7 @@ export function writeRange(prev: URLSearchParams, w: CostWindow, tz: DisplayTz):
   if (isCustom(w)) {
     n.set("from", w.from!);
     n.set("to", w.to!);
-  } else if (w.days !== 1) n.set("days", String(w.days));
+  } else if (w.days !== DEFAULT_DAYS) n.set("days", String(w.days));
   // The zone is in the address whenever it was chosen, so a link reads in the
   // clock it was shared in.
   if (tz !== DEFAULT_TZ || isCustom(w)) n.set("tz", tz);

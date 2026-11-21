@@ -131,7 +131,7 @@ const modelCell = (source: string, model: string, calls: number, list: number | 
   unpriced_tokens: list == null ? output + 13 : 0, unpriced_calls: list == null ? calls : 0,
 });
 
-function serve(data: CostCells = cells(), route = "/costs?tz=utc", health?: CostHealthReport, home = false) {
+function serve(data: CostCells = cells(), route = "/costs?days=1&tz=utc", health?: CostHealthReport, home = false) {
   const ext = data.external;
   mockFetch({
     ...(health ? { "/api/v1/cost/health": health } : {}),
@@ -154,7 +154,7 @@ function serve(data: CostCells = cells(), route = "/costs?tz=utc", health?: Cost
 }
 
 /** The full view of covey's price table (#120): Reported and Recomputed apart, as before the lead figure. */
-const FULL = "/costs?prices=recomputed";
+const FULL = "/costs?days=1&prices=recomputed";
 const kpi = (label: string) => document.querySelector<HTMLElement>(`[data-kpi="${label}"]`)!;
 const kpiValue = (label: string) => kpi(label).querySelector("[data-kpi-value]")!.textContent;
 const kpiParts = (label: string) => kpi(label).querySelector("[data-parts]")?.textContent ?? null;
@@ -211,7 +211,7 @@ describe("the sessions outside covey on the cost page, included by default (#120
     await waitFor(() => expect(kpiValue(t("costs.inputTokens"))).toBe(fmtCount(1000 + 10_000_000)));
     const today = [t("costs.inputTokens"), t("costs.outputTokens"), t("costs.totalTokens")].map((l) => kpiValue(l));
     cleanup();
-    serve(cells(), "/costs?only=covey");
+    serve(cells(), "/costs?days=1&only=covey");
     await screen.findByRole("button", { name: "covey only" });
     await waitFor(() => expect(kpiValue(t("costs.inputTokens"))).toBe(fmtCount(1000 + 10_000_000)));
     expect([t("costs.inputTokens"), t("costs.outputTokens"), t("costs.totalTokens")].map((l) => kpiValue(l))).toEqual(today);
@@ -272,7 +272,7 @@ describe("the sessions outside covey on the cost page, included by default (#120
     fireEvent.click(screen.getByRole("button", { name: t("costs.who.bannerOk") }));
     expect(document.querySelector("[data-who-banner]")).toBeNull();
     cleanup();
-    serve(cells(), "/costs?agents=a1");
+    serve(cells(), "/costs?days=1&agents=a1");
     await answerReady();
     expect(document.querySelector("[data-who-banner]")).toBeNull();
     localStorage.removeItem("covey.costs.whoExact.v1");
@@ -764,7 +764,7 @@ describe("the outside review's minors (#120)", () => {
       "/api/v1/cost/usage-readings": [],
       "/api/v1/cost/indicators": null,
     });
-    const { container } = renderWithProviders(<Costs />, { route: "/costs?tz=utc", path: "/costs" });
+    const { container } = renderWithProviders(<Costs />, { route: "/costs?days=1&tz=utc", path: "/costs" });
     const note = await waitFor(() => {
       const n = container.querySelector(`[data-credential="${KEY}#0"] [data-billed-hourly-from]`);
       if (!n) throw new Error("no note yet");
@@ -1464,7 +1464,7 @@ describe("the answer table, re-review (#204)", () => {
     fireEvent.click(screen.getByRole("button", { name: t("costs.bar.clear") }));
     await waitFor(() => expect(document.querySelector("[data-who]")!.textContent).toContain(t("costs.bar.whoAll")));
     cleanup();
-    serve(cells(), "/costs?tz=utc", undefined, true);
+    serve(cells(), "/costs?days=1&tz=utc", undefined, true);
     await waitFor(() => expect(document.querySelector("[data-who-locked]")).not.toBeNull());
     expect(document.querySelector("[data-share]")).not.toBeNull();
   });
@@ -1473,12 +1473,12 @@ describe("the answer table, re-review (#204)", () => {
 describe("the chart's source chips from the address (#215 review)", () => {
   beforeEach(async () => { await i18n.changeLanguage("en"); });
   it("a link that hides every source falls back to all of them; one that hides some keeps them hidden", async () => {
-    serve(cells(), "/costs?hide=reported,real,billed");
+    serve(cells(), "/costs?days=1&hide=reported,real,billed");
     await answerReady();
     const chip = (name: string) => screen.getAllByRole("button", { name }).find((b) => b.hasAttribute("aria-pressed"))!;
     await waitFor(() => expect(chip(t("costs.lead.label")).getAttribute("aria-pressed")).toBe("true"));
     cleanup();
-    serve(cells(), "/costs?hide=billed");
+    serve(cells(), "/costs?days=1&hide=billed");
     await answerReady();
     await waitFor(() => expect(chip(t("costs.lead.label")).getAttribute("aria-pressed")).toBe("true"));
   });
@@ -1506,7 +1506,7 @@ describe("the incomplete marks of the data checks (#178)", () => {
   };
 
   it("a stopped uploader (c1): the outside part in the headline, beside the inclusion chip and on the outside sessions", async () => {
-    serve(cells(), "/costs", report(c1));
+    serve(cells(), "/costs?days=1", report(c1));
     expect(await headlineMarks()).toEqual(["outside"]);
     expect(parts("[data-inclusion]")).toEqual(["outside"]);
     expect(parts("[data-outside]")).toEqual(["outside"]);
@@ -1514,16 +1514,16 @@ describe("the incomplete marks of the data checks (#178)", () => {
   });
 
   it("a reset nobody recorded (c3) or a seat with no reading (c2): the multiple in the headline", async () => {
-    serve(cells(), "/costs", report(failed("c3", "drops", { drops: 1, early_resets: 0, last_drop_at: H19 })));
+    serve(cells(), "/costs?days=1", report(failed("c3", "drops", { drops: 1, early_resets: 0, last_drop_at: H19 })));
     expect(await headlineMarks()).toEqual(["multiple"]);
     cleanup();
-    serve(cells(), "/costs", report(failed("c2", "none", { credential: `${SEAT} #0` })));
+    serve(cells(), "/costs?days=1", report(failed("c2", "none", { credential: `${SEAT} #0` })));
     expect(await headlineMarks()).toEqual(["multiple"]);
     expect(document.querySelectorAll("[data-incomplete='outside'], [data-incomplete='tokenPrice']").length).toBe(0);
   });
 
   it("a model without a list price (c5): every figure at token prices — tiles, chart, model table, headline", async () => {
-    serve(cells(), "/costs", report(failed("c5", "unpriced", { models: 2, unpriced: ["claude-sonnet-5-7"], unpriced_agents: ["claude-sonnet-5-7"] })));
+    serve(cells(), "/costs?days=1", report(failed("c5", "unpriced", { models: 2, unpriced: ["claude-sonnet-5-7"], unpriced_agents: ["claude-sonnet-5-7"] })));
     expect(await headlineMarks()).toEqual(["tokenPrice"]);
     expect(parts("[data-kpi-incomplete]")).toEqual([]);
     expect(parts("[data-chart-title]")).toEqual(["tokenPrice"]);
@@ -1532,7 +1532,7 @@ describe("the incomplete marks of the data checks (#178)", () => {
   });
 
   it("a call booked twice (c4): the same figures, and every mark at once when several checks fail", async () => {
-    serve(cells(), "/costs", report(c1, failed("c3", "drops", { drops: 1, last_drop_at: H19 }),
+    serve(cells(), "/costs?days=1", report(c1, failed("c3", "drops", { drops: 1, last_drop_at: H19 }),
       failed("c4", "duplicates", { external_duplicates: 0, agent_duplicates: 2 })));
     expect(await headlineMarks()).toEqual(["multiple", "outside", "tokenPrice"]);
     expect(parts("[data-kpi-incomplete]")).toEqual([]);
@@ -1540,7 +1540,7 @@ describe("the incomplete marks of the data checks (#178)", () => {
   });
 
   it("“covey only” leaves the outside part out of the chips and tiles, but the answer card keeps its outside rows and their marks", async () => {
-    serve(cells(), "/costs?only=covey", report(c1, failed("c5", "unpriced", { unpriced: ["x"], unpriced_agents: ["x"] })));
+    serve(cells(), "/costs?days=1&only=covey", report(c1, failed("c5", "unpriced", { unpriced: ["x"], unpriced_agents: ["x"] })));
     // The card is the whole dent under covey only (#195): its operator and project rows stand, and the stopped
     // uploader's mark with them (#179 merge review).
     expect(await headlineMarks()).toEqual(["outside", "tokenPrice"]);
@@ -1552,10 +1552,10 @@ describe("the incomplete marks of the data checks (#178)", () => {
   // counted: everywhere they are included, and on the answer card always (its outside rows stand under covey only too).
   it("a model only outside calls used: marked where the outside sessions are counted, the answer card always", async () => {
     const outsideOnly = failed("c5", "unpriced", { unpriced: ["x"], unpriced_outside: ["x"] });
-    serve(cells(), "/costs", report(outsideOnly));
+    serve(cells(), "/costs?days=1", report(outsideOnly));
     expect(await headlineMarks()).toEqual(["tokenPrice"]);
     cleanup();
-    serve(cells(), "/costs?only=covey", report(failed("c3", "drops", { drops: 1, last_drop_at: H19 }), outsideOnly));
+    serve(cells(), "/costs?days=1&only=covey", report(failed("c3", "drops", { drops: 1, last_drop_at: H19 }), outsideOnly));
     expect(await headlineMarks()).toEqual(["multiple", "tokenPrice"]);
     // Off the card, covey's own figures carry no outside model's mark.
     expect(document.querySelectorAll("[data-chart-title] [data-incomplete='tokenPrice'], [data-models-title] [data-incomplete='tokenPrice']").length).toBe(0);
@@ -1568,16 +1568,16 @@ describe("the incomplete marks of the data checks (#178)", () => {
     expect(document.querySelectorAll("[data-incomplete]").length).toBe(0);
     cleanup();
     // The same checks on a quick range (it ends now) mark the card.
-    serve(cells(), "/costs?tz=utc", report(c1));
+    serve(cells(), "/costs?days=1&tz=utc", report(c1));
     expect(await headlineMarks()).toEqual(["outside"]);
   });
 
   it("a call booked twice (c4) marks the token counts in the Tokens drawer", async () => {
-    serve(cells(), "/costs", report(failed("c4", "duplicates", { external_duplicates: 0, agent_duplicates: 2 })));
+    serve(cells(), "/costs?days=1", report(failed("c4", "duplicates", { external_duplicates: 0, agent_duplicates: 2 })));
     await answerReady();
     await waitFor(() => expect(parts("[data-tokens-incomplete]")).toEqual(["tokenPrice"]));
     cleanup();
-    serve(cells(), "/costs", report(failed("c5", "unpriced", { unpriced: ["x"], unpriced_agents: ["x"] })));
+    serve(cells(), "/costs?days=1", report(failed("c5", "unpriced", { unpriced: ["x"], unpriced_agents: ["x"] })));
     await answerReady();
     await waitFor(() => expect(parts("[data-answer-incomplete]")).toEqual(["tokenPrice"]));
     // An unpriced model changes no token count: no mark there.
@@ -1708,7 +1708,7 @@ describe("the cost home (PR 5)", () => {
   it("leads with the equation: the metered work ÷ the capacity used = the multiple, the same figures as the table", async () => {
     const data = cells();
     const a = tableOf(data);
-    serve(data, "/costs?tz=utc", health, true);
+    serve(data, "/costs?days=1&tz=utc", health, true);
     const hero = await screen.findByText(fmtUSD(a.metered), { selector: "[data-home-metered]" });
     expect(hero).toBeTruthy();
     expect(document.querySelector("[data-home-capacity]")!.textContent).toBe(`≈ ${fmtUSD(a.real!)}`);
@@ -1720,7 +1720,7 @@ describe("the cost home (PR 5)", () => {
   });
 
   it("says beside it whether the data is fresh, and how far the meter's week has gone", async () => {
-    serve(cells(), "/costs?tz=utc", health, true);
+    serve(cells(), "/costs?days=1&tz=utc", health, true);
     const trust = await waitFor(() => { const x = document.querySelector("[data-home-trust]"); if (!x?.querySelector("[data-home-week]")) throw new Error("no week yet"); return x; });
     expect(trust.textContent).toContain(t("costs.home.minutesAgo", { n: 3 }));
     expect(trust.textContent).toContain(t("costs.home.minutesAgo", { n: 4 }));
@@ -1748,7 +1748,7 @@ describe("the cost home (PR 5)", () => {
   it("the hero's points × the point price is the capacity shown, to the cent (#217 review)", async () => {
     const data = cells();
     const a = tableOf(data);
-    serve(data, "/costs?tz=utc", health, true);
+    serve(data, "/costs?days=1&tz=utc", health, true);
     const hero = await waitFor(() => { const x = document.querySelector("[data-home-hero]"); if (!x) throw new Error("no hero"); return x; });
     expect(hero.textContent).toContain(t("costs.answer.totalSub", { pts: "6", rate: fmtUSDFixed(a.rate!, 4) }));
   });
@@ -1764,7 +1764,7 @@ describe("the cost home (PR 5)", () => {
   it("with two seats the strip is not drawn, and an amount before a seat's first reading is still said (#217 review)", async () => {
     const data = { ...twoSeats(), since: "2026-11-17T17:00:00Z" };
     const h = headline(data)!;
-    serve(data, "/costs?tz=utc", health, true);
+    serve(data, "/costs?days=1&tz=utc", health, true);
     const cov = await waitFor(() => { const x = document.querySelector("[data-home-coverage]"); if (!x) throw new Error("no coverage"); return x; });
     expect(cov.querySelector(".cost-home-strip")).toBeNull();
     if (h.before >= 0.005) expect(cov.querySelector("[data-home-cov-before]")).not.toBeNull();
@@ -1775,7 +1775,7 @@ describe("the cost home (PR 5)", () => {
     const stale: CostHealthReport = { status: "fail", checked_at: H19, checks: [
       { id: "c1", status: "fail", reason: "stale", facts: { last_push_minutes: 4320 }, checked_at: H19 },
     ] };
-    serve(cells(), "/costs?tz=utc", stale, true);
+    serve(cells(), "/costs?days=1&tz=utc", stale, true);
     const trust = await waitFor(() => { const x = document.querySelector("[data-home-trust]"); if (!x?.textContent?.includes(t("costs.home.daysAgo", { n: 3 }))) throw new Error("no age"); return x; });
     expect(trust.textContent).not.toContain("4320");
     cleanup();
@@ -1786,7 +1786,7 @@ describe("the cost home (PR 5)", () => {
   });
 
   it("without a subscription meter it says there is no capacity figure, and points to the details", async () => {
-    serve(cells(null), "/costs?tz=utc", health, true);
+    serve(cells(null), "/costs?days=1&tz=utc", health, true);
     await waitFor(() => expect(document.querySelector("[data-home-empty]")).not.toBeNull());
     expect(document.querySelector("[data-home-hero]")).toBeNull();
   });

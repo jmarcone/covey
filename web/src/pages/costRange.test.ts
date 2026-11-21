@@ -39,8 +39,9 @@ describe("the range in the address", () => {
     expect(quick.get("from")).toBeNull();
     expect(quick.get("to")).toBeNull();
     expect(quick.get("prices")).toBe("recomputed");
-    // the default day and the default zone leave the address bare
-    expect(writeRange(quick, { days: 1 }, "local").toString()).toBe("prices=recomputed");
+    // the default range (30 days) and the default zone leave the address bare; 24 hours is no default any more
+    expect(writeRange(quick, { days: 30 }, "local").toString()).toBe("prices=recomputed");
+    expect(writeRange(quick, { days: 1 }, "local").get("days")).toBe("1");
   });
 
   it("reads the reader's clock unless the address says utc", () => {

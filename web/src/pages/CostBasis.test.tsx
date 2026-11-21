@@ -134,7 +134,7 @@ function serve(data: CostCells) {
     "/api/v1/cost/models": { rows: [], runs_without_breakdown: 0, usd_without_breakdown: 0 },
     "/api/v1/cost/usage-readings": [],
   });
-  return renderWithProviders(<Costs />);
+  return renderWithProviders(<Costs />, { route: "/?days=1" });
 }
 
 async function block(container: HTMLElement) {
@@ -467,7 +467,7 @@ describe("Kostengrundlage — Seite", () => {
       if (path.endsWith("/cost/usage-readings")) return json([]);
       return json({ error: "not mocked" }, 404);
     }));
-    const { container } = renderWithProviders(<Costs me={testPrincipal("org_admin")} />);
+    const { container } = renderWithProviders(<Costs me={testPrincipal("org_admin")} />, { route: "/?days=1" });
     const b = await block(container);
     expect(b.querySelector("[data-basis-line]")!.textContent).toMatch(/^Abgerechnet nach: Sitzpreis \(keine Grundlage gesetzt/);
     await userEvent.click(await within(b).findByRole("button", { name: "Nutzungsbetrag hinzufügen" }));
@@ -513,7 +513,7 @@ describe("Kostengrundlage — Seite", () => {
       if (path.endsWith("/cost/usage-readings")) return json([]);
       return json({ error: "not mocked" }, 404);
     }));
-    const { container } = renderWithProviders(<Costs me={testPrincipal("org_admin")} />);
+    const { container } = renderWithProviders(<Costs me={testPrincipal("org_admin")} />, { route: "/?days=1" });
     const b = await block(container);
     // The window's list has no note: the cells do not carry one.
     expect(b.querySelector(`[data-charge="c1"] [data-charge-note]`)).toBeNull();
