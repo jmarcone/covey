@@ -227,10 +227,24 @@ The page shows unattributed and not split in the collapsed section *How the real
 - *Billed* says why instead of $0.00 (no admin key, not mapped, sync failed, not landed). A bill bucket after `data_refreshed_at` is not complete.
 - No multiple is shown when points are unpriced, or when there are fewer than 3 points.
 
-**Status.** **Not built: [#178](https://github.com/jmarcone/covey/issues/178).**
-- The checks it names (uploader fresh, meter fresh, meter monotonic, no double booking, models priced, cost basis set, bill sync, pre-meter usage) and the trust badge do not exist yet.
-- A stopped uploader makes the outside sessions' list look smaller with no mark, because their calls are missing. While its machines count as active (7 days after their last push or call), they hold the meter's readings unsplit. After that, a seat whose only linked source stopped stays unsplit. Where another linked source still reports, though, the readings are split without the stopped source's calls, and the other parts grow.
-- Until #178 lands, a report must run those checks by hand. See *Reconciling a figure* below.
+**The data checks ([#178](https://github.com/jmarcone/covey/issues/178)).** `Store.CostHealth` (`internal/observability/costhealth.go`) runs eight read-only checks at an instant the caller passes. Each gives `pass`, `warn`, `fail` or `info` with a reason code and the facts behind it; the report's status is the worst check, and `info` never counts. `GET /api/v1/cost/health` serves it, kept 5 min per organisation; when the checks cannot run, the answer is a 500 and the badge says *unavailable*, never green.
+
+| Check | Fails or warns when | Marks |
+|---|---|---|
+| C1 uploader fresh | a host that sends a watermark (`--complete`) and pushed in the last 7 days has not pushed for 75 min (fail). A host without a watermark is only `info`: covey cannot tell idle from stopped. Every host silent 7–90 days warns. | the outside part: headline, `/costs/outside`, a seat's outside rows |
+| C2 meter fresh | a seat that spent in the last 7 days has no reading (fail), or spent more than 2 h after its latest reading (warn). The reading is the latest of the source the page reads the seat from (`pickCoverage`: most readings, then usage_cmd, manual, inband), aged by `fetched_at`. A seat whose basis in force is `usage` is skipped. | on *no reading* only: the multiple, and the real cost and multiple of every seat it names |
+| C3 meter monotonic | in the last 14 days, a reading falls more than 1 point below its week's top, or a new week starts while the previous reading's `resets_at` was still ahead. Same rows and week split as the meter (`meterRowsAt`), and only the source the page reads. | the multiple and real cost of the seats it names |
+| C4 no double booking | a `(line_uuid, model)` appears twice, or an outside `message_id` under two sources (a renamed `--source` or `--label` uploads every transcript again). The agents' half cannot fail while the index of 0144 exists. | every token-price figure |
+| C5 models priced | a model used in the last 30 days has no list price. | every token-price figure of the side that used it |
+| C6 cost basis set | a seat that spent in the last 7 days (the same seats as C2) has neither a plan nor a `usage` basis in force, or spend names no credential. | — (the page already says *unpriced*) |
+| C7 bill sync | an org-wide admin key is stored and the last sync failed, has not run for 2 h, or found no bill although covey's Anthropic API keys spent 24–48 h before. | — (*Billed* already says why) |
+| C8 pre-meter usage | a linked source called on a seat before that seat's first reading. | `info` only |
+
+**Status.** Built (#178). Open points:
+- C2, C5 and C6 leave out the lines of runtimes whose engine is not Claude Code (Codex's ChatGPT plan, educa's contract seat): no source reads a weekly meter for them, and the list prices are Claude's.
+- A C3 failure marks the seats it names for its whole 14-day window, whatever range the page shows. A recorded reset ([#177](https://github.com/jmarcone/covey/issues/177)) is what ends it.
+- C1 reads `first_reported_at`, which a host keeps once it sent a watermark. That is the meter share's own rule (`watermarksFrom`), so C1 agrees with the page.
+- Under a red C1, the readings of a seat whose linked sources still report are split without the stopped source's calls, and the other parts grow; the mark on the outside part is what says so.
 
 ## Sources and how they are stored
 
@@ -440,10 +454,8 @@ GROUP BY 1 ORDER BY 1;
 - `jq '.external.meter | .real_usd - (.covey_real_usd + .external_real_usd + .unattributed_real_usd + .unsplit_real_usd)'` on `/api/v1/cost/cells?days=7&bucket=hour` must be 0 to the cent (R4).
 - `.external.meter.credentials[] | {points, real_usd}` must match the meter query times the price per point.
 
-**Until #178 lands, check by hand before a report:**
-- every host that pushed in the last 7 days has pushed in the last 75 minutes (`external_usage_hosts.pushed_at`);
-- the meter has a reading in the last hour of the period;
-- every model in `model_usage` and `external_usage` has a list price;
+**Before a report:**
+- `/api/v1/cost/health` has no `fail` (R6). Its checks are read at the moment of the request, so for a past period also check by hand that the meter has a reading in the last hour of the period;
 - no reset falls inside a step that the report's multiple divides (#185);
 - `.external.meter.credentials[].incomplete_chunks` is 0 for every seat whose split the report quotes. Where it is not, name the count next to covey's part (#196).
 
@@ -454,7 +466,6 @@ GROUP BY 1 ORDER BY 1;
 | [#185](https://github.com/jmarcone/covey/issues/185) | R2, R3 | a reset step's old-week list is in the multiple and the split |
 | [#196](https://github.com/jmarcone/covey/issues/196) | R4, R3 | an incomplete chunk's unexplained movement is folded into covey's and the outside part |
 | [#186](https://github.com/jmarcone/covey/issues/186) | R5 | a plan's exchange rate needs no date |
-| [#178](https://github.com/jmarcone/covey/issues/178) | R6 | data checks and the *incomplete* mark |
 | [#167](https://github.com/jmarcone/covey/issues/167) | R1 | headline and multiple for pay-per-token credentials; real cost from the monthly meter until the bill lands |
 | [#153](https://github.com/jmarcone/covey/issues/153) | R1, R2 | readings only while covey runs |
 | [#177](https://github.com/jmarcone/covey/issues/177) | R2 | list per point varies about 10× with the workload mix (unexplained) |

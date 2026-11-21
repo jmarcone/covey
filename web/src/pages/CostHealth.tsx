@@ -66,6 +66,11 @@ export function incompleteParts(rep: CostHealthReport | undefined, tokens: Token
   };
 }
 
+/** The seats a failed c2 names (secret #slot): every seat that spent with no
+ *  reading; a report from before c2 named them all gives its deciding one. */
+export const unreadSeats = (c: CostHealthCheck): string[] =>
+  c.facts.credentials ?? (c.facts.credential ? [c.facts.credential] : []);
+
 /** The checks that leave one credential's own figures short (secret #slot,
  *  as the server names it): a reset nobody recorded on its meter (c3 names
  *  the credentials) or no reading where it spent (c2 names the seat) its
@@ -76,7 +81,7 @@ export function credentialIncomplete(rep: CostHealthReport | undefined, credenti
   { multiple: CostHealthCheck[]; outside: CostHealthCheck[] } {
   const c3 = failedCheck(rep, "c3"), c2 = failedCheck(rep, "c2"), c1 = failedCheck(rep, "c1");
   return {
-    multiple: only(c3?.facts.credentials?.includes(credential) && c3, c2?.facts.credential === credential && c2),
+    multiple: only(c3?.facts.credentials?.includes(credential) && c3, c2 && unreadSeats(c2).includes(credential) && c2),
     outside: only(sources != null && c1?.facts.stale_hosts?.some((h) => sources.includes(h.source)) && c1),
   };
 }

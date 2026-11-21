@@ -160,6 +160,12 @@ describe("the worst check and the incomplete parts", () => {
     const c2 = check("c2", "fail", "none", { credential: "seat_b #0" });
     expect(ids(credentialIncomplete(report("fail", [c3, c2]), "seat_b #0", null).multiple)).toEqual(["c3", "c2"]);
     expect(ids(credentialIncomplete(report("fail", [c2]), "claude_code_oauth_token #0", null).multiple)).toEqual([]);
+    // Outside lane review (finding 6): c2 names every seat with no reading,
+    // and each is marked, not only the one that decides.
+    const both = check("c2", "fail", "none", { credential: "claude_code_oauth_token #0", credentials: ["claude_code_oauth_token #0", "seat_b #0"] });
+    expect(ids(credentialIncomplete(report("fail", [both]), "seat_b #0", null).multiple)).toEqual(["c2"]);
+    expect(ids(credentialIncomplete(report("fail", [both]), "claude_code_oauth_token #0", null).multiple)).toEqual(["c2"]);
+    expect(ids(credentialIncomplete(report("fail", [both]), "seat_c #0", null).multiple)).toEqual([]);
     // staleC1's host is of the source "operator".
     expect(ids(credentialIncomplete(rep, "seat_b #0", ["operator"]).outside)).toEqual(["c1"]);
     expect(ids(credentialIncomplete(rep, "seat_b #0", ["projects"]).outside)).toEqual([]);

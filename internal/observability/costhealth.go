@@ -82,6 +82,14 @@ const anthropicBilledEngine = "claude-code"
 const lineKindSQL = `COALESCE(NULLIF(m.credential_kind, ''), (SELECT rc.kind FROM runtime_credentials rc
 	WHERE rc.runtime_id = m.runtime_id AND rc.ord = m.credential_ord), '')`
 
+// notOtherEngineSQL keeps a model_usage line m unless its runtime runs
+// another engine than Claude Code. Codex's ChatGPT plan and educa's contract
+// seat are subscriptions too, but no source reads a weekly meter for them and
+// covey's list prices are Claude's: counting them would leave C2, C5 and C6
+// red for as long as such a runtime works, with nothing anyone can do. A line
+// whose runtime is gone still counts.
+const notOtherEngineSQL = `NOT EXISTS (SELECT 1 FROM runtimes rt WHERE rt.id = m.runtime_id AND rt.engine <> '` + anthropicBilledEngine + `')`
+
 // seatsSpentSQL is the CTE `seats (key, slot, last)`: the credentials on a
 // meter that spent in the $3 before $2 — by covey's agents (model_usage, of
 // any kind but api_key: lineKindSQL) or by an outside source linked to the
@@ -92,6 +100,7 @@ const seatsSpentSQL = `seats AS (SELECT key, slot, max(last) AS last FROM (
 			SELECT m.secret_key AS key, m.secret_slot::int AS slot, max(m.created_at) AS last FROM model_usage m
 			WHERE m.org_id = $1 AND m.created_at > $2::timestamptz - $3::interval AND m.created_at <= $2
 			  AND m.secret_key IS NOT NULL AND m.secret_slot IS NOT NULL AND ` + lineKindSQL + ` <> 'api_key'
+			  AND ` + notOtherEngineSQL + `
 			GROUP BY 1, 2
 			UNION ALL
 			SELECT em.secret_key, em.secret_slot::int, max(e.ts) FROM external_usage e
@@ -134,7 +143,8 @@ type HealthFacts struct {
 	QuietHosts  []StaleHost `json:"quiet_hosts,omitempty"`
 	// C2: the seat that decides (secret #slot), when it last spent, its
 	// latest weekly reading and how old it is, and whether the fleet is
-	// paused (no runs, so no in-band readings).
+	// paused (no runs, so no in-band readings). On `none`, Credentials
+	// names every seat without a reading, so the page marks each.
 	Credential  string     `json:"credential,omitempty"`
 	SpentAt     *time.Time `json:"spent_at,omitempty"`
 	ReadingAt   *time.Time `json:"reading_at,omitempty"`
@@ -243,6 +253,53 @@ func minutesSince(now, t time.Time) *int {
 
 func credName(key string, slot int) string { return fmt.Sprintf("%s #%d", key, slot) }
 
+// readSources is, per seat (credName), the source of weekly readings the
+// page reads that seat's real cost and multiple from: pickCoverage's rule
+// (the most readings in (since, now], then usage_cmd, manual, inband) over
+// the meter's own rows. C2 and C3 look at that source alone, so a reading
+// typed in beside an in-band series neither turns C2 green nor C3 red while
+// the figure does not read it.
+func readSources(rows []meterRow, since, now time.Time) map[string]string {
+	type seat struct {
+		key  string
+		slot int
+	}
+	type seatSource struct {
+		seat
+		source string
+	}
+	n := map[seatSource]int{}
+	for _, r := range rows {
+		if r.window == WindowSevenDay && r.at.After(since) && !r.at.After(now) {
+			n[seatSource{seat{r.key, r.slot}, r.source}]++
+		}
+	}
+	var cov []MeterCoverage
+	seats := map[seat]bool{}
+	for k, c := range n {
+		cov = append(cov, MeterCoverage{SecretKey: k.key, SecretSlot: k.slot, Source: k.source, WindowKind: WindowSevenDay, Readings: c})
+		seats[k.seat] = true
+	}
+	// One order, so that a tie pickCoverage cannot break is broken the same
+	// way on every run.
+	slices.SortFunc(cov, func(a, b MeterCoverage) int {
+		if a.Source < b.Source {
+			return -1
+		}
+		if a.Source > b.Source {
+			return 1
+		}
+		return 0
+	})
+	out := map[string]string{}
+	for s := range seats {
+		if c, ok := pickCoverage(cov, s.key, s.slot); ok {
+			out[credName(s.key, s.slot)] = c.Source
+		}
+	}
+	return out
+}
+
 // C1 uploader fresh: every host that pushed in the last 7 days pushed within
 // 75 minutes (external_usage_hosts.pushed_at). A stopped uploader makes the
 // outside part look smaller, not missing.
@@ -322,6 +379,12 @@ func (s *Store) checkUploaderFresh(ctx context.Context, orgID uuid.UUID, now tim
 // reading entered by hand.
 func (s *Store) checkMeterFresh(ctx context.Context, orgID uuid.UUID, now time.Time, _ HealthInputs) (HealthCheck, error) {
 	c := HealthCheck{ID: "c2"}
+	since := now.Add(-basisWindow)
+	meter, err := s.meterRowsAt(ctx, orgID, "day", since)
+	if err != nil {
+		return c, fmt.Errorf("cost health c2: %w", err)
+	}
+	read := readSources(meter, since, now)
 	rows, err := s.pool.Query(ctx, `WITH `+seatsSpentSQL+`
 		SELECT s.key, s.slot, s.last, r.fetched_at, r.week_percent FROM seats s
 		LEFT JOIN LATERAL (SELECT u.fetched_at, u.week_percent FROM usage_readings u
@@ -352,9 +415,30 @@ func (s *Store) checkMeterFresh(ctx context.Context, orgID uuid.UUID, now time.T
 		}
 		return 0
 	}
+	// The latest reading of the source the page reads (readSources), where
+	// the seat was read in the window; else the query's latest of any source.
+	latest := func(x *seat) {
+		src, ok := read[credName(x.key, x.slot)]
+		if !ok {
+			return
+		}
+		x.at, x.pct = nil, nil
+		for _, r := range meter {
+			if r.key == x.key && r.slot == x.slot && r.source == src && r.window == WindowSevenDay && !r.at.After(now) &&
+				(x.at == nil || !r.at.Before(*x.at)) {
+				at, pct := r.at, r.pct
+				x.at, x.pct = &at, &pct
+			}
+		}
+	}
 	var worst *seat
+	var none []string
 	var x seat
 	if _, err := pgx.ForEachRow(rows, []any{&x.key, &x.slot, &x.spent, &x.at, &x.pct}, func() error {
+		latest(&x)
+		if rank(x) == 2 {
+			none = append(none, credName(x.key, x.slot))
+		}
 		if worst == nil || rank(x) > rank(*worst) ||
 			(rank(x) == rank(*worst) && x.at != nil && worst.at != nil && x.at.Before(*worst.at)) {
 			w := x
@@ -379,7 +463,7 @@ func (s *Store) checkMeterFresh(ctx context.Context, orgID uuid.UUID, now time.T
 	spent := worst.spent.UTC()
 	c.Facts.Credential, c.Facts.SpentAt = credName(worst.key, worst.slot), &spent
 	if worst.at == nil {
-		c.Status, c.Reason = HealthFail, "none"
+		c.Status, c.Reason, c.Facts.Credentials = HealthFail, "none", none
 		return c, nil
 	}
 	var killed bool
@@ -413,7 +497,8 @@ func (s *Store) checkMeterFresh(ctx context.Context, orgID uuid.UUID, now time.T
 //     rollover has its reset time behind it and is not one.
 //
 // Readings of the last 14 days, by when they were read; the weekly
-// all-models window only, the one the multiple divides by. The facts name
+// all-models window only, the one the multiple divides by, and per seat only
+// the source the page reads (readSources). The facts name
 // the credentials (secret #slot) with either: their real cost and multiple
 // are short, and the page marks those.
 func (s *Store) checkMeterMonotonic(ctx context.Context, orgID uuid.UUID, now time.Time, _ HealthInputs) (HealthCheck, error) {
@@ -427,8 +512,9 @@ func (s *Store) checkMeterMonotonic(ctx context.Context, orgID uuid.UUID, now ti
 	var last *time.Time
 	var creds []string
 	below := func(r meterRow) bool { return !r.reset && r.pct < r.top-1 }
+	read := readSources(rows, from, now)
 	for i, r := range rows {
-		if r.window != WindowSevenDay || r.at.After(now) || !r.at.After(from) {
+		if r.window != WindowSevenDay || r.at.After(now) || !r.at.After(from) || read[credName(r.key, r.slot)] != r.source {
 			continue
 		}
 		var prev *meterRow
@@ -467,18 +553,21 @@ func (s *Store) checkMeterMonotonic(ctx context.Context, orgID uuid.UUID, now ti
 	return c, nil
 }
 
-// C4 no double booking: one row per call — outside calls by (source,
-// session_id, message_id), agent lines by (line_uuid, model): one result
-// line is split per model, so line_uuid alone repeats by design. Today the
-// schema already holds both (external_usage's primary key, 0150;
-// idx_model_usage_line, 0144); the check is what notices when an install
-// lost one of them, a restore without its indexes for instance.
+// C4 no double booking: one row per call — outside calls by message_id,
+// across sources; agent lines by (line_uuid, model): one result line is
+// split per model, so line_uuid alone repeats by design. Within one source
+// external_usage's primary key (0150) already holds the outside key, but the
+// uploader keeps no state and sends every transcript again: a renamed
+// --source, a changed --label or a switch to --source-per-project uploads the
+// same calls under a second source, and every outside figure counts them
+// twice. idx_model_usage_line (0144) holds the agents' key; that half
+// notices an install that lost it, a restore without its indexes.
 func (s *Store) checkNoDoubleBooking(ctx context.Context, orgID uuid.UUID, _ time.Time, _ HealthInputs) (HealthCheck, error) {
 	c := HealthCheck{ID: "c4"}
 	var ext, agent int
 	err := s.pool.QueryRow(ctx, `SELECT
 		(SELECT count(*) FROM (SELECT 1 FROM external_usage WHERE org_id = $1
-			GROUP BY source, session_id, message_id HAVING count(*) > 1) x),
+			GROUP BY message_id HAVING count(*) > 1) x),
 		(SELECT count(*) FROM (SELECT 1 FROM model_usage WHERE org_id = $1 AND line_uuid IS NOT NULL
 			GROUP BY line_uuid, model HAVING count(*) > 1) y)`, orgID).Scan(&ext, &agent)
 	if err != nil {
@@ -505,9 +594,9 @@ func (s *Store) checkModelsPriced(ctx context.Context, orgID uuid.UUID, now time
 	rows, err := s.pool.Query(ctx, `SELECT model, false FROM external_usage
 			WHERE org_id = $1 AND ts > $2::timestamptz - $3::interval AND ts <= $2
 			  AND (model <> '' OR input + output + cache_read + cache_write_5m + cache_write_1h > 0)
-		UNION SELECT model, true FROM model_usage
-			WHERE org_id = $1 AND created_at > $2::timestamptz - $3::interval AND created_at <= $2
-			  AND (model <> '' OR input_tokens + output_tokens + cache_read_tokens + cache_write_5m_tokens + cache_write_1h_tokens > 0)`,
+		UNION SELECT m.model, true FROM model_usage m
+			WHERE m.org_id = $1 AND m.created_at > $2::timestamptz - $3::interval AND m.created_at <= $2 AND `+notOtherEngineSQL+`
+			  AND (m.model <> '' OR m.input_tokens + m.output_tokens + m.cache_read_tokens + m.cache_write_5m_tokens + m.cache_write_1h_tokens > 0)`,
 		orgID, now, pricedWindow)
 	if err != nil {
 		return c, fmt.Errorf("cost health c5: %w", err)
@@ -686,12 +775,15 @@ func (s *Store) checkBillSync(ctx context.Context, orgID uuid.UUID, now time.Tim
 func (s *Store) checkPreMeterUsage(ctx context.Context, orgID uuid.UUID, now time.Time, _ HealthInputs) (HealthCheck, error) {
 	c := HealthCheck{ID: "c8", Status: HealthInfo, Reason: "pre_meter"}
 	var n int
-	err := s.pool.QueryRow(ctx, `SELECT count(*) FROM external_usage e
+	// Each seat's first reading once, not one lookup per call.
+	err := s.pool.QueryRow(ctx, `WITH firsts AS (SELECT u.secret_key, u.secret_slot, min(u.fetched_at) AS first
+			FROM usage_readings u
+			WHERE u.org_id = $1 AND u.window_kind = 'seven_day' AND u.supported AND NOT u.stale AND u.week_percent IS NOT NULL
+			GROUP BY 1, 2)
+		SELECT count(*) FROM external_usage e
 		JOIN external_usage_meters em ON em.org_id = e.org_id AND em.source = e.source
-		WHERE e.org_id = $1 AND e.ts <= $2 AND e.ts < COALESCE((SELECT min(u.fetched_at) FROM usage_readings u
-			WHERE u.org_id = $1 AND u.secret_key = em.secret_key AND u.secret_slot = em.secret_slot
-			  AND u.window_kind = 'seven_day' AND u.supported AND NOT u.stale AND u.week_percent IS NOT NULL),
-			'infinity'::timestamptz)`, orgID, now).Scan(&n)
+		LEFT JOIN firsts f ON f.secret_key = em.secret_key AND f.secret_slot = em.secret_slot
+		WHERE e.org_id = $1 AND e.ts <= $2 AND e.ts < COALESCE(f.first, 'infinity'::timestamptz)`, orgID, now).Scan(&n)
 	if err != nil {
 		return c, fmt.Errorf("cost health c8: %w", err)
 	}

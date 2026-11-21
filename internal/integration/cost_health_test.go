@@ -476,13 +476,76 @@ func TestCostHealthMeterFreshAgesByWhenRead(t *testing.T) {
 
 	// Review round 2, finding 20: an in-band reading read 30 minutes ago and
 	// received before the one typed in is the latest — by when it was read,
-	// not when it arrived.
+	// not when it arrived. (Two of them, so that the in-band series is the
+	// one the page reads: readSources.)
+	f.readingFrom(t, ord, "claude_code_oauth_token", "inband", 30, nil, healthNow.Add(-time.Hour), healthNow.Add(-time.Hour), true, false)
 	f.readingFrom(t, ord, "claude_code_oauth_token", "inband", 31, nil, healthNow.Add(-30*time.Minute), healthNow.Add(-30*time.Minute), true, false)
 	c = f.check(t, "c2")
 	expectCheck(t, c, observability.HealthPass, "fresh")
 	if *c.Facts.ReadingAgo != 30 || *c.Facts.WeekPercent != 31 {
 		t.Errorf("reading %d minutes old at %v %%, want 30 at 31", *c.Facts.ReadingAgo, *c.Facts.WeekPercent)
 	}
+}
+
+// Outside lane review (finding 4): the page reads a seat's real cost from one
+// source, the one with the most readings (pickCoverage). A single reading
+// typed in beside an in-band series that stopped does not make the figure
+// fresh, so it does not make C2 fresh either.
+func TestCostHealthMeterFreshReadsThePagesSource(t *testing.T) {
+	f := newHealthFixture(t)
+	ord := f.s.seat(t, f.rt, daemon.CredSubscription, "claude_code_oauth_token", "sitz", "Work")
+	for i := 0; i < 5; i++ { // in band, every half hour, up to 4 h ago
+		at := healthNow.Add(-4*time.Hour - time.Duration(i)*30*time.Minute)
+		f.reading(t, ord, "claude_code_oauth_token", float64(20-i), nil, at, true, false)
+	}
+	f.line(t, "claude-opus-5-5", ord, "claude_code_oauth_token", "subscription", "", healthNow.Add(-10*time.Minute))
+	expectCheck(t, f.check(t, "c2"), observability.HealthWarn, "stale")
+	f.readingFrom(t, ord, "claude_code_oauth_token", "manual", 25, nil, healthNow.Add(-5*time.Minute), healthNow.Add(-5*time.Minute), true, false)
+	c := f.check(t, "c2")
+	expectCheck(t, c, observability.HealthWarn, "stale")
+	if *c.Facts.ReadingAgo != 240 {
+		t.Errorf("reading %d minutes old, want 240 (the in-band series the page reads)", *c.Facts.ReadingAgo)
+	}
+}
+
+// Outside lane review (finding 6): every seat that spent with no reading is
+// named, so the page marks each one's figures, not only the first.
+func TestCostHealthMeterFreshNamesEverySeatWithoutReading(t *testing.T) {
+	f := newHealthFixture(t)
+	a := f.s.seat(t, f.rt, daemon.CredSubscription, "claude_code_oauth_token", "sitz-a", "A")
+	b := f.s.seat(t, f.rt, daemon.CredSubscription, "seat_b_token", "sitz-b", "B")
+	f.line(t, "claude-opus-5-5", a, "claude_code_oauth_token", "subscription", "", healthNow.Add(-5*time.Minute))
+	f.line(t, "claude-opus-5-5", b, "seat_b_token", "subscription", "", healthNow.Add(-5*time.Minute))
+	c := f.check(t, "c2")
+	expectCheck(t, c, observability.HealthFail, "none")
+	if !slices.Equal(c.Facts.Credentials, []string{"claude_code_oauth_token #0", "seat_b_token #0"}) {
+		t.Errorf("credentials %v, want both seats", c.Facts.Credentials)
+	}
+}
+
+// Outside lane review (finding 1): Codex's ChatGPT plan is a subscription with
+// no weekly meter and no Claude list price. Its lines are no seat for C2 or
+// C6 and no model for C5; the same lines on a Claude Code runtime are.
+func TestCostHealthOtherEnginesAreNoSeat(t *testing.T) {
+	f := newHealthFixture(t)
+	codex, err := f.s.runtimes.Create(f.ctx, f.s.orgID, "codex", "Codex", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claude := f.rt
+	f.rt = codex.ID
+	ord := f.s.seat(t, codex.ID, daemon.CredSubscription, "codex_auth_json", "chatgpt", "ChatGPT plan")
+	f.line(t, "gpt-5.5-codex", ord, "codex_auth_json", "subscription", "", healthNow.Add(-5*time.Minute))
+	expectCheck(t, f.check(t, "c2"), observability.HealthPass, "no_meter")
+	expectCheck(t, f.check(t, "c5"), observability.HealthPass, "no_models")
+	expectCheck(t, f.check(t, "c6"), observability.HealthPass, "set")
+
+	f.rt = claude
+	ord = f.s.seat(t, claude, daemon.CredSubscription, "codex_auth_json", "chatgpt", "ChatGPT plan")
+	f.line(t, "gpt-5.5-codex", ord, "codex_auth_json", "subscription", "", healthNow.Add(-5*time.Minute))
+	expectCheck(t, f.check(t, "c2"), observability.HealthFail, "none")
+	expectCheck(t, f.check(t, "c5"), observability.HealthFail, "unpriced")
+	expectCheck(t, f.check(t, "c6"), observability.HealthWarn, "missing")
 }
 
 // Review round 2, finding 13: a seat that only a linked outside source spent
@@ -588,6 +651,25 @@ func TestCostHealthMeterDropFollowsTheMeter(t *testing.T) {
 	expectCheck(t, g.check(t, "c3"), observability.HealthPass, "monotonic")
 }
 
+// Outside lane review (finding 5): C3 looks at the source the page reads. Two
+// readings typed in by hand, 45 % then 43 %, beside an in-band series of the
+// same seat do not mark a figure that never reads them; the same fall in the
+// in-band series does.
+func TestCostHealthMeterDropOnlyInThePagesSource(t *testing.T) {
+	f := newHealthFixture(t)
+	ord := f.s.seat(t, f.rt, daemon.CredSubscription, "claude_code_oauth_token", "sitz", "Work")
+	resets := healthNow.Add(2 * 24 * time.Hour)
+	for i := 0; i < 4; i++ {
+		f.reading(t, ord, "claude_code_oauth_token", float64(30+i), &resets, healthNow.Add(time.Duration(i-6)*time.Hour), true, false)
+	}
+	f.readingFrom(t, ord, "claude_code_oauth_token", "manual", 45, &resets, healthNow.Add(-5*time.Hour-30*time.Minute), healthNow, true, false)
+	f.readingFrom(t, ord, "claude_code_oauth_token", "manual", 43, &resets, healthNow.Add(-4*time.Hour-30*time.Minute), healthNow, true, false)
+	expectCheck(t, f.check(t, "c3"), observability.HealthPass, "monotonic")
+
+	f.reading(t, ord, "claude_code_oauth_token", 10, &resets, healthNow.Add(-time.Hour), true, false)
+	expectCheck(t, f.check(t, "c3"), observability.HealthFail, "drops")
+}
+
 // C3 (outside review, 1): an account reset in mid-week moves the reset time
 // and drops the figure while the old week was still running — a reset
 // nobody recorded. An ordinary weekly rollover, its reset time behind it, is
@@ -640,6 +722,26 @@ func TestCostHealthNoDoubleBooking(t *testing.T) {
 	c = f.check(t, "c4")
 	if *c.Facts.ExternalDuplicates != 1 {
 		t.Errorf("outside duplicates %d, want 1", *c.Facts.ExternalDuplicates)
+	}
+}
+
+// Outside lane review (finding 3): the uploader sends every transcript again,
+// so a source renamed (--source, --label, --source-per-project) uploads the
+// same calls under a second source. The primary key cannot stop that; C4
+// does, with the schema whole.
+func TestCostHealthSameCallUnderTwoSources(t *testing.T) {
+	f := newHealthFixture(t)
+	f.outsideCall(t, "operator", "msg-1", "claude-opus-5-5", healthNow.Add(-time.Hour))
+	f.outsideCall(t, "operator", "msg-2", "claude-opus-5-5", healthNow.Add(-time.Hour))
+	f.outsideCall(t, "projects-sylius", "msg-3", "claude-opus-5-5", healthNow.Add(-time.Hour))
+	expectCheck(t, f.check(t, "c4"), observability.HealthPass, "unique")
+
+	f.outsideCall(t, "covey operator", "msg-1", "claude-opus-5-5", healthNow.Add(-time.Hour))
+	f.outsideCall(t, "covey operator", "msg-2", "claude-opus-5-5", healthNow.Add(-time.Hour))
+	c := f.check(t, "c4")
+	expectCheck(t, c, observability.HealthFail, "duplicates")
+	if *c.Facts.ExternalDuplicates != 2 || *c.Facts.AgentDuplicates != 0 {
+		t.Errorf("duplicates %d outside / %d agent, want 2 / 0", *c.Facts.ExternalDuplicates, *c.Facts.AgentDuplicates)
 	}
 }
 

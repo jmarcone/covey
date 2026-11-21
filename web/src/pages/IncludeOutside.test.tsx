@@ -881,6 +881,13 @@ describe("the incomplete marks of the data checks (#178)", () => {
     mockFetch({ "/api/v1/cost/external-usage": view, "/api/v1/cost/health": report(failed("c2", "none", { credential: `${SEAT} #0` })) });
     renderWithProviders(<OutsideCosts />, { route: "/costs/outside?days=1&bucket=hour", path: "/costs/outside" });
     await waitFor(() => expect(meterParts()).toEqual({ tile: ["multiple"], title: ["multiple"], seat: ["multiple"] }));
+    cleanup();
+    // Outside lane review (finding 7): a seat with no reading that is not
+    // shown here (a Codex seat, another meter) leaves this page unmarked.
+    mockFetch({ "/api/v1/cost/external-usage": view, "/api/v1/cost/health": report(failed("c2", "none", { credential: "seat_b #0", credentials: ["seat_b #0"] })) });
+    renderWithProviders(<OutsideCosts />, { route: "/costs/outside?days=1&bucket=hour", path: "/costs/outside" });
+    await waitFor(() => expect(document.querySelector(`[data-seat='${SEAT}#0']`)).toBeTruthy());
+    expect(meterParts()).toEqual({ tile: [], title: [], seat: [] });
   });
 
   // Review round 2, finding 14: a credential's own real cost and multiples

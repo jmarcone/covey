@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link, useSearchParams } from "react-router";
-import { api, type ExternalModelUsage } from "../api";
+import { api, type CostHealthCheck, type ExternalModelUsage } from "../api";
 import { exact, fmtBucket, fmtCount, fmtNumber, fmtUSD, fmtUSDAxis } from "../format";
 import { Seg } from "./Costs";
 import { rateLine } from "./SubscriptionDent";
@@ -33,7 +33,7 @@ import {
   type SplitRow,
 } from "./outsideFigures";
 import { meterPriced } from "./costFigures";
-import { IncompleteMark, credentialIncomplete, incompleteParts, useCostHealth } from "./CostHealth";
+import { IncompleteMark, credentialIncomplete, incompleteParts, unreadSeats, useCostHealth } from "./CostHealth";
 
 /* The detailed view of the Claude Code sessions outside covey (#120, the
  * human's second comment): like an agent's cost view — list price over time
@@ -199,10 +199,11 @@ export default function OutsideCosts() {
   const health = useCostHealth();
   const incomplete = incompleteParts(health.data, { agents: false, outside: true });
   // The meter share and the seats' lines divide by the meter: a seat with
-  // no reading where it spent (c2) or a reset nobody recorded on a seat
-  // shown here (c3 names them) leaves them short.
+  // no reading where it spent (c2) or a reset nobody recorded (c3) leaves
+  // them short, where it concerns a seat shown here (both name theirs).
   const seatName = (c: { secret_key: string; secret_slot: number }) => `${c.secret_key} #${c.secret_slot}`;
-  const meterIncomplete = incomplete.multiple.filter((c) => c.id !== "c3" || seats.some((s) => c.facts.credentials?.includes(seatName(s))));
+  const named = (c: CostHealthCheck) => (c.id === "c2" ? unreadSeats(c) : c.facts.credentials ?? []);
+  const meterIncomplete = incomplete.multiple.filter((c) => seats.some((s) => named(c).includes(seatName(s))));
 
   return (
     <div>
