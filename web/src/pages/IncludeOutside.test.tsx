@@ -236,14 +236,29 @@ describe("the sessions outside covey on the cost page, included by default (#120
     expect(document.querySelector("[data-inclusion-note]")!.textContent).toBe(
       t("costs.who.exactNote", { sources: document.querySelector("[data-inclusion-note]")!.textContent!.match(/\(([^)]*)\)/)![1] }));
     expect(document.querySelector("[data-seg^='out:']")).toBeNull();
-    // "covey only" stands on and cannot be switched while agents are selected, and says why.
+    // "covey only" stands on and cannot be switched while agents are selected; it stays focusable and is described by the note.
     const chip = screen.getByRole("button", { name: "covey only" }) as HTMLButtonElement;
     expect(chip.getAttribute("aria-pressed")).toBe("true");
-    expect(chip.disabled).toBe(true);
+    expect(chip.disabled).toBe(false);
+    expect(chip.getAttribute("aria-disabled")).toBe("true");
+    expect(chip.getAttribute("aria-describedby")).toBe("who-exact-note");
+    expect(document.getElementById("who-exact-note")).toBe(document.querySelector("[data-inclusion-note]"));
     expect(chip.getAttribute("title")).toBe(t("costs.who.coveyOnlyLocked"));
+    fireEvent.click(chip);
+    expect(chip.getAttribute("aria-pressed")).toBe("true");
     // The answer stays account-wide and says so.
     expect(document.querySelector("[data-answer] [data-org-wide]")).toBeTruthy();
     expect(rowList("covey")).toBe(fmtUSD(9));
+  });
+
+  it("1: under a selection the answer card ignores the chart's source chips, which are not on screen (PR 7 review)", async () => {
+    serve(cells(), `/costs?off=${encodeURIComponent(SY)}`);
+    await answerReady();
+    expect(answerRow(`project:${SY}`)).toBeNull();
+    cleanup();
+    serve(cells(), `/costs?off=${encodeURIComponent(SY)}&agents=a1`);
+    await answerReady();
+    expect(answerRow(`project:${SY}`)).not.toBeNull();
   });
 
   it("1: the change is said once per viewer, in a banner that stays dismissed", async () => {

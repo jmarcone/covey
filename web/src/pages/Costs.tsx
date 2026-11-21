@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
-import { asEnum, asSet, useParamState } from "./costView";
+import { asEnum, asSet, runUSD, useParamState } from "./costView";
 import { Seg } from "./Seg";
 import { CostFilterBar, ShareButton, WhoSummary, useCostRange } from "./costRangeState";
 import { CostTabs } from "./CostTabs";
@@ -132,7 +132,8 @@ function TokenMix({ tokens, split }: { tokens: Record<string, number>; split?: R
 function ExpensiveRuns({ runs }: { runs: RunCost[] }) {
   const { t } = useTranslation();
   if (runs.length === 0) return <div className="muted text-sm">{t("costs.empty")}</div>;
-  const ranked = [...runs].sort((a, b) => (b.measured_usd ?? -1) - (a.measured_usd ?? -1)).slice(0, 25);
+  // Ranked on the shared basis (runUSD), as the server ranks each list and the Work view does; a merge of several agents' lists is cut again.
+  const ranked = [...runs].sort((a, b) => (runUSD(b) ?? -1) - (runUSD(a) ?? -1)).slice(0, 25);
   return (
     <div style={{ overflowX: "auto" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
@@ -267,7 +268,9 @@ export default function Costs({ me }: { me?: Principal }) {
     refetchInterval: 30000,
     enabled: !badRange,
   })) });
-  const runList = runFetches.flatMap((f) => f.data ?? []);
+  // A merged list only once every agent's own is in: a missing one would read as "this agent had no expensive run".
+  const runsFailed = runFetches.some((f) => f.isError);
+  const runList = runFetches.every((f) => f.data !== undefined) ? runFetches.flatMap((f) => f.data ?? []) : null;
 
   // The price list hangs on the same scope and period as everything else on
   // this page — performance is no second topic next to the costs, but the
@@ -308,8 +311,8 @@ export default function Costs({ me }: { me?: Principal }) {
   const dent = useMemo(() => subscriptionDent(cells.data?.external), [cells.data]);
   const head = useMemo(() => headline(cells.data), [cells.data]);
   // The answer table (#195): the headline's and the dent's figures as rows.
-  const answer = useMemo(() => (head && dent && cells.data?.external ? answerTable(head, dent, cells.data.external, cells.data.meter ?? [], coveyOnly ? NO_SOURCES : offSources) : null),
-    [head, dent, cells.data, offSources, coveyOnly]);
+  const answer = useMemo(() => (head && dent && cells.data?.external ? answerTable(head, dent, cells.data.external, cells.data.meter ?? [], coveyOnly || filtered ? NO_SOURCES : offSources) : null),
+    [head, dent, cells.data, offSources, coveyOnly, filtered]);
   const ppt = useMemo(() => payPerTokenHeadline(cells.data, orgFigures, BUCKET_MS[bucket] ?? BUCKET_MS.day, end),
     [cells.data, orgFigures, bucket, end]);
 
@@ -325,6 +328,9 @@ export default function Costs({ me }: { me?: Principal }) {
   const split = useMemo(() => (noOutside ? null : outsideSplit(ext)), [ext, noOutside]);
   const realParts = useMemo(() => sourceRealParts(ext), [ext]);
   const included = outside != null ? ext! : null;
+  // The account-wide blocks (the meters per credential and their marks) keep the outside part under a selection, as
+  // orgFigures does: their "everything on this meter" names its outside rows whatever the selection.
+  const orgOutside = !coveyOnly && sourcesListed.length > 0 ? ext! : null;
   const coveyTok = totals.tokens;
   const tok = useMemo(() => {
     if (!outside) return coveyTok;
@@ -373,7 +379,7 @@ export default function Costs({ me }: { me?: Principal }) {
   // leave its own real cost and multiples short — its block and its meter
   // in the insights say so where those figures stand.
   const credentialMarks = (key: string, slot: number): CredentialMarks => {
-    const m = credentialIncomplete(healthData, `${key} #${slot}`, included ? seatSources(included, key, slot).map((x) => x.source) : null);
+    const m = credentialIncomplete(healthData, `${key} #${slot}`, orgOutside ? seatSources(orgOutside, key, slot).map((x) => x.source) : null);
     return { multiple: <IncompleteMark checks={m.multiple} part="multiple" />, outside: <IncompleteMark checks={m.outside} part="outside" /> };
   };
 
@@ -388,7 +394,7 @@ export default function Costs({ me }: { me?: Principal }) {
       {/* The sessions outside covey: in every figure below by default, each
           figure naming its parts; "covey only" leaves them out (#120). */}
       {sourcesListed.length > 0 && (!hasAnswer || noOutside) && (
-        <p className="muted text-xs mb-4" data-inclusion-note style={{ maxWidth: 760 }}>
+        <p className="muted text-xs mb-4" data-inclusion-note id={filtered ? "who-exact-note" : undefined} style={{ maxWidth: 760 }}>
           {t(filtered ? "costs.who.exactNote" : coveyOnly ? "costs.incl.coveyOnlyNote" : "costs.incl.includedNote",
             { sources: sourcesListed.map((s) => s.source).join(", ") })}
         </p>
@@ -415,7 +421,7 @@ export default function Costs({ me }: { me?: Principal }) {
           // The sessions outside covey: in every figure by default, each figure naming its parts; "covey only" leaves them out (#120).
           <span className="flex items-center gap-2" data-inclusion>
             {/* A selection of agents has no outside sessions in it: the chip stands on, and says why it cannot be switched. */}
-            <Chip on={noOutside} disabled={filtered} onClick={() => { if (!filtered) setCoveyOnly(!coveyOnly); }}
+            <Chip on={noOutside} locked={filtered} describedBy={filtered ? "who-exact-note" : undefined} onClick={() => { if (!filtered) setCoveyOnly(!coveyOnly); }}
               title={t(filtered ? "costs.who.coveyOnlyLocked" : "costs.incl.coveyOnlyTitle")}>{t("costs.incl.coveyOnly")}</Chip>
             <IncompleteMark checks={outsideMark} part="outside" />
           </span>
@@ -539,14 +545,15 @@ export default function Costs({ me }: { me?: Principal }) {
         <div className="card" style={{ gridColumn: "span 1" }}>
           <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.runs.title")}</div>
           <p className="muted text-xs mb-3">{t("costs.runs.hint")}</p>
-          <ExpensiveRuns runs={runList} />
+          {runsFailed ? <p className="muted text-sm" data-runs-error role="alert">{t("costs.home.loadError")}</p>
+            : runList ? <ExpensiveRuns runs={runList} /> : <p className="muted text-sm">{t("costs.home.loading")}</p>}
         </div>
       </div>
 
       {/* Cost insights: per model as Claude Code reported it, and the
           subscription meter per credential. The model lines follow the agent
           filter; what is per credential stays org-wide and says so. */}
-      <CostInsights days={win.days} win={custom ? win : undefined} figures={orgFigures} agents={selected} outside={included} answered={answer?.covers}
+      <CostInsights days={win.days} win={custom ? win : undefined} figures={orgFigures} agents={selected} outside={included} meterOutside={orgOutside} answered={answer?.covers}
         incomplete={<IncompleteMark checks={incomplete.tokenPrice} part="tokenPrice" />} marks={credentialMarks} />
       </CustomRangeContext.Provider>
       )}

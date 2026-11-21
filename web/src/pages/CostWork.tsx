@@ -8,7 +8,7 @@ import { PriceList } from "../components/PriceList";
 import { isRangeCode, type RangeCode } from "./costRange";
 import { CostFilterBar, ShareButton, WhoSummary, useCostRange } from "./costRangeState";
 import { CostTabs } from "./CostTabs";
-import { asSet, useParamState } from "./costView";
+import { asSet, runUSD, useParamState } from "./costView";
 
 /* Work (cost home views): which runs burned the money, and what came of it. The runs are ranked by their token price
  * (Claude Code's own price where it reported one, else covey's list price); a run that ended without a result (failed,
@@ -19,9 +19,7 @@ import { asSet, useParamState } from "./costView";
 const NONE: ReadonlySet<string> = new Set();
 const LIMIT = 500;
 const WASTE = new Set(["failed", "cancelled", "killed"]);
-/** A run's token price on the basis the server ranks by and the cost home and Details show: its lines priced with
- * covey's list (measured), else Claude Code's price, else its booked total. */
-export const runUSD = (x: RunCost): number | null => x.measured_usd ?? x.engine_usd ?? (x.total_usd > 0 ? x.total_usd : null);
+export { runUSD };
 
 export default function CostWork() {
   const { t } = useTranslation();
