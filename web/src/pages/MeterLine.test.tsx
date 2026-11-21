@@ -5,7 +5,7 @@ import type { CostCells, MeterSegment, UsageReading } from "../api";
 import i18n from "../i18n";
 import { fmtBucket, fmtUSD, fmtUSDAxis } from "../format";
 import { renderWithProviders } from "../test/render";
-import { meterPoints, nextBucket, usableReadings } from "./costFigures";
+import { droppedReadings, meterPoints, meterY, nextBucket, usableReadings } from "./costFigures";
 import { BarChart, CostExplorer, type Bar } from "./StackedCostChart";
 
 // The weekly meter as a line over the cost bars (#117): one dot per usable
@@ -341,6 +341,23 @@ describe("weekly meter line: position", () => {
     const ticks = [...container.querySelectorAll("svg[data-meter-axis] [data-meter-tick]")];
     expect(ticks.map((t) => Number(t.getAttribute("y")) - 4)).toEqual([0, 25, 50, 75, 100].map((v) => padT + plotH - (v / 100) * plotH));
   });
+
+  it("draws a reading outside 0 to 100 % at the plot's edge, and keeps its true value in the label and the tooltip", () => {
+    expect(meterY(1000, 18, 200)).toBe(18);
+    expect(meterY(-5, 18, 200)).toBe(218);
+    expect(meterY(50, 18, 200)).toBe(118);
+    const periods = [iso(18, 18)];
+    const point = (pct: number, frac: number, part: number) => ({ at: iso(18, 18, 10 * part), pct, slot: 0, frac, part, reset: false, newWeek: false });
+    const { container } = renderWithProviders(
+      <BarChart title="t" periods={periods} groups={[bar(1)]} fmtPeriod={(p) => p} fmtValue={fmtUSD} fmtAxis={fmtUSDAxis}
+        meter={{ points: [point(1000, 0.25, 0), point(250, 0.75, 1)], label: "m", name: "n", fmtAt: (s) => s }} />,
+    );
+    const padT = 18;
+    const cys = parts(container as HTMLElement).flatMap(dots).map((d) => Number(d.getAttribute("cy")));
+    expect(cys).toEqual([padT, padT]);
+    expect(parts(container as HTMLElement).flatMap(dots).map((d) => d.getAttribute("data-pct"))).toEqual(["1000", "250"]);
+    expect(container.querySelector("g[data-period]")!.getAttribute("aria-label")).toContain("1,000 % · 2026-11-18T18:10:00.000Z 250 %");
+  });
 });
 
 describe("meterPoints", () => {
@@ -457,31 +474,49 @@ describe("meterPoints", () => {
     expect(usableReadings(old, SEAT, 0, "usage_cmd", "seven_day")).toHaveLength(1);
   });
 
-  it("drops a late reading at the range's start that the server's mark dropped, though the page has no earlier reading to show it", () => {
-    // since 10:00. Before it: 09:00 39 % (old week) and 09:35 1 % (new week), not on the page. In it: 10:05 39 % with the
-    // old week's resets_at (a lagging second daemon) and 10:20 2 %. The server's segment is 09:35-10:20.
+  it("keeps a reading whose resets_at drifts by under an hour a step inside one segment, as the server does", () => {
+    // A manual weekly reading may carry any resets_at (httpapi/costinsights.go:286-292); stacked.go:656, :664-665 keep this
+    // run as one week. Judged against the segment's latest (10:40), the first (09:00) would be 100 minutes late.
     const rs = [
-      reading(iso(18, 10, 5), 39, { resets_at: "2026-11-18T12:00:00Z" }),
-      reading(iso(18, 10, 20), 2, { resets_at: "2026-11-25T09:35:00Z" }),
+      reading(iso(18, 10, 5), 1, { source: "manual", resets_at: "2026-11-25T09:00:00Z" }),
+      reading(iso(18, 10, 20), 2, { source: "manual", resets_at: "2026-11-25T09:50:00Z" }),
+      reading(iso(18, 10, 40), 3, { source: "manual", resets_at: "2026-11-25T10:40:00Z" }),
     ];
-    const ps = meterPoints(rs, cov([seg(iso(18, 9, 35), iso(18, 10, 20), { reset: true })]), [iso(18, 10)], "hour");
-    expect(ps.map((p) => p.pct)).toEqual([2]);
-    // a reading without resets_at, or within the hour of the latest one, stays
-    const kept = [reading(iso(18, 10, 5), 1, { resets_at: "2026-11-25T09:00:00Z" }), reading(iso(18, 10, 20), 2, { resets_at: "2026-11-25T09:35:00Z" }),
-      reading(iso(18, 10, 30), 3, { resets_at: null })];
-    expect(meterPoints(kept, cov([seg(iso(18, 9, 35), iso(18, 10, 30))]), [iso(18, 10)], "hour").map((p) => p.pct)).toEqual([1, 2, 3]);
+    const c = { ...cov([seg(iso(18, 10, 5), iso(18, 10, 40))]), source: "manual" };
+    expect(meterPoints(rs, c, [iso(18, 10)], "hour").map((p) => p.pct)).toEqual([1, 2, 3]);
   });
 
-  it("pins today's rule where resets_at drifts inside one segment: judged against the segment's latest, not the previous reading", () => {
-    // The server compares each reading with the previous one and the running maximum, so it keeps all three here; this
-    // drops the first, 100 minutes before the latest. No current source drifts (the /usage parse is absolute, a reading
-    // entered by hand repeats the last reset), so this is an assumption, written down.
+  it("still drops a reading more than an hour before the latest reset an earlier reading of its segment gave", () => {
     const rs = [
-      reading(iso(18, 10, 0), 1, { resets_at: "2026-11-25T09:00:00Z" }),
-      reading(iso(18, 10, 10), 2, { resets_at: "2026-11-25T09:50:00Z" }),
-      reading(iso(18, 10, 20), 3, { resets_at: "2026-11-25T10:40:00Z" }),
+      reading(iso(18, 10, 5), 1, { resets_at: "2026-11-25T09:00:00Z" }), reading(iso(18, 10, 20), 2, { resets_at: "2026-11-25T09:35:00Z" }),
+      reading(iso(18, 10, 30), 39, { resets_at: "2026-11-18T12:00:00Z" }), reading(iso(18, 10, 40), 3, { resets_at: null }),
     ];
-    expect(meterPoints(rs, cov([seg(iso(18, 10, 0), iso(18, 10, 20))]), [iso(18, 10)], "hour").map((p) => p.pct)).toEqual([2, 3]);
+    expect(meterPoints(rs, cov([seg(iso(18, 10, 5), iso(18, 10, 40))]), [iso(18, 10)], "hour").map((p) => p.pct)).toEqual([1, 2, 3]);
+  });
+
+  it("marks the first drawn reading as a new week when the range starts at a reset, from the segment's Reset flag", () => {
+    // the first segment of the window began with a reset (Reset = true) and starts at this reading: nothing drawn before it
+    const rs = [reading(iso(18, 10, 5), 1), reading(iso(18, 10, 20), 2), reading(iso(18, 11, 5), 3)];
+    const segs = [seg(iso(18, 10, 5), iso(18, 11, 5), { reset: true })];
+    const ps = meterPoints(rs, cov(segs), [iso(18, 10), iso(18, 11)], "hour");
+    expect(ps.map((p) => [p.pct, p.newWeek, p.reset])).toEqual([[1, true, false], [2, false, false], [3, false, false]]);
+    // a first segment that is no reset (the baseline's week), or a range that starts inside a week, marks nothing
+    expect(meterPoints(rs, cov([seg(iso(18, 10, 5), iso(18, 11, 5))]), [iso(18, 10), iso(18, 11)], "hour").some((p) => p.newWeek)).toBe(false);
+    expect(meterPoints(rs.slice(1), cov(segs), [iso(18, 10), iso(18, 11)], "hour").some((p) => p.newWeek)).toBe(false);
+  });
+
+  it("counts the meter card's dropped readings per window kind, as the server partitions them", () => {
+    // seven_day: week 2 (resets 12/02) then a late reading of week 1; "" (older daemon): only week 1's reset time, all fine
+    // on its own. Run together, the "" readings after 12/02 would be late; apart they are not.
+    const rs = [
+      reading(iso(18, 9), 38, { resets_at: "2026-11-25T09:00:00Z" }), reading(iso(18, 9, 10), 1, { resets_at: "2026-12-02T09:00:00Z" }),
+      reading(iso(18, 9, 20), 39, { resets_at: "2026-11-25T09:00:00Z", window_kind: "" }),
+      reading(iso(18, 9, 30), 2, { resets_at: "2026-12-02T09:00:00Z" }), reading(iso(18, 9, 40), 40, { resets_at: "2026-11-25T09:00:00Z", window_kind: "" }),
+      reading(iso(18, 9, 50), 41, { stale: true }), reading(iso(18, 9, 55), 5, { window_kind: "five_hour" }),
+    ];
+    expect(droppedReadings(rs, SEAT, 0, "usage_cmd")).toBe(1);
+    // the old call, over both kinds as one run, would have counted the "" readings late too
+    expect(rs.filter((r) => r.window_kind !== "five_hour").length - usableReadings(rs, SEAT, 0, "usage_cmd").length).toBeGreaterThan(1);
   });
 
   it("marks a new week after a gap as such without drawing a fall", () => {

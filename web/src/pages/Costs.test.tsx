@@ -227,8 +227,11 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
     fireEvent.focusIn(period);
     const tip = await screen.findByRole("tooltip");
     expect(period.getAttribute("aria-describedby")).toBe(tip.id);
-    // the meter's crossings are no longer written out (#117): its line says it
-    expect(tip.textContent).not.toMatch(/9 % → 10 %/);
+    // the details show the period's figures; the meter's crossings are no longer written out (#117)
+    expect(tip.textContent).toContain("Zu Tokenpreisen (wie von Claude Code gemeldet)8,00 $");
+    expect(tip.textContent).toContain("Echte Kosten (Schätzung)0,46 $");
+    // no readings in this fixture, so no meter line in the details; with readings, MeterLine.test.tsx ("has no crossing label …") pins what it lists
+    expect(tip.querySelector("[data-meter-readings]")).toBeNull();
     fireEvent.keyDown(period, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
     fireEvent.keyDown(period, { key: "Enter" });

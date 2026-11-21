@@ -8,7 +8,7 @@ import { DEFAULT_SOURCES, SOURCES, SOURCE_INFO, isPerModel, modelFigure, sourceH
 import { isSeat, perCredentialTotals, scopeFigure, type SourceTotal } from "./costFigures";
 import { MonthlyMeters, usageList } from "./CostBasis";
 import { Chip } from "./StackedCostChart";
-import { usableReadings, type CredentialFigures } from "./costFigures";
+import { droppedReadings, type CredentialFigures } from "./costFigures";
 import { OrgWide, OutsideMark, SOURCE_COLOR, Swatch, useUsageReadings } from "./StackedCostChart";
 import { externalStamp, kpiLead, listedSources, outsideModelRows, outsideSplit, seatSources, sourceStyles, type OutsideModelRow, type SourceStyles } from "./outsideFigures";
 import { withUnpriced, withinMoney, withinSplit } from "./StackedCostChart";
@@ -334,11 +334,10 @@ function MeterFigures({ f, readings, outside = null }: {
   const r = f.real;
   const source = t(`costs.insights.source_${m.source}`, { defaultValue: m.source });
   const own = readings.filter((x) => x.secret_key === m.secret_key && x.secret_slot === m.secret_slot);
-  const sameWindow = own.filter((x) => x.source === m.source && (x.window_kind === "seven_day" || x.window_kind === ""));
   // Only a count: it holds the readings of the range, so a late one at the
   // range's start, whose week the server judged with an earlier mark, is not
-  // counted here (the chart's line drops it per segment, in meterPoints).
-  const dropped = sameWindow.length - usableReadings(own, m.secret_key, m.secret_slot, m.source).length;
+  // counted here.
+  const dropped = droppedReadings(own, m.secret_key, m.secret_slot, m.source);
   const five = own.filter((x) => x.supported && !x.stale && x.window_percent != null).at(-1);
 
   let real: string;
