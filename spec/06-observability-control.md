@@ -155,6 +155,8 @@ An agent out of control? **Stop it immediately** — `pause`/`kill` to the daemo
 
 ## Cost control
 
+What each money figure means, its formula, where it is computed and how to check it — the one real cost, the multiple, the split of the meter, outside usage, the cost basis — is the cost methodology, [`30-cost-methodology.md`](30-cost-methodology.md).
+
 Not optional but a prerequisite for the always-on economics (see [`03-lifecycle-scheduling.md`](03-lifecycle-scheduling.md)):
 
 - **Cost tracking per agent** — from the `cost` events (tokens/compute per LLM call); aggregated up to department/cost-centre level for controlling (see [`09-enterprise-model.md`](09-enterprise-model.md)).
