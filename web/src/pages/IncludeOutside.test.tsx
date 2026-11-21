@@ -5,7 +5,7 @@ import OutsideCosts from "./OutsideCosts";
 import { readFileSync } from "node:fs";
 import type { CostCells, ExternalMeterStep, ExternalMeterSums, ExternalMeterTotal, ExternalModelCell, ExternalUsage } from "../api";
 import i18n from "../i18n";
-import { fmtCount, fmtNumber, fmtUSD } from "../format";
+import { fmtBucket, fmtCount, fmtNumber, fmtUSD } from "../format";
 import { mockFetch, renderWithProviders, openDentRow } from "../test/render";
 import { credentialFigures, everythingOnMeter, headline, inRange, meterSlack, seatLists, subscriptionDent } from "./costFigures";
 import { answerTable } from "./costAnswerModel";
@@ -1093,7 +1093,8 @@ describe("the answer table, review round 2 (#204)", () => {
     serve(data);
     await answerReady();
     expect(answerRow(`project:${GHOST}`)!.querySelector("[data-answer-partly]")).toBeNull();
-    expect(rowReal(`project:${GHOST}`)).toBe(`≈ ${fmtUSD(0.5 * PP)}`);
+    // Its figure, and how much of its work lies within the readings ($1 of its $2): the share covers that part only.
+    expect(rowReal(`project:${GHOST}`)).toBe(`≈ ${fmtUSD(0.5 * PP)}${t("costs.answer.meteredOf", { usd: fmtUSD(1) })}`);
   });
 
   it("12: the multiple is the figure above the Difference row over the Total's real cost, and the sentence names it", async () => {
@@ -1259,18 +1260,77 @@ describe("the answer table, re-review (#204)", () => {
     expect(a.rows.some((r) => r.source === "projects-tiny")).toBe(false);
   });
 
-  it("the answer at a glance shows the table's total, real cost and multiple, and says what the multiple divides", async () => {
+  it("the answer at a glance is an equation: the metered work ÷ the capacity used = the multiple, never the total ÷ it", async () => {
     const data = cells();
     const a = tableOf(data);
+    const h = headline(data)!;
     serve(data);
     await answerReady();
     const hero = document.querySelector("[data-answer-hero]")!;
-    expect(hero.querySelector("[data-hero-list]")!.textContent).toBe(document.querySelector("[data-answer-total] [data-answer-list]")!.textContent);
+    // The numerator is the metered work, not the Total row's figure.
+    expect(hero.querySelector("[data-hero-list]")!.textContent).toBe(fmtUSD(a.metered));
+    expect(fmtUSD(a.metered)).not.toBe(document.querySelector("[data-answer-total] [data-answer-list]")!.textContent);
     expect(hero.querySelector("[data-hero-real]")!.textContent).toBe(document.querySelector("[data-answer-total] [data-answer-real]")!.textContent);
     expect(hero.querySelector("[data-hero-multiple]")!.textContent).toBe(`≈ ${times(a.multiple!)}`);
-    // Not "list ÷ real": the numerator is named, the same text as the Difference row's.
-    expect(hero.textContent).toContain(t("costs.answer.fromDifferenceOf", { metered: fmtUSD(a.metered) }));
+    expect(a.metered / a.real!).toBeCloseTo(a.multiple!, 9);
+    expect(hero.textContent).toContain(t("costs.answer.heroMetered"));
+    expect(hero.textContent).toContain(t("costs.answer.heroCapacity"));
     expect(hero.textContent).toContain(t("costs.answer.heroPoints", { pts: "6" }));
+    // The reconciliation: the Total's figure = the metered work + what lies outside the readings, and it adds up.
+    const parts = [h.before, h.after, h.unpriced, h.usage].filter((v) => v >= 0.005);
+    expect(parts.length).toBeGreaterThan(0);
+    expect(a.metered + parts.reduce((x, y) => x + y, 0)).toBeCloseTo(a.list, 2);
+    const recon = hero.querySelector("[data-answer-recon]")!.textContent!;
+    expect(recon.startsWith(t("costs.answer.reconAll", { all: fmtUSD(a.list), metered: fmtUSD(a.metered) }))).toBe(true);
+    if (h.after >= 0.005) expect(recon).toContain(t("costs.answer.reconAfter", { usd: fmtUSD(h.after) }));
+  });
+
+  it("no reconciliation line while a source is switched off: its parts would not add up to the rows shown", () => {
+    const data = cells();
+    const a = answerTable(headline(data)!, subscriptionDent(data.external)!, data.external!, data.meter ?? [], new Set([SY]));
+    expect(a.multiple).toBeNull();
+  });
+
+  it("a project whose work all came before the meter's first reading says so, never ≈ $0.00", async () => {
+    // SEAT's first reading starts 17:40 on 11/17; this project's calls are at 10:00 that morning.
+    const data = withProjects(cells(), [{ source: "projects-early", list: 5, firstAt: "2026-11-17T10:00:00Z" }]);
+    const a = tableOf(data);
+    const row = a.rows.find((r) => r.source === "projects-early")!;
+    expect(row.real).toBeNull();
+    expect(row.beforeMeter).toBe("2026-11-17T17:40:00.000Z");
+    expect(row.pending).toBe(false);
+    serve(data);
+    await answerReady();
+    const cell = answerRow("project:projects-early")!.querySelector("[data-answer-real]")!;
+    expect(cell.querySelector("[data-answer-before-meter]")!.textContent).toBe(t("costs.answer.beforeMeter"));
+    expect(cell.textContent).toContain(t("costs.answer.beforeMeterWhy", { date: fmtBucket("2026-11-17T17:40:00Z", "day") }));
+    expect(cell.textContent).not.toContain("$0.00");
+    // Its token price still counts in the Total: it is work at token prices, with no meter data to share.
+    expect(rowList("project:projects-early")).toContain(fmtUSD(5));
+  });
+
+  it("a project with calls on both sides of the first reading keeps its figure", () => {
+    const data = withProjects(cells(), [{ source: "projects-early", list: 5, firstAt: "2026-11-17T10:00:00Z" }]);
+    const e = data.external!;
+    e.sources = e.sources.map((s) => (s.source === "projects-early" ? { ...s, last_at: H19 } : s));
+    expect(tableOf(data).rows.find((r) => r.source === "projects-early")!.beforeMeter).toBeNull();
+  });
+
+  it("says how much of a row's token price lies within the readings where that is less than all of it", async () => {
+    const data = cells();
+    // The operator: $3 of its $3 list price lies within the readings (all of it), so no line at the lead's $2.50 either.
+    const op = tableOf(data).rows.find((r) => r.kind === "operator")!;
+    expect(op.meteredList).toBeCloseTo(op.list!, 9);
+    // Move half of the operator's list outside the readings: $3 within of $6 → half of its lead figure.
+    const e = data.external!;
+    e.sources = e.sources.map((s) => (s.source === OP ? { ...s, list_usd: 6 } : s));
+    const half = tableOf(data).rows.find((r) => r.kind === "operator")!;
+    expect(half.meteredList).toBeCloseTo(half.list! / 2, 9);
+    serve(data);
+    await answerReady();
+    expect(answerRow("operator")!.querySelector("[data-answer-metered]")!.textContent).toBe(t("costs.answer.meteredOf", { usd: fmtUSD(half.list! / 2) }));
+    // covey's own row: no line (its split list and its token price are on different bases).
+    expect(answerRow("covey")!.querySelector("[data-answer-metered]")).toBeNull();
   });
 
   it("each row's 'where it comes from' is in the column and, for phones, under the part, the same text", async () => {
