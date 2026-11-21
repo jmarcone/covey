@@ -1,12 +1,13 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { Route, Routes, useLocation } from "react-router";
 import Costs from "./Costs";
 import CostHome from "./CostHome";
 import OutsideCosts from "./OutsideCosts";
 import { readFileSync } from "node:fs";
 import type { CostCells, CostHealthCheck, CostHealthReport, ExternalMeterStep, ExternalMeterSums, ExternalMeterTotal, ExternalModelCell, ExternalUsage } from "../api";
 import i18n from "../i18n";
-import { fmtBucket, fmtCount, fmtNumber, fmtUSD } from "../format";
+import { fmtBucket, fmtCount, fmtNumber, fmtUSD, fmtUSDFixed } from "../format";
 import { mockFetch, renderWithProviders, openDentRow } from "../test/render";
 import { CostAnswer } from "./CostAnswer";
 import { credentialFigures, everythingOnMeter, headline, inRange, meterSlack, seatLists, subscriptionDent } from "./costFigures";
@@ -1670,6 +1671,46 @@ describe("the cost home (PR 5)", () => {
     const here = within(tabs).getByRole("link", { name: t("costs.home.tabOverview") });
     expect(here.getAttribute("aria-current")).toBe("page");
     expect(within(tabs).getByRole("link", { name: t("costs.home.tabDetails") }).getAttribute("href")).toBe("/costs/details?days=7&tz=utc");
+  });
+
+  it("the hero's points × the point price is the capacity shown, to the cent (#217 review)", async () => {
+    const data = cells();
+    const a = tableOf(data);
+    serve(data, "/costs?tz=utc", health, true);
+    const hero = await waitFor(() => { const x = document.querySelector("[data-home-hero]"); if (!x) throw new Error("no hero"); return x; });
+    expect(hero.textContent).toContain(t("costs.answer.totalSub", { pts: "6", rate: fmtUSDFixed(a.rate!, 4) }));
+  });
+
+  it("an old /costs link with the details page's settings opens the details page with them (#217 review)", async () => {
+    mockFetch({});
+    const Where = () => <span data-testid="where">{useLocation().pathname + useLocation().search}</span>;
+    renderWithProviders(<Routes><Route path="/costs" element={<CostHome />} /><Route path="/costs/details" element={<Where />} /></Routes>,
+      { route: "/costs?days=7&agents=a1&layout=agents" });
+    expect((await screen.findByTestId("where")).textContent).toBe("/costs/details?days=7&agents=a1&layout=agents");
+  });
+
+  it("with two seats the strip is not drawn, and an amount before a seat's first reading is still said (#217 review)", async () => {
+    const data = { ...twoSeats(), since: "2026-11-17T17:00:00Z" };
+    const h = headline(data)!;
+    serve(data, "/costs?tz=utc", health, true);
+    const cov = await waitFor(() => { const x = document.querySelector("[data-home-coverage]"); if (!x) throw new Error("no coverage"); return x; });
+    expect(cov.querySelector(".cost-home-strip")).toBeNull();
+    if (h.before >= 0.005) expect(cov.querySelector("[data-home-cov-before]")).not.toBeNull();
+    if (h.after >= 0.005) expect(cov.querySelector("[data-home-cov-after]")).not.toBeNull();
+  });
+
+  it("says a long silence in days, and a past window gets no check count (#217 review)", async () => {
+    const stale: CostHealthReport = { status: "fail", checked_at: H19, checks: [
+      { id: "c1", status: "fail", reason: "stale", facts: { last_push_minutes: 4320 }, checked_at: H19 },
+    ] };
+    serve(cells(), "/costs?tz=utc", stale, true);
+    const trust = await waitFor(() => { const x = document.querySelector("[data-home-trust]"); if (!x?.textContent?.includes(t("costs.home.daysAgo", { n: 3 }))) throw new Error("no age"); return x; });
+    expect(trust.textContent).not.toContain("4320");
+    cleanup();
+    serve(cells(), "/costs?from=2026-11-17T17:00:00Z&to=2026-11-17T21:00:00Z&tz=utc", health, true);
+    const door = await waitFor(() => { const d = document.querySelector("[data-home-door='health']"); if (!d) throw new Error("no door"); return d; });
+    expect(door.querySelector(".cost-home-door-value")!.textContent).toBe("–");
+    expect(door.textContent).toContain(t("costs.home.healthNow"));
   });
 
   it("without a subscription meter it says there is no capacity figure, and points to the details", async () => {

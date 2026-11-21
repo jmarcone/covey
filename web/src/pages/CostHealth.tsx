@@ -6,6 +6,8 @@ import { api, type CostHealthCheck, type CostHealthReport, type CostHealthStatus
 import { fmtDelta, fmtNumber } from "../format";
 import { uiLocale } from "../i18n";
 import { counted } from "./OutsideSessions";
+import { CostTabs } from "./CostTabs";
+import { useCostQuery } from "./costView";
 
 /* Cost health (#178): whether the figures on the cost page can be trusted
  * right now. The server runs the checks (GET /cost/health, kept five minutes)
@@ -206,10 +208,12 @@ export function IncompleteMark({ checks, part }: { checks: readonly CostHealthCh
 /** /costs/health: every check with its status and reason, and when they ran. */
 export default function CostHealthPage() {
   const { t } = useTranslation();
+  const back = useCostQuery(["source"]);
   const q = useCostHealth();
   return (
     <div>
-      <div className="mb-1"><Link to="/costs" className="text-sm">← {t("costs.outside.back")}</Link></div>
+      <div className="mb-1"><Link to={`/costs${back}`} className="text-sm">← {t("costs.outside.back")}</Link></div>
+      <CostTabs />
       <div className="flex items-baseline gap-3 mb-1">
         <h1 className="text-[22px]">{t("costs.health.title")}</h1>
         {q.data && !q.isError && <StatusPill status={q.data.status} />}

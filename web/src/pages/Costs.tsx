@@ -5,7 +5,7 @@ import { Link } from "react-router";
 import { asEnum, asSet, useParamState } from "./costView";
 import { Seg } from "./Seg";
 import { CostRangeControls, useCostRange } from "./costRangeState";
-import { CostTabs } from "./CostHome";
+import { CostTabs } from "./CostTabs";
 import { isRangeCode, type RangeCode } from "./costRange";
 import { api, ApiError, type IndicatorReport, type Principal, type RunCost } from "../api";
 import { exact, fmtBucket, fmtCount, fmtUSD } from "../format";
