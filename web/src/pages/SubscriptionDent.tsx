@@ -179,9 +179,10 @@ export function SubscriptionDentRow({ d, filtered, h = null, sourceParts = [] }:
   // Why no reading was split, from the data, one rule for the cards and the
   // line below them (#164 review, finding 1): the readings moved with no
   // reported call, their outside calls had no price, the outside sessions had
-  // not reported through them, the last two mixed, or no priced reading moved.
+  // not reported through them, the last two mixed, not reported mixed with
+  // no-call movement (#164 review, nit 7), or no priced reading moved.
   const whyUnsplit = d.unsplit.steps === 0 ? (un.steps > 0 ? "NoCall" : "Idle")
-    : notReported === 0 ? "Unpriced" : unpricedSteps > 0 ? "Both" : "";
+    : notReported === 0 ? "Unpriced" : unpricedSteps > 0 ? "Both" : un.steps > 0 ? "Some" : "";
   // No seat names a source: there is no outside part to wait for.
   const noSource = d.seats.every((s) => s.sources.length === 0);
   // A part no split step backs has no figure (its real cost is 0 because
@@ -189,11 +190,13 @@ export function SubscriptionDentRow({ d, filtered, h = null, sourceParts = [] }:
   // part's work at token prices where the headline has it (#164). The token
   // price is the headline's (one figure on the page), whose range holds the
   // readings billed by usage that the dent leaves out: it stands only where
-  // there are none (#164 review, finding 4). The outside part's reason: no
+  // there are none (#164 review, finding 4), and none of the work before the
+  // first or after the last reading, which the dent leaves out the same way
+  // and names as pending (nit 8). The outside part's reason: no
   // source on these meters, else no split reading on a seat that names one
   // where covey's part has one, else covey's.
   const notSplit = (tokenPrice: number | null | undefined, outside: boolean) => [
-    tokenPrice != null && tokenPrice >= 0.005 && h != null && h.usage < 0.005 ? t("costs.dent.partTokenPrice", { list: fmtUSD(tokenPrice) }) : null,
+    tokenPrice != null && tokenPrice >= 0.005 && h != null && h.usage < 0.005 && h.unmetered < 0.005 ? t("costs.dent.partTokenPrice", { list: fmtUSD(tokenPrice) }) : null,
     t(outside && noSource ? "costs.dent.partNotSplitNoSource" : outside && d.covey.split ? "costs.dent.partNotSplitOutside"
       : `costs.dent.partNotSplit${whyUnsplit}`),
   ].filter(Boolean).join(" · ");

@@ -516,6 +516,16 @@ describe("Costs — the dent's parts without a split reading (#164)", () => {
     expect(row.querySelector("[data-dent-no-multiple]")!.textContent).toBe(t("costs.dent.noMultipleSplitBoth"));
   });
 
+  it("readings not reported and readings that moved with no call: says some were not reported, on the cards and in the line", async () => {
+    const b = [step("2026-11-17T18:40:00Z", "2026-11-17T17:40:00Z", 4, false, 300, 151),
+      step("2026-11-17T19:40:00Z", "2026-11-17T18:40:00Z", 2, true, 0, 0)];
+    const { row, group } = await dentRow(external([{ steps: b, total: seat(b) }]));
+    expectNoFigure(group("covey agents (internal)"), t("costs.dent.partNotSplitSome"));
+    expectNoFigure(group("Sessions outside covey"), t("costs.dent.partNotSplitSome"));
+    expect(row.textContent).not.toMatch(/through any of them/);
+    expect(row.querySelector("[data-dent-no-multiple]")!.textContent).toBe(t("costs.dent.noMultipleSplitSome"));
+  });
+
   it("only idle readings: –, and that no priced reading moved the meter", async () => {
     const b = [step("2026-11-17T18:40:00Z", "2026-11-17T17:40:00Z", 0, true, 0, 0)];
     const { row, group } = await dentRow(external([{ steps: b, total: seat(b, { split_runs: 0, split_slack_points: 0, split_slack_usd: 0 }) }]));
@@ -571,6 +581,15 @@ describe("Costs — the dent's parts without a split reading (#164)", () => {
     const { container: c2 } = renderWithProviders(<SubscriptionDentRow d={d} filtered={false} h={{ ...h, usage: 12 }} />);
     expect(c2.querySelector("[data-dent='covey']")!.textContent).not.toContain("at token prices");
     expect(c2.querySelector("[data-dent='covey']")!.textContent!.endsWith(t("costs.dent.partNotSplit"))).toBe(true);
+  });
+
+  it("states no token price on a – card where the range holds work before the first or after the last reading, which the dent names as pending", () => {
+    const b = unreported();
+    const ext = external([{ steps: b, total: seat(b) }]);
+    const d = subscriptionDent(ext)!, h = headline(cells(ext))!;
+    const { container } = renderWithProviders(<SubscriptionDentRow d={d} filtered={false} h={{ ...h, unmetered: 3, after: 3 }} />);
+    expect(container.querySelector("[data-dent='covey']")!.textContent).not.toContain("at token prices");
+    expect(container.querySelector("[data-dent='covey']")!.textContent!.endsWith(t("costs.dent.partNotSplit"))).toBe(true);
   });
 
   it("keeps every figure and the together multiple when a seat with sources has a split step", async () => {
