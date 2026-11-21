@@ -68,7 +68,7 @@ Wird ein Agent auf eine Engine gesetzt, deren CLI an keinem dieser Orte zu finde
 
 ## Claude Code
 
-`claude-code` fährt Claude Code headless (`claude -p`, Ausgabe als `stream-json`), und an dieser Engine wird der Rest der Plattform gemessen: Resume über `--resume`, der Systemprompt über `--append-system-prompt`, Skills aus `.claude/skills`, die Aktionen der Zielsysteme als MCP-Server, der Werkzeugumfang über `--allowedTools` und der Denkaufwand über `--effort`. Sie meldet ihre Kosten selbst, und covey bucht sie unverändert, bei einem Abo zusätzlich die Auslastung des Fensters, wie der Anbieter sie meldet.
+`claude-code` fährt Claude Code headless (`claude -p`, Ausgabe als `stream-json`), und an dieser Engine wird der Rest der Plattform gemessen: Resume über `--resume`, der Systemprompt über `--append-system-prompt`, Skills aus `.claude/skills`, die Aktionen der Zielsysteme als MCP-Server, der Werkzeugumfang über `--allowedTools` und der Denkaufwand über `--effort`. Sie meldet ihre Kosten selbst, und covey bucht sie unverändert, bei einem Abo zusätzlich die Auslastung des Fensters, wie der Anbieter sie meldet. Der Systemprompt trägt die Konfiguration des Agenten und nichts von der Aufgabe — bis auf die Abschnitte zu Stimme und Gespräch, die dem Anlass folgen, und einen Hinweis auf einen gestoppten Kollegen, den die Aufgabe nennt —, sodass ein Lauf ihn aus dem Prompt-Cache lesen kann, wenn die Läufe des Agenten aufeinander folgen; die Aufgabe, ihr Wiki-Kontext und ihr Arbeitsverzeichnis gehen in die erste Nachricht. Das eigene Auto-Memory von Claude Code ist für covey-Läufe aus: Das Gedächtnis des Agenten ist das Wiki.
 
 Sie braucht einen von zwei Zugängen:
 

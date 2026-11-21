@@ -121,16 +121,16 @@ func TestScratchDirStampsItsEntry(t *testing.T) {
 	}
 }
 
-func TestWithScratchNamesTheDirectory(t *testing.T) {
+func TestScratchParagraphNamesTheDirectory(t *testing.T) {
 	dir := filepath.Join("/home/agent", "scratch", taskA)
-	got := withScratch("Du bist Brunhilde.", dir)
-	if !strings.HasPrefix(got, "Du bist Brunhilde.\n\n## Where your files go") {
-		t.Fatalf("the paragraph belongs after the prompt:\n%s", got)
+	got := scratchParagraph(dir)
+	if !strings.HasPrefix(got, "## Where your files go") {
+		t.Fatalf("the paragraph has to open with its heading:\n%s", got)
 	}
 	if !strings.Contains(got, "~/scratch/"+taskA+"/") {
 		t.Fatalf("the directory is not named:\n%s", got)
 	}
-	if withScratch("Du bist Brunhilde.", "") != "Du bist Brunhilde." {
-		t.Fatal("without a scratch directory the prompt must stay as it was")
+	if scratchParagraph("") != "" {
+		t.Fatal("without a scratch directory there is nothing to say")
 	}
 }

@@ -7,7 +7,7 @@ Makes the runtime adapter from [`01-architecture.md`](01-architecture.md) concre
 The daemon in the sandbox calls Claude Code as a **subprocess**:
 
 ```bash
-claude -p "<task>" \
+claude -p "<wiki context, scratch directory, task>" \
   --output-format stream-json \
   --append-system-prompt "<compiled SOUL.md>" \
   --allowedTools "Read,Edit,Bash" \
@@ -17,14 +17,18 @@ claude -p "<task>" \
 
 `-p` switches from the interactive REPL into a single batch run; all CLI options work with `-p`.
 
+**What goes where.** The appended system prompt is the **agent's**: the compiled configuration, the target-system docs, the team directory, the workplace — the same text, byte for byte, for every task of the agent. Everything that belongs to the **task** goes into the first user message (`-p`): the wiki's relevant pages and index ([`05`](05-memory.md)), the paragraph naming the task's scratch directory ([`16`](16-runner.md)), then title and body, each once. The reason is the prompt cache: a system prompt that differs from task to task is written into the cache anew on the first turn of every run (14–25k tokens each time), where a stable one is read from the cache the agent's previous run wrote, at a tenth of the price (#23). Some parts still differ per occasion and stay in the system prompt, because they are the agent's voice rather than the task: the occasion's `TONE.md`, the chat tone of a chat answer, the audience block and the conversation sections; and the note on stopped colleagues a task names (empty unless it names one) is a known per-task exception.
+
+Claude Code's own **auto memory is off** for every process covey starts (`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, set by the adapter next to `HOME`): the run, the handover turn, the sub-run and educa-ai, which runs the same harness. The wiki is the agent's one memory of record, and the CLI wrote the auto memory's path — under `~/.claude/projects/<cwd>/`, with the task's scratch directory as cwd — into its system prompt ahead of covey's text, so that no task's system prompt matched another's. The directory was empty in every task's scratch directory; the cwds that repeat across tasks — a sub-run's project checkout under `~/repos`, the home of runs from before the scratch directory — were not checked. The variable and not `--settings '{"autoMemoryEnabled":false}'`, because the handover turn passes `--settings` already; not `--bare`, which would also drop hooks, `CLAUDE.md` discovery and OAuth.
+
 ## Flag → covey concept
 
 The control maps almost 1:1 onto the daemon protocol:
 
 | Claude Code flag | covey concept |
 |---|---|
-| `-p "<task>"` | `assign_task` — a task from the backlog ([`03`](03-lifecycle-scheduling.md)) |
-| `--append-system-prompt` / `--system-prompt` | `inject_config` — the compiled `SOUL.md` ([`02`](02-agent-model.md)) |
+| `-p "<task>"` | `assign_task` — a task from the backlog ([`03`](03-lifecycle-scheduling.md)), with its `memory_context` and the daemon's scratch paragraph; on a resume `resume_input` alone |
+| `--append-system-prompt` / `--system-prompt` | `inject_config` — the compiled `SOUL.md` ([`02`](02-agent-model.md)) plus the workplace; nothing of the task |
 | `--model <id\|alias>` | `inject_config.model` — the model per agent (registry field, PATCH `/agents/{id}/model`); empty = the binary's/account's default |
 | `--effort <low\|medium\|high\|xhigh\|max>` | `inject_config.effort` — the reasoning effort per agent (registry field, PATCH `/agents/{id}/effort`); empty = the binary's default. Independent of the model: a model runs at any level |
 | `--max-turns <n>` | `inject_config.max_turns` — the turn limit per agent (registry field, PATCH `/agents/{id}/max-turns`); 0 = orchestrator default (30) |
@@ -55,7 +59,9 @@ That maps exactly onto covey's `blocked` mechanic:
 
 With that, the `blocked → working` edge from [`03-lifecycle-scheduling.md`](03-lifecycle-scheduling.md) is realised with the runtime's own means.
 
-> **Short term vs. long term.** The Claude Code session is the *short-term working context* (a limited context window, possibly expiring). *Durable* memory across tasks stays covey's memory layer ([`05-memory.md`](05-memory.md)) — ingest at `done`, query at `triage`. Session persistence alone should not be relied on for long-term knowledge.
+> **Short term vs. long term.** The Claude Code session is the *short-term working context* (a limited context window, possibly expiring). *Durable* memory across tasks stays covey's memory layer ([`05-memory.md`](05-memory.md)) — ingest at `done`, query at `triage`. Session persistence alone should not be relied on for long-term knowledge. Claude Code's auto memory is off for the same reason (see [Basic mechanics](#basic-mechanics)): the wiki is the one memory of record.
+
+On a resume `-p` carries the resume input alone; the task, its wiki context and its directory are in the session's first message already, and the daemon does not send the dispatch's `memory_context` again. The appended system prompt is passed unchanged. Claude Code 2.1.327 records a session's system prompt with the session and resends that record on `--resume` whatever the flag says; an older CLI sends what it is given, and only the same text keeps the conversation's cached prefix.
 
 ## Streaming → recording
 
@@ -85,7 +91,7 @@ The `cost` message says what its figure covers in **`basis`**:
 
 Next to it travel `session_id` and `session_total_usd` (the last line's `total_cost_usd`): a cross-check — a session's booked amounts should add up to its last total — never a figure to book.
 
-**The handover resumes with the run's own arguments.** The summary turn after a turn limit (`summarize`) is started with the main run's argument list — system prompt, `--tools`, `--allowedTools`, `--mcp-config`, model, effort — and differs only in the prompt, `--resume` and `--max-turns 1`. The prompt cache is keyed on that prefix: a resume with a shorter argument list missed it and wrote the whole context again on every handover (some 15 % of one evening's spend).
+**The handover resumes with the run's own arguments.** The summary turn after a turn limit (`summarize`) is started with the main run's argument list — system prompt, `--tools`, `--allowedTools`, `--mcp-config`, model, effort — and differs only in the prompt, `--resume`, `--max-turns 2` and the `--settings` that carries the tool guard (`summaryToolGuard`). The appended system prompt is the run's, unchanged: the task's share went with the run's first message and is in the session. The prompt cache is keyed on that prefix: a resume with a shorter argument list missed it and wrote the whole context again on every handover (some 15 % of one evening's spend).
 
 On a **subscription seat that figure is notional** — Claude Code prices the run as if it had been billed, but the seat is paid for regardless. It is booked as it arrives and labelled by the credential it came from; what that means for totals and unit costs is in [`18-runtimes-capacity.md`](18-runtimes-capacity.md) and [`17-kpis.md`](17-kpis.md). An adapter for another engine may not report a dollar figure at all, in which case it has to be derived from tokens and a price list — which is why the token counts are stored separately and not only the money.
 
@@ -112,7 +118,7 @@ As **defence in depth**, `--allowedTools` (and `--permission-mode`) is neverthel
 
 ## Sub-run in the project checkout
 
-A run starts in the **task's scratch directory** (`/home/agent/scratch/<task-id>`, [`16-runner.md`](16-runner.md), "Where a run's files go") with `HOME` at the **agent home** (`/home/agent`) — that is where `~/.claude`, the wiki working copy and the dependency caches live. A resume whose session was recorded in the home before scratch directories existed starts in the home, because `--resume` looks for the transcript under the working directory. A project's source code, by contrast, lands under `~/repos/<project>-<ref>/` ([`13-zammad-integration.md`](13-zammad-integration.md) describes the pattern for target systems; the GitLab plugin's `checkout` action unpacks the archive there). Claude Code, however, looks for project memory (`CLAUDE.md`), `.claude/agents`, skills and commands **relative to the working directory** — from the home an agent sees none of it.
+A run starts in the **task's scratch directory** (`/home/agent/scratch/<task-id>`, [`16-runner.md`](16-runner.md), "Where a run's files go") with `HOME` at the **agent home** (`/home/agent`) — that is where `~/.claude`, the wiki working copy and the dependency caches live. A resume whose session was recorded in the home before scratch directories existed starts in the home. Older Claude Code versions looked for the transcript only under the working directory; 2.1.327 finds a session started from another directory, continues it in the project directory where it lies and adds an environment update with the new cwd — the fallback stays for images with an older CLI. A turn-limit continuation (a new child task with its own scratch directory, resuming its parent's session) relies on that newer behaviour. A project's source code, by contrast, lands under `~/repos/<project>-<ref>/` ([`13-zammad-integration.md`](13-zammad-integration.md) describes the pattern for target systems; the GitLab plugin's `checkout` action unpacks the archive there). Claude Code, however, looks for project memory (`CLAUDE.md`), `.claude/agents`, skills and commands **relative to the working directory** — from the home an agent sees none of it.
 
 That costs twice over: the agent re-derives the project structure on every heartbeat run (a fresh process, a capped turn budget), and the project's conventions do not affect the result.
 
