@@ -208,7 +208,7 @@
       "fiveHourNotReported": "5 小时窗口：未报告",
       "dropped": "已剔除 {{count}} 次读数（过时或无数值）",
       "source_usage_cmd": "/usage",
-      "source_inband": "运行流中",
+      "source_inband": "运行或 covey 轮询的流中",
       "source_manual": "手动录入",
       "source_merged": "所有读取来源（智能体运行、/usage、探针）",
       "unpricedRow": "其中无标价的模型（{{count}}）：按 Claude Code 自己的价格计入，与重新计算的数字一致",

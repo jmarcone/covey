@@ -208,7 +208,7 @@
       "fiveHourNotReported": "5-hour window: not reported",
       "dropped": "{{count}} reading(s) dropped (stale or without a figure)",
       "source_usage_cmd": "/usage",
-      "source_inband": "in the run's stream",
+      "source_inband": "in the stream of a run or of covey's poll",
       "source_manual": "entered by hand",
       "source_merged": "every reader (agents' runs, /usage, the probe)",
       "unpricedRow": "of which models without a list price ({{count}}): at Claude Code's own price, as in the recomputed figure",

@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"covey/internal/observability"
@@ -68,6 +70,11 @@ func (s *Server) handlePostExternalUsage(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusBadRequest, "invalid body: one JSON object expected")
 		return
 	}
+	// The same 400 as any other source the rules refuse.
+	if err := uploadSourceAllowed(in.Source); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	var link observability.MeterLinkChange
 	if len(in.MeterCredential) > 0 {
 		link.Set = true
@@ -93,6 +100,23 @@ func (s *Server) handlePostExternalUsage(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
+}
+
+// uploadSourceAllowed refuses an upload into one of covey's own meter poll
+// sources (#153). covey books its polls there and vouches for their
+// watermark (AdvanceMeterPollMarks); calls an uploader slipped in would be
+// covered by that watermark without anything saying they were all sent, and
+// would hide in what reads as covey's own call. The test is wider than
+// IsMeterPollSource: any name that, trimmed and in lower case, begins with
+// "meter poll" is refused, so that no upload passes for covey's own in the
+// list of sources either. Deleting such a source stays allowed: the next poll
+// books it anew.
+func uploadSourceAllowed(source string) error {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(source)), observability.MeterPollSource) {
+		return observability.ErrInvalidExternal{Reason: fmt.Sprintf("source %q is reserved for covey's own meter poll; "+
+			"push under another source name", source)}
+	}
+	return nil
 }
 
 // handleDeleteExternalUsage removes every row of ?source=, its meter link and

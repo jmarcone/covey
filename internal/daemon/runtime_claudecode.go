@@ -40,6 +40,11 @@ const (
 	claudeBinEnv        = "COVEY_CLAUDE_BIN"
 )
 
+// EngineClaudeCode is this adapter's engine name, as runtimes.engine holds it.
+// Named for whoever has to tell its credentials apart from another engine's
+// of the same kind (the meter poll, observability.MeterPollDue).
+const EngineClaudeCode = "claude-code"
+
 func NewClaudeCode() *ClaudeCode {
 	bin := os.Getenv(claudeBinEnv)
 	if bin == "" {
@@ -50,7 +55,7 @@ func NewClaudeCode() *ClaudeCode {
 
 func init() {
 	RegisterRuntime(RuntimeDescriptor{
-		Name:        "claude-code",
+		Name:        EngineClaudeCode,
 		Label:       "Claude Code",
 		Description: "Real Claude Code sandbox (claude -p, headless). Needs an Anthropic credential under Secrets.",
 		Credentials: []RuntimeCredential{
@@ -91,7 +96,7 @@ func init() {
 	})
 }
 
-func (c *ClaudeCode) Name() string { return "claude-code" }
+func (c *ClaudeCode) Name() string { return EngineClaudeCode }
 
 // streamEvent is the generic view of a stream-json line, as decodeStreamEvent
 // reads it.
