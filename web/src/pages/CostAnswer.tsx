@@ -67,8 +67,10 @@ function realCell(t: TFunction, r: AnswerRow): ReactNode {
 const cell = { padding: "8px 12px 8px 0", verticalAlign: "top" } as const;
 const num = { ...cell, textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" } as const;
 
-export function CostAnswer({ a, h, filtered, drawer, elsewhere: elsewhereUsd, marks }: {
+export function CostAnswer({ a, h, filtered, drawer, elsewhere: elsewhereUsd, marks, hero = true }: {
   a: AnswerTable; h: Headline; filtered: boolean;
+  /** The at-a-glance equation beside the table: off where the page shows the answer larger itself (the cost home). */
+  hero?: boolean;
   /** The data checks' marks on what the answer rests on (#178): beside the title, never hiding a figure. */
   marks?: ReactNode;
   /** The explanations, rendered only while the drawer is open. */
@@ -143,7 +145,7 @@ export function CostAnswer({ a, h, filtered, drawer, elsewhere: elsewhereUsd, ma
       {/* The answer at a glance: beside the table on a wide screen, above it otherwise. The multiple says what it divides. */}
       {/* The answer as an equation: the multiple never stands without what it divides and what it divides by (the
           cost home proposal's first honesty rule). Without a multiple: the work at token prices and the capacity used. */}
-      <div className="cost-answer-hero" data-answer-hero>
+      {hero && <div className="cost-answer-hero" data-answer-hero>
         <div>
           <div className="muted cost-answer-hero-label">{t(a.multiple != null ? "costs.answer.heroMetered" : "costs.answer.heroList")}</div>
           <div className="cost-answer-hero-figure" data-hero-list>{fmtUSD(a.multiple != null ? a.metered : a.list)}</div>
@@ -167,7 +169,7 @@ export function CostAnswer({ a, h, filtered, drawer, elsewhere: elsewhereUsd, ma
           </div>
         )}
         {recon && <p className="cost-answer-hero-recon" data-answer-recon>{recon}</p>}
-      </div>
+      </div>}
       <div style={{ overflowX: "auto", minWidth: 0 }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }} data-answer-table>
         <thead>

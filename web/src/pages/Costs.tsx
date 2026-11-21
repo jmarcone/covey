@@ -1,14 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Link, useSearchParams } from "react-router";
-import { asEnum, asSet, bucketFits, useCostWindow, useParamState } from "./costView";
-import { RangePanel } from "./RangePanel";
+import { Link } from "react-router";
+import { asEnum, asSet, useParamState } from "./costView";
 import { Seg } from "./Seg";
-import { bucketForSpan, customWindow, isCustom, isRangeCode, readRange, windowQuery, writeRange,
-  type CostWindow, type RangeCode } from "./costRange";
+import { CostRangeControls, useCostRange } from "./costRangeState";
+import { CostTabs } from "./CostTabs";
+import { isRangeCode, type RangeCode } from "./costRange";
 import { api, ApiError, type IndicatorReport, type Principal, type RunCost } from "../api";
-import { exact, fmtBucket, fmtCount, fmtUSD, setDisplayTz } from "../format";
+import { exact, fmtBucket, fmtCount, fmtUSD } from "../format";
 import { PriceList } from "../components/PriceList";
 import { CostInsights } from "./CostInsights";
 import { CostAnswer } from "./CostAnswer";
@@ -18,8 +18,8 @@ import { PayPerTokenRow, SubscriptionDentRow } from "./SubscriptionDent";
 import { canSetPlan } from "./PlanPrice";
 import { OutsideOverview } from "./OutsideSessions";
 import { CostHealthBadge, IncompleteMark, credentialIncomplete, incompleteParts, useCostHealth } from "./CostHealth";
-import { COVEY_ONLY_PARAM, COVEY_ONLY_VALUE, PRICES_PARAM, PRICES_RECOMPUTED, beforeRange, bucketOptions, kpiLead, listedSources,
-  outsideKpis, outsideSplit, rangeOptions, seatSources, sourceRealParts, type OutsideKpis } from "./outsideFigures";
+import { COVEY_ONLY_PARAM, COVEY_ONLY_VALUE, PRICES_PARAM, PRICES_RECOMPUTED, beforeRange, kpiLead, listedSources,
+  outsideKpis, outsideSplit, seatSources, sourceRealParts, type OutsideKpis } from "./outsideFigures";
 import {
   AgentFilter,
   BUCKET_MS,
@@ -188,48 +188,9 @@ const NO_SOURCES: ReadonlySet<string> = new Set();
 export default function Costs({ me }: { me?: Principal }) {
   const { t } = useTranslation();
 
-  // The whole view lives in the address (cost home PR 2): a link opens what its sender saw. A new range keeps the
-  // chosen bucket where it still fits.
-  const [params, setParams] = useSearchParams();
-  // A quick range and its bucket are in the address (PR 2, useCostWindow); a custom range is ?from=&to= (RFC 3339,
-  // [from, to)) with ?tz= (#193), so a segment can be shared, reloaded and walked back to.
-  const { days, bucket: quickBucket, setBucket: setQuickBucket } = useCostWindow();
-  const range = useMemo(() => readRange(params, Date.now()), [params]);
-  const tz = range.tz;
-  // One clock for every label of the page (the tiles, the axis, the tables).
-  // Set in the render, for this pass's labels, and again in the effect: under
-  // StrictMode the simulated unmount runs the cleanup after the first commit,
-  // and a child that re-renders on its own query would read UTC from then on.
-  setDisplayTz(tz);
-  useEffect(() => {
-    setDisplayTz(tz);
-    return () => setDisplayTz("utc");
-  }, [tz]);
-  const customOk = range.from != null && range.to != null && range.error == null;
-  // from/to given but not usable: no query is asked, the panel says why.
-  const badRange = range.error != null;
-  // The fields show what the address says whenever both values parse, a refused
-  // range too, so the error points at them; only an unparseable one falls back
-  // to the panel's default.
-  const parsed = Number.isFinite(range.from) && Number.isFinite(range.to);
-  const shownFrom = parsed ? range.from : null;
-  const shownTo = parsed ? range.to : null;
-  const win: CostWindow = customOk ? customWindow(range.from!, range.to!) : { days };
-  const custom = isCustom(win);
-  const [panelOpen, setPanelOpen] = useState(false);
-  // The panel follows the address: once it holds no custom range (Back from an applied one), the control shows the
-  // quick range the page really reads, not a stale "Custom" (#200 merge review).
-  useEffect(() => {
-    if (range.from == null && range.to == null) setPanelOpen(false);
-  }, [range.from, range.to]);
-  const wq = windowQuery(win);
-  // A custom range's bucket: the one the address names where it fits the span, else the span's own.
-  const spanDays = custom ? Math.max(1, Math.ceil((range.to! - range.from!) / 86_400_000)) : days;
-  const want = params.get("bucket");
-  const bucket = custom ? (want != null && bucketFits(spanDays, want) ? want : bucketForSpan(range.to! - range.from!)) : quickBucket;
-  const setBucket = (b: string) => (custom
-    ? setParams((prev) => { const p = new URLSearchParams(prev); p.set("bucket", b); return p; }, { replace: true })
-    : setQuickBucket(b));
+  // The window is the cost pages' shared one (useCostRange): the home and this page read it the same way.
+  const r = useCostRange();
+  const { params, setParams, days, range, badRange, win, custom, wq, bucket, tz } = r;
   const [metric, setMetric] = useParamState<Metric>("metric", "cost", METRIC.parse, METRIC.show);
   // The agent filter replaces the scope tabs: none selected = the whole
   // organisation, any combination for the charts and the KPIs; exactly one
@@ -264,9 +225,6 @@ export default function Costs({ me }: { me?: Principal }) {
   const cells = useCostCells(win, bucket, !badRange);
   const billed = useBilled(win, bucket, !badRange);
   const readings = useUsageReadings(win, !badRange);
-  // The meter's readings of the last days, for the picker's helpers (since the
-  // last reset, between two readings).
-  const helperReadings = useUsageReadings({ days: 8 }, panelOpen || custom || badRange);
   // The server refused the range (a 400 with its code): said in the panel, in
   // the reader's language.
   const apiCode: RangeCode | "unknown" | null = cells.error instanceof ApiError && cells.error.status === 400
@@ -319,34 +277,6 @@ export default function Costs({ me }: { me?: Principal }) {
   // than "you do not see them".
   const indicatorsForbidden = indicators.error instanceof ApiError && indicators.error.status === 403;
 
-  // A change of range is a step in the history: Back returns to the one before. A quick range keeps a chosen bucket
-  // where it fits (PR 2); a custom range starts at its span's own.
-  const setRange = (v: number | "custom") => {
-    if (v === "custom") {
-      setPanelOpen(true);
-      return;
-    }
-    setPanelOpen(false);
-    setParams((prev) => {
-      const p = writeRange(prev, { days: v }, tz);
-      const b = p.get("bucket");
-      if (b != null && !bucketFits(v, b)) p.delete("bucket");
-      return p;
-    });
-  };
-  const applyCustom = (from: number, to: number) => {
-    setPanelOpen(false); // the custom range keeps the panel shown while it is in force
-    setParams((prev) => {
-      const p = writeRange(prev, customWindow(from, to), tz);
-      p.delete("bucket");
-      return p;
-    });
-  };
-  const setTz = (next: typeof tz) => setParams((prev) => {
-    const n = new URLSearchParams(prev);
-    n.set("tz", next);
-    return n;
-  }, { replace: true });
 
   // The credentials' figures over the whole organisation, for the meter card:
   // the same the tiles show without an agent filter.
@@ -460,23 +390,14 @@ export default function Costs({ me }: { me?: Principal }) {
     <div>
       <div className="flex items-baseline gap-3 mb-1">
         <h1 className="text-[22px]">{t("costs.title")}</h1>
+        <CostTabs />
         <span className="muted">{scopeName}</span>
         <CostHealthBadge />
       </div>
       <p className="muted text-sm mb-4" style={{ maxWidth: 620 }}>{t("costs.subtitle")}</p>
 
       {/* Controls */}
-      <div className="flex flex-wrap items-center gap-3 mb-4">
-        <div style={{ flex: 1 }} />
-        <Seg<number | "custom"> value={custom || panelOpen || badRange ? "custom" : days} onChange={setRange}
-          options={[...rangeOptions(t), { v: "custom", label: t("costs.range.custom") }]} />
-        <Seg value={bucket} onChange={setBucket} options={bucketOptions(t, win.days)} />
-      </div>
-      {(custom || panelOpen || badRange) && (
-        // Re-made when the range changes from outside (Back, a pasted link), so the fields hold what the address says.
-        <RangePanel key={`${range.from}-${range.to}-${tz}`} from={shownFrom} to={shownTo}
-          tz={tz} onTz={setTz} onApply={applyCustom} error={rangeError} readings={helperReadings.data ?? []} />
-      )}
+      <CostRangeControls r={r} rangeError={rangeError} />
       {refused && <p className="muted text-sm" data-range-refused>{t("costs.range.refused")}</p>}
 
       {!refused && (

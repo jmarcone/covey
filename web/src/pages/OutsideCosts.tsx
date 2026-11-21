@@ -29,6 +29,7 @@ import {
   type SplitRow,
 } from "./outsideFigures";
 import { useCostQuery, useCostWindow } from "./costView";
+import { CostTabs } from "./CostTabs";
 import { meterPriced } from "./costFigures";
 import { IncompleteMark, credentialIncomplete, incompleteParts, unreadSeats, useCostHealth } from "./CostHealth";
 
@@ -198,7 +199,8 @@ export default function OutsideCosts() {
 
   return (
     <div>
-      <div className="mb-1"><Link to={`/costs${back}`} className="text-sm">← {t("costs.outside.back")}</Link></div>
+      <div className="mb-1"><Link to={`/costs/details${back}`} className="text-sm">← {t("costs.outside.back")}</Link></div>
+      <CostTabs />
       <div className="flex items-baseline gap-3 mb-1">
         <h1 className="text-[22px]" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><Swatch color={OUTSIDE_COLOR} /> {t("costs.outside.series")}</h1>
         <span className="muted">{source ?? t("costs.outside.sourceAll")}</span>

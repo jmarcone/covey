@@ -1,11 +1,13 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { Route, Routes, useLocation } from "react-router";
 import Costs from "./Costs";
+import CostHome from "./CostHome";
 import OutsideCosts from "./OutsideCosts";
 import { readFileSync } from "node:fs";
 import type { CostCells, CostHealthCheck, CostHealthReport, ExternalMeterStep, ExternalMeterSums, ExternalMeterTotal, ExternalModelCell, ExternalUsage } from "../api";
 import i18n from "../i18n";
-import { fmtBucket, fmtCount, fmtNumber, fmtUSD } from "../format";
+import { fmtBucket, fmtCount, fmtNumber, fmtUSD, fmtUSDFixed } from "../format";
 import { mockFetch, renderWithProviders, openDentRow } from "../test/render";
 import { CostAnswer } from "./CostAnswer";
 import { credentialFigures, everythingOnMeter, headline, inRange, meterSlack, seatLists, subscriptionDent } from "./costFigures";
@@ -129,7 +131,7 @@ const modelCell = (source: string, model: string, calls: number, list: number | 
   unpriced_tokens: list == null ? output + 13 : 0, unpriced_calls: list == null ? calls : 0,
 });
 
-function serve(data: CostCells = cells(), route = "/costs?tz=utc", health?: CostHealthReport) {
+function serve(data: CostCells = cells(), route = "/costs?tz=utc", health?: CostHealthReport, home = false) {
   const ext = data.external;
   mockFetch({
     ...(health ? { "/api/v1/cost/health": health } : {}),
@@ -148,7 +150,7 @@ function serve(data: CostCells = cells(), route = "/costs?tz=utc", health?: Cost
     "/api/v1/cost/usage-readings": [],
     "/api/v1/cost/indicators": null,
   });
-  return renderWithProviders(<Costs />, { route, path: "/costs" });
+  return renderWithProviders(home ? <CostHome /> : <Costs />, { route, path: "/costs" });
 }
 
 /** The full view of covey's price table (#120): Reported and Recomputed apart, as before the lead figure. */
@@ -1617,5 +1619,103 @@ describe("the incomplete marks of the data checks (#178)", () => {
     expect(await headlineMarks()).toEqual(["outside"]);
     await blocks();
     expect(document.querySelectorAll("[data-credential] [data-incomplete], [data-meter] [data-incomplete]").length).toBe(0);
+  });
+});
+
+// The cost home (cost home PR 5): the equation across the room, its trust beside it, its coverage under it, the
+// parts table, and doors that keep the window.
+describe("the cost home (PR 5)", () => {
+  beforeEach(async () => { await i18n.changeLanguage("en"); });
+  const tableOf = (data: CostCells) => answerTable(headline(data)!, subscriptionDent(data.external)!, data.external!, data.meter ?? [], new Set());
+  const health: CostHealthReport = { status: "pass", checked_at: H19, checks: [
+    { id: "c1", status: "pass", reason: "fresh", facts: { last_push_minutes: 3 }, checked_at: H19 },
+    { id: "c2", status: "pass", reason: "fresh", facts: { reading_minutes: 4, week_percent: 34 }, checked_at: H19 },
+    { id: "c8", status: "info", reason: "pre_meter", facts: { calls: 5 }, checked_at: H19 },
+  ] };
+
+  it("leads with the equation: the metered work ÷ the capacity used = the multiple, the same figures as the table", async () => {
+    const data = cells();
+    const a = tableOf(data);
+    serve(data, "/costs?tz=utc", health, true);
+    const hero = await screen.findByText(fmtUSD(a.metered), { selector: "[data-home-metered]" });
+    expect(hero).toBeTruthy();
+    expect(document.querySelector("[data-home-capacity]")!.textContent).toBe(`≈ ${fmtUSD(a.real!)}`);
+    expect(document.querySelector("[data-home-multiple]")!.textContent).toBe(`≈ ${times(a.multiple!)}`);
+    // The table below is the answer card's, without its own small hero.
+    await answerReady();
+    expect(document.querySelector("[data-answer-hero]")).toBeNull();
+    expect(document.querySelector("[data-answer-total] [data-answer-real]")!.textContent).toBe(`≈ ${fmtUSD(a.real!)}`);
+  });
+
+  it("says beside it whether the data is fresh, and how far the meter's week has gone", async () => {
+    serve(cells(), "/costs?tz=utc", health, true);
+    const trust = await waitFor(() => { const x = document.querySelector("[data-home-trust]"); if (!x?.querySelector("[data-home-week]")) throw new Error("no week yet"); return x; });
+    expect(trust.textContent).toContain(t("costs.home.minutesAgo", { n: 3 }));
+    expect(trust.textContent).toContain(t("costs.home.minutesAgo", { n: 4 }));
+    expect(trust.querySelector("[data-home-week]")!.textContent).toContain(t("costs.home.week", { pct: "34" }));
+  });
+
+  it("doors keep the window, and the health door counts the checks that pass (info left out)", async () => {
+    serve(cells(), "/costs?days=7&tz=utc", health, true);
+    const door = await waitFor(() => { const d = document.querySelector("[data-home-door='details']"); if (!d) throw new Error("no doors yet"); return d; });
+    expect(door.getAttribute("href")).toBe("/costs/details?days=7&tz=utc");
+    expect(document.querySelector("[data-home-door='health']")!.getAttribute("href")).toBe("/costs/health?days=7&tz=utc");
+    await waitFor(() => expect(document.querySelector("[data-home-door='health'] .cost-home-door-value")!.textContent).toBe("2 / 2"));
+    // The top model of the agents' token price, from /cost/models.
+    await waitFor(() => expect(document.querySelector("[data-home-door='model'] .cost-home-door-value")!.textContent).toBe("claude-opus-5-5"));
+  });
+
+  it("the tabs name the page the reader is on and carry the window", async () => {
+    serve(cells(), "/costs?days=7&tz=utc", health, true);
+    const tabs = await screen.findByRole("navigation", { name: t("costs.home.tabsLabel") });
+    const here = within(tabs).getByRole("link", { name: t("costs.home.tabOverview") });
+    expect(here.getAttribute("aria-current")).toBe("page");
+    expect(within(tabs).getByRole("link", { name: t("costs.home.tabDetails") }).getAttribute("href")).toBe("/costs/details?days=7&tz=utc");
+  });
+
+  it("the hero's points × the point price is the capacity shown, to the cent (#217 review)", async () => {
+    const data = cells();
+    const a = tableOf(data);
+    serve(data, "/costs?tz=utc", health, true);
+    const hero = await waitFor(() => { const x = document.querySelector("[data-home-hero]"); if (!x) throw new Error("no hero"); return x; });
+    expect(hero.textContent).toContain(t("costs.answer.totalSub", { pts: "6", rate: fmtUSDFixed(a.rate!, 4) }));
+  });
+
+  it("an old /costs link with the details page's settings opens the details page with them (#217 review)", async () => {
+    mockFetch({});
+    const Where = () => <span data-testid="where">{useLocation().pathname + useLocation().search}</span>;
+    renderWithProviders(<Routes><Route path="/costs" element={<CostHome />} /><Route path="/costs/details" element={<Where />} /></Routes>,
+      { route: "/costs?days=7&agents=a1&layout=agents" });
+    expect((await screen.findByTestId("where")).textContent).toBe("/costs/details?days=7&agents=a1&layout=agents");
+  });
+
+  it("with two seats the strip is not drawn, and an amount before a seat's first reading is still said (#217 review)", async () => {
+    const data = { ...twoSeats(), since: "2026-11-17T17:00:00Z" };
+    const h = headline(data)!;
+    serve(data, "/costs?tz=utc", health, true);
+    const cov = await waitFor(() => { const x = document.querySelector("[data-home-coverage]"); if (!x) throw new Error("no coverage"); return x; });
+    expect(cov.querySelector(".cost-home-strip")).toBeNull();
+    if (h.before >= 0.005) expect(cov.querySelector("[data-home-cov-before]")).not.toBeNull();
+    if (h.after >= 0.005) expect(cov.querySelector("[data-home-cov-after]")).not.toBeNull();
+  });
+
+  it("says a long silence in days, and a past window gets no check count (#217 review)", async () => {
+    const stale: CostHealthReport = { status: "fail", checked_at: H19, checks: [
+      { id: "c1", status: "fail", reason: "stale", facts: { last_push_minutes: 4320 }, checked_at: H19 },
+    ] };
+    serve(cells(), "/costs?tz=utc", stale, true);
+    const trust = await waitFor(() => { const x = document.querySelector("[data-home-trust]"); if (!x?.textContent?.includes(t("costs.home.daysAgo", { n: 3 }))) throw new Error("no age"); return x; });
+    expect(trust.textContent).not.toContain("4320");
+    cleanup();
+    serve(cells(), "/costs?from=2026-11-17T17:00:00Z&to=2026-11-17T21:00:00Z&tz=utc", health, true);
+    const door = await waitFor(() => { const d = document.querySelector("[data-home-door='health']"); if (!d) throw new Error("no door"); return d; });
+    expect(door.querySelector(".cost-home-door-value")!.textContent).toBe("–");
+    expect(door.textContent).toContain(t("costs.home.healthNow"));
+  });
+
+  it("without a subscription meter it says there is no capacity figure, and points to the details", async () => {
+    serve(cells(null), "/costs?tz=utc", health, true);
+    await waitFor(() => expect(document.querySelector("[data-home-empty]")).not.toBeNull());
+    expect(document.querySelector("[data-home-hero]")).toBeNull();
   });
 });
