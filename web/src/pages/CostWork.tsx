@@ -9,6 +9,8 @@ import { isRangeCode, type RangeCode } from "./costRange";
 import { CostFilterBar, ShareButton, WhoSummary, useCostRange } from "./costRangeState";
 import { CostTabs } from "./CostTabs";
 import { asSet, runUSD, useParamState } from "./costView";
+import { basisSupport, useBasis } from "./costBasisSwitch";
+import { BasisLockChip } from "./BasisControl";
 
 /* Work (cost home views): which runs burned the money, and what came of it. The runs are ranked by their token price
  * (Claude Code's own price where it reported one, else covey's list price); a run that ended without a result (failed,
@@ -48,6 +50,9 @@ export default function CostWork() {
   const idle = shown.filter((x) => x.actions === 0).length;
   const capped = fetches.some((f) => (f.data?.length ?? 0) >= LIMIT);
   const names = agents.size > 0 ? [...new Set(all.map((x) => x.slug))] : [];
+  // The basis (cost home PR 9): a run carries no capacity and no credential, so its figures keep the token price, said once.
+  const { basis } = useBasis();
+  const support = basisSupport("work", "runs", basis, { whoSelected: agents.size > 0 });
 
   return (
     <div className="cost-view">
@@ -63,6 +68,7 @@ export default function CostWork() {
       {!refused && !failed && runs.data && shown.length === 0 && <p className="muted text-sm" data-work-empty>{t("costs.work.empty")}</p>}
       {!refused && !failed && shown.length > 0 && (
         <>
+          {support.state === "locked" && <div className="mb-2" data-work-lock><BasisLockChip support={support} basis={basis} /></div>}
           <div className="cost-view-tiles" data-work-tiles>
             <div className="cost-view-tile" data-work-top><span className="cost-home-label">{t("costs.work.top")}</span>
               <span className="cost-view-tile-value">{runUSD(shown[0]) != null ? fmtUSD(runUSD(shown[0])!) : "–"}</span>

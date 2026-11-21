@@ -14,6 +14,8 @@ import { OrgWide, OutsideMark, SOURCE_COLOR, Swatch, useUsageReadings, type Cred
 import { windowQuery, type CostWindow } from "./costRange";
 import { externalStamp, kpiLead, listedSources, outsideModelRows, outsideSplit, seatSources, sourceStyles, type OutsideModelRow, type SourceStyles } from "./outsideFigures";
 import { withUnpriced, withinMoney, withinSplit } from "./StackedCostChart";
+import { BASIS_SOURCE, basisSupport, useBasis } from "./costBasisSwitch";
+import { BasisLockChip, BasisTag } from "./BasisControl";
 
 /* Cost insights.
  *
@@ -62,8 +64,11 @@ function saveColumns(cols: Source[]) {
   try { window.localStorage.setItem(COLS_KEY, JSON.stringify(cols)); } catch { /* private mode */ }
 }
 
-function ModelTable({ rep, figures, agents, outside = null }: {
+function ModelTable({ rep, figures, agents, outside = null, forced = null }: {
   rep: ModelUsageReport; figures: CredentialFigures[]; agents: ReadonlySet<string>;
+  /** The page's basis puts its source's column on (cost home PR 9): the seats' row under capacity, the keys' under
+   *  billed. Set by the basis, not by this browser's remembered choice, which it leaves as it is. */
+  forced?: Source | null;
   /** The sessions outside covey per source and model, included (#120); null: covey only. */
   outside?: { ext: ExternalUsage; rows: OutsideModelRow[]; styles: SourceStyles } | null;
 }) {
@@ -90,12 +95,16 @@ function ModelTable({ rep, figures, agents, outside = null }: {
   const offered = SOURCES.filter((c) => isPerModel(c) || perBy[c] != null);
   const shown = offered.filter((c) => chosen.includes(c));
   // What was stored may name only columns this window does not offer: then the default.
-  const visible = shown.length > 0 ? shown : offered.filter((c) => DEFAULT_SOURCES.includes(c));
+  const remembered = shown.length > 0 ? shown : offered.filter((c) => DEFAULT_SOURCES.includes(c));
+  // The basis's column joins what is remembered, where this window offers it (a meter, a bill); never stored.
+  const forcedOn = forced != null && offered.includes(forced) ? forced : null;
+  const visible = forcedOn && !remembered.includes(forcedOn) ? SOURCES.filter((c) => c === forcedOn || remembered.includes(c)) : remembered;
   // Switch within what is remembered, not within what is offered now: a
   // column the window lacks (Real over 24 h, which has no meter) stays in the
   // choice and comes back with the window that offers it.
   const toggle = (c: Source) => {
-    const base = shown.length > 0 ? chosen : SOURCES.filter((x) => chosen.includes(x) || visible.includes(x));
+    if (c === forcedOn) return; // set by the basis
+    const base = shown.length > 0 ? chosen : SOURCES.filter((x) => chosen.includes(x) || remembered.includes(x));
     const next = base.includes(c) ? base.filter((x) => x !== c) : SOURCES.filter((x) => x === c || base.includes(x));
     if (!next.some((x) => offered.includes(x))) return; // keep at least one on show
     setChosen(next);
@@ -205,12 +214,16 @@ function ModelTable({ rep, figures, agents, outside = null }: {
       <div className="flex flex-wrap items-center gap-2" style={{ marginBottom: 8 }} role="group" aria-label={t("costs.filter.source")}>
         <span className="muted text-xs" style={{ marginRight: 4 }}>{t("costs.filter.source")}</span>
         {offered.map((c) => {
-          const locked = visible.length === 1 && visible[0] === c;
+          const byBasis = c === forcedOn;
+          const locked = byBasis || (visible.length === 1 && visible[0] === c);
           return (
-            <Chip key={c} on={visible.includes(c)} color={SOURCE_COLOR[c]} hatched={SOURCE_INFO[c].estimate} onClick={() => toggle(c)}
-              locked={locked} title={locked ? t("costs.insights.lastColumn") : undefined}>
-              {sourceLabel(t, c)}
-            </Chip>
+            <span key={c} data-insights-chip={c} data-basis-forced={byBasis || undefined} style={{ display: "contents" }}>
+              <Chip on={visible.includes(c)} color={SOURCE_COLOR[c]} hatched={SOURCE_INFO[c].estimate} onClick={() => toggle(c)}
+                locked={locked} title={byBasis ? t("costs.basisDetails.chart.setByBasisTitle") : locked ? t("costs.insights.lastColumn") : undefined}>
+                {sourceLabel(t, c)}
+                {byBasis && <span className="muted"> · {t("costs.basisDetails.chart.setByBasis")}</span>}
+              </Chip>
+            </span>
           );
         })}
       </div>
@@ -303,6 +316,8 @@ function ModelTable({ rep, figures, agents, outside = null }: {
                 <tr key={c} data-credential-row={c} style={{ borderTop: "1px solid var(--border)" }}>
                   <td style={{ ...td, whiteSpace: "normal" }} colSpan={6} title={spansOf(total).join("\n") || undefined}>
                     {t(SOURCE_INFO[c].rowLabel!, spanOf(total))}{filtered && <OrgWide />}
+                    {/* A bill is the whole key's (cost home PR 9): what else used the key is in it too. */}
+                    {c === "billed" && forcedOn === "billed" && <span className="muted" data-whole-key> · {t("costs.basisDetails.wholeKey")}</span>}
                   </td>
                   {visible.map((x) => {
                     const own = x === c ? perCell(c, total) : { text: isPerModel(x) ? sameScope(total, x) : "", why: undefined };
@@ -460,6 +475,12 @@ export function CostInsights({ days, win: customWin, figures, agents = NO_AGENTS
   marks?: (key: string, slot: number) => CredentialMarks;
 }) {
   const { t } = useTranslation();
+  // The page's basis (cost home PR 9), through the contract: the model columns stay at token price (capacity is not
+  // split by model, bills are per key) and say so, while the basis's own per-credential row is put on; the meters are
+  // the capacity basis's own figures, and no bill.
+  const { basis } = useBasis();
+  const modelsSupport = basisSupport("details", "insightsModels", basis);
+  const meterSupport = basisSupport("details", "insightsMeter", basis);
   const win: CostWindow = customWin ?? { days };
   const wq = windowQuery(win);
   const models = useQuery({
@@ -497,11 +518,17 @@ export function CostInsights({ days, win: customWin, figures, agents = NO_AGENTS
         <div style={{ fontWeight: 600, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }} data-models-title>
           {t("costs.insights.modelsTitle")}{incomplete}
         </div>
+        <BasisLockChip support={modelsSupport} basis={basis} />
         <p className="muted text-xs mb-3">{t("costs.insights.modelsHint")}</p>
-        {models.data ? <ModelTable rep={models.data} figures={figures} agents={agents} outside={outsideRows} /> : <div className="muted text-sm">…</div>}
+        {models.data ? <ModelTable rep={models.data} figures={figures} agents={agents} outside={outsideRows}
+          forced={basis !== "token" ? BASIS_SOURCE[basis] : null} /> : <div className="muted text-sm">…</div>}
       </div>
       <div className="card">
-        <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.insights.meterTitle")}{filtered && <OrgWide />}</div>
+        <div style={{ fontWeight: 600, marginBottom: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }} data-meter-title>
+          {t("costs.insights.meterTitle")}{filtered && <OrgWide />}
+          {basis === "capacity" && meterSupport.state === "honoured" && <BasisTag basis="capacity" />}
+        </div>
+        <BasisLockChip support={meterSupport} basis={basis} />
         <p className="muted text-xs mb-3">{t("costs.insights.meterHint")}</p>
         {metered.length === 0 && monthly.length === 0 && <div className="muted text-sm">{t("costs.insights.noReadings")}</div>}
         {metered.map((f) => <MeterFigures key={f.id} f={f} readings={rs} outside={meterOutside === undefined ? outside : meterOutside} answered={answersSeat(answered, f.id) && isSeat(f)}

@@ -2363,3 +2363,15 @@ ol.md-list { list-style: decimal; }
   .cost-view-tile-value { font-size: 32px; }
   .cost-view-table table { font-size: 15px; }
 }
+
+/* The Basis switch (cost home PR 9): the control, its lock chip, tag and the absent figure. */
+.cost-basis { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; }
+.cost-basis-select { font-size: 14px; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary); }
+.cost-basis-lock { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; padding: 3px 10px; border: 1px dashed var(--border); border-radius: 6px; color: var(--text-secondary); }
+.cost-basis-totoken { border: 0; background: transparent; color: var(--text-accent); cursor: pointer; font-size: 12px; padding: 0; text-decoration: underline; }
+.cost-basis-totoken:focus-visible { outline: 2px solid var(--text-accent); outline-offset: 2px; }
+.cost-basis-tag { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); }
+.cost-basis-swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.cost-basis-swatch.hatched { background-image: repeating-linear-gradient(45deg, transparent 0 3px, rgba(255,255,255,.55) 3px 4px) !important; }
+.cost-nofigure { white-space: nowrap; cursor: help; }
+.cost-nofigure:focus-visible { outline: 2px solid var(--text-accent); outline-offset: 2px; }

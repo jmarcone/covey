@@ -7,6 +7,9 @@ import { isRangeCode, type RangeCode } from "./costRange";
 import { CostFilterBar, ShareButton, WhoSummary, useCostRange } from "./costRangeState";
 import { CostTabs } from "./CostTabs";
 import { asSet, useParamState } from "./costView";
+import { basisSupport, useBasis } from "./costBasisSwitch";
+import { BasisLockChip } from "./BasisControl";
+import { NoFigure } from "./NoFigure";
 
 /* Models (cost home views): which model the money went to, and what one run of it costs. One row per model, the
  * agents' work and the sessions outside covey apart (they are no agents), each at its lead token price: Claude Code's
@@ -95,6 +98,9 @@ export default function CostModels() {
   const cheapest = agentRows.filter((x) => x.runs >= 5).sort((a, b) => a.usd / a.runs - b.usd / b.runs)[0];
   const input = rows.reduce((a, x) => a + x.input + x.cacheRead, 0), cacheRead = rows.reduce((a, x) => a + x.cacheRead, 0);
   const names = (models.data?.rows ?? []).filter((m) => agents.has(m.agent_id)).map((m) => m.agent_name || m.agent_slug);
+  // The basis (cost home PR 9): no capacity or bill per model, so the tiles and the table keep the token price, said once.
+  const { basis } = useBasis();
+  const support = basisSupport("models", "table", basis, { whoSelected: agents.size > 0 });
 
   return (
     <div className="cost-view">
@@ -110,10 +116,12 @@ export default function CostModels() {
       {!refused && !failed && models.data && rows.length === 0 && <p className="muted text-sm" data-models-empty>{t("costs.models.empty")}</p>}
       {!refused && !failed && rows.length > 0 && (
         <>
+          {support.state === "locked" && <div className="mb-2" data-models-lock><BasisLockChip support={support} basis={basis} /></div>}
           <div className="cost-view-tiles" data-models-tiles>
             <div className="cost-view-tile"><span className="cost-home-label">{t("costs.models.topModel")}</span>
               <span className="cost-view-tile-value">{top.model}</span>
-              <span className="cost-home-sub">{total > 0 ? t("costs.models.share", { pct: fmtNumber((top.usd / total) * 100, 0), usd: fmtUSD(top.usd) }) : fmtUSD(0)}</span></div>
+              <span className="cost-home-sub" data-models-top-share>{total > 0 ? t("costs.models.share", { pct: fmtNumber((top.usd / total) * 100, 0), usd: fmtUSD(top.usd) })
+                : <NoFigure reason="noData" />}</span></div>
             {cheapest && <div className="cost-view-tile"><span className="cost-home-label">{t("costs.models.cheapest")}</span>
               <span className="cost-view-tile-value">{cheapest.model}</span>
               <span className="cost-home-sub">{t("costs.models.perRun", { usd: fmtUSD(cheapest.usd / cheapest.runs) })}</span></div>}

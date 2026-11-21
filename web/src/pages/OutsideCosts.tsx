@@ -32,6 +32,9 @@ import { useCostQuery, useCostWindow } from "./costView";
 import { CostTabs } from "./CostTabs";
 import { meterPriced } from "./costFigures";
 import { IncompleteMark, credentialIncomplete, incompleteParts, unreadSeats, useCostHealth } from "./CostHealth";
+import { basisSupport, useBasis, type Basis, type NoFigureReason } from "./costBasisSwitch";
+import { BasisControl, BasisLockChip, BasisTag } from "./BasisControl";
+import { NoFigure } from "./NoFigure";
 
 /* The detailed view of the Claude Code sessions outside covey (#120, the
  * human's second comment): like an agent's cost view — list price over time
@@ -69,6 +72,45 @@ function useWindow() {
     }, { replace: true });
   };
   return { days, bucket, source, set };
+}
+
+/** A source's own figure under the basis (cost home PR 9): token, its list price as before; capacity, its server part
+ *  of the meter (source_parts[].real_usd, ≈), none for a source on no meter (billed per use) or with no part yet;
+ *  billed, none (sources are not linked to an API key). Never $0.00 for a figure that does not exist.
+ *  A capacity figure that is absent says why, from the page's own data (the source's first and last call, the seat's
+ *  readings in the same response): the seat has no plan price, all its calls came after the seat's last reading
+ *  (pending), or all before its first (before the meter); otherwise its readings were not split (yet). Without the
+ *  meter (an older caller) or without the seat's readings, it stays "not split". */
+export function sourceFigure(basis: Basis,
+  s: { source: string; meter_credential: { secret_key: string; secret_slot: number } | null | Record<string, never>; list_usd: number | null; first_at?: string | null; last_at?: string | null },
+  real: ReadonlyMap<string, number>, meter?: Pick<ExternalModelUsage["meter"], "steps" | "credentials"> | null):
+  { usd: number; estimate: boolean } | { none: NoFigureReason } | null {
+  const support = basisSupport("outside", "sources", basis);
+  if (support.state === "none") return { none: support.reason };
+  if (basis === "capacity") {
+    if (!s.meter_credential) return { none: "usageBasis" };
+    const v = real.get(s.source);
+    if (v != null && v >= 0.005) return { usd: v, estimate: true };
+    return { none: capacityAbsent(s, meter) };
+  }
+  return s.list_usd != null ? { usd: s.list_usd, estimate: false } : null;
+}
+
+function capacityAbsent(s: { meter_credential: { secret_key?: string; secret_slot?: number } | null; first_at?: string | null; last_at?: string | null },
+  meter: Pick<ExternalModelUsage["meter"], "steps" | "credentials"> | null | undefined): NoFigureReason {
+  const ref = s.meter_credential;
+  if (!meter || !ref || ref.secret_key == null) return "notSplit";
+  const seat = meter.credentials.find((c) => c.secret_key === ref.secret_key && c.secret_slot === ref.secret_slot);
+  // The seat moved, but none of its movement has a plan price (its readings are unpriced, not on the usage basis).
+  if (seat && seat.step_count > 0 && seat.unpriced_steps > 0 && !meterPriced(seat)) return "noPlanPrice";
+  const own = meter.steps.filter((x) => x.secret_key === ref.secret_key && x.secret_slot === ref.secret_slot);
+  if (own.length === 0) return "notSplit";
+  const last = Math.max(...own.map((x) => Date.parse(x.at)));
+  const first = Math.min(...own.map((x) => Date.parse(x.from ?? x.at)));
+  const firstCall = s.first_at ? Date.parse(s.first_at) : NaN, lastCall = s.last_at ? Date.parse(s.last_at) : NaN;
+  if (Number.isFinite(firstCall) && firstCall > last) return "pending";
+  if (Number.isFinite(lastCall) && lastCall < first) return "beforeMeter";
+  return "notSplit";
 }
 
 export function useExternalUsage(days: number, bucket: string, source: string | null) {
@@ -139,6 +181,8 @@ export default function OutsideCosts() {
   // Back to the overview with its whole view (agents, chips, toggles), less this page's own source chip.
   const back = useCostQuery(["source"]);
   const q = useExternalUsage(days, bucket, source);
+  const { basis } = useBasis();
+  const modelSupport = basisSupport("outside", "perModel", basis);
   const [stack, setStack] = useState<"model" | "origin">("model");
   const [asTable, setAsTable] = useState(false);
   const data = q.data;
@@ -212,18 +256,25 @@ export default function OutsideCosts() {
       <p className="muted text-sm mb-4" style={{ maxWidth: 680 }}>{t("costs.outside.pageHint")}</p>
 
       <div className="flex flex-wrap items-center gap-3 mb-3">
+        <BasisControl />
         <div style={{ flex: 1 }} />
         <Seg value={days} onChange={(v) => set({ days: v })} options={rangeOptions(t)} />
         <Seg value={bucket} onChange={(v) => set({ bucket: v })} options={bucketOptions(t, days)} />
       </div>
+      {basis !== "token" && <div className="mb-3" data-outside-overview-lock><BasisLockChip support={basisSupport("outside", "overview", basis)} basis={basis} /></div>}
       <div className="flex flex-wrap items-center gap-2 mb-4" role="group" aria-label={t("costs.outside.source")}>
         <span className="muted text-xs" style={{ width: 84 }}>{t("costs.outside.source")}</span>
+        {basis !== "token" && <BasisTag basis={basis} />}
         <Chip on={source == null} onClick={() => set({ source: null })}>{t("costs.outside.sourceAll")}</Chip>
-        {(data?.sources ?? []).filter((s) => listedSource(s, real) || s.source === source).map((s) => (
-          <Chip key={s.source} on={source === s.source} onClick={() => set({ source: s.source })}>
-            {s.source} <span style={{ opacity: 0.7 }}>{s.list_usd != null ? fmtUSD(s.list_usd) : "–"}</span>
-          </Chip>
-        ))}
+        {(data?.sources ?? []).filter((s) => listedSource(s, real) || s.source === source).map((s) => {
+          const f = sourceFigure(basis, s, real, data?.meter);
+          return (
+            <Chip key={s.source} on={source === s.source} onClick={() => set({ source: s.source })}>
+              {s.source} <span style={{ opacity: 0.7 }} data-source-figure={s.source}>{f == null ? "–" : "none" in f ? <NoFigure reason={f.none} />
+                : `${f.estimate ? "≈ " : ""}${fmtUSD(f.usd)}`}</span>
+            </Chip>
+          );
+        })}
       </div>
 
       {q.isError ? <p className="muted">{t("costs.outside.loadError")}</p> : !data ? null : cells.length === 0 && seats.length === 0 ? (
@@ -286,6 +337,9 @@ export default function OutsideCosts() {
 
         <div className="card mb-4">
           <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.outside.tokensTitle")}</div>
+          {modelSupport.state === "locked" && <div className="mb-2" data-outside-model-lock><BasisLockChip support={modelSupport} basis={basis} /></div>}
+          {modelSupport.state === "none" && <p className="text-xs mb-2" data-outside-model-none={modelSupport.reason}>
+            <BasisTag basis={basis} /> {t("costs.basisViews.outside.perModelNone")} <NoFigure reason={modelSupport.reason} /></p>}
           <p className="muted text-xs mb-2">{t("costs.outside.tokensHint")}</p>
           <SplitTable test="model" title={t("costs.outside.byModel")} rows={models.rows} total={models.total} label={(k) => k} color={modelColor} />
           <SplitTable test="origin" title={t("costs.outside.byOrigin")} rows={origins.rows} total={origins.total} label={originLabel} color={(k) => ORIGIN_COLOR[k]} />

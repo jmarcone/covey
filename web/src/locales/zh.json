@@ -1076,6 +1076,110 @@
       "coveyOnlyLocked": "已选择智能体：covey 之外的会话不属于智能体的选择。",
       "banner": "变更：选择智能体后，现在只统计这些智能体。covey 之外的会话不再加入选择。无法跟随选择的内容标有“整个组织”。",
       "bannerOk": "知道了"
+    },
+    "basisSwitch": {
+      "label": "计价依据",
+      "option": {
+        "token": "token 价格",
+        "capacity": "已用套餐额度（估算）",
+        "billed": "账单金额（API 密钥）",
+        "cash": "现金（套餐，按比例分摊）"
+      },
+      "desc": {
+        "token": "按 token 价格计算的工作：有 Claude Code 报告值时用其价格，否则用 covey 的标价。",
+        "capacity": "计量器移动的点数 × 套餐每点价格。这是估算，覆盖整个账户。",
+        "billed": "Anthropic 向按 token 付费的 API 密钥收取的金额。按整个密钥计，而非按席位。",
+        "cash": "待批准：套餐价格在计量时段内的分摊尚未显示。"
+      },
+      "tag": {
+        "token": "token 价格",
+        "capacity": "≈ 套餐额度（估算）",
+        "billed": "账单金额"
+      },
+      "lock": {
+        "notPerRun": "套餐额度属于计量器，而不属于某次运行；此处按 token 价格显示。",
+        "noCredentialOnRun": "运行不带凭据，因此没有账单；此处按 token 价格显示。",
+        "notPerModel": "套餐额度尚未按模型拆分；此处按 token 价格显示。",
+        "billedPerKey": "账单按 API 密钥计，而非按智能体或模型；此处按 token 价格显示。",
+        "answerIsTokenOverCapacity": "答案始终是 token 价格 ÷ 已用套餐额度。",
+        "perPeriodAgent": "按期间看，额度和账单属于凭据，而不属于智能体；此处按 token 价格显示。",
+        "meterPerSeat": "此卡片显示每个席位的套餐额度；账单按 API 密钥计。",
+        "outsideTokenOnly": "本页的卡片和图表按 token 价格计；各来源的套餐额度见来源标签。",
+        "outsideSeeSources": "此部分的金额按 token 价格计；各来源的套餐额度见“covey 之外的会话”页面。",
+        "outsideNoBill": "covey 之外的来源未关联到 API 密钥，因此没有账单；其金额按 token 价格显示。"
+      },
+      "lockChip": "此处不适用{{basis}}：{{reason}}",
+      "toToken": "切换到 token 价格",
+      "pruned": {
+        "cash": "现金（套餐，按比例分摊）待批准：按 token 价格显示。",
+        "unknown": "链接中的计价依据本页无法识别：按 token 价格显示。"
+      }
+    },
+    "noFigure": {
+      "short": {
+        "pending": "待定",
+        "beforeMeter": "计量器之前",
+        "afterMeter": "最后读数之后",
+        "notSplit": "未拆分",
+        "unpricedExcluded": "无标价",
+        "notAtThisLevel": "此层级无",
+        "usageBasis": "按用量计费",
+        "accountWide": "整个账户",
+        "noReported": "未报告",
+        "noData": "无数据",
+        "bucketTooFine": "过细",
+        "noBilledKeys": "无 API 密钥",
+        "loadError": "未加载",
+        "notLanded": "尚未到达",
+        "noPlanPrice": "无套餐价格"
+      },
+      "long": {
+        "pending": "待定：其份额将在计量器下次读数后得出。",
+        "beforeMeter": "无数值：这些工作发生在计量器首次读数之前{{detail}}。",
+        "afterMeter": "暂无数值：这些工作发生在计量器最后一次读数之后。",
+        "notSplit": "无数值：这些工作期间的读数未在各部分之间拆分。",
+        "unpricedExcluded": "无数值：这些 token 没有标价{{detail}}。",
+        "notAtThisLevel": "此层级无数值：它按凭据存在，而非按部分。",
+        "usageBasis": "无数值：按用量计费，而非按套餐。",
+        "accountWide": "整个账户：未拆分到账户以下。",
+        "noReported": "无数值：Claude Code 未报告这些调用的价格。",
+        "noData": "此时段内无数据。",
+        "bucketTooFine": "10 分钟粒度下无数值：套餐额度和账单最细按小时提供。请选择按小时或更粗的粒度。",
+        "noBilledKeys": "无数值：此时段内没有 API 密钥关联到账单。",
+        "loadError": "无数值：无法获取账单。请稍后重试。",
+        "notLanded": "暂无数值：已关联 API 密钥，但此时段的账单尚未到达（或账单同步失败或未配置）。",
+        "noPlanPrice": "无数值：该席位的计量读数没有套餐价格。设置套餐价格后即可查看已用套餐额度。"
+      }
+    },
+    "basisDetails": {
+      "wholeKey": "整个密钥，不仅是 covey",
+      "chart": {
+        "setByBasis": "由计价依据决定",
+        "setByBasisTitle": "由筛选栏中的计价依据开关决定：更改计价依据即可更改它。",
+        "alsoShow": "同时显示",
+        "useHourly": "按小时显示",
+        "noCapacityOnKey": "API 密钥按 token 计费：它没有套餐额度。",
+        "noCapacityHere": "此时段内该席位没有带价格的计量器移动：无套餐额度估算。",
+        "noBillOnSeat": "席位按套餐付费：没有属于它的 API 密钥账单。"
+      },
+      "kpi": {
+        "capacityNone": "此时段内没有席位有带价格的计量器移动。",
+        "capacitySub": "各席位估算之和 · 区间 {{low}} – {{high}} · 整个账户",
+        "capacityPartial": "{{m}} 个席位中有 {{n}} 个有带价格的估算：其余未计入合计",
+        "billedPartial": "{{m}} 个 API 密钥中有 {{n}} 个有账单：其余未计入合计"
+      }
+    },
+    "basisViews": {
+      "home": {
+        "covNone": "自 {{from}} 起：无计量器数据",
+        "covMetered": "{{from}} 至 {{to}}：已计量",
+        "covAfter": "最后读数之后",
+        "billedLabel": "已关联 API 密钥的账单金额（按 token 付费，整个密钥，不仅是 covey）",
+        "billedUntil": "截至 {{until}} 的完整计费区间；不计入上方答案"
+      },
+      "outside": {
+        "perModelNone": "按模型："
+      }
     }
   },
   "lang": {

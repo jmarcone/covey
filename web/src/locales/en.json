@@ -1076,6 +1076,110 @@
       "coveyOnlyLocked": "Agents are selected: the sessions outside covey are not part of a selection of agents.",
       "banner": "Changed: selecting agents now counts exactly those agents. The sessions outside covey are no longer added to a selection. What cannot follow a selection is marked “whole organization”.",
       "bannerOk": "Got it"
+    },
+    "basisSwitch": {
+      "label": "Basis",
+      "option": {
+        "token": "Token price",
+        "capacity": "Plan capacity used (est.)",
+        "billed": "Billed (API keys)",
+        "cash": "Cash (plan, pro-rated)"
+      },
+      "desc": {
+        "token": "The work at token prices: Claude Code's own price where it reported one, else covey's list price.",
+        "capacity": "Meter points moved × the plan's price per point. An estimate, for the whole account.",
+        "billed": "What Anthropic billed the pay-per-token API keys. Whole keys, not seats.",
+        "cash": "Awaits sign-off: the plan's price spread over the metered span is not shown yet."
+      },
+      "tag": {
+        "token": "Token price",
+        "capacity": "≈ Plan capacity (est.)",
+        "billed": "Billed"
+      },
+      "lock": {
+        "notPerRun": "plan capacity belongs to a meter, not to a run; shown here at token price.",
+        "noCredentialOnRun": "a run carries no credential, so no bill; shown here at token price.",
+        "notPerModel": "plan capacity is not split by model yet; shown here at token price.",
+        "billedPerKey": "bills are per API key, not per agent or model; shown here at token price.",
+        "answerIsTokenOverCapacity": "the answer is always token price ÷ plan capacity used.",
+        "perPeriodAgent": "per period, capacity and bills belong to a credential, not to agents; shown here at token price.",
+        "meterPerSeat": "this card shows plan capacity per seat; bills are per API key.",
+        "outsideTokenOnly": "the tiles and the chart on this page are at token price; plan capacity per source is in the source chips.",
+        "outsideSeeSources": "this section's money is at token price; plan capacity per source is on the page Sessions outside covey.",
+        "outsideNoBill": "outside sources are not linked to an API key, so they have no bill; their money is shown at token price."
+      },
+      "lockChip": "{{basis}} not applied here: {{reason}}",
+      "toToken": "Switch to token price",
+      "pruned": {
+        "cash": "Cash (plan, pro-rated) awaits sign-off: showing token price.",
+        "unknown": "The link names a basis this page does not know: showing token price."
+      }
+    },
+    "noFigure": {
+      "short": {
+        "pending": "pending",
+        "beforeMeter": "before the meter",
+        "afterMeter": "after the last reading",
+        "notSplit": "not split",
+        "unpricedExcluded": "no list price",
+        "notAtThisLevel": "not at this level",
+        "usageBasis": "billed by usage",
+        "accountWide": "account-wide",
+        "noReported": "not reported",
+        "noData": "no data",
+        "bucketTooFine": "too fine",
+        "noBilledKeys": "no API keys",
+        "loadError": "not loaded",
+        "notLanded": "not landed yet",
+        "noPlanPrice": "no plan price"
+      },
+      "long": {
+        "pending": "Pending: its share follows the next meter reading.",
+        "beforeMeter": "No figure: this work is before the meter's first reading{{detail}}.",
+        "afterMeter": "No figure yet: this work is after the meter's last reading.",
+        "notSplit": "No figure: the readings over this work were not split between the parts.",
+        "unpricedExcluded": "No figure: no list price for these tokens{{detail}}.",
+        "notAtThisLevel": "No figure at this level: it exists per credential, not per part.",
+        "usageBasis": "No figure: billed by usage, not by a plan.",
+        "accountWide": "Account-wide: not split below the whole account.",
+        "noReported": "No figure: Claude Code reported no price for these calls.",
+        "noData": "No data in this window.",
+        "bucketTooFine": "No figure at 10 minutes: plan capacity and bills come per hour at the finest. Pick hourly or coarser.",
+        "noBilledKeys": "No figure: no API key is mapped to a bill in this window.",
+        "loadError": "No figure: the bill could not be fetched. Try again later.",
+        "notLanded": "No figure yet: API keys are mapped, but no bill has landed for this window (or the bill sync failed or is not set up).",
+        "noPlanPrice": "No figure: the seat's meter readings have no plan price. Set the plan's price to see the plan capacity used."
+      }
+    },
+    "basisDetails": {
+      "wholeKey": "whole key, not only covey",
+      "chart": {
+        "setByBasis": "set by Basis",
+        "setByBasisTitle": "Set by the Basis switch in the filter bar: change the basis to change it.",
+        "alsoShow": "Also show",
+        "useHourly": "Use hourly",
+        "noCapacityOnKey": "An API key is billed per token: it has no plan capacity.",
+        "noCapacityHere": "No priced meter movement on this seat in the window: no plan capacity estimate.",
+        "noBillOnSeat": "A seat is paid as a plan: no API key bill belongs to it."
+      },
+      "kpi": {
+        "capacityNone": "No seat has a priced meter movement in this window.",
+        "capacitySub": "The seats' estimates added up · range {{low}} – {{high}} · account-wide",
+        "capacityPartial": "{{n}} of {{m}} seats have a priced estimate: the others are not in the sum",
+        "billedPartial": "{{n}} of {{m}} API keys have a bill: the others are not in the sum"
+      }
+    },
+    "basisViews": {
+      "home": {
+        "covNone": "from {{from}}: no meter data",
+        "covMetered": "{{from}} to {{to}}: metered",
+        "covAfter": "after the last reading",
+        "billedLabel": "Billed to mapped API keys (pay-per-token, whole keys, not only covey)",
+        "billedUntil": "whole billed buckets to {{until}}; not part of the answer above"
+      },
+      "outside": {
+        "perModelNone": "per model:"
+      }
     }
   },
   "lang": {

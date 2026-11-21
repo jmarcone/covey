@@ -1076,6 +1076,110 @@
       "coveyOnlyLocked": "Agenten sind ausgewählt: Die Sitzungen außerhalb von covey gehören nicht zu einer Auswahl von Agenten.",
       "banner": "Geändert: Eine Auswahl von Agenten zählt jetzt genau diese Agenten. Die Sitzungen außerhalb von covey werden einer Auswahl nicht mehr hinzugefügt. Was einer Auswahl nicht folgen kann, ist mit „ganze Organisation“ markiert.",
       "bannerOk": "Verstanden"
+    },
+    "basisSwitch": {
+      "label": "Basis",
+      "option": {
+        "token": "Tokenpreis",
+        "capacity": "Genutzte Plankapazität (geschätzt)",
+        "billed": "Abgerechnet (API-Schlüssel)",
+        "cash": "Gezahlt (Tarif, anteilig)"
+      },
+      "desc": {
+        "token": "Die Arbeit zu Tokenpreisen: Claude Codes eigener Preis, wo es einen gemeldet hat, sonst coveys Listenpreis.",
+        "capacity": "Bewegte Zählerpunkte × Tarifpreis je Punkt. Eine Schätzung, für das ganze Konto.",
+        "billed": "Was Anthropic den Pay-per-Token-API-Schlüsseln abgerechnet hat. Ganze Schlüssel, keine Sitze.",
+        "cash": "Wartet auf Freigabe: Der Tarifpreis, verteilt über den gemessenen Zeitraum, wird noch nicht gezeigt."
+      },
+      "tag": {
+        "token": "Tokenpreis",
+        "capacity": "≈ Plankapazität (geschätzt)",
+        "billed": "Abgerechnet"
+      },
+      "lock": {
+        "notPerRun": "Plankapazität gehört zu einem Zähler, nicht zu einem Lauf; hier zum Tokenpreis gezeigt.",
+        "noCredentialOnRun": "Ein Lauf trägt keine Zugangsdaten, also keine Rechnung; hier zum Tokenpreis gezeigt.",
+        "notPerModel": "Plankapazität ist noch nicht nach Modell aufgeteilt; hier zum Tokenpreis gezeigt.",
+        "billedPerKey": "Rechnungen gelten je API-Schlüssel, nicht je Agent oder Modell; hier zum Tokenpreis gezeigt.",
+        "answerIsTokenOverCapacity": "Die Antwort ist immer Tokenpreis ÷ genutzte Plankapazität.",
+        "perPeriodAgent": "Je Zeitraum gehören Kapazität und Rechnungen zu Zugangsdaten, nicht zu Agenten; hier zum Tokenpreis gezeigt.",
+        "meterPerSeat": "Diese Karte zeigt die Plankapazität je Sitz; Rechnungen gelten je API-Schlüssel.",
+        "outsideTokenOnly": "Kacheln und Diagramm auf dieser Seite stehen zum Tokenpreis; die Plankapazität je Quelle steht in den Quellen-Chips.",
+        "outsideSeeSources": "Die Beträge dieses Abschnitts stehen zum Tokenpreis; die Plankapazität je Quelle steht auf der Seite Sitzungen außerhalb von covey.",
+        "outsideNoBill": "Quellen außerhalb von covey sind keinem API-Schlüssel zugeordnet, haben also keine Rechnung; ihre Beträge stehen zum Tokenpreis."
+      },
+      "lockChip": "{{basis}} gilt hier nicht: {{reason}}",
+      "toToken": "Zum Tokenpreis wechseln",
+      "pruned": {
+        "cash": "Gezahlt (Tarif, anteilig) wartet auf Freigabe: Gezeigt wird der Tokenpreis.",
+        "unknown": "Der Link nennt eine Basis, die diese Seite nicht kennt: Gezeigt wird der Tokenpreis."
+      }
+    },
+    "noFigure": {
+      "short": {
+        "pending": "ausstehend",
+        "beforeMeter": "vor dem Zähler",
+        "afterMeter": "nach der letzten Ablesung",
+        "notSplit": "nicht zugeordnet",
+        "unpricedExcluded": "kein Listenpreis",
+        "notAtThisLevel": "nicht auf dieser Ebene",
+        "usageBasis": "nach Nutzung berechnet",
+        "accountWide": "kontoweit",
+        "noReported": "nicht gemeldet",
+        "noData": "keine Daten",
+        "bucketTooFine": "zu fein",
+        "noBilledKeys": "keine API-Schlüssel",
+        "loadError": "nicht geladen",
+        "notLanded": "noch nicht eingetroffen",
+        "noPlanPrice": "kein Tarifpreis"
+      },
+      "long": {
+        "pending": "Ausstehend: Der Anteil folgt bei der nächsten Zählerablesung.",
+        "beforeMeter": "Keine Zahl: Diese Arbeit liegt vor der ersten Ablesung des Zählers{{detail}}.",
+        "afterMeter": "Noch keine Zahl: Diese Arbeit liegt nach der letzten Ablesung des Zählers.",
+        "notSplit": "Keine Zahl: Die Ablesungen über dieser Arbeit wurden nicht auf die Teile aufgeteilt.",
+        "unpricedExcluded": "Keine Zahl: kein Listenpreis für diese Tokens{{detail}}.",
+        "notAtThisLevel": "Keine Zahl auf dieser Ebene: Es gibt sie je Zugangsdaten, nicht je Teil.",
+        "usageBasis": "Keine Zahl: nach Nutzung berechnet, nicht über einen Tarif.",
+        "accountWide": "Kontoweit: nicht unterhalb des ganzen Kontos aufgeteilt.",
+        "noReported": "Keine Zahl: Claude Code hat für diese Aufrufe keinen Preis gemeldet.",
+        "noData": "Keine Daten in diesem Zeitraum.",
+        "bucketTooFine": "Keine Zahl bei 10 Minuten: Plankapazität und Rechnungen gibt es höchstens je Stunde. Wähle stündlich oder gröber.",
+        "noBilledKeys": "Keine Zahl: In diesem Zeitraum ist kein API-Schlüssel einer Rechnung zugeordnet.",
+        "loadError": "Keine Zahl: Die Rechnung konnte nicht abgerufen werden. Später erneut versuchen.",
+        "notLanded": "Noch keine Zahl: API-Schlüssel sind zugeordnet, aber für diesen Zeitraum ist noch keine Rechnung eingetroffen (oder der Rechnungsabgleich ist fehlgeschlagen oder nicht eingerichtet).",
+        "noPlanPrice": "Keine Zahl: Die Zählerstände des Sitzes haben keinen Tarifpreis. Den Preis des Tarifs setzen, um die genutzte Plankapazität zu sehen."
+      }
+    },
+    "basisDetails": {
+      "wholeKey": "ganzer Schlüssel, nicht nur covey",
+      "chart": {
+        "setByBasis": "durch Basis festgelegt",
+        "setByBasisTitle": "Durch den Basis-Schalter in der Filterleiste festgelegt: Ändere die Basis, um es zu ändern.",
+        "alsoShow": "Auch zeigen",
+        "useHourly": "Stündlich verwenden",
+        "noCapacityOnKey": "Ein API-Schlüssel wird je Token berechnet: Er hat keine Plankapazität.",
+        "noCapacityHere": "Keine bepreiste Zählerbewegung auf diesem Sitz im Zeitraum: keine Schätzung der Plankapazität.",
+        "noBillOnSeat": "Ein Sitz wird als Tarif bezahlt: Zu ihm gehört keine Rechnung eines API-Schlüssels."
+      },
+      "kpi": {
+        "capacityNone": "Kein Sitz hat in diesem Zeitraum eine bepreiste Zählerbewegung.",
+        "capacitySub": "Die Schätzungen der Sitze addiert · Spanne {{low}} – {{high}} · kontoweit",
+        "capacityPartial": "{{n}} von {{m}} Sitzen haben eine bepreiste Schätzung: Die anderen sind nicht in der Summe",
+        "billedPartial": "{{n}} von {{m}} API-Schlüsseln haben eine Rechnung: Die anderen sind nicht in der Summe"
+      }
+    },
+    "basisViews": {
+      "home": {
+        "covNone": "ab {{from}}: keine Zählerdaten",
+        "covMetered": "{{from}} bis {{to}}: gemessen",
+        "covAfter": "nach der letzten Ablesung",
+        "billedLabel": "Den zugeordneten API-Schlüsseln abgerechnet (Pay-per-Token, ganze Schlüssel, nicht nur covey)",
+        "billedUntil": "ganze abgerechnete Abschnitte bis {{until}}; nicht Teil der Antwort oben"
+      },
+      "outside": {
+        "perModelNone": "je Modell:"
+      }
     }
   },
   "lang": {

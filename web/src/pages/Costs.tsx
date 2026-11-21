@@ -8,12 +8,15 @@ import { CostFilterBar, ShareButton, WhoSummary, useCostRange } from "./costRang
 import { CostTabs } from "./CostTabs";
 import { isRangeCode, type RangeCode } from "./costRange";
 import { api, ApiError, type IndicatorReport, type Principal, type RunCost } from "../api";
-import { exact, fmtBucket, fmtCount, fmtUSD } from "../format";
+import { exact, fmtBucket, fmtCount, fmtUSD, fmtUSDBelow } from "../format";
 import { PriceList } from "../components/PriceList";
 import { CostInsights } from "./CostInsights";
 import { CostAnswer } from "./CostAnswer";
 import { answerTable } from "./costAnswerModel";
-import { coveyElsewhere, credentialFigures, headline, payPerTokenHeadline, subscriptionDent } from "./costFigures";
+import { coveyElsewhere, credentialFigures, headline, isSeat, payPerTokenHeadline, subscriptionDent, type BilledState, type CredentialFigures } from "./costFigures";
+import { basisSupport, useBasis, type Basis, type NoFigureReason } from "./costBasisSwitch";
+import { BasisLockChip, BasisTag } from "./BasisControl";
+import { NoFigure } from "./NoFigure";
 import { PayPerTokenRow, SubscriptionDentRow } from "./SubscriptionDent";
 import { canSetPlan } from "./PlanPrice";
 import { OutsideOverview } from "./OutsideSessions";
@@ -38,6 +41,7 @@ import {
   splitLines,
   outsideMoney,
   priceTableLine,
+  billedStateText,
   useBilled,
   useCostCells,
   useUsageReadings,
@@ -58,12 +62,18 @@ const METRIC = asEnum<Metric>(["cost", "tokens"]);
 
 // --- KPI tiles ---------------------------------------------------------------
 
-function Kpi({ label, value, sub, color, parts, check }: { label: string; value: string; sub?: string; color?: string; parts?: React.ReactNode; check?: string }) {
+function Kpi({ label, value, sub, color, hatched, parts, check, tag, lead }: { label: string; value: React.ReactNode; sub?: string; color?: string; hatched?: boolean; parts?: React.ReactNode; check?: string;
+  /** The basis the figure is in, where the page's basis is another (cost home PR 9). */
+  tag?: React.ReactNode;
+  /** The tile that leads under the page's basis. */
+  lead?: Basis;
+}) {
   return (
-    <div className="card" data-kpi={label} style={{ flex: 1, minWidth: 150 }}>
-      <div className="muted text-xs" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        {color && <Swatch color={color} />}
+    <div className="card" data-kpi={label} data-basis-lead={lead} style={{ flex: 1, minWidth: 150 }}>
+      <div className="muted text-xs" style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+        {color && <Swatch color={color} hatched={hatched} />}
         {label}
+        {tag}
       </div>
       <div data-kpi-value style={{ fontSize: 24, fontWeight: 600, marginTop: 2 }}>{value}</div>
       {sub && <div className="muted text-xs" style={{ marginTop: 2 }}>{sub}</div>}
@@ -73,6 +83,52 @@ function Kpi({ label, value, sub, color, parts, check }: { label: string; value:
       {check && <div className="muted text-xs" data-price-check style={{ marginTop: 2 }}>{check}</div>}
     </div>
   );
+}
+
+/** The page's lead tile under capacity or billed (cost home PR 9), from the credentials' own server figures: the seats'
+ *  plan capacity estimates, or the API keys' bills. Only what exists is summed, and the tile says how many it covers;
+ *  with none, no figure and why, never $0.00. Nothing is allocated. */
+export function BasisKpi({ basis, figures, billedQuery = { loading: false, error: false } }: {
+  basis: Exclude<Basis, "token">; figures: CredentialFigures[];
+  /** The bill's own query: while it loads the tile waits; only its failure is a load error. */
+  billedQuery?: { loading: boolean; error: boolean };
+}) {
+  const { t } = useTranslation();
+  const label = t(`costs.basisSwitch.option.${basis}`);
+  if (basis === "capacity") {
+    const seats = figures.filter((f) => isSeat(f));
+    // A seat whose meter did not move (below) is priced: its capacity is 0 to below one point, so it counts with 0 and
+    // its high bound in the range. Only a seat without a plan price (or without a reading) is left out, and said so.
+    const priced = seats.filter((f) => f.real?.priced);
+    if (priced.length === 0) {
+      return <Kpi label={label} lead={basis} color={SOURCE_COLOR.real} hatched value={<NoFigure reason="noData" />} sub={t("costs.basisDetails.kpi.capacityNone")} />;
+    }
+    const sum = (k: "value" | "low" | "high") => priced.reduce((a, f) => a + (f.real!.below && k !== "high" ? 0 : f.real![k]), 0);
+    const partial = priced.length < seats.length ? t("costs.basisDetails.kpi.capacityPartial", { n: priced.length, m: seats.length }) : "";
+    // Every priced seat below one point: an upper bound, as CostInsights says it ("< $high"), never ≈ $0.00.
+    if (priced.every((f) => f.real!.below)) {
+      return <Kpi label={label} lead={basis} color={SOURCE_COLOR.real} hatched value={<span data-kpi-below>{fmtUSDBelow(sum("high"))}</span>}
+        sub={[t("costs.fig.realBelow"), partial].filter(Boolean).join(" · ")} />;
+    }
+    const sub = [t("costs.basisDetails.kpi.capacitySub", { low: fmtUSD(sum("low")), high: fmtUSD(sum("high")) }), partial].filter(Boolean).join(" · ");
+    return <Kpi label={label} lead={basis} color={SOURCE_COLOR.real} hatched value={`≈ ${fmtUSD(sum("value"))}`} sub={sub} />;
+  }
+  const keys = figures.filter((f) => f.kind === "api_key" && f.billed != null);
+  const measured = keys.filter((f) => f.billed!.state === "measured");
+  if (billedQuery.loading) return <Kpi label={label} lead={basis} color={SOURCE_COLOR.billed} value="…" />;
+  const tag = <span className="muted" data-whole-key>· {t("costs.basisDetails.wholeKey")}</span>;
+  if (measured.length === 0) {
+    // Keys but none measured: the bill has not landed (or the sync failed or is not set up); a key that could not be
+    // read at all is a load error; keys none of which is mapped are no billed keys. The keys' own states say the rest.
+    const states = new Set(keys.map((f) => f.billed!.state));
+    const reason: NoFigureReason = billedQuery.error ? "loadError" : keys.length === 0 ? "noBilledKeys"
+      : ["not_landed", "failed", "no_bucket", "unconfigured", "unavailable"].some((x) => states.has(x as BilledState)) ? "notLanded"
+      : "noBilledKeys";
+    const why = [...new Set(keys.map((f) => billedStateText(t, f.billed!)))].join(" · ");
+    return <Kpi label={label} lead={basis} color={SOURCE_COLOR.billed} tag={tag} value={<NoFigure reason={reason} />} sub={why || undefined} />;
+  }
+  const sub = measured.length < keys.length ? t("costs.basisDetails.kpi.billedPartial", { n: measured.length, m: keys.length }) : undefined;
+  return <Kpi label={label} lead={basis} color={SOURCE_COLOR.billed} tag={tag} value={fmtUSD(measured.reduce((a, f) => a + f.billed!.usd, 0))} sub={sub} />;
 }
 
 // --- Segmented switches ------------------------------------------------------
@@ -208,6 +264,8 @@ export default function Costs({ me }: { me?: Principal }) {
   // The window is the cost pages' shared one (useCostRange): the home and this page read it the same way.
   const r = useCostRange();
   const { params, setParams, days, range, badRange, win, custom, wq, bucket, tz } = r;
+  // The page's basis (cost home PR 9): every block reads what it does with it from the contract (basisSupport).
+  const { basis } = useBasis();
   const [metric, setMetric] = useParamState<Metric>("metric", "cost", METRIC.parse, METRIC.show);
   // The agent filter (Who): none selected = the whole organisation; a selection counts exactly those agents, in every
   // block that follows it (cost home PR 7). The sessions outside covey are no agents: a selection never adds them.
@@ -319,6 +377,12 @@ export default function Costs({ me }: { me?: Principal }) {
 
   // KPIs over the same lines as the charts, narrowed by the same filter.
   const totals = useMemo(() => cellTotals(cells.data, selected), [cells.data, selected]);
+  // The basis per block (cost home PR 9). The tiles are range totals (the bucket does not touch them); per agent there
+  // is no capacity or bill, so a selection keeps the token price and says so. Runs and the price list carry no meter
+  // and no credential: token price, with the reason.
+  const kpiSupport = basisSupport("details", "kpis", basis, { whoSelected: selected.size > 0 });
+  const runsSupport = basisSupport("details", "runs", basis);
+  const priceListSupport = basisSupport("details", "priceList", basis);
   // The outside sessions with calls in the range; null for covey only or none.
   const ext = cells.data?.external;
   const sourcesListed = useMemo(() => listedSources(ext), [ext]);
@@ -402,6 +466,8 @@ export default function Costs({ me }: { me?: Principal }) {
       )}
     </>
   );
+  // Under another basis a token figure says it is one (cost home PR 9).
+  const tokenTag = basis !== "token" ? <BasisTag basis="token" /> : undefined;
   // covey's own work no row of the page covers: the headline's, less what the pay-per-token row shows of each credential.
   const elsewhere = head ? coveyElsewhere(head.coveyElsewhereBy, ppt) : 0;
   return (
@@ -441,7 +507,7 @@ export default function Costs({ me }: { me?: Principal }) {
           token prices and its share of the real cost, the total, the multiple
           and one sentence. What explains it is in the drawer. */}
       {answer && head && dent && (
-        <CostAnswer a={answer} h={head} filtered={selected.size > 0} elsewhere={elsewhere}
+        <CostAnswer a={answer} h={head} filtered={selected.size > 0} elsewhere={elsewhere} basis={basis}
           marks={cardMarks.multiple.length + cardMarks.outside.length + cardMarks.tokenPrice.length > 0 && <>
             <IncompleteMark checks={cardMarks.multiple} part="multiple" />
             <IncompleteMark checks={cardMarks.outside} part="outside" />
@@ -466,15 +532,17 @@ export default function Costs({ me }: { me?: Principal }) {
       {/* Without a subscription meter there is no answer table: the lead
           figure stands as a tile, as before. One list-price figure leads
           (#120); the toggle shows covey's price table apart. */}
+      {!answer && kpiSupport.state === "locked" && <div className="mb-2" data-kpi-lock><BasisLockChip support={kpiSupport} basis={basis} /></div>}
       {!answer && (
         <div className="flex flex-wrap gap-3 mb-4">
+          {basis !== "token" && kpiSupport.state === "honoured" && <BasisKpi basis={basis} figures={orgFigures} billedQuery={{ loading: billed.isLoading, error: billed.isError }} />}
           {fullPrices ? <>
-            <Kpi label={t("costs.fig.reported")} value={fmtUSD(totals.reported + (outside?.reported ?? 0))} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.reported}
+            <Kpi label={t("costs.fig.reported")} value={fmtUSD(totals.reported + (outside?.reported ?? 0))} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.reported} tag={tokenTag}
               parts={parts(fmtUSD(totals.reported), (o) => outsideMoney(t, o, "reported"))} />
-            <Kpi label={t("costs.fig.recomputed")} value={fmtUSD(totals.recomputed + (outside?.list ?? 0))} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.recomputed}
+            <Kpi label={t("costs.fig.recomputed")} value={fmtUSD(totals.recomputed + (outside?.list ?? 0))} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.recomputed} tag={tokenTag}
               parts={parts(fmtUSD(totals.recomputed), (o) => outsideMoney(t, o, "list"))} />
           </> : (
-            <Kpi label={t("costs.lead.label")} value={fmtUSD(lead)} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.reported}
+            <Kpi label={t("costs.lead.label")} value={fmtUSD(lead)} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.reported} tag={tokenTag}
               parts={outside && split ? <SplitParts stacked lines={leadLines(t, filtered, fmtUSD(totals.reported), split)} /> : undefined}
               check={priceTableLine(t, lead, totals.recomputed + (outside?.list ?? 0))} />
           )}
@@ -498,7 +566,7 @@ export default function Costs({ me }: { me?: Principal }) {
         {metric === "cost" ? (
           <CostExplorer data={cells.data} billed={billed.data} readings={readings.data ?? []} canSetPlan={canSetPlan(me?.Role ?? "")} selected={selected} bucket={bucket} fmtPeriod={fmtPeriod}
             outside={included} full={fullPrices} onFull={setFullPrices} off={offSources} onToggleSource={toggleSource} answered={answer?.covers}
-            marks={credentialMarks} />
+            marks={credentialMarks} onBucket={r.setBucket} />
         ) : (
           <TokenExplorer data={cells.data} selected={selected} fmtPeriod={fmtPeriod} outside={included} />
         )}
@@ -534,6 +602,7 @@ export default function Costs({ me }: { me?: Principal }) {
       <div className="grid gap-4 mb-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(320px, 100%), 1fr))" }}>
         <div className="card">
           <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.indicators.title")}{scope === "org" && selected.size > 0 && <OrgWide />}</div>
+          <BasisLockChip support={priceListSupport} basis={basis} />
           <p className="muted text-xs mb-3">{t("costs.indicators.hint")}</p>
           {custom ? (
             <p className="muted text-xs" data-indicators-custom>{t("costs.range.indicatorsCustom")}</p>
@@ -545,6 +614,7 @@ export default function Costs({ me }: { me?: Principal }) {
         </div>
         <div className="card" style={{ gridColumn: "span 1" }}>
           <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.runs.title")}</div>
+          <BasisLockChip support={runsSupport} basis={basis} />
           <p className="muted text-xs mb-3">{t("costs.runs.hint")}</p>
           {runsFailed ? <p className="muted text-sm" data-runs-error role="alert">{t("costs.home.loadError")}</p>
             : runList ? <ExpensiveRuns runs={runList} /> : <p className="muted text-sm">{t("costs.home.loading")}</p>}
