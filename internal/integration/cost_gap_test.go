@@ -529,7 +529,9 @@ type gapRun struct {
 	noUUID bool
 	// derived: the lines carry no model_usage_since_last_result (a CLI
 	// before the field); their rows are the running total's difference.
-	derived bool
+	// derivedAt: the same for single lines (a session that mixes both).
+	derived   bool
+	derivedAt map[int]bool
 	// end: "booked" (the daemon's invocation report, the lines' shares),
 	// "killed" (no report, as after a kill or a budget pause; a BookRun that
 	// failed leaves the same) or "" (the run goes on). Either end is followed
@@ -549,7 +551,7 @@ func playGapRuns(t *testing.T, s *stack, agentID, orgID uuid.UUID, sid string, r
 		}
 		usd := 0.0
 		for i, l := range r.lines {
-			raw := []byte(l.json(sid, n, !r.derived))
+			raw := []byte(l.json(sid, n, !r.derived && !r.derivedAt[i]))
 			n++
 			if r.noUUID || r.resent[i] {
 				var line map[string]any
@@ -870,6 +872,30 @@ func TestCostOfAFailedLineOfAKilledRun(t *testing.T) {
 					failed: map[int]bool{0: true}, derived: true, end: "killed"},
 			}
 		}, 1.7, 1.2, 1.3, false, 0},
+		// F carries model_usage_since_last_result, the filed line after it
+		// does not: L2's derived row is its total minus L0's row, F's share
+		// included. Filing F books it twice (2.5).
+		{"followed by a derived line", func(task uuid.UUID) []gapRun {
+			return []gapRun{
+				{task: task, lines: []recordedLine{gapLine(0.5, 0.5)}, end: "booked"},
+				{task: task, lines: []recordedLine{gapLine(1.3, 0.8), gapLine(1.7, 0.4)},
+					failed: map[int]bool{0: true}, derivedAt: map[int]bool{1: true}, end: "killed"},
+			}
+		}, 1.7, 1.2, 1.3, false, 0},
+		{"followed by a derived line in one run", func(task uuid.UUID) []gapRun {
+			return []gapRun{{task: task, lines: []recordedLine{gapLine(0.5, 0.5), gapLine(1.3, 0.8), gapLine(1.7, 0.4)},
+				failed: map[int]bool{1: true}, derivedAt: map[int]bool{2: true}, end: "killed"}}
+		}, 1.7, 1.7, 1.3, false, 0},
+		// A line without a uuid whose filing failed, sent again and filed:
+		// the copy's rows are F's share. Filing F books it twice (2.1). With
+		// a uuid the line's unique index stops the second insert.
+		{"a filed copy without a uuid", func(task uuid.UUID) []gapRun {
+			return []gapRun{
+				{task: task, lines: []recordedLine{gapLine(0.5, 0.5)}, end: "booked"},
+				{task: task, lines: []recordedLine{gapLine(1.3, 0.8), gapLine(1.3, 0.8)},
+					failed: map[int]bool{0: true}, resent: map[int]bool{1: true}, noUUID: true, end: "killed"},
+			}
+		}, 1.3, 0.8, 1.3, false, 0},
 		// A process without a line before F (0.2 of 1.5 - 0.5 - 0.8). Where
 		// a later line of F's session was filed, its gap measured over F from
 		// the same bound and holds the 0.2: F is filed without a gap of its
@@ -974,5 +1000,63 @@ func TestFileFailedLinesGoesOnWithTheOtherSessions(t *testing.T) {
 	}
 	if rows(other) != 1 || rows(later) != 0 {
 		t.Errorf("the main session's line has %d rows (want 1), the sub-run's later line %d (want 0)", rows(other), rows(later))
+	}
+}
+
+// A followed line whose refiling fails again does not end its session: it is
+// refiled without a gap and subtracts nothing, so the next followed line of
+// the session loses nothing by being filed after it. L0 filed, F1 (cannot be
+// filed: a duration beyond an interval) and F2 failed, L3 filed, the run
+// killed: F2 is filed, F1's failure is returned.
+func TestFileFailedLinesGoesOnAfterAFollowedLine(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	agent := s.newSupportAgent("nachgereicht-gefolgt")
+	task := uuid.New()
+	sid := uuid.NewString()
+	lastID := func() int64 {
+		t.Helper()
+		var id int64
+		if err := s.pool.QueryRow(ctx, `SELECT max(id) FROM recording_events WHERE agent_id=$1`, agent.ID).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	if err := s.obs.Record(ctx, agent.OrgID, agent.ID, &task, observability.KindLifecycle, map[string]string{"status": "working"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.obs.RecordRuntime(ctx, agent.OrgID, agent.ID, &task, observability.CredentialRef{},
+		[]byte(gapLine(0.5, 0.5).json(sid, 0, true))); err != nil {
+		t.Fatal(err)
+	}
+	var line map[string]any
+	if err := json.Unmarshal([]byte(gapLine(1.0, 0.5).json(sid, 1, true)), &line); err != nil {
+		t.Fatal(err)
+	}
+	line["duration_ms"] = 1e30
+	broken, _ := json.Marshal(line)
+	if err := s.obs.Record(ctx, agent.OrgID, agent.ID, &task, observability.KindRuntime, json.RawMessage(broken)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.obs.Record(ctx, agent.OrgID, agent.ID, &task, observability.KindRuntime,
+		json.RawMessage(gapLine(1.5, 0.5).json(sid, 2, true))); err != nil {
+		t.Fatal(err)
+	}
+	f2 := lastID()
+	if err := s.obs.RecordRuntime(ctx, agent.OrgID, agent.ID, &task, observability.CredentialRef{},
+		[]byte(gapLine(1.9, 0.4).json(sid, 3, true))); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := s.obs.FileFailedLines(ctx, agent.ID, task, observability.CredentialRef{})
+	if err == nil || n != 1 {
+		t.Fatalf("want F2 filed and F1's failure returned: %d filed, err %v", n, err)
+	}
+	var rows int
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM model_usage WHERE event_id=$1 AND basis <> 'gap'`, f2).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 {
+		t.Errorf("F2 has %d rows, want 1: a followed line's failure must not end its session", rows)
 	}
 }

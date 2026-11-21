@@ -464,37 +464,41 @@ func (s *Store) RecordRuntime(ctx context.Context, orgID, agentID uuid.UUID, tas
 		VALUES ($1,$2,$3,$4,$5) RETURNING id`, orgID, agentID, taskID, KindRuntime, []byte(payload)).Scan(&id); err != nil {
 		return err
 	}
-	if err := s.fileModelUsage(ctx, id, cred, true); err != nil {
+	if _, err := s.fileModelUsage(ctx, id, cred, true); err != nil {
 		return fmt.Errorf("model usage of recording event %d: %w", id, err)
 	}
 	return nil
 }
 
 // fileModelUsage files the per-model rows of recording event id, then — with
-// gap — the gap it reveals, and books the gap.
-func (s *Store) fileModelUsage(ctx context.Context, id int64, cred CredentialRef, gap bool) error {
+// gap — the gap it reveals, and books the gap. It returns how many per-model
+// rows it inserted (0 where every row was filed already, ON CONFLICT).
+func (s *Store) fileModelUsage(ctx context.Context, id int64, cred CredentialRef, gap bool) (int64, error) {
 	rt, ord, key, slot := cred.columns()
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, modelUsageInsert, id, rt, ord, key, slot, cred.Kind); err != nil {
-		return err
-	}
-	if !gap {
-		return tx.Commit(ctx)
-	}
-	tag, err := tx.Exec(ctx, modelUsageGapInsert, id, rt, ord, key, slot, cred.Kind)
+	rows, err := tx.Exec(ctx, modelUsageInsert, id, rt, ord, key, slot, cred.Kind)
 	if err != nil {
-		return fmt.Errorf("gap: %w", err)
+		return 0, err
 	}
-	if tag.RowsAffected() > 0 {
-		if _, err := tx.Exec(ctx, gapBooking, id); err != nil {
-			return fmt.Errorf("booking the gap: %w", err)
+	if gap {
+		tag, err := tx.Exec(ctx, modelUsageGapInsert, id, rt, ord, key, slot, cred.Kind)
+		if err != nil {
+			return 0, fmt.Errorf("gap: %w", err)
+		}
+		if tag.RowsAffected() > 0 {
+			if _, err := tx.Exec(ctx, gapBooking, id); err != nil {
+				return 0, fmt.Errorf("booking the gap: %w", err)
+			}
 		}
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return rows.RowsAffected(), nil
 }
 
 // failedLines selects the result lines of a task's latest run ($1 the task,
@@ -507,13 +511,22 @@ func (s *Store) fileModelUsage(ctx context.Context, id int64, cred CredentialRef
 //     run's start, of that session or of none (a daemon from before the
 //     field names no session), with a basis other than gap or unreported. An
 //     invocation report holds the line already; a from_deltas or legacy one
-//     leaves its share to the gap, as modelUsageGapInsert says.
+//     leaves its share to the gap, as modelUsageGapInsert says. An entry of
+//     no session therefore counts as the report of every session of the
+//     run, a sub-run's whose CLI never named one included: accepted, it errs
+//     towards booking too little (as main did), never twice, and an older
+//     daemon's report must keep holding its run's lines.
 //   - Above every earlier filed line of its session: a line whose running
 //     total is not is a copy or an old line arriving late, its share inside
 //     that filed line's total (the gap's bound, the same rule).
-//   - Without model_usage_since_last_result, only where no later line of the
-//     session was filed: a later derived row is the running total minus the
-//     earlier rows, the failed line's share included.
+//   - Not where a later filed line of the session holds the line already:
+//     any later line where the failed one has no model_usage_since_last_result
+//     (its share is only the running total's difference); a later derived
+//     line whatever the failed one carries (a derived row is the running
+//     total minus the earlier rows, the failed line's share included); a
+//     later filed copy (the same running total: a line without a uuid sent
+//     again, whose rows are the failed line's share). since_last is NULL,
+//     not false, for a line without the field.
 //
 // Copies of one line count once, the first: the same session and running
 // total, as the gap counts them (a copy carries the line's uuid, and a line
@@ -554,9 +567,14 @@ WHERE NOT EXISTS (
 	SELECT 1 FROM model_usage p JOIN recording_events f ON f.id = p.event_id
 	WHERE u.session_id <> '' AND p.session_id = u.session_id AND p.event_id < u.id
 	  AND ` + lineTotal("f.payload") + ` >= u.total)
-  AND (u.since_last OR NOT EXISTS (
+  AND NOT EXISTS (
 	SELECT 1 FROM model_usage p
-	WHERE u.session_id <> '' AND p.session_id = u.session_id AND p.event_id > u.id))
+	WHERE u.session_id <> '' AND p.session_id = u.session_id AND p.event_id > u.id
+	  AND (NOT COALESCE(u.since_last, false) OR p.basis = 'derived'))
+  AND NOT EXISTS (
+	SELECT 1 FROM model_usage p JOIN recording_events f ON f.id = p.event_id
+	WHERE u.session_id <> '' AND p.session_id = u.session_id AND p.event_id > u.id
+	  AND ` + lineTotal("f.payload") + ` = u.total)
 ORDER BY u.id`
 
 // FileFailedLines files once more the result lines of the task's latest run
@@ -577,11 +595,14 @@ ORDER BY u.id`
 // the session comes, and a later line of the same run would subtract it as
 // its run's, the report still to come.
 //
-// It returns how many lines it filed and the first error. A failure ends its
-// session, the lines before it staying filed: a later line of that session
-// filed after the failed one would subtract it as its run's, the report still
-// to come, and lose it. Left unfiled, both stay with the gap of the session's
-// next line. The other sessions of the run (a sub-run's is its own) go on.
+// It returns how many lines it filed rows for and the first error. A failure
+// of a line filed with its gap ends its session, the lines before it staying
+// filed: a later line of that session filed after the failed one would
+// subtract it as its run's, the report still to come, and lose it. Left
+// unfiled, both stay with the gap of the session's next line. A followed
+// line's failure does not: it is filed without a gap, and every later line of
+// the session either is followed too or has the later filed line as its
+// bound. The other sessions of the run (a sub-run's is its own) go on.
 func (s *Store) FileFailedLines(ctx context.Context, agentID, taskID uuid.UUID, cred CredentialRef) (int, error) {
 	rows, err := s.pool.Query(ctx, failedLines, taskID, agentID)
 	if err != nil {
@@ -606,14 +627,21 @@ func (s *Store) FileFailedLines(ctx context.Context, agentID, taskID uuid.UUID, 
 		if l.session != "" && stopped[l.session] {
 			continue
 		}
-		if err := s.fileModelUsage(ctx, l.id, cred, !l.followed); err != nil {
+		inserted, err := s.fileModelUsage(ctx, l.id, cred, !l.followed)
+		if err != nil {
 			if first == nil {
 				first = fmt.Errorf("model usage of recording event %d: %w", l.id, err)
 			}
-			stopped[l.session] = true
+			// A followed line is refiled without a gap and subtracts
+			// nothing, so a later line of its session loses nothing by it.
+			if !l.followed {
+				stopped[l.session] = true
+			}
 			continue
 		}
-		filed++
+		if inserted > 0 {
+			filed++
+		}
 	}
 	return filed, first
 }
