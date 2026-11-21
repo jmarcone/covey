@@ -11,8 +11,8 @@ func TestListPriceKnowsTheModelsInUse(t *testing.T) {
 			t.Errorf("%s: no list price", m)
 		}
 	}
-	if _, ok := ListPrice("claude-haiku-4-5-20251001"); ok {
-		t.Errorf("claude-haiku-4-5 must stay unpriced until its price is checked")
+	if p, ok := ListPrice("claude-haiku-4-5-20251001"); !ok || p.Input != 1 || p.Output != 5 || p.CacheRead != 0.10 {
+		t.Errorf("claude-haiku-4-5-20251001: %+v ok=%v, want $1/$5, cache read $0.10", p, ok)
 	}
 }
 

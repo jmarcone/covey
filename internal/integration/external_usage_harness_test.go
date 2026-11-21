@@ -41,18 +41,39 @@ import (
 
 const harnessFixture = "testdata/harness-home-2026-11-17"
 
-// The models covey's list does not know (#154 priced the rest; Haiku 4.5 waits
-// for a checked price).
-var harnessUnpriced = map[string]bool{"claude-haiku-4-5-20251001": true, "<synthetic>": true}
+// The models covey's list does not know (#154 priced the rest).
+var harnessUnpriced = map[string]bool{"<synthetic>": true}
 
 // harnessScriptDiffers: models covey now prices (#154) that the measurement
 // script priced differently. harness_usage.py matched every "sonnet" model to
 // Sonnet 5.5's rates (cache read $0.10), while Sonnet 5 reads at 0.1x input
 // ($0.20). The script's figure for them is left out of the comparisons, as an
 // unpriced model's is, and covey must price them.
-var harnessScriptDiffers = map[string]bool{"claude-sonnet-5": true}
+var harnessScriptDiffers = map[string]bool{"claude-sonnet-5": true, "claude-haiku-4-5-20251001": true}
 
-// harnessNotCompared: the script's figure is not a reference for these models.
+// harnessCacheReadGap: covey's cache-read rate minus the script's, $/MTok, for
+// the harnessScriptDiffers models. Their input, output and cache-write rates
+// are the same in both (Sonnet 5: 2 / 10 / 2.5 / 4), so the script's figure
+// plus cache_read × this gap must equal covey's to the cent.
+var harnessCacheReadGap = map[string]float64{"claude-sonnet-5": 0.20 - 0.10}
+
+// harnessScriptUnpriced: models the script left unpriced (its figure is $0), so
+// covey's whole figure is the gap: priced here from the tokens at covey's rates.
+var harnessScriptUnpriced = map[string]bool{"claude-haiku-4-5-20251001": true}
+
+// harnessDiffersWant is covey's expected figure for a harnessScriptDiffers model:
+// the script's dollars plus the rate gap on its cache-read tokens.
+func harnessDiffersWant(model string, scriptUSD float64, tokens map[string]int64) float64 {
+	if harnessScriptUnpriced[model] {
+		p, _ := observability.ListPrice(model)
+		return (float64(tokens["input"])*p.Input + float64(tokens["output"])*p.Output + float64(tokens["cache_read"])*p.CacheRead +
+			float64(tokens["cache_write_5m"])*p.CacheWrite5m + float64(tokens["cache_write_1h"])*p.CacheWrite1h) / 1e6
+	}
+	return scriptUSD + float64(tokens["cache_read"])*harnessCacheReadGap[model]/1e6
+}
+
+// harnessNotCompared: the script's figure is not a reference for these models
+// as they stand; the harnessScriptDiffers ones are compared via harnessDiffersWant.
 func harnessNotCompared(m string) bool { return harnessUnpriced[m] || harnessScriptDiffers[m] }
 
 // The measurement's headline figures (results/2026-11-18-harness-home).
@@ -339,6 +360,10 @@ func TestExternalUsageMatchesHarnessMeasurement(t *testing.T) {
 				if !g.priced || g.unpricedTokens != 0 {
 					t.Errorf("%s %s %s: priced=%v, %d unpriced tokens; #154 prices it", name, k.period.Format(time.RFC3339), k.model, g.priced, g.unpricedTokens)
 				}
+				// Still compared: the script's figure plus its known rate gap.
+				if want := harnessDiffersWant(k.model, w.usd, w.tokens); !sameCents(g.usd, want) {
+					t.Errorf("%s %s %s: covey $%.6f, the script $%.4f + its rate gap = $%.6f", name, k.period.Format(time.RFC3339), k.model, g.usd, w.usd, want)
+				}
 				continue
 			}
 			if harnessUnpriced[k.model] {
@@ -393,7 +418,7 @@ func TestExternalUsageMatchesHarnessMeasurement(t *testing.T) {
 	ext := cellsExternal(t, admin, fmt.Sprintf("days=%d&bucket=10min", days))
 	var coveyTotal, wantPriced, scriptUnpriced, scriptAll float64
 	var coveySub, wantPricedSub, scriptUnpricedSub, scriptAllSub float64
-	var scriptDiffers, scriptDiffersSub, coveyDiffers float64
+	var scriptDiffers, scriptDiffersSub, coveyDiffers, wantDiffers float64
 	for k, f := range got10m {
 		if !harnessScriptDiffers[k.model] {
 			coveySub += f.sub
@@ -407,6 +432,7 @@ func TestExternalUsageMatchesHarnessMeasurement(t *testing.T) {
 		if harnessScriptDiffers[k.model] {
 			scriptDiffers += w.usd
 			scriptDiffersSub += w.sub
+			wantDiffers += harnessDiffersWant(k.model, w.usd, w.tokens)
 			continue
 		}
 		if harnessUnpriced[k.model] {
@@ -465,7 +491,10 @@ func TestExternalUsageMatchesHarnessMeasurement(t *testing.T) {
 	if math.Abs(coveySub-wantPricedSub) > 0.01 {
 		t.Errorf("subagents+workflows over the priced models: covey $%.4f, the script $%.4f", coveySub, wantPricedSub)
 	}
-	t.Logf("models the script priced differently (#154): covey $%.4f, the script $%.4f", coveyDiffers, scriptDiffers)
+	t.Logf("models the script priced differently (#154): covey $%.4f, the script $%.4f, the script + its rate gap $%.4f", coveyDiffers, scriptDiffers, wantDiffers)
+	if math.Abs(coveyDiffers-wantDiffers) > 0.01 {
+		t.Errorf("models the script priced differently: covey $%.4f, the script + its cache-read rate gap $%.4f", coveyDiffers, wantDiffers)
+	}
 	if v := coveyTotal + scriptUnpriced + scriptDiffers; math.Abs(v-harnessTotalUSD) > 0.01 {
 		t.Errorf("covey + the script's unknown models = $%.4f, the measurement $%.4f", v, harnessTotalUSD)
 	}
