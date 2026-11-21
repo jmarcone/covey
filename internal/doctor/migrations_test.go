@@ -89,7 +89,7 @@ func TestDoctorReportsAMigrationAppliedUnderAnotherName(t *testing.T) {
 			t.Errorf("the remedy prints a statement for a row with nothing to move to: %q", f.Remedy)
 		}
 		// No statement follows, so nothing is "by hand:", and no colon points at prose.
-		if strings.Contains(f.Remedy, "by hand") || strings.Contains(f.Remedy, "same): ") {
+		if strings.Contains(f.Remedy, "by hand") || strings.Contains(f.Remedy, "main's): ") {
 			t.Errorf("the remedy promises a statement that is not there: %q", f.Remedy)
 		}
 	}
@@ -136,7 +136,7 @@ func TestDoctorPrintsTheStatementForARenumberedMigration(t *testing.T) {
 		if !strings.Contains(f.Remedy, want) {
 			t.Errorf("the remedy does not print %q: %q", want, f.Remedy)
 		}
-		for _, want := range []string{"backup", "git diff", "record the row under main's number by hand: " + want} {
+		for _, want := range []string{"backup", "git diff", "settle the row by hand: " + want} {
 			if !strings.Contains(f.Remedy, want) {
 				t.Errorf("the remedy does not say %q: %q", want, f.Remedy)
 			}

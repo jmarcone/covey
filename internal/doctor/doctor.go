@@ -168,7 +168,7 @@ func mismatchRemedy(ms []db.NameMismatch) string {
 	}
 	lead := "`covey serve` refuses to start until rows and files agree. If this binary is an unmerged branch, renumber its migration in the source (CLAUDE.md). If the database ran a branch build whose numbering main changed: take a backup, check that the SQL of the two files is the same (git diff of the branch's file against main's)"
 	if statements {
-		lead += ", then record the row under main's number by hand: "
+		lead += ", then settle the row by hand: "
 	} else {
 		lead += ". "
 	}

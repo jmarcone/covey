@@ -29,7 +29,9 @@ finding as blocking. Who fixes it depends on which side is the unmerged one:
   ```
 
   If the row is already recorded under main's number, the doctor prints a
-  DELETE for the stale row instead.
+  DELETE for the stale row instead. For a row that fits more than one file
+  (several files of the same name after the number) it prints no statement:
+  check which one the database ran, then write the UPDATE yourself.
 
   Nothing runs it for you, and `covey serve` does not rewrite the row itself;
   after it, the next start applies what is missing and does not run the moved

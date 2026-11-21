@@ -453,3 +453,32 @@ func TestPendingOnAnUnmigratedDatabase(t *testing.T) {
 		t.Errorf("Pending = %v", got)
 	}
 }
+
+// A stale row of a migration recorded at main's number is not also moved onto
+// a second file of the same name: that UPDATE would mark the second file
+// applied without running it. The row gets its DELETE, nothing else, and the
+// second file stays pending.
+func TestAStaleRowIsNotMovedOntoASecondFileOfItsName(t *testing.T) {
+	applied := map[int]appliedMigration{
+		84: {name: "0084_base"}, 85: {name: "0085_rte"}, 86: {name: "0086_b"}, 87: {name: "0087_rte"},
+	}
+	ms := []migration{{version: 84, name: "0084_base"}, {version: 85, name: "0085_a"},
+		{version: 86, name: "0086_b"}, {version: 87, name: "0087_rte"}, {version: 90, name: "0090_rte"}}
+	_, err := unapplied(ms, applied)
+	var mm *NameMismatchError
+	if !errors.As(err, &mm) {
+		t.Fatalf("expected a refusal, got %v", err)
+	}
+	if len(mm.Mismatches) != 1 {
+		t.Fatalf("%d mismatches, expected only the stale row's: %v", len(mm.Mismatches), err)
+	}
+	if got := mm.Mismatches[0].Statement(); got != "DELETE FROM schema_migrations WHERE version=85" {
+		t.Errorf("statement = %q, expected the DELETE", got)
+	}
+	// After the DELETE the second file is a plain pending migration.
+	delete(applied, 85)
+	out, err := unapplied(ms, applied)
+	if err != nil || len(out) != 2 || out[0].name != "0085_a" || out[1].name != "0090_rte" {
+		t.Errorf("after the DELETE: %v, %v — expected 0085_a and 0090_rte pending", out, err)
+	}
+}

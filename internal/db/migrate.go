@@ -266,8 +266,16 @@ func isUndefinedTable(err error) bool {
 // A database row without any file (a database ahead of the binary) is left alone.
 func unapplied(ms []migration, applied map[int]appliedMigration) ([]migration, error) {
 	onDisk := make(map[string]bool, len(ms))
+	// Slugs a file carries that is applied under its own name: a row of such a
+	// slug at another number is a stale row of that migration (recordedAs), not
+	// one waiting to be moved onto a second file of the slug — moving it would
+	// mark that file applied without running it.
+	recorded := map[string]bool{}
 	for _, m := range ms {
 		onDisk[m.name] = true
+		if a, ok := applied[m.version]; ok && a.name == m.name {
+			recorded[slug(m.name)] = true
+		}
 	}
 	// Rows whose name no file carries, by slug — the lowest version wins, so the
 	// message does not depend on map order.
@@ -278,7 +286,7 @@ func unapplied(ms []migration, applied map[int]appliedMigration) ([]migration, e
 	sort.Ints(versions)
 	orphans := map[string]int{}
 	for _, v := range versions {
-		if onDisk[applied[v].name] {
+		if onDisk[applied[v].name] || recorded[slug(applied[v].name)] {
 			continue
 		}
 		if _, dup := orphans[slug(applied[v].name)]; !dup {
