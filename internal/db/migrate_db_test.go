@@ -454,31 +454,61 @@ func TestPendingOnAnUnmigratedDatabase(t *testing.T) {
 	}
 }
 
-// A stale row of a migration recorded at main's number is not also moved onto
-// a second file of the same name: that UPDATE would mark the second file
-// applied without running it. The row gets its DELETE, nothing else, and the
-// second file stays pending.
-func TestAStaleRowIsNotMovedOntoASecondFileOfItsName(t *testing.T) {
+// A row of a name that one file carries applied under its own number, while a
+// second file of that name waits: the row may be a stale copy of the first or
+// the branch run of the second. Neither the DELETE nor an UPDATE onto the
+// second file is safe (the one runs it twice, the other never), so the start
+// is refused with every candidate and no statement.
+func TestARowBesideASecondFileOfItsNameGetsNoStatement(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		applied map[int]appliedMigration
+		ms      []migration
+	}{
+		{"stale or branch run, a file at the row's number", map[int]appliedMigration{
+			84: {name: "0084_base"}, 85: {name: "0085_rte"}, 86: {name: "0086_b"}, 87: {name: "0087_rte"},
+		}, []migration{{version: 84, name: "0084_base"}, {version: 85, name: "0085_a"},
+			{version: 86, name: "0086_b"}, {version: 87, name: "0087_rte"}, {version: 90, name: "0090_rte"}}},
+		{"an older migration of the same name, no file at the row's number", map[int]appliedMigration{
+			10: {name: "0010_add_index"}, 85: {name: "0085_add_index"},
+		}, []migration{{version: 10, name: "0010_add_index"}, {version: 87, name: "0087_add_index"}}},
+		{"the same with a file at the row's number", map[int]appliedMigration{
+			10: {name: "0010_add_index"}, 85: {name: "0085_add_index"},
+		}, []migration{{version: 10, name: "0010_add_index"}, {version: 85, name: "0085_other"}, {version: 87, name: "0087_add_index"}}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			out, err := unapplied(c.ms, c.applied)
+			var mm *NameMismatchError
+			if !errors.As(err, &mm) {
+				t.Fatalf("expected a refusal, got %v (would run %v)", err, out)
+			}
+			var ambiguous bool
+			for _, m := range mm.Mismatches {
+				if st := m.Statement(); st != "" {
+					t.Errorf("statement %q printed for %s", st, m)
+				}
+				ambiguous = ambiguous || m.Ambiguous()
+			}
+			if !ambiguous {
+				t.Errorf("no mismatch names both candidates: %v", err)
+			}
+		})
+	}
+}
+
+// The plain stale row stays a DELETE: no second file of its name waits.
+func TestAStaleRowWithoutASecondFileStaysADelete(t *testing.T) {
 	applied := map[int]appliedMigration{
 		84: {name: "0084_base"}, 85: {name: "0085_rte"}, 86: {name: "0086_b"}, 87: {name: "0087_rte"},
 	}
 	ms := []migration{{version: 84, name: "0084_base"}, {version: 85, name: "0085_a"},
-		{version: 86, name: "0086_b"}, {version: 87, name: "0087_rte"}, {version: 90, name: "0090_rte"}}
+		{version: 86, name: "0086_b"}, {version: 87, name: "0087_rte"}}
 	_, err := unapplied(ms, applied)
 	var mm *NameMismatchError
-	if !errors.As(err, &mm) {
-		t.Fatalf("expected a refusal, got %v", err)
-	}
-	if len(mm.Mismatches) != 1 {
-		t.Fatalf("%d mismatches, expected only the stale row's: %v", len(mm.Mismatches), err)
+	if !errors.As(err, &mm) || len(mm.Mismatches) != 1 {
+		t.Fatalf("expected one mismatch, got %v", err)
 	}
 	if got := mm.Mismatches[0].Statement(); got != "DELETE FROM schema_migrations WHERE version=85" {
 		t.Errorf("statement = %q, expected the DELETE", got)
-	}
-	// After the DELETE the second file is a plain pending migration.
-	delete(applied, 85)
-	out, err := unapplied(ms, applied)
-	if err != nil || len(out) != 2 || out[0].name != "0085_a" || out[1].name != "0090_rte" {
-		t.Errorf("after the DELETE: %v, %v — expected 0085_a and 0090_rte pending", out, err)
 	}
 }

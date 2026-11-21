@@ -266,15 +266,17 @@ func isUndefinedTable(err error) bool {
 // A database row without any file (a database ahead of the binary) is left alone.
 func unapplied(ms []migration, applied map[int]appliedMigration) ([]migration, error) {
 	onDisk := make(map[string]bool, len(ms))
-	// Slugs a file carries that is applied under its own name: a row of such a
-	// slug at another number is a stale row of that migration (recordedAs), not
-	// one waiting to be moved onto a second file of the slug — moving it would
-	// mark that file applied without running it.
-	recorded := map[string]bool{}
+	// The file of a slug applied under its own name, the lowest: an orphan row
+	// of that slug may be a stale row of it, or the branch run of a second
+	// file of the slug waiting to run. The names cannot tell which, so such a
+	// row is ambiguous: refused with every candidate, no statement.
+	recorded := map[string]string{}
 	for _, m := range ms {
 		onDisk[m.name] = true
 		if a, ok := applied[m.version]; ok && a.name == m.name {
-			recorded[slug(m.name)] = true
+			if _, seen := recorded[slug(m.name)]; !seen {
+				recorded[slug(m.name)] = m.name
+			}
 		}
 	}
 	// Rows whose name no file carries, by slug — the lowest version wins, so the
@@ -286,7 +288,7 @@ func unapplied(ms []migration, applied map[int]appliedMigration) ([]migration, e
 	sort.Ints(versions)
 	orphans := map[string]int{}
 	for _, v := range versions {
-		if onDisk[applied[v].name] || recorded[slug(applied[v].name)] {
+		if onDisk[applied[v].name] {
 			continue
 		}
 		if _, dup := orphans[slug(applied[v].name)]; !dup {
@@ -321,7 +323,11 @@ func unapplied(ms []migration, applied map[int]appliedMigration) ([]migration, e
 				continue
 			}
 			moved[slug(m.name)] = len(bad)
-			bad = append(bad, NameMismatch{Version: m.version, File: m.name, AppliedVersion: v, Applied: applied[v].name, AppliedAt: applied[v].appliedAt})
+			mm := NameMismatch{Version: m.version, File: m.name, AppliedVersion: v, Applied: applied[v].name, AppliedAt: applied[v].appliedAt}
+			if r, ok := recorded[slug(m.name)]; ok {
+				mm.Candidates = []string{r, m.name}
+			}
+			bad = append(bad, mm)
 		}
 	}
 	if len(bad) > 0 {
@@ -335,16 +341,25 @@ func unapplied(ms []migration, applied map[int]appliedMigration) ([]migration, e
 // version carries its own name in the database. The row at m's number is then
 // the stale one — this is what a build from before the guard leaves, when it
 // skipped m by version and ran the same migration again under main's number.
+// None while a file of the row's name has not run: the row may be its branch
+// run, and deleting it would run that file a second time.
 func recordedAs(ms []migration, applied map[int]appliedMigration, m migration, row appliedMigration) string {
+	found := ""
 	for _, f := range ms {
 		if f.version == m.version || slug(f.name) != slug(row.name) {
 			continue
 		}
-		if a, ok := applied[f.version]; ok && a.name == f.name {
-			return f.name
+		a, ok := applied[f.version]
+		if !ok {
+			// A file of the row's name still waits to run: the row may be its
+			// branch run, not a stale copy of the recorded one. No DELETE.
+			return ""
+		}
+		if found == "" && a.name == f.name {
+			found = f.name
 		}
 	}
-	return ""
+	return found
 }
 
 // Pending names the migrations this database has not seen yet — read, without

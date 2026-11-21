@@ -28,8 +28,12 @@ finding as blocking. Who fixes it depends on which side is the unmerged one:
   UPDATE schema_migrations SET version=<main's number>, name='<main's file name, without .up.sql>' WHERE version=<the number in the database>;
   ```
 
-  If the row is already recorded under main's number, the doctor prints a
-  DELETE for the stale row instead. For a row that fits more than one file
+  If the row's migration is already recorded under another number (a file of
+  the same name after the number, applied under its own name) and no other
+  file of that name is waiting to run, the doctor prints a DELETE for the
+  stale row instead; the same `git diff` check applies. Where a file of that
+  name is still waiting, the row may be its branch run rather than a stale
+  copy, and the doctor prints no statement. For a row that fits more than one file
   (several files of the same name after the number) it prints no statement:
   check which one the database ran, then write the UPDATE yourself.
 
