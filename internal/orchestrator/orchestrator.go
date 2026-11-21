@@ -990,12 +990,22 @@ func (o *Orchestrator) releaseWorkSignature(ctx context.Context, agentID uuid.UU
 // rememberWorkSignature advances the signature that was last fired on. Best
 // effort: if it fails, the next tick wakes the agent at most once too often —
 // which is more harmless than a missed run.
-func (o *Orchestrator) rememberWorkSignature(ctx context.Context, agentID uuid.UUID, name, sig string) {
-	if _, err := o.Pool.Exec(ctx,
+//
+// Reports whether the watermark MAY have moved: false only when the UPDATE
+// answered that it hit no row (the heartbeat is gone, nothing to release). An
+// error does not prove the write did not land — a kill or shutdown that
+// cancels ctx while the autocommit UPDATE is in flight aborts the read, and
+// the server may already have committed it. The caller's release must then
+// still run; releasing a write that did not land only wakes once more.
+func (o *Orchestrator) rememberWorkSignature(ctx context.Context, agentID uuid.UUID, name, sig string) bool {
+	tag, err := o.Pool.Exec(ctx,
 		"UPDATE agent_heartbeats SET last_work_sig=$3 WHERE agent_id=$1 AND name=$2",
-		agentID, name, sig); err != nil {
+		agentID, name, sig)
+	if err != nil {
 		o.Log.Warn("advance heartbeat signature", "agent", agentID, "name", name, "err", err)
+		return true
 	}
+	return tag.RowsAffected() > 0
 }
 
 // refreshWorkSignature advances a successful heartbeat run to the target
@@ -1019,11 +1029,17 @@ func (o *Orchestrator) rememberWorkSignature(ctx context.Context, agentID uuid.U
 // carries the action, not the id of the note it produced (see
 // spec/03-lifecycle-scheduling.md).
 //
-// The check runs synchronously in the completion path, after the task is
-// already finished: the watermark has to be settled before the next tick can
-// read it. It costs one work check — and only for runs that wrote something at
-// all; a silent run does not even get that far.
-func (o *Orchestrator) refreshWorkSignature(ctx context.Context, agentID, orgID uuid.UUID, name string, since time.Time) {
+// The check runs synchronously in the completion path, BEFORE the task is
+// finished: the watermark has to be settled before the next tick can read it,
+// and a tick only counts the heartbeat as due once its task is done. It costs
+// one work check — and only for runs that wrote something at all; a silent run
+// does not even get that far.
+//
+// Reports whether the watermark may have been written (see
+// rememberWorkSignature: a failed UPDATE counts, its outcome is unknown): the
+// caller releases it again when the task then fails to end, and must not touch
+// one the run never moved.
+func (o *Orchestrator) refreshWorkSignature(ctx context.Context, agentID, orgID uuid.UUID, name string, since time.Time) bool {
 	var condition string
 	if err := o.Pool.QueryRow(ctx,
 		"SELECT only_if FROM agent_heartbeats WHERE agent_id=$1 AND name=$2",
@@ -1031,22 +1047,24 @@ func (o *Orchestrator) refreshWorkSignature(ctx context.Context, agentID, orgID 
 		// Also the normal case of a heartbeat removed or renamed while its run
 		// was going: then there is no watermark left to maintain.
 		o.Log.Debug("refresh heartbeat signature: heartbeat no longer present", "agent", agentID, "name", name, "err", err)
-		return
+		return false
 	}
 	if strings.TrimSpace(condition) == "" {
-		return
+		return false
 	}
 	if !o.runWroteSignature(ctx, agentID, condition, since) {
 		o.Log.Info("heartbeat watermark kept: the run wrote nothing itself",
 			"agent", agentID, "name", name, "system", condition)
-		return
+		return false
 	}
 	has, sig := o.heartbeatHasWork(ctx, agentID, orgID, condition)
 	if !has {
-		o.rememberWorkSignature(ctx, agentID, name, "")
-	} else if sig != "" {
-		o.rememberWorkSignature(ctx, agentID, name, sig)
+		return o.rememberWorkSignature(ctx, agentID, name, "")
 	}
+	if sig != "" {
+		return o.rememberWorkSignature(ctx, agentID, name, sig)
+	}
+	return false
 }
 
 // runWroteSignature answers whether the run since `since` executed an action of
@@ -3205,13 +3223,19 @@ func (o *Orchestrator) handleDaemonMessage(ctx context.Context, agent agents.Age
 				result += " (to " + name + ")"
 			}
 		}
-		if _, err := o.Backlog.Complete(ctx, taskID, state, result, d.Error); err != nil {
-			return true, err
-		}
+		// The watermark is settled BEFORE the task turns done. Done makes the
+		// heartbeat due again (no pending task left, see fireHeartbeats), and a
+		// tick between the two would read the agent's own comment as new work and
+		// wake it for it — the self-comment loop the refresh exists to prevent.
+		// The refresh costs a work check, so that window is as wide as a network
+		// round trip, not a few microseconds (#13). While the task is still
+		// running its heartbeat counts as pending and no tick can interleave.
+		//
 		// A run that ended without a result must not keep its wake-up: the work
 		// it was woken for is still lying there. A successful run does the
 		// converse and advances its watermark past any target-system action it
 		// performed itself, so that action cannot wake it again.
+		advanced, advancedTitle := false, ""
 		if t, err := o.Backlog.Get(ctx, taskID); err == nil {
 			heartbeatRun := t.Origin == "heartbeat"
 			if !heartbeatRun && strings.HasPrefix(t.Origin, originContinuation+":") {
@@ -3242,9 +3266,30 @@ func (o *Orchestrator) handleDaemonMessage(ctx context.Context, agent agents.Age
 							"task", taskID, "err", chainErr)
 						since = time.Time{}
 					}
-					o.refreshWorkSignature(ctx, agent.ID, agent.OrgID, t.Title, since)
+					advanced = o.refreshWorkSignature(ctx, agent.ID, agent.OrgID, t.Title, since)
+					advancedTitle = t.Title
 				}
 			}
+		}
+		if _, err := o.Backlog.Complete(ctx, taskID, state, result, d.Error); err != nil {
+			// The watermark was advanced above, before the task ended; if the
+			// task does not end as this run reports it, the advance must not
+			// stand. The state it was moved past may hold foreign work; waking
+			// once too often is harmless, swallowing it is not.
+			//
+			// The window is between the advance and Complete, and a kill or a
+			// shutdown cancels exactly ctx there — so the release runs without
+			// it, as runAgent's Complete(StateFailed) does when this error comes
+			// back up. And Complete can fail after its commit (its follow-up
+			// read): a task that is done ended as reported, and its advance
+			// stands. Decided from the row, not from the error.
+			if advanced {
+				rctx := context.WithoutCancel(ctx)
+				if cur, getErr := o.Backlog.Get(rctx, taskID); getErr != nil || cur.State != backlog.StateDone {
+					o.releaseWorkSignature(rctx, agent.ID, advancedTitle)
+				}
+			}
+			return true, err
 		}
 		// done step: feed what was learned into the wiki (spec/05). The
 		// consolidation (merging near-duplicates) runs task-independently in the

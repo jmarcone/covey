@@ -17,6 +17,16 @@ type heartbeatSignatureTestSystem struct{}
 var heartbeatSignatureState struct {
 	sync.Mutex
 	sig string
+	// delay slows the work check down, so a completion path that checks AFTER
+	// the task turned done is observable instead of a race of microseconds.
+	delay time.Duration
+	// entered is signalled (non-blocking) each time a delayed work check starts,
+	// so a test can act while the check sleeps instead of guessing at a moment.
+	entered chan struct{}
+	// proceed, when set, replaces the delay: the check holds until the test
+	// closes it, so what the test does "during the check" cannot race the
+	// check's end on a slow machine.
+	proceed chan struct{}
 }
 
 func init() {
@@ -39,8 +49,24 @@ func (heartbeatSignatureTestSystem) HasWork(context.Context, target.Credential) 
 }
 func (heartbeatSignatureTestSystem) HasWorkSigned(context.Context, target.Credential, string) (bool, string, error) {
 	heartbeatSignatureState.Lock()
-	defer heartbeatSignatureState.Unlock()
-	return true, heartbeatSignatureState.sig, nil
+	sig, delay, entered, proceed := heartbeatSignatureState.sig, heartbeatSignatureState.delay,
+		heartbeatSignatureState.entered, heartbeatSignatureState.proceed
+	heartbeatSignatureState.Unlock()
+	if entered != nil && delay > 0 {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+	}
+	if proceed != nil && delay > 0 {
+		select {
+		case <-proceed:
+		case <-time.After(30 * time.Second):
+		}
+	} else {
+		time.Sleep(delay)
+	}
+	return true, sig, nil
 }
 
 // Only "write" changes the state in this system — like a comment in GitLab.
@@ -325,7 +351,17 @@ func TestHeartbeatSignatureAdvancesAfterASuccessfulRun(t *testing.T) {
 	}
 	heartbeatSignatureState.Lock()
 	heartbeatSignatureState.sig = "issue15!23@42"
+	// The check after the run takes a moment. The watermark must be settled by
+	// the time the task reads done, whatever that moment is: a heartbeat that is
+	// due right after done would otherwise read the agent's own comment as new
+	// work (#13: the window behind the flake).
+	heartbeatSignatureState.delay = 400 * time.Millisecond
 	heartbeatSignatureState.Unlock()
+	t.Cleanup(func() {
+		heartbeatSignatureState.Lock()
+		heartbeatSignatureState.delay = 0
+		heartbeatSignatureState.Unlock()
+	})
 
 	admin := login(t, s, "admin@test.local", "admin-passwort")
 	admin.expect(http.MethodPost,
@@ -350,6 +386,133 @@ func TestHeartbeatSignatureAdvancesAfterASuccessfulRun(t *testing.T) {
 	if got != "issue15!23@42" {
 		t.Fatalf("successful run must advance the handled watermark, got %q", got)
 	}
+}
+
+// A heartbeat task discarded while its completion check runs: the run wrote, so
+// the watermark was advanced before Complete; Complete then fails (cancelled →
+// done) and the advance must not stand, or the state it was moved past — which
+// may hold foreign work — would never wake the heartbeat again.
+//
+// Cancelling the task does not cancel the run, so this is the one way to reach
+// the release branch from outside: the refresh advances, Complete refuses.
+func TestHeartbeatWatermarkReleasedWhenTheTaskIsDiscardedDuringTheCheck(t *testing.T) {
+	discardHeartbeatDuringTheCheck(t, "puls-verworfen", nil)
+}
+
+// The advance's UPDATE fails, and its outcome is unknown: a kill or shutdown
+// that cancels the run context while the autocommit UPDATE is in flight aborts
+// the read, the server may have committed anyway. So a failed write counts as
+// "may have moved" and the release must still run when Complete then refuses.
+// A trigger makes the advance fail deterministically; the release (to "") goes
+// through, and the watermark must end there, not at the old value.
+func TestHeartbeatWatermarkReleasedWhenTheAdvanceFailsAndTheTaskIsDiscarded(t *testing.T) {
+	discardHeartbeatDuringTheCheck(t, "puls-verworfen-fehler", func(ctx context.Context, s *stack) {
+		if _, err := s.pool.Exec(ctx, `
+			CREATE FUNCTION test_fail_heartbeat_advance() RETURNS trigger AS $$
+			BEGIN
+				IF NEW.last_work_sig = 'issue15!23@42' THEN
+					RAISE EXCEPTION 'advance lost in flight';
+				END IF;
+				RETURN NEW;
+			END $$ LANGUAGE plpgsql;
+			CREATE TRIGGER test_fail_heartbeat_advance BEFORE UPDATE ON agent_heartbeats
+				FOR EACH ROW EXECUTE FUNCTION test_fail_heartbeat_advance();`); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+// discardHeartbeatDuringTheCheck fires a writing heartbeat, waits until its
+// completion check sleeps, runs whileChecking (if any), discards the task over
+// the API and expects the watermark released to "".
+func discardHeartbeatDuringTheCheck(t *testing.T, slug string, whileChecking func(context.Context, *stack)) {
+	t.Helper()
+	s := newStack(t)
+	ctx := context.Background()
+
+	agent, err := s.registry.Create(ctx, s.orgID, slug, "Puls verworfen", "mock", &s.adminID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.registry.SaveConfig(ctx, agent.ID, map[string]string{
+		"SOUL.md":   "# Puls verworfen",
+		"ACCESS.md": "- system: heartbeatsigtest scope: write,read",
+		"HEARTBEAT.md": "- alle: 1h nur-wenn: heartbeatsigtest titel: Abnahme " +
+			"aufgabe: Nimm ab. [mock:action heartbeatsigtest/write {}] [mock:result abgenommen]",
+	}, &s.adminID); err != nil {
+		t.Fatal(err)
+	}
+	// Activation is opt-in (fail-closed), for the test plugin too.
+	if _, err := s.pool.Exec(ctx, `INSERT INTO target_plugins (org_id, name, kind, enabled)
+		VALUES ($1,'heartbeatsigtest','builtin',TRUE) ON CONFLICT DO NOTHING`, s.orgID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(ctx,
+		"UPDATE agent_heartbeats SET last_work_sig='issue15!23@41' WHERE agent_id=$1 AND name='Abnahme'",
+		agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	entered, proceed := make(chan struct{}, 1), make(chan struct{})
+	heartbeatSignatureState.Lock()
+	heartbeatSignatureState.sig = "issue15!23@42"
+	heartbeatSignatureState.delay = time.Millisecond // non-zero: the check signals and holds
+	heartbeatSignatureState.entered = entered
+	heartbeatSignatureState.proceed = proceed
+	heartbeatSignatureState.Unlock()
+	released := false
+	t.Cleanup(func() {
+		if !released {
+			close(proceed)
+		}
+		heartbeatSignatureState.Lock()
+		heartbeatSignatureState.delay = 0
+		heartbeatSignatureState.entered = nil
+		heartbeatSignatureState.proceed = nil
+		heartbeatSignatureState.Unlock()
+	})
+
+	admin := login(t, s, "admin@test.local", "admin-passwort")
+	admin.expect(http.MethodPost,
+		"/api/v1/agents/"+agent.ID.String()+"/heartbeats/Abnahme/fire", nil, http.StatusOK)
+
+	// The check is running: the run is over and the watermark is about to move,
+	// the task still reads in_progress. Discard it in exactly that window.
+	select {
+	case <-entered:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the completion check never ran")
+	}
+	if whileChecking != nil {
+		whileChecking(ctx, s)
+	}
+	tasks, err := s.backlog.ListByAgent(ctx, agent.ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var taskID string
+	for _, task := range tasks {
+		if task.Title == "Abnahme" {
+			taskID = task.ID.String()
+		}
+	}
+	if taskID == "" {
+		t.Fatal("no heartbeat task while the check runs")
+	}
+	admin.expect(http.MethodPost, "/api/v1/tasks/"+taskID+"/cancel", nil, http.StatusOK)
+	// The task is discarded while the check holds: now let the check end,
+	// the advance land and Complete refuse.
+	close(proceed)
+	released = true
+
+	var got string
+	waitFor(t, "advance released", 10*time.Second, func() bool {
+		if err := s.pool.QueryRow(ctx,
+			"SELECT last_work_sig FROM agent_heartbeats WHERE agent_id=$1 AND name='Abnahme'",
+			agent.ID).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		return got == ""
+	})
 }
 
 // The counterpart to the advance: a run that wrote NOTHING in the target system
