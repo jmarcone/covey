@@ -33,6 +33,10 @@ export type AnswerRow = {
   /** All of its work at token prices came after the meter's last reading (none lies within a reading): its real
    *  share is not known yet, not 0. Shown as "pending", never as ≈ $0.00 (#164's rule, the human on #204). */
   pending: boolean;
+  /** All of its work came before the first meter reading of the seats behind it: there is no meter data for that time,
+   *  so it has no real share at all (not 0, not pending). The first reading's time; null otherwise. Shown as "before the
+   *  first reading", never as ≈ $0.00 (cost home proposal, PR 1: the auction and ghostrobot rows read ≈ $0.00). */
+  beforeMeter: string | null;
   /** kind "small": the sources folded into the row, each under SMALL_USD at token prices. */
   folded: string[];
 };
@@ -115,7 +119,7 @@ export function answerTable(h: Headline, d: SubscriptionDent, ext: ExternalUsage
   const real = (xs: typeof shown) => (priced && sourceState(xs.map((s) => s.source)) !== "none" ? xs.reduce((a, s) => a + (parts.get(s.source) ?? 0), 0) : null);
   const row = (r: Pick<AnswerRow, "key" | "kind"> & Partial<AnswerRow>): AnswerRow => ({
     source: null, list: null, recomputed: false, unpricedTokens: 0, before: false, real: null, notSplit: false, partlySplit: false,
-    pending: false, folded: [], ...r,
+    pending: false, beforeMeter: null, folded: [], ...r,
   });
   // A row whose every call came after the meter's last reading has no share yet: it is pending, not 0 (its real cost
   // follows at the next reading). Decided from the calls' times, never from a part of 0: a part can be 0 for other
@@ -123,9 +127,12 @@ export function answerTable(h: Headline, d: SubscriptionDent, ext: ExternalUsage
   // The last reading is the seat's own: seats are read at different times, and a source's share comes only from the
   // steps of the seats that name it. A source no seat names keeps the meter's last reading.
   const lastAt = new Map<string, number>();
+  const firstFrom = new Map<string, number>();
   for (const x of m.steps) {
     const id = credId(x.secret_key, x.secret_slot);
     lastAt.set(id, Math.max(lastAt.get(id) ?? -Infinity, Date.parse(x.at)));
+    // A reading's span starts at its `from` (the reading before it); the first reading's `from` is the meter's baseline.
+    firstFrom.set(id, Math.min(firstFrom.get(id) ?? Infinity, Date.parse(x.from ?? x.at)));
   }
   const meterLast = Math.max(-Infinity, ...lastAt.values());
   const lastReadingOf = (source: string) => {
@@ -133,6 +140,44 @@ export function answerTable(h: Headline, d: SubscriptionDent, ext: ExternalUsage
     return cs.length > 0 ? Math.max(-Infinity, ...cs.map((c) => lastAt.get(credId(c.secret_key, c.secret_slot)) ?? -Infinity)) : meterLast;
   };
   const firstAt = new Map(ext.sources.map((x) => [x.source, x.first_at]));
+  const lastCall = new Map(ext.sources.map((x) => [x.source, x.last_at]));
+  // The first reading of the seats that name a source: the earliest start of any of their readings.
+  const firstReadingOf = (source: string) => {
+    const cs = m.credentials.filter((c) => c.sources.includes(source));
+    const ids = cs.length > 0 ? cs.map((c) => credId(c.secret_key, c.secret_slot)) : [...firstFrom.keys()];
+    return Math.min(Infinity, ...ids.map((id) => firstFrom.get(id) ?? Infinity));
+  };
+  const sourceBeforeMeter = (s: (typeof shown)[number]) => {
+    const l = lastCall.get(s.source), first = firstReadingOf(s.source);
+    return l != null && Number.isFinite(first) && Date.parse(l) < first;
+  };
+  // A row all of whose work lies before the first reading has no real share at all: named, never ≈ $0.00.
+  const withBefore = (r: AnswerRow, xs: typeof shown): AnswerRow => {
+    if (!priced || r.pending || xs.length === 0 || !xs.every(sourceBeforeMeter)) return r;
+    const first = Math.min(...xs.map((s) => firstReadingOf(s.source)));
+    return { ...r, real: null, notSplit: false, partlySplit: false, beforeMeter: new Date(first).toISOString() };
+  };
+  // The list each source has within the split readings (the server's source_parts). A row none of whose work lies in a
+  // split reading has no share yet (its work is before, after or between readings, or in a reading not split so far):
+  // "not assigned yet", never ≈ $0.00. This also covers work on both sides of the readings and none inside them.
+  const partList = new Map<string, number>();
+  for (const p of m.source_parts ?? m.credentials.flatMap((c) => c.source_parts ?? [])) partList.set(p.source, (partList.get(p.source) ?? 0) + p.list_usd);
+  const noSplitWork = (r: AnswerRow, xs: typeof shown): AnswerRow =>
+    priced && r.real != null && r.real < 0.005 && xs.length > 0 && xs.every((s) => !((partList.get(s.source) ?? 0) > 0)) &&
+      ((r.list ?? 0) >= 0.005 || r.unpricedTokens > 0)
+      ? { ...r, real: null, notSplit: true, partlySplit: false } : r;
+  // A row of several sources where most of its work (by token price) lies in no split reading: its figure holds only the
+  // sources with a part, so it says it may be too low instead of standing as a bare ≈ $0.00 (#212 verify).
+  const mostlyUnassigned = (r: AnswerRow, xs: typeof shown): AnswerRow => {
+    if (r.real == null || r.partlySplit || xs.length < 2) return r;
+    const all = xs.reduce((a, s) => a + (s.list ?? 0), 0);
+    const assigned = xs.filter((s) => (partList.get(s.source) ?? 0) > 0).reduce((a, s) => a + (s.list ?? 0), 0);
+    return all >= 0.005 && assigned < all / 2 ? { ...r, partlySplit: true } : r;
+  };
+  const finish = (r: AnswerRow, xs: typeof shown): AnswerRow => {
+    const out = withBefore(withPending(r, xs), xs);
+    return out.pending || out.beforeMeter ? out : mostlyUnassigned(noSplitWork(out, xs), xs);
+  };
   const sourcePending = (s: (typeof shown)[number]) => {
     const f = firstAt.get(s.source), last = lastReadingOf(s.source);
     return f != null && Number.isFinite(last) && Date.parse(f) > last;
@@ -147,7 +192,7 @@ export function answerTable(h: Headline, d: SubscriptionDent, ext: ExternalUsage
   const operator = shown.filter((s) => isOperatorSource(s.source));
   if (operator.length > 0) {
     const st = sourceState(operator.map((s) => s.source));
-    rows.push(withPending(row({ key: "operator", kind: "operator", list: lead(operator), recomputed: operator.some((s) => s.recomputed > 0),
+    rows.push(finish(row({ key: "operator", kind: "operator", list: lead(operator), recomputed: operator.some((s) => s.recomputed > 0),
       unpricedTokens: operator.reduce((a, s) => a + s.unpricedTokens, 0), before: operator.every((s) => s.before), real: real(operator),
       ...flags(st) }), operator));
   }
@@ -158,11 +203,11 @@ export function answerTable(h: Headline, d: SubscriptionDent, ext: ExternalUsage
   const isSmall = (s: (typeof shown)[number]) => s.list != null && s.list < SMALL_USD && !s.before && s.unpricedTokens === 0 && !pendingOf([s]);
   const small = projects.filter(isSmall);
   for (const s of projects.filter((x) => small.length < 2 || !isSmall(x))) {
-    rows.push(withPending(row({ key: `project:${s.source}`, kind: "project", source: s.source, list: s.list, recomputed: s.recomputed > 0,
+    rows.push(finish(row({ key: `project:${s.source}`, kind: "project", source: s.source, list: s.list, recomputed: s.recomputed > 0,
       unpricedTokens: s.unpricedTokens, before: s.before, real: real([s]), ...flags(sourceState([s.source])) }), [s]));
   }
   if (small.length >= 2) {
-    rows.push(withPending(row({ key: "small", kind: "small", folded: small.map((s) => s.source), list: lead(small),
+    rows.push(finish(row({ key: "small", kind: "small", folded: small.map((s) => s.source), list: lead(small),
       recomputed: small.some((s) => s.recomputed > 0), real: real(small), ...flags(sourceState(small.map((s) => s.source))) }), small));
   }
   // What a hidden source took of the meter is not the table's: the total follows the rows shown.

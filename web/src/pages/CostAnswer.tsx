@@ -1,7 +1,7 @@
 import { useId, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { fmtCount, fmtNumber, fmtUSD, fmtUSDFixed } from "../format";
+import { fmtBucket, fmtCount, fmtNumber, fmtUSD, fmtUSDFixed } from "../format";
 import type { Headline } from "./costFigures";
 import type { AnswerRow, AnswerTable } from "./costAnswerModel";
 import { OrgWide, outsideMoney, priceTableLine } from "./StackedCostChart";
@@ -51,8 +51,12 @@ function label(t: TFunction, r: AnswerRow): { name: string; from: string } {
 }
 
 function realCell(t: TFunction, r: AnswerRow): ReactNode {
+  const sub = { fontWeight: 400, whiteSpace: "normal" } as const;
   if (r.pending) return <><span className="muted" data-answer-pending>{t("costs.answer.pending")}</span>
-    <div className="muted text-xs" style={{ fontWeight: 400, whiteSpace: "normal" }}>{t("costs.answer.pendingWhy")}</div></>;
+    <div className="muted text-xs" style={sub}>{t("costs.answer.pendingWhy")}</div></>;
+  // All of its work came before the meter's first reading: no meter data for that time, so no figure, and never ≈ $0.00.
+  if (r.beforeMeter) return <><span className="muted" data-answer-before-meter>{t("costs.answer.beforeMeter")}</span>
+    <div className="muted text-xs" style={sub}>{t("costs.answer.beforeMeterWhy", { date: fmtBucket(r.beforeMeter, "hour") })}</div></>;
   return <>
     {r.real != null ? `≈ ${fmtUSD(r.real)}` : "–"}
     {r.notSplit && <div className="muted text-xs" style={{ fontWeight: 400, whiteSpace: "normal" }}>{t("costs.answer.notSplit")}</div>}
@@ -110,6 +114,15 @@ export function CostAnswer({ a, h, filtered, drawer, elsewhere: elsewhereUsd }: 
     ? t("costs.dent.incompleteNote", { n: fmtNumber(a.incompleteChunks, 0) }) : null;
   const check = hidden ? undefined : priceTableLine(t, h.list, h.table);
   const recomputed = a.rows.some((r) => r.recomputed && r.list != null && !r.before);
+  // All the work at token prices, taken apart into what the multiple divides and what lies outside the meter's readings.
+  // Shown only where the parts add up to the table's total (no source hidden), so the line can be checked by hand.
+  const reconParts = hidden || a.multiple == null ? [] : ([
+    [h.before, "costs.answer.reconBefore"], [h.after, "costs.answer.reconAfter"], [h.unpriced, "costs.answer.reconUnpriced"], [h.usage, "costs.answer.reconUsage"],
+  ] as [number, string][]).filter(([v]) => v >= 0.005);
+  const reconSum = a.metered + reconParts.reduce((acc, [v]) => acc + v, 0);
+  const recon = reconParts.length > 0 && Math.abs(reconSum - a.list) < 0.01
+    ? [t("costs.answer.reconAll", { all: fmtUSD(a.list), metered: fmtUSD(a.metered) }), ...reconParts.map(([v, k]) => t(k, { usd: fmtUSD(v) }))].join(" ")
+    : null;
   // The multiple divides only the work within the meter's readings: where that is less than the total, the label says so.
   const diffFrom = a.multiple != null && a.list - a.metered >= 0.005
     ? t("costs.answer.fromDifferenceOf", { metered: fmtUSD(a.metered) }) : t("costs.answer.fromDifference");
@@ -125,23 +138,32 @@ export function CostAnswer({ a, h, filtered, drawer, elsewhere: elsewhereUsd }: 
       </div>
       <div className="cost-answer-body">
       {/* The answer at a glance: beside the table on a wide screen, above it otherwise. The multiple says what it divides. */}
+      {/* The answer as an equation: the multiple never stands without what it divides and what it divides by (the
+          cost home proposal's first honesty rule). Without a multiple: the work at token prices and the capacity used. */}
       <div className="cost-answer-hero" data-answer-hero>
         <div>
-          <div className="muted cost-answer-hero-label">{t("costs.answer.heroList")}</div>
-          <div className="cost-answer-hero-figure" data-hero-list>{fmtUSD(a.list)}</div>
+          <div className="muted cost-answer-hero-label">{t(a.multiple != null ? "costs.answer.heroMetered" : "costs.answer.heroList")}</div>
+          <div className="cost-answer-hero-figure" data-hero-list>{fmtUSD(a.multiple != null ? a.metered : a.list)}</div>
         </div>
         <div>
-          <div className="muted cost-answer-hero-label">{t("costs.answer.heroReal")}</div>
-          <div className="cost-answer-hero-figure" data-hero-real>{a.real != null ? `≈ ${fmtUSD(a.real)}` : "–"}</div>
+          <div className="muted cost-answer-hero-label">{t("costs.answer.heroCapacity")}</div>
+          <div className="cost-answer-hero-figure cost-answer-hero-capacity">
+            {a.multiple != null && <span className="cost-answer-hero-op" aria-hidden="true">÷ </span>}
+            <span data-hero-real>{a.real != null ? `≈ ${fmtUSD(a.real)}` : "–"}</span>
+          </div>
           {a.real != null && a.points != null && <div className="muted cost-answer-hero-sub">{t("costs.answer.heroPoints", { pts: pts(a.points) })}</div>}
         </div>
         {a.multiple != null && (
           <div>
-            <div className="muted cost-answer-hero-label">{t("costs.answer.rowDifference")}</div>
-            <div className="cost-answer-hero-figure cost-answer-hero-multiple" data-hero-multiple>≈ {times(a.multiple)}</div>
-            <div className="muted cost-answer-hero-sub">{diffFrom}</div>
+            <div className="muted cost-answer-hero-label">{t("costs.answer.heroMultiple")}</div>
+            <div className="cost-answer-hero-figure">
+              <span className="cost-answer-hero-op" aria-hidden="true">= </span>
+              <span data-hero-multiple>≈ {times(a.multiple)}</span>
+            </div>
+            {a.floor != null && <div className="muted cost-answer-hero-sub">{t("costs.answer.floor", { floor: times(a.floor) })}</div>}
           </div>
         )}
+        {recon && <p className="cost-answer-hero-recon" data-answer-recon>{recon}</p>}
       </div>
       <div style={{ overflowX: "auto", minWidth: 0 }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }} data-answer-table>
@@ -182,7 +204,7 @@ export function CostAnswer({ a, h, filtered, drawer, elsewhere: elsewhereUsd }: 
           </tr>
           <tr style={{ borderTop: "1px solid var(--border)" }} data-answer-difference>
             <th scope="row" style={{ ...cell, textAlign: "left", fontWeight: 600 }}>
-              {t("costs.answer.rowDifference")}
+              {t("costs.answer.rowMultiple")}
               <div className="muted text-xs cost-answer-from-inline" style={{ fontWeight: 400 }}>{diffFrom}</div>
             </th>
             <td className="muted cost-answer-from" style={cell} data-answer-multiple-from>{diffFrom}</td>

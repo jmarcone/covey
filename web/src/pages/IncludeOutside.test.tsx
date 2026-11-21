@@ -5,8 +5,9 @@ import OutsideCosts from "./OutsideCosts";
 import { readFileSync } from "node:fs";
 import type { CostCells, ExternalMeterStep, ExternalMeterSums, ExternalMeterTotal, ExternalModelCell, ExternalUsage } from "../api";
 import i18n from "../i18n";
-import { fmtCount, fmtNumber, fmtUSD } from "../format";
+import { fmtBucket, fmtCount, fmtNumber, fmtUSD } from "../format";
 import { mockFetch, renderWithProviders, openDentRow } from "../test/render";
+import { CostAnswer } from "./CostAnswer";
 import { credentialFigures, everythingOnMeter, headline, inRange, meterSlack, seatLists, subscriptionDent } from "./costFigures";
 import { answerTable } from "./costAnswerModel";
 import { hostsBehind, listedSources, outsideKpis, outsideModelRows, sourceRealPerPeriod, sourcesWithoutSeat } from "./outsideFigures";
@@ -1259,18 +1260,105 @@ describe("the answer table, re-review (#204)", () => {
     expect(a.rows.some((r) => r.source === "projects-tiny")).toBe(false);
   });
 
-  it("the answer at a glance shows the table's total, real cost and multiple, and says what the multiple divides", async () => {
+  it("the answer at a glance is an equation: the metered work ÷ the capacity used = the multiple, never the total ÷ it", async () => {
     const data = cells();
     const a = tableOf(data);
+    const h = headline(data)!;
     serve(data);
     await answerReady();
     const hero = document.querySelector("[data-answer-hero]")!;
-    expect(hero.querySelector("[data-hero-list]")!.textContent).toBe(document.querySelector("[data-answer-total] [data-answer-list]")!.textContent);
+    // The numerator is the metered work, not the Total row's figure.
+    expect(hero.querySelector("[data-hero-list]")!.textContent).toBe(fmtUSD(a.metered));
+    expect(fmtUSD(a.metered)).not.toBe(document.querySelector("[data-answer-total] [data-answer-list]")!.textContent);
     expect(hero.querySelector("[data-hero-real]")!.textContent).toBe(document.querySelector("[data-answer-total] [data-answer-real]")!.textContent);
     expect(hero.querySelector("[data-hero-multiple]")!.textContent).toBe(`≈ ${times(a.multiple!)}`);
-    // Not "list ÷ real": the numerator is named, the same text as the Difference row's.
-    expect(hero.textContent).toContain(t("costs.answer.fromDifferenceOf", { metered: fmtUSD(a.metered) }));
+    expect(a.metered / a.real!).toBeCloseTo(a.multiple!, 9);
+    expect(hero.textContent).toContain(t("costs.answer.heroMetered"));
+    expect(hero.textContent).toContain(t("costs.answer.heroCapacity"));
     expect(hero.textContent).toContain(t("costs.answer.heroPoints", { pts: "6" }));
+    // The reconciliation: the Total's figure = the metered work + what lies outside the readings, and it adds up.
+    const parts = [h.before, h.after, h.unpriced, h.usage].filter((v) => v >= 0.005);
+    expect(parts.length).toBeGreaterThan(0);
+    expect(a.metered + parts.reduce((x, y) => x + y, 0)).toBeCloseTo(a.list, 2);
+    const recon = hero.querySelector("[data-answer-recon]")!.textContent!;
+    expect(recon.startsWith(t("costs.answer.reconAll", { all: fmtUSD(a.list), metered: fmtUSD(a.metered) }))).toBe(true);
+    if (h.after >= 0.005) expect(recon).toContain(t("costs.answer.reconAfter", { usd: fmtUSD(h.after) }));
+  });
+
+
+  it("a project whose work all came before the meter's first reading says so, never ≈ $0.00", async () => {
+    // SEAT's first reading starts 17:40 on 11/17; this project's calls are at 10:00 that morning.
+    const data = withProjects(cells(), [{ source: "projects-early", list: 5, firstAt: "2026-11-17T10:00:00Z" }]);
+    const a = tableOf(data);
+    const row = a.rows.find((r) => r.source === "projects-early")!;
+    expect(row.real).toBeNull();
+    expect(row.beforeMeter).toBe("2026-11-17T17:40:00.000Z");
+    expect(row.pending).toBe(false);
+    serve(data);
+    await answerReady();
+    const cell = answerRow("project:projects-early")!.querySelector("[data-answer-real]")!;
+    expect(cell.querySelector("[data-answer-before-meter]")!.textContent).toBe(t("costs.answer.beforeMeter"));
+    expect(cell.textContent).toContain(t("costs.answer.beforeMeterWhy", { date: fmtBucket("2026-11-17T17:40:00Z", "hour") }));
+    expect(cell.textContent).not.toContain("$0.00");
+    // Its token price still counts in the Total: it is work at token prices, with no meter data to share.
+    expect(rowList("project:projects-early")).toContain(fmtUSD(5));
+  });
+
+  it("a project with calls on both sides of the first reading keeps its figure", () => {
+    const data = withProjects(cells(), [{ source: "projects-early", list: 5, firstAt: "2026-11-17T10:00:00Z" }]);
+    const e = data.external!;
+    e.sources = e.sources.map((s) => (s.source === "projects-early" ? { ...s, last_at: H19 } : s));
+    expect(tableOf(data).rows.find((r) => r.source === "projects-early")!.beforeMeter).toBeNull();
+  });
+
+  it("a row none of whose work lies in a split reading says it is not assigned yet, never ≈ $0.00", async () => {
+    // Calls on both sides of the readings and none inside them: neither before the meter nor pending, and no part.
+    const data = withProjects(cells(), [{ source: "projects-gap", list: 4 }]);
+    const e = data.external!;
+    e.sources = e.sources.map((s) => (s.source === "projects-gap" ? { ...s, first_at: "2026-11-17T10:00:00Z", last_at: "2026-11-17T21:00:00Z" } : s));
+    const row = tableOf(data).rows.find((r) => r.source === "projects-gap")!;
+    expect(row.beforeMeter).toBeNull();
+    expect(row.pending).toBe(false);
+    expect(row.real).toBeNull();
+    expect(row.notSplit).toBe(true);
+    serve(data);
+    await answerReady();
+    expect(rowReal("project:projects-gap")).toContain(t("costs.answer.notSplit"));
+    expect(rowReal("project:projects-gap")).not.toContain("$0.00");
+    // A row with work in a split reading keeps its figure, however small.
+    expect(rowReal(`project:${SY}`)).toMatch(/^≈ \$/);
+  });
+
+  it("a row of several sources whose work lies mostly in no split reading says it may be too low, not a bare figure", async () => {
+    // Two small projects fold into one row: a ($0.40, all of it in a split reading) and b ($0.90, none of it).
+    const data = withProjects(cells(), [{ source: "projects-a", list: 0.4 }, { source: "projects-b", list: 0.9 }]);
+    data.external!.meter.source_parts = [...data.external!.meter.source_parts!, { source: "projects-a", list_usd: 0.4, real_usd: 0.001 }];
+    const small = tableOf(data).rows.find((r) => r.kind === "small")!;
+    expect(small.folded).toEqual(["projects-a", "projects-b"]);
+    expect(small.real).toBeCloseTo(0.001, 9);
+    expect(small.partlySplit).toBe(true);
+    serve(data);
+    await answerReady();
+    expect(answerRow("small")!.querySelector("[data-answer-partly]")!.textContent).toBe(t("costs.answer.partlyNotSplit"));
+    // With most of the row's work in a split reading, no note.
+    const most = withProjects(cells(), [{ source: "projects-a", list: 0.9 }, { source: "projects-b", list: 0.4 }]);
+    most.external!.meter.source_parts = [...most.external!.meter.source_parts!, { source: "projects-a", list_usd: 0.9, real_usd: 0.02 }];
+    expect(tableOf(most).rows.find((r) => r.kind === "small")!.partlySplit).toBe(false);
+  });
+
+  it("hides the reconciliation line while a source is switched off: its parts would not add up to the rows shown", () => {
+    const data = cells();
+    const h = headline(data)!;
+    const a = answerTable(h, subscriptionDent(data.external)!, data.external!, data.meter ?? [], new Set([SY]));
+    renderWithProviders(<CostAnswer a={a} h={h} filtered={false} />);
+    expect(document.querySelector("[data-answer-hero]")).not.toBeNull();
+    expect(document.querySelector("[data-answer-recon]")).toBeNull();
+    cleanup();
+    const all = tableOf(data);
+    renderWithProviders(<CostAnswer a={all} h={h} filtered={false} />);
+    expect(document.querySelector("[data-answer-recon]")).not.toBeNull();
+    // The operators are not read out; each figure keeps its label.
+    for (const op of document.querySelectorAll(".cost-answer-hero-op")) expect(op.getAttribute("aria-hidden")).toBe("true");
   });
 
   it("each row's 'where it comes from' is in the column and, for phones, under the part, the same text", async () => {
