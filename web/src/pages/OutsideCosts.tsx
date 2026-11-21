@@ -75,18 +75,42 @@ function useWindow() {
 }
 
 /** A source's own figure under the basis (cost home PR 9): token, its list price as before; capacity, its server part
- *  of the meter (source_parts[].real_usd, ≈), none for a source on no meter (billed per use) or with no part split yet;
- *  billed, none (sources are not linked to an API key). Never $0.00 for a figure that does not exist. */
-export function sourceFigure(basis: Basis, s: { source: string; meter_credential: unknown; list_usd: number | null }, real: ReadonlyMap<string, number>):
+ *  of the meter (source_parts[].real_usd, ≈), none for a source on no meter (billed per use) or with no part yet;
+ *  billed, none (sources are not linked to an API key). Never $0.00 for a figure that does not exist.
+ *  A capacity figure that is absent says why, from the page's own data (the source's first and last call, the seat's
+ *  readings in the same response): the seat has no plan price, all its calls came after the seat's last reading
+ *  (pending), or all before its first (before the meter); otherwise its readings were not split (yet). Without the
+ *  meter (an older caller) or without the seat's readings, it stays "not split". */
+export function sourceFigure(basis: Basis,
+  s: { source: string; meter_credential: { secret_key: string; secret_slot: number } | null | Record<string, never>; list_usd: number | null; first_at?: string | null; last_at?: string | null },
+  real: ReadonlyMap<string, number>, meter?: Pick<ExternalModelUsage["meter"], "steps" | "credentials"> | null):
   { usd: number; estimate: boolean } | { none: NoFigureReason } | null {
   const support = basisSupport("outside", "sources", basis);
   if (support.state === "none") return { none: support.reason };
   if (basis === "capacity") {
     if (!s.meter_credential) return { none: "usageBasis" };
     const v = real.get(s.source);
-    return v != null && v >= 0.005 ? { usd: v, estimate: true } : { none: "notSplit" };
+    if (v != null && v >= 0.005) return { usd: v, estimate: true };
+    return { none: capacityAbsent(s, meter) };
   }
   return s.list_usd != null ? { usd: s.list_usd, estimate: false } : null;
+}
+
+function capacityAbsent(s: { meter_credential: { secret_key?: string; secret_slot?: number } | null; first_at?: string | null; last_at?: string | null },
+  meter: Pick<ExternalModelUsage["meter"], "steps" | "credentials"> | null | undefined): NoFigureReason {
+  const ref = s.meter_credential;
+  if (!meter || !ref || ref.secret_key == null) return "notSplit";
+  const seat = meter.credentials.find((c) => c.secret_key === ref.secret_key && c.secret_slot === ref.secret_slot);
+  // The seat moved, but none of its movement has a plan price (its readings are unpriced, not on the usage basis).
+  if (seat && seat.step_count > 0 && seat.unpriced_steps > 0 && !meterPriced(seat)) return "noPlanPrice";
+  const own = meter.steps.filter((x) => x.secret_key === ref.secret_key && x.secret_slot === ref.secret_slot);
+  if (own.length === 0) return "notSplit";
+  const last = Math.max(...own.map((x) => Date.parse(x.at)));
+  const first = Math.min(...own.map((x) => Date.parse(x.from ?? x.at)));
+  const firstCall = s.first_at ? Date.parse(s.first_at) : NaN, lastCall = s.last_at ? Date.parse(s.last_at) : NaN;
+  if (Number.isFinite(firstCall) && firstCall > last) return "pending";
+  if (Number.isFinite(lastCall) && lastCall < first) return "beforeMeter";
+  return "notSplit";
 }
 
 export function useExternalUsage(days: number, bucket: string, source: string | null) {
@@ -243,7 +267,7 @@ export default function OutsideCosts() {
         {basis !== "token" && <BasisTag basis={basis} />}
         <Chip on={source == null} onClick={() => set({ source: null })}>{t("costs.outside.sourceAll")}</Chip>
         {(data?.sources ?? []).filter((s) => listedSource(s, real) || s.source === source).map((s) => {
-          const f = sourceFigure(basis, s, real);
+          const f = sourceFigure(basis, s, real, data?.meter);
           return (
             <Chip key={s.source} on={source === s.source} onClick={() => set({ source: s.source })}>
               {s.source} <span style={{ opacity: 0.7 }} data-source-figure={s.source}>{f == null ? "–" : "none" in f ? <NoFigure reason={f.none} />

@@ -5,39 +5,53 @@ import { Seg } from "./Seg";
 
 /* The Basis switch in the cost pages' filter bar, its lock chip and its tag (cost home PR 9). */
 
-/** The switch: a segmented row from 1600px wide, a select below. Cash stands as an option, disabled, until signed off. */
+/** The switch: a segmented row from 1600px wide, a select below. Cash stands as an option, disabled, until signed off.
+ *  Below 1600px the select's options carry no visible tooltip, so the current basis's description (and, while cash is
+ *  disabled, why) stands as a muted line under it. A link that opened with a basis the page cannot show (cash before
+ *  sign-off, an unknown word) is said with the switch, wherever the switch stands (the filter bar, the Outside page). */
 export function BasisControl() {
   const { t } = useTranslation();
-  const { basis, setBasis } = useBasis();
+  const { basis, pruned, setBasis } = useBasis();
   const wide = useWide();
-  const descId = `${useId().replace(/[^a-zA-Z0-9_-]/g, "")}-basis`;
+  const base = useId().replace(/[^a-zA-Z0-9_-]/g, "");
+  const descId = `${base}-basis`, cashId = `${base}-basis-cash`;
   const options = [
     ...BASES.map((b) => ({ v: b as Basis | "cash", label: t(`costs.basisSwitch.option.${b}`), title: t(`costs.basisSwitch.desc.${b}`) })),
     { v: "cash" as const, label: t("costs.basisSwitch.option.cash"), disabled: !CASH_BASIS_ENABLED, title: t("costs.basisSwitch.desc.cash") },
   ];
   const pick = (v: Basis | "cash") => { if (v !== "cash") setBasis(v); };
+  const note = pruned
+    ? <span className="muted text-xs" role="status" data-basis-pruned={pruned} style={{ flexBasis: "100%", order: 99 }}>{t(`costs.basisSwitch.pruned.${pruned}`)}</span>
+    : null;
+  if (wide) {
+    return (
+      <>
+        <span className="cost-basis" data-basis-control={basis} role="group" aria-label={t("costs.basisSwitch.label")} aria-describedby={descId}>
+          <span className="muted">{t("costs.basisSwitch.label")}</span>
+          <Seg<Basis | "cash"> value={basis} onChange={pick} options={options} />
+          <span id={descId} className="sr-only">{t(`costs.basisSwitch.desc.${basis}`)}</span>
+        </span>
+        {note}
+      </>
+    );
+  }
   return (
-    <span className="cost-basis" data-basis-control={basis} role="group" aria-label={t("costs.basisSwitch.label")} aria-describedby={descId}>
-      <span className="muted">{t("costs.basisSwitch.label")}</span>
-      {wide ? (
-        <Seg<Basis | "cash"> value={basis} onChange={pick} options={options} />
-      ) : (
-        <select className="cost-basis-select" value={basis} aria-label={t("costs.basisSwitch.label")} aria-describedby={descId}
-          onChange={(e) => pick(e.target.value as Basis | "cash")}>
-          {options.map((o) => <option key={o.v} value={o.v} disabled={"disabled" in o && o.disabled}>{o.label}</option>)}
-        </select>
-      )}
-      <span id={descId} className="sr-only">{t(`costs.basisSwitch.desc.${basis}`)}</span>
-    </span>
+    <>
+      <span className="cost-basis" data-basis-control={basis} role="group" aria-label={t("costs.basisSwitch.label")}>
+        <span className="muted">{t("costs.basisSwitch.label")}</span>
+        <span style={{ display: "inline-flex", flexDirection: "column", gap: 2, maxWidth: 360 }}>
+          <select className="cost-basis-select" value={basis} aria-label={t("costs.basisSwitch.label")}
+            aria-describedby={CASH_BASIS_ENABLED ? descId : `${descId} ${cashId}`}
+            onChange={(e) => pick(e.target.value as Basis | "cash")}>
+            {options.map((o) => <option key={o.v} value={o.v} disabled={"disabled" in o && o.disabled}>{o.label}</option>)}
+          </select>
+          <span id={descId} className="muted text-xs" data-basis-desc={basis}>{t(`costs.basisSwitch.desc.${basis}`)}</span>
+          {!CASH_BASIS_ENABLED && <span id={cashId} className="muted text-xs" data-basis-desc="cash">{t("costs.basisSwitch.desc.cash")}</span>}
+        </span>
+      </span>
+      {note}
+    </>
   );
-}
-
-/** A link that opened with a basis the page cannot show (cash before sign-off, an unknown word): said once, in the bar. */
-export function BasisPrunedNote() {
-  const { t } = useTranslation();
-  const { pruned } = useBasis();
-  if (!pruned) return null;
-  return <p className="muted text-xs" role="status" data-basis-pruned={pruned}>{t(`costs.basisSwitch.pruned.${pruned}`)}</p>;
 }
 
 /** A block that keeps the token price under another basis says so, with the reason and a way back to token price. */

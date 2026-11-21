@@ -14,6 +14,8 @@ import {
   type Unsplit,
 } from "./outsideFigures";
 import { asBool, asEnum, useCostQuery, useParamState } from "./costView";
+import { basisSupport, useBasis } from "./costBasisSwitch";
+import { BasisLockChip } from "./BasisControl";
 
 const OUTMODE = asEnum<"apart" | "combined">(["apart", "combined"]);
 
@@ -139,6 +141,9 @@ export function OutsideOverview({ data, selected, days, bucket, fmtPeriod, incom
   // The detailed view opens with this page's whole view (range, bucket, agents, chips), and its back link keeps it.
   // A hook: above the early return below.
   const query = useCostQuery();
+  // The page's basis (cost home PR 9): this section's money stays at token price and says why (basisSupport).
+  const { basis } = useBasis();
+  const support = basisSupport("details", "outsideOverview", basis);
   const totals = useMemo(() => outsideTotals(data?.external), [data]);
   const outside = useMemo(() => outsidePerPeriod(data?.external), [data]);
   const agents = useMemo(() => agentsPerPeriod(data, selected), [data, selected]);
@@ -176,6 +181,7 @@ export function OutsideOverview({ data, selected, days, bucket, fmtPeriod, incom
         {detailLink && <Link to={detail} className="text-sm" data-outside-detail>{t("costs.outside.details")}</Link>}
       </div>
       <p className="muted text-xs mb-3" style={{ maxWidth: 760 }}>{t("costs.outside.hint")}</p>
+      {support.state === "locked" && <div className="mb-3" data-outside-overview-lock><BasisLockChip support={support} basis={basis} /></div>}
       <div className="flex flex-wrap items-center gap-2 mb-3">
         <Chip on={on} color={OUTSIDE_COLOR} onClick={() => setOn(!on)}>{t("costs.outside.show")}</Chip>
         {on && <>

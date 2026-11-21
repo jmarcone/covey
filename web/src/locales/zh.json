@@ -1097,15 +1097,18 @@
         "billed": "账单金额"
       },
       "lock": {
-        "notPerRun": "套餐额度属于计量器，而不属于某次运行。",
-        "noCredentialOnRun": "运行不带凭据，因此没有账单。",
-        "notPerModel": "套餐额度尚未按模型拆分。",
-        "billedPerKey": "账单按 API 密钥计，而非按智能体或模型。",
+        "notPerRun": "套餐额度属于计量器，而不属于某次运行；此处按 token 价格显示。",
+        "noCredentialOnRun": "运行不带凭据，因此没有账单；此处按 token 价格显示。",
+        "notPerModel": "套餐额度尚未按模型拆分；此处按 token 价格显示。",
+        "billedPerKey": "账单按 API 密钥计，而非按智能体或模型；此处按 token 价格显示。",
         "answerIsTokenOverCapacity": "答案始终是 token 价格 ÷ 已用套餐额度。",
-        "perPeriodAgent": "按期间看，额度和账单属于凭据，而不属于智能体。",
-        "outsideTokenOnly": "本页的卡片和图表按 token 价格计；各来源的套餐额度见来源标签。"
+        "perPeriodAgent": "按期间看，额度和账单属于凭据，而不属于智能体；此处按 token 价格显示。",
+        "meterPerSeat": "此卡片显示每个席位的套餐额度；账单按 API 密钥计。",
+        "outsideTokenOnly": "本页的卡片和图表按 token 价格计；各来源的套餐额度见来源标签。",
+        "outsideSeeSources": "此部分的金额按 token 价格计；各来源的套餐额度见“covey 之外的会话”页面。",
+        "outsideNoBill": "covey 之外的来源未关联到 API 密钥，因此没有账单；其金额按 token 价格显示。"
       },
-      "lockChip": "此处不适用{{basis}}：{{reason}}按 token 价格显示。",
+      "lockChip": "此处不适用{{basis}}：{{reason}}",
       "toToken": "切换到 token 价格",
       "pruned": {
         "cash": "现金（套餐，按比例分摊）待批准：按 token 价格显示。",
@@ -1125,7 +1128,10 @@
         "noReported": "未报告",
         "noData": "无数据",
         "bucketTooFine": "过细",
-        "noBilledKeys": "无 API 密钥"
+        "noBilledKeys": "无 API 密钥",
+        "loadError": "未加载",
+        "notLanded": "尚未到达",
+        "noPlanPrice": "无套餐价格"
       },
       "long": {
         "pending": "待定：其份额将在计量器下次读数后得出。",
@@ -1139,7 +1145,10 @@
         "noReported": "无数值：Claude Code 未报告这些调用的价格。",
         "noData": "此时段内无数据。",
         "bucketTooFine": "10 分钟粒度下无数值：套餐额度和账单最细按小时提供。请选择按小时或更粗的粒度。",
-        "noBilledKeys": "无数值：此时段内没有 API 密钥关联到账单。"
+        "noBilledKeys": "无数值：此时段内没有 API 密钥关联到账单。",
+        "loadError": "无数值：无法获取账单。请稍后重试。",
+        "notLanded": "暂无数值：已关联 API 密钥，但此时段的账单尚未到达（或账单同步失败或未配置）。",
+        "noPlanPrice": "无数值：该席位的计量读数没有套餐价格。设置套餐价格后即可查看已用套餐额度。"
       }
     },
     "basisDetails": {

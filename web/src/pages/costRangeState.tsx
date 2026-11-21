@@ -7,7 +7,7 @@ import { bucketForSpan, customWindow, isCustom, readRange, windowQuery, writeRan
 import { bucketOptions, rangeOptions } from "./outsideFigures";
 import { RangePanel } from "./RangePanel";
 import { Seg } from "./Seg";
-import { BasisControl, BasisPrunedNote } from "./BasisControl";
+import { BasisControl } from "./BasisControl";
 import { useUsageReadings } from "./StackedCostChart";
 
 /* The cost pages' window, shared by the home (/costs) and the details page
@@ -187,7 +187,6 @@ export function CostFilterBar(props: Parameters<typeof CostRangeControls>[0]) {
     <>
       <div className="cost-filterbar" role="region" aria-label={t("costs.bar.label")} data-filterbar>
         <CostRangeControls basisSwitch {...props} part="row" />
-        <BasisPrunedNote />
       </div>
       <CostRangeControls {...props} part="panel" />
     </>

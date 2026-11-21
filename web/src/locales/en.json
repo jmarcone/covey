@@ -1097,15 +1097,18 @@
         "billed": "Billed"
       },
       "lock": {
-        "notPerRun": "plan capacity belongs to a meter, not to a run.",
-        "noCredentialOnRun": "a run carries no credential, so no bill.",
-        "notPerModel": "plan capacity is not split by model yet.",
-        "billedPerKey": "bills are per API key, not per agent or model.",
+        "notPerRun": "plan capacity belongs to a meter, not to a run; shown here at token price.",
+        "noCredentialOnRun": "a run carries no credential, so no bill; shown here at token price.",
+        "notPerModel": "plan capacity is not split by model yet; shown here at token price.",
+        "billedPerKey": "bills are per API key, not per agent or model; shown here at token price.",
         "answerIsTokenOverCapacity": "the answer is always token price ÷ plan capacity used.",
-        "perPeriodAgent": "per period, capacity and bills belong to a credential, not to agents.",
-        "outsideTokenOnly": "the tiles and the chart on this page are at token price; plan capacity per source is in the source chips."
+        "perPeriodAgent": "per period, capacity and bills belong to a credential, not to agents; shown here at token price.",
+        "meterPerSeat": "this card shows plan capacity per seat; bills are per API key.",
+        "outsideTokenOnly": "the tiles and the chart on this page are at token price; plan capacity per source is in the source chips.",
+        "outsideSeeSources": "this section's money is at token price; plan capacity per source is on the page Sessions outside covey.",
+        "outsideNoBill": "outside sources are not linked to an API key, so they have no bill; their money is shown at token price."
       },
-      "lockChip": "{{basis}} not applied here: {{reason}} Shown at token price.",
+      "lockChip": "{{basis}} not applied here: {{reason}}",
       "toToken": "Switch to token price",
       "pruned": {
         "cash": "Cash (plan, pro-rated) awaits sign-off: showing token price.",
@@ -1125,7 +1128,10 @@
         "noReported": "not reported",
         "noData": "no data",
         "bucketTooFine": "too fine",
-        "noBilledKeys": "no API keys"
+        "noBilledKeys": "no API keys",
+        "loadError": "not loaded",
+        "notLanded": "not landed yet",
+        "noPlanPrice": "no plan price"
       },
       "long": {
         "pending": "Pending: its share follows the next meter reading.",
@@ -1139,7 +1145,10 @@
         "noReported": "No figure: Claude Code reported no price for these calls.",
         "noData": "No data in this window.",
         "bucketTooFine": "No figure at 10 minutes: plan capacity and bills come per hour at the finest. Pick hourly or coarser.",
-        "noBilledKeys": "No figure: no API key is mapped to a bill in this window."
+        "noBilledKeys": "No figure: no API key is mapped to a bill in this window.",
+        "loadError": "No figure: the bill could not be fetched. Try again later.",
+        "notLanded": "No figure yet: API keys are mapped, but no bill has landed for this window (or the bill sync failed or is not set up).",
+        "noPlanPrice": "No figure: the seat's meter readings have no plan price. Set the plan's price to see the plan capacity used."
       }
     },
     "basisDetails": {

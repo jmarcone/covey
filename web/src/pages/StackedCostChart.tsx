@@ -27,6 +27,7 @@ import {
   meterSplit,
   splitPerPeriod,
   stepRate,
+  type BilledFigure,
   type CredentialFigures,
   type SplitPeriod,
   EMPTY_SPLIT_PERIOD,
@@ -128,6 +129,16 @@ export function useUsageReadings(win: CostWindow, enabled = true) {
     refetchInterval: 30000,
     enabled,
   });
+}
+
+/** Why an API key's bill has no figure, in words (never "$0.00"): its state other than measured. */
+export function billedStateText(t: TFunction, b: Pick<BilledFigure, "state" | "error">): string {
+  return b.state === "unconfigured" ? t("costs.fig.billedUnconfigured")
+    : b.state === "unmapped" ? t("costs.fig.billedUnmapped")
+    : b.state === "failed" ? t("costs.fig.billedSyncFailed", { error: b.error || "–" })
+    : b.state === "not_landed" ? t("costs.fig.billedNotLanded")
+    : b.state === "no_bucket" ? t("costs.fig.billedNoBucket")
+    : t("costs.fig.billedUnavailable");
 }
 
 /** What Anthropic billed, per bucket and API key; an organisation without an
@@ -1166,12 +1177,7 @@ function CredentialTiles({ f, filtered, narrowed, out, split, seatSplit, full, m
       tiles.push(<Tile key="billed" label={t("costs.fig.billed")} value="–" sub={t("costs.fig.filteredRealNote")} color={SOURCE_COLOR.billed} />);
     } else if (b.state !== "measured") {
       // No bill could be read: say why, never "$0.00".
-      const why = b.state === "unconfigured" ? t("costs.fig.billedUnconfigured")
-        : b.state === "unmapped" ? t("costs.fig.billedUnmapped")
-        : b.state === "failed" ? t("costs.fig.billedSyncFailed", { error: b.error || "–" })
-        : b.state === "not_landed" ? t("costs.fig.billedNotLanded")
-        : b.state === "no_bucket" ? t("costs.fig.billedNoBucket")
-        : t("costs.fig.billedUnavailable");
+      const why = billedStateText(t, b);
       tiles.push(<Tile key="billed" label={t("costs.fig.billed")} value="–" sub={why} color={SOURCE_COLOR.billed} />);
     } else {
       // The bill covers whole billed buckets; the reported and recomputed

@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { fmtBucket, fmtCount, fmtNumber, fmtUSD, fmtUSDFixed } from "../format";
 import type { Headline } from "./costFigures";
-import { isRemainderRow, partsMoney, type AnswerRow, type AnswerTable } from "./costAnswerModel";
+import { isRemainderRow, noCapacityReason, partsMoney, type AnswerRow, type AnswerTable } from "./costAnswerModel";
 import { basisSupport, type Basis } from "./costBasisSwitch";
 import { BasisLockChip, BasisTag } from "./BasisControl";
 import { NoFigure } from "./NoFigure";
@@ -46,8 +46,8 @@ type MoneyCol = "list" | "real" | "billed";
 const COLS: Record<Basis, MoneyCol[]> = { token: ["list", "real"], capacity: ["real", "list"], billed: ["billed", "list", "real"] };
 
 /** The capacity column where capacity leads: each row's server figure ≈, or the reason it has none (never ≈ $0.00). */
-function capacityCell(t: TFunction, r: AnswerRow): ReactNode {
-  const m = partsMoney(r, "capacity");
+function capacityCell(t: TFunction, r: AnswerRow, a: AnswerTable): ReactNode {
+  const m = partsMoney(r, "capacity", { noPlanPrice: a.real == null, usage: a.why === "usage" });
   if (m == null) return null;
   if ("none" in m) return <NoFigure reason={m.none} detail={m.none === "beforeMeter" && r.beforeMeter ? ` (${fmtBucket(r.beforeMeter, "hour")})` : undefined} />;
   return <>
@@ -226,7 +226,7 @@ export function CostAnswer({ a, h, filtered, drawer, elsewhere: elsewhereUsd, ma
                     const m = partsMoney(r, "billed");
                     return <td key={c} style={{ ...num, whiteSpace: "normal", ...last }} data-answer-billed>{m && "none" in m ? <NoFigure reason={m.none} /> : ""}</td>;
                   }
-                  return <td key={c} style={{ ...num, ...last }} data-answer-real>{basis === "capacity" ? capacityCell(t, r) : realCell(t, r)}</td>;
+                  return <td key={c} style={{ ...num, ...last }} data-answer-real>{basis === "capacity" ? capacityCell(t, r, a) : realCell(t, r)}</td>;
                 })}
               </tr>
             );
@@ -242,7 +242,7 @@ export function CostAnswer({ a, h, filtered, drawer, elsewhere: elsewhereUsd, ma
               if (c === "list") return <td key={c} style={style} data-answer-list>{fmtUSD(a.list)}</td>;
               if (c === "billed") return <td key={c} style={{ ...style, whiteSpace: "normal" }} data-answer-billed><NoFigure reason="notAtThisLevel" /></td>;
               return <td key={c} style={style} data-answer-real>{a.real != null ? `≈ ${fmtUSD(a.real)}`
-                : basis === "capacity" ? <NoFigure reason="noData" /> : "–"}</td>;
+                : basis === "capacity" ? <NoFigure reason={noCapacityReason(a)} /> : "–"}</td>;
             })}
           </tr>
           <tr style={{ borderTop: "1px solid var(--border)" }} data-answer-difference>

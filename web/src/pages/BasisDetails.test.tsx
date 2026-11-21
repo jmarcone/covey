@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
-import Costs from "./Costs";
+import Costs, { BasisKpi } from "./Costs";
+import { fmtUSD, fmtUSDBelow } from "../format";
 import { CostInsights } from "./CostInsights";
 import type { CostCells } from "../api";
 import type { CredentialFigures } from "./costFigures";
@@ -245,7 +246,8 @@ describe("CostInsights unter der Basis", () => {
     await waitFor(() => expect(cols()).toEqual(["reported", "recomputed", "billed"]));
     const keys = document.querySelector<HTMLElement>('[data-credential-row="billed"]')!;
     expect(keys.querySelector("[data-whole-key]")).not.toBeNull();
-    expect(locks()).toEqual(["billedPerKey", "billedPerKey"]);
+    // the models keep the token price (per key); the meter card shows capacity per seat and says so (D)
+    expect(locks()).toEqual(["billedPerKey", "meterPerSeat"]);
   });
 
   it("die gemerkte Wahl unter token bleibt, was die Basis erzwingt", async () => {
@@ -256,5 +258,60 @@ describe("CostInsights unter der Basis", () => {
     fireEvent.click(screen.getByRole("button", { name: new RegExp(i18n.t("costs.fig.recomputed") as string) }));
     await waitFor(() => expect(cols()).toEqual(["reported", "recomputed", "real"]));
     expect(JSON.parse(window.localStorage.getItem(COLS)!)).toEqual(["reported", "recomputed"]);
+  });
+});
+
+// --- The lead tile under capacity and billed (review H, I) -----------------------------------------------------------
+
+const seatFig = (over: Partial<typeof real>) => ({ ...seat, id: `${Math.random()}`, real: { ...real, ...over } }) as unknown as CredentialFigures;
+const keyFig = (state: string) => ({ ...key, id: `k-${state}`, billed: { ...(key.billed as object), state, usd: 0, error: "" } }) as unknown as CredentialFigures;
+const kpiValue = () => document.querySelector<HTMLElement>("[data-kpi] [data-kpi-value]")!;
+
+describe("Details: die Leitkachel unter capacity und billed", () => {
+  beforeEach(() => useGerman());
+
+  it("I: ein Sitz ohne Bewegung zählt als bepreist (0, sein oberer Rand im Bereich), kein Teilhinweis", () => {
+    renderWithProviders(<BasisKpi basis="capacity" figures={[seatFig({}), seatFig({ value: 0, low: 0, high: 1.2, points: 0, below: true })]} />);
+    expect(kpiValue().textContent).toMatch(/^≈ /);
+    const sub = document.querySelector("[data-kpi]")!.textContent!;
+    expect(sub).toContain(fmtUSD(6));
+    expect(sub).toContain(fmtUSD(9.2));
+    expect(sub).not.toContain("1/2");
+  });
+
+  it("I: nur Sitze ohne Planpreis fehlen und werden genannt", () => {
+    renderWithProviders(<BasisKpi basis="capacity" figures={[seatFig({}), seatFig({ priced: false })]} />);
+    expect(kpiValue().textContent).toBe(`≈ ${fmtUSD(7)}`);
+    expect(document.querySelector("[data-kpi]")!.textContent).toContain(i18n.t("costs.basisDetails.kpi.capacityPartial", { n: 1, m: 2 }) as string);
+  });
+
+  it("I: jeder bepreiste Sitz ohne Bewegung: < $high wie CostInsights, keine NoFigure", () => {
+    renderWithProviders(<BasisKpi basis="capacity" figures={[seatFig({ value: 0, low: 0, high: 1.2, points: 0, below: true })]} />);
+    expect(document.querySelector("[data-kpi-below]")!.textContent).toBe(fmtUSDBelow(1.2));
+    expect(document.querySelector("[data-kpi] [data-no-figure]")).toBeNull();
+  });
+
+  it("H: Schlüssel ohne gemessene Rechnung: notLanded mit dem Zustand der Schlüssel; keine Schlüssel: noBilledKeys", () => {
+    const { unmount } = renderWithProviders(<BasisKpi basis="billed" figures={[keyFig("not_landed")]} />);
+    expect(document.querySelector("[data-kpi] [data-no-figure]")!.getAttribute("data-no-figure")).toBe("notLanded");
+    expect(document.querySelector("[data-kpi]")!.textContent).toContain(i18n.t("costs.fig.billedNotLanded") as string);
+    expect(document.querySelector("[data-kpi]")!.textContent).not.toMatch(/0[.,]00/);
+    unmount();
+    const second = renderWithProviders(<BasisKpi basis="billed" figures={[keyFig("failed")]} />);
+    expect(document.querySelector("[data-kpi] [data-no-figure]")!.getAttribute("data-no-figure")).toBe("notLanded");
+    second.unmount();
+    // A key not read yet is not a load error: only the bill's own failed query is (#review H).
+    const third = renderWithProviders(<BasisKpi basis="billed" figures={[keyFig("unavailable")]} />);
+    expect(document.querySelector("[data-kpi] [data-no-figure]")!.getAttribute("data-no-figure")).toBe("notLanded");
+    third.unmount();
+    const loading = renderWithProviders(<BasisKpi basis="billed" figures={[keyFig("unavailable")]} billedQuery={{ loading: true, error: false }} />);
+    expect(document.querySelector("[data-kpi] [data-no-figure]")).toBeNull();
+    expect(document.querySelector("[data-kpi]")!.textContent).toContain("…");
+    loading.unmount();
+    const failed = renderWithProviders(<BasisKpi basis="billed" figures={[keyFig("unavailable")]} billedQuery={{ loading: false, error: true }} />);
+    expect(document.querySelector("[data-kpi] [data-no-figure]")!.getAttribute("data-no-figure")).toBe("loadError");
+    failed.unmount();
+    renderWithProviders(<BasisKpi basis="billed" figures={[seat]} />);
+    expect(document.querySelector("[data-kpi] [data-no-figure]")!.getAttribute("data-no-figure")).toBe("noBilledKeys");
   });
 });

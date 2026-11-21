@@ -8,13 +8,13 @@ import { CostFilterBar, ShareButton, WhoSummary, useCostRange } from "./costRang
 import { CostTabs } from "./CostTabs";
 import { isRangeCode, type RangeCode } from "./costRange";
 import { api, ApiError, type IndicatorReport, type Principal, type RunCost } from "../api";
-import { exact, fmtBucket, fmtCount, fmtUSD } from "../format";
+import { exact, fmtBucket, fmtCount, fmtUSD, fmtUSDBelow } from "../format";
 import { PriceList } from "../components/PriceList";
 import { CostInsights } from "./CostInsights";
 import { CostAnswer } from "./CostAnswer";
 import { answerTable } from "./costAnswerModel";
-import { coveyElsewhere, credentialFigures, headline, isSeat, payPerTokenHeadline, subscriptionDent, type CredentialFigures } from "./costFigures";
-import { basisSupport, useBasis, type Basis } from "./costBasisSwitch";
+import { coveyElsewhere, credentialFigures, headline, isSeat, payPerTokenHeadline, subscriptionDent, type BilledState, type CredentialFigures } from "./costFigures";
+import { basisSupport, useBasis, type Basis, type NoFigureReason } from "./costBasisSwitch";
 import { BasisLockChip, BasisTag } from "./BasisControl";
 import { NoFigure } from "./NoFigure";
 import { PayPerTokenRow, SubscriptionDentRow } from "./SubscriptionDent";
@@ -41,6 +41,7 @@ import {
   splitLines,
   outsideMoney,
   priceTableLine,
+  billedStateText,
   useBilled,
   useCostCells,
   useUsageReadings,
@@ -87,25 +88,44 @@ function Kpi({ label, value, sub, color, hatched, parts, check, tag, lead }: { l
 /** The page's lead tile under capacity or billed (cost home PR 9), from the credentials' own server figures: the seats'
  *  plan capacity estimates, or the API keys' bills. Only what exists is summed, and the tile says how many it covers;
  *  with none, no figure and why, never $0.00. Nothing is allocated. */
-function BasisKpi({ basis, figures }: { basis: Exclude<Basis, "token">; figures: CredentialFigures[] }) {
+export function BasisKpi({ basis, figures, billedQuery = { loading: false, error: false } }: {
+  basis: Exclude<Basis, "token">; figures: CredentialFigures[];
+  /** The bill's own query: while it loads the tile waits; only its failure is a load error. */
+  billedQuery?: { loading: boolean; error: boolean };
+}) {
   const { t } = useTranslation();
   const label = t(`costs.basisSwitch.option.${basis}`);
   if (basis === "capacity") {
     const seats = figures.filter((f) => isSeat(f));
-    const priced = seats.filter((f) => f.real?.priced && !f.real.below);
+    // A seat whose meter did not move (below) is priced: its capacity is 0 to below one point, so it counts with 0 and
+    // its high bound in the range. Only a seat without a plan price (or without a reading) is left out, and said so.
+    const priced = seats.filter((f) => f.real?.priced);
     if (priced.length === 0) {
       return <Kpi label={label} lead={basis} color={SOURCE_COLOR.real} hatched value={<NoFigure reason="noData" />} sub={t("costs.basisDetails.kpi.capacityNone")} />;
     }
-    const sum = (k: "value" | "low" | "high") => priced.reduce((a, f) => a + f.real![k], 0);
-    const sub = [t("costs.basisDetails.kpi.capacitySub", { low: fmtUSD(sum("low")), high: fmtUSD(sum("high")) }),
-      priced.length < seats.length ? t("costs.basisDetails.kpi.capacityPartial", { n: priced.length, m: seats.length }) : ""].filter(Boolean).join(" · ");
+    const sum = (k: "value" | "low" | "high") => priced.reduce((a, f) => a + (f.real!.below && k !== "high" ? 0 : f.real![k]), 0);
+    const partial = priced.length < seats.length ? t("costs.basisDetails.kpi.capacityPartial", { n: priced.length, m: seats.length }) : "";
+    // Every priced seat below one point: an upper bound, as CostInsights says it ("< $high"), never ≈ $0.00.
+    if (priced.every((f) => f.real!.below)) {
+      return <Kpi label={label} lead={basis} color={SOURCE_COLOR.real} hatched value={<span data-kpi-below>{fmtUSDBelow(sum("high"))}</span>}
+        sub={[t("costs.fig.realBelow"), partial].filter(Boolean).join(" · ")} />;
+    }
+    const sub = [t("costs.basisDetails.kpi.capacitySub", { low: fmtUSD(sum("low")), high: fmtUSD(sum("high")) }), partial].filter(Boolean).join(" · ");
     return <Kpi label={label} lead={basis} color={SOURCE_COLOR.real} hatched value={`≈ ${fmtUSD(sum("value"))}`} sub={sub} />;
   }
   const keys = figures.filter((f) => f.kind === "api_key" && f.billed != null);
   const measured = keys.filter((f) => f.billed!.state === "measured");
+  if (billedQuery.loading) return <Kpi label={label} lead={basis} color={SOURCE_COLOR.billed} value="…" />;
   const tag = <span className="muted" data-whole-key>· {t("costs.basisDetails.wholeKey")}</span>;
   if (measured.length === 0) {
-    return <Kpi label={label} lead={basis} color={SOURCE_COLOR.billed} tag={tag} value={<NoFigure reason="noBilledKeys" />} />;
+    // Keys but none measured: the bill has not landed (or the sync failed or is not set up); a key that could not be
+    // read at all is a load error; keys none of which is mapped are no billed keys. The keys' own states say the rest.
+    const states = new Set(keys.map((f) => f.billed!.state));
+    const reason: NoFigureReason = billedQuery.error ? "loadError" : keys.length === 0 ? "noBilledKeys"
+      : ["not_landed", "failed", "no_bucket", "unconfigured", "unavailable"].some((x) => states.has(x as BilledState)) ? "notLanded"
+      : "noBilledKeys";
+    const why = [...new Set(keys.map((f) => billedStateText(t, f.billed!)))].join(" · ");
+    return <Kpi label={label} lead={basis} color={SOURCE_COLOR.billed} tag={tag} value={<NoFigure reason={reason} />} sub={why || undefined} />;
   }
   const sub = measured.length < keys.length ? t("costs.basisDetails.kpi.billedPartial", { n: measured.length, m: keys.length }) : undefined;
   return <Kpi label={label} lead={basis} color={SOURCE_COLOR.billed} tag={tag} value={fmtUSD(measured.reduce((a, f) => a + f.billed!.usd, 0))} sub={sub} />;
@@ -487,7 +507,7 @@ export default function Costs({ me }: { me?: Principal }) {
           token prices and its share of the real cost, the total, the multiple
           and one sentence. What explains it is in the drawer. */}
       {answer && head && dent && (
-        <CostAnswer a={answer} h={head} filtered={selected.size > 0} elsewhere={elsewhere}
+        <CostAnswer a={answer} h={head} filtered={selected.size > 0} elsewhere={elsewhere} basis={basis}
           marks={cardMarks.multiple.length + cardMarks.outside.length + cardMarks.tokenPrice.length > 0 && <>
             <IncompleteMark checks={cardMarks.multiple} part="multiple" />
             <IncompleteMark checks={cardMarks.outside} part="outside" />
@@ -515,7 +535,7 @@ export default function Costs({ me }: { me?: Principal }) {
       {!answer && kpiSupport.state === "locked" && <div className="mb-2" data-kpi-lock><BasisLockChip support={kpiSupport} basis={basis} /></div>}
       {!answer && (
         <div className="flex flex-wrap gap-3 mb-4">
-          {basis !== "token" && kpiSupport.state === "honoured" && <BasisKpi basis={basis} figures={orgFigures} />}
+          {basis !== "token" && kpiSupport.state === "honoured" && <BasisKpi basis={basis} figures={orgFigures} billedQuery={{ loading: billed.isLoading, error: billed.isError }} />}
           {fullPrices ? <>
             <Kpi label={t("costs.fig.reported")} value={fmtUSD(totals.reported + (outside?.reported ?? 0))} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.reported} tag={tokenTag}
               parts={parts(fmtUSD(totals.reported), (o) => outsideMoney(t, o, "reported"))} />

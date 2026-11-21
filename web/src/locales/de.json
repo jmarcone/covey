@@ -1097,15 +1097,18 @@
         "billed": "Abgerechnet"
       },
       "lock": {
-        "notPerRun": "Plankapazität gehört zu einem Zähler, nicht zu einem Lauf.",
-        "noCredentialOnRun": "Ein Lauf trägt keine Zugangsdaten, also keine Rechnung.",
-        "notPerModel": "Plankapazität ist noch nicht nach Modell aufgeteilt.",
-        "billedPerKey": "Rechnungen gelten je API-Schlüssel, nicht je Agent oder Modell.",
+        "notPerRun": "Plankapazität gehört zu einem Zähler, nicht zu einem Lauf; hier zum Tokenpreis gezeigt.",
+        "noCredentialOnRun": "Ein Lauf trägt keine Zugangsdaten, also keine Rechnung; hier zum Tokenpreis gezeigt.",
+        "notPerModel": "Plankapazität ist noch nicht nach Modell aufgeteilt; hier zum Tokenpreis gezeigt.",
+        "billedPerKey": "Rechnungen gelten je API-Schlüssel, nicht je Agent oder Modell; hier zum Tokenpreis gezeigt.",
         "answerIsTokenOverCapacity": "Die Antwort ist immer Tokenpreis ÷ genutzte Plankapazität.",
-        "perPeriodAgent": "Je Zeitraum gehören Kapazität und Rechnungen zu Zugangsdaten, nicht zu Agenten.",
-        "outsideTokenOnly": "Kacheln und Diagramm auf dieser Seite stehen zum Tokenpreis; die Plankapazität je Quelle steht in den Quellen-Chips."
+        "perPeriodAgent": "Je Zeitraum gehören Kapazität und Rechnungen zu Zugangsdaten, nicht zu Agenten; hier zum Tokenpreis gezeigt.",
+        "meterPerSeat": "Diese Karte zeigt die Plankapazität je Sitz; Rechnungen gelten je API-Schlüssel.",
+        "outsideTokenOnly": "Kacheln und Diagramm auf dieser Seite stehen zum Tokenpreis; die Plankapazität je Quelle steht in den Quellen-Chips.",
+        "outsideSeeSources": "Die Beträge dieses Abschnitts stehen zum Tokenpreis; die Plankapazität je Quelle steht auf der Seite Sitzungen außerhalb von covey.",
+        "outsideNoBill": "Quellen außerhalb von covey sind keinem API-Schlüssel zugeordnet, haben also keine Rechnung; ihre Beträge stehen zum Tokenpreis."
       },
-      "lockChip": "{{basis}} gilt hier nicht: {{reason}} Gezeigt zum Tokenpreis.",
+      "lockChip": "{{basis}} gilt hier nicht: {{reason}}",
       "toToken": "Zum Tokenpreis wechseln",
       "pruned": {
         "cash": "Gezahlt (Tarif, anteilig) wartet auf Freigabe: Gezeigt wird der Tokenpreis.",
@@ -1125,7 +1128,10 @@
         "noReported": "nicht gemeldet",
         "noData": "keine Daten",
         "bucketTooFine": "zu fein",
-        "noBilledKeys": "keine API-Schlüssel"
+        "noBilledKeys": "keine API-Schlüssel",
+        "loadError": "nicht geladen",
+        "notLanded": "noch nicht eingetroffen",
+        "noPlanPrice": "kein Tarifpreis"
       },
       "long": {
         "pending": "Ausstehend: Der Anteil folgt bei der nächsten Zählerablesung.",
@@ -1139,7 +1145,10 @@
         "noReported": "Keine Zahl: Claude Code hat für diese Aufrufe keinen Preis gemeldet.",
         "noData": "Keine Daten in diesem Zeitraum.",
         "bucketTooFine": "Keine Zahl bei 10 Minuten: Plankapazität und Rechnungen gibt es höchstens je Stunde. Wähle stündlich oder gröber.",
-        "noBilledKeys": "Keine Zahl: In diesem Zeitraum ist kein API-Schlüssel einer Rechnung zugeordnet."
+        "noBilledKeys": "Keine Zahl: In diesem Zeitraum ist kein API-Schlüssel einer Rechnung zugeordnet.",
+        "loadError": "Keine Zahl: Die Rechnung konnte nicht abgerufen werden. Später erneut versuchen.",
+        "notLanded": "Noch keine Zahl: API-Schlüssel sind zugeordnet, aber für diesen Zeitraum ist noch keine Rechnung eingetroffen (oder der Rechnungsabgleich ist fehlgeschlagen oder nicht eingerichtet).",
+        "noPlanPrice": "Keine Zahl: Die Zählerstände des Sitzes haben keinen Tarifpreis. Den Preis des Tarifs setzen, um die genutzte Plankapazität zu sehen."
       }
     },
     "basisDetails": {

@@ -1097,15 +1097,18 @@
         "billed": "Facturado"
       },
       "lock": {
-        "notPerRun": "la capacidad del plan pertenece a un contador, no a una ejecución.",
-        "noCredentialOnRun": "una ejecución no lleva credencial, así que no hay factura.",
-        "notPerModel": "la capacidad del plan aún no se reparte por modelo.",
-        "billedPerKey": "las facturas son por clave de API, no por agente ni por modelo.",
+        "notPerRun": "la capacidad del plan pertenece a un contador, no a una ejecución; aquí se muestra a precio por token.",
+        "noCredentialOnRun": "una ejecución no lleva credencial, así que no hay factura; aquí se muestra a precio por token.",
+        "notPerModel": "la capacidad del plan aún no se reparte por modelo; aquí se muestra a precio por token.",
+        "billedPerKey": "las facturas son por clave de API, no por agente ni por modelo; aquí se muestra a precio por token.",
         "answerIsTokenOverCapacity": "la respuesta es siempre el precio por token ÷ la capacidad del plan usada.",
-        "perPeriodAgent": "por periodo, la capacidad y las facturas pertenecen a una credencial, no a los agentes.",
-        "outsideTokenOnly": "los recuadros y el gráfico de esta página están a precio por token; la capacidad del plan por fuente está en las etiquetas de cada fuente."
+        "perPeriodAgent": "por periodo, la capacidad y las facturas pertenecen a una credencial, no a los agentes; aquí se muestra a precio por token.",
+        "meterPerSeat": "esta tarjeta muestra la capacidad del plan por asiento; las facturas son por clave de API.",
+        "outsideTokenOnly": "los recuadros y el gráfico de esta página están a precio por token; la capacidad del plan por fuente está en las etiquetas de cada fuente.",
+        "outsideSeeSources": "los importes de esta sección están a precio por token; la capacidad del plan por fuente está en la página Sesiones fuera de covey.",
+        "outsideNoBill": "las fuentes fuera de covey no están vinculadas a una clave de API, así que no tienen factura; sus importes se muestran a precio por token."
       },
-      "lockChip": "{{basis}} no se aplica aquí: {{reason}} Se muestra a precio por token.",
+      "lockChip": "{{basis}} no se aplica aquí: {{reason}}",
       "toToken": "Cambiar a precio por token",
       "pruned": {
         "cash": "Efectivo (plan, prorrateado) está pendiente de aprobación: se muestra a precio por token.",
@@ -1125,7 +1128,10 @@
         "noReported": "no informado",
         "noData": "sin datos",
         "bucketTooFine": "demasiado fino",
-        "noBilledKeys": "sin claves de API"
+        "noBilledKeys": "sin claves de API",
+        "loadError": "no cargado",
+        "notLanded": "aún no llegó",
+        "noPlanPrice": "sin precio del plan"
       },
       "long": {
         "pending": "Pendiente: su parte llega con la próxima lectura del contador.",
@@ -1139,7 +1145,10 @@
         "noReported": "Sin cifra: Claude Code no informó ningún precio para estas llamadas.",
         "noData": "No hay datos en este periodo.",
         "bucketTooFine": "Sin cifra a 10 minutos: la capacidad del plan y las facturas llegan como mucho por hora. Elige por hora o más amplio.",
-        "noBilledKeys": "Sin cifra: ninguna clave de API está asociada a una factura en este periodo."
+        "noBilledKeys": "Sin cifra: ninguna clave de API está asociada a una factura en este periodo.",
+        "loadError": "Sin cifra: no se pudo obtener la factura. Inténtalo de nuevo más tarde.",
+        "notLanded": "Aún sin cifra: hay claves de API asociadas, pero todavía no ha llegado ninguna factura para este periodo (o la sincronización de facturas falló o no está configurada).",
+        "noPlanPrice": "Sin cifra: las lecturas del contador del asiento no tienen precio del plan. Indica el precio del plan para ver la capacidad del plan usada."
       }
     },
     "basisDetails": {

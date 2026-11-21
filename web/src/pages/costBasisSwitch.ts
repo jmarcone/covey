@@ -25,12 +25,18 @@ export type LockReason =
   | "billedPerKey" // bills are per API key, not per agent or model
   | "answerIsTokenOverCapacity" // the answer is always token price ÷ capacity
   | "perPeriodAgent" // per period, capacity and bills are per credential, not per agent
-  | "outsideTokenOnly"; // the outside page's tiles and chart are at token price; capacity per source is in its chips
+  | "meterPerSeat" // the meter card shows plan capacity per seat; bills are per API key
+  | "outsideTokenOnly" // capacity: the outside page's tiles and chart are at token price; capacity per source is in its chips
+  | "outsideSeeSources" // capacity: the details' outside section is at token price; capacity per source is on the Outside page
+  | "outsideNoBill"; // billed: outside sources are not linked to an API key, so their money stays at token price
 
 /** Why a figure is absent (never $0.00). */
 export type NoFigureReason =
   | "pending" | "beforeMeter" | "afterMeter" | "notSplit" | "unpricedExcluded" | "notAtThisLevel" | "usageBasis"
-  | "accountWide" | "noReported" | "noData" | "bucketTooFine" | "noBilledKeys";
+  | "accountWide" | "noReported" | "noData" | "bucketTooFine" | "noBilledKeys"
+  | "loadError" // the bill could not be fetched
+  | "notLanded" // keys are mapped, but no bill has landed yet (or the sync failed or is not configured)
+  | "noPlanPrice"; // the seat's meter readings have no plan price
 
 export type BasisSupport =
   | { state: "honoured" }
@@ -42,7 +48,7 @@ export type BlockId =
   | "hero" | "parts" | "coverage" | "doorDetails" | "doorRun" // home
   | "table" | "tiles" // models, work
   | "priceList" | "runs" // work, details
-  | "kpis" | "chart" | "insightsModels" | "insightsMeter" // details
+  | "kpis" | "chart" | "insightsModels" | "insightsMeter" | "outsideOverview" // details
   | "sources" | "perModel" | "overview"; // outside
 
 const HONOURED: BasisSupport = { state: "honoured" };
@@ -56,8 +62,11 @@ export function basisSupport(view: CostViewId, block: BlockId, basis: Basis, ctx
   const capacity = basis === "capacity";
   switch (view) {
     case "home":
-      if (block === "hero") return lock("answerIsTokenOverCapacity");
-      if (block === "parts" || block === "coverage" || block === "doorDetails") return capacity ? HONOURED : none("notAtThisLevel");
+      // The hero is token ÷ capacity: capacity is half of it, so it is honoured; under billed it stays the equation.
+      if (block === "hero") return capacity ? HONOURED : lock("answerIsTokenOverCapacity");
+      if (block === "parts" || block === "coverage") return capacity ? HONOURED : none("notAtThisLevel");
+      // The details door keeps the work at token price under billed (bills are per key) and says so.
+      if (block === "doorDetails") return capacity ? HONOURED : lock("billedPerKey");
       if (block === "doorRun") return lock(capacity ? "notPerRun" : "noCredentialOnRun");
       break;
     case "models":
@@ -67,7 +76,9 @@ export function basisSupport(view: CostViewId, block: BlockId, basis: Basis, ctx
     case "details":
       if (block === "runs" || block === "priceList") return lock(capacity ? "notPerRun" : "noCredentialOnRun");
       if (block === "insightsModels") return lock(capacity ? "notPerModel" : "billedPerKey");
-      if (block === "insightsMeter") return capacity ? HONOURED : lock("billedPerKey");
+      if (block === "insightsMeter") return capacity ? HONOURED : lock("meterPerSeat");
+      // The outside sessions' section: its money is at token price (capacity per source is on the Outside page).
+      if (block === "outsideOverview") return lock(capacity ? "outsideSeeSources" : "outsideNoBill");
       if (block === "kpis" || block === "chart") {
         if (ctx.whoSelected) return lock("perPeriodAgent");
         if (ctx.bucket === "10min") return none("bucketTooFine");
@@ -77,7 +88,7 @@ export function basisSupport(view: CostViewId, block: BlockId, basis: Basis, ctx
     case "outside":
       if (block === "sources") return capacity ? HONOURED : none("notAtThisLevel");
       if (block === "perModel") return capacity ? lock("notPerModel") : none("usageBasis");
-      if (block === "overview") return lock("outsideTokenOnly");
+      if (block === "overview") return lock(capacity ? "outsideTokenOnly" : "outsideNoBill");
       break;
   }
   return HONOURED;

@@ -1097,15 +1097,18 @@
         "billed": "Zafakturowane"
       },
       "lock": {
-        "notPerRun": "pojemność planu należy do licznika, nie do przebiegu.",
-        "noCredentialOnRun": "przebieg nie ma poświadczenia, więc nie ma rachunku.",
-        "notPerModel": "pojemność planu nie jest jeszcze dzielona według modelu.",
-        "billedPerKey": "rachunki są na klucz API, nie na agenta ani model.",
+        "notPerRun": "pojemność planu należy do licznika, nie do przebiegu; tutaj pokazano w cenach tokenów.",
+        "noCredentialOnRun": "przebieg nie ma poświadczenia, więc nie ma rachunku; tutaj pokazano w cenach tokenów.",
+        "notPerModel": "pojemność planu nie jest jeszcze dzielona według modelu; tutaj pokazano w cenach tokenów.",
+        "billedPerKey": "rachunki są na klucz API, nie na agenta ani model; tutaj pokazano w cenach tokenów.",
         "answerIsTokenOverCapacity": "odpowiedź to zawsze cena za token ÷ wykorzystana pojemność planu.",
-        "perPeriodAgent": "w ujęciu okresowym pojemność i rachunki należą do poświadczenia, nie do agentów.",
-        "outsideTokenOnly": "kafelki i wykres na tej stronie są w cenach tokenów; pojemność planu na źródło jest w etykietach źródeł."
+        "perPeriodAgent": "w ujęciu okresowym pojemność i rachunki należą do poświadczenia, nie do agentów; tutaj pokazano w cenach tokenów.",
+        "meterPerSeat": "ta karta pokazuje pojemność planu na stanowisko; rachunki są na klucz API.",
+        "outsideTokenOnly": "kafelki i wykres na tej stronie są w cenach tokenów; pojemność planu na źródło jest w etykietach źródeł.",
+        "outsideSeeSources": "kwoty w tej sekcji są w cenach tokenów; pojemność planu na źródło jest na stronie Sesje poza covey.",
+        "outsideNoBill": "źródła poza covey nie są powiązane z kluczem API, więc nie mają rachunku; ich kwoty pokazano w cenach tokenów."
       },
-      "lockChip": "{{basis}} nie ma tu zastosowania: {{reason}} Pokazano w cenach tokenów.",
+      "lockChip": "{{basis}} nie ma tu zastosowania: {{reason}}",
       "toToken": "Przełącz na cenę za token",
       "pruned": {
         "cash": "Gotówka (plan, proporcjonalnie) czeka na zatwierdzenie: pokazano cenę za token.",
@@ -1125,7 +1128,10 @@
         "noReported": "nie zgłoszono",
         "noData": "brak danych",
         "bucketTooFine": "zbyt drobne",
-        "noBilledKeys": "brak kluczy API"
+        "noBilledKeys": "brak kluczy API",
+        "loadError": "nie wczytano",
+        "notLanded": "jeszcze nie dotarł",
+        "noPlanPrice": "brak ceny planu"
       },
       "long": {
         "pending": "Oczekuje: udział pojawi się po następnym odczycie licznika.",
@@ -1139,7 +1145,10 @@
         "noReported": "Brak kwoty: Claude Code nie zgłosił ceny dla tych wywołań.",
         "noData": "Brak danych w tym okresie.",
         "bucketTooFine": "Brak kwoty przy 10 minutach: pojemność planu i rachunki są najwyżej godzinowe. Wybierz widok godzinowy lub szerszy.",
-        "noBilledKeys": "Brak kwoty: żaden klucz API nie jest przypisany do rachunku w tym okresie."
+        "noBilledKeys": "Brak kwoty: żaden klucz API nie jest przypisany do rachunku w tym okresie.",
+        "loadError": "Brak kwoty: nie udało się pobrać rachunku. Spróbuj ponownie później.",
+        "notLanded": "Jeszcze brak kwoty: klucze API są przypisane, ale za ten okres nie dotarł jeszcze żaden rachunek (albo synchronizacja rachunków nie powiodła się lub nie jest skonfigurowana).",
+        "noPlanPrice": "Brak kwoty: odczyty licznika stanowiska nie mają ceny planu. Ustaw cenę planu, aby zobaczyć wykorzystaną pojemność planu."
       }
     },
     "basisDetails": {

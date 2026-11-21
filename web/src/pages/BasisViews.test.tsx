@@ -7,8 +7,10 @@ import { mockFetch, renderWithProviders } from "../test/render";
 import CostHome from "./CostHome";
 import CostModels from "./CostModels";
 import CostWork from "./CostWork";
+import Costs from "./Costs";
+import { basisSupport } from "./costBasisSwitch";
 import OutsideCosts, { sourceFigure } from "./OutsideCosts";
-import { answerTable, billedKeys, partsMoney, type AnswerRow } from "./costAnswerModel";
+import { answerTable, billedAbsentReason, billedKeys, partsMoney, type AnswerRow } from "./costAnswerModel";
 import { headline, subscriptionDent } from "./costFigures";
 import { runUSD } from "./costView";
 
@@ -158,8 +160,9 @@ describe("the cost home under a basis", () => {
     expect(Math.abs(shown.reduce((s, v) => s + v, 0) - a.real!)).toBeLessThan(0.01);
     for (const x of document.querySelectorAll("[data-answer-row] [data-answer-capacity]")) expect(x.textContent!.startsWith("≈ ")).toBe(true);
     expect(document.querySelector("[data-answer-total] [data-answer-real]")!.textContent).toBe(`≈ ${fmtUSD(a.real!)}`);
-    // The hero stays the equation, with the chip; the details door leads with the capacity; the run door keeps token price.
-    expect(lockOf("[data-home-hero-lock]")).toBe("answerIsTokenOverCapacity");
+    // The hero is token ÷ capacity: honoured under capacity, no chip; the details door leads with the capacity; the run
+    // door keeps token price.
+    expect(document.querySelector("[data-home-hero-lock]")).toBeNull();
     expect(document.querySelector("[data-home-door='details'] .cost-home-door-value")!.textContent).toBe(`≈ ${fmtUSD(a.real!)}`);
     await waitFor(() => expect(lockOf("[data-home-door-lock='run']")).toBe("notPerRun"));
   });
@@ -182,7 +185,9 @@ describe("the cost home under a basis", () => {
     expect(lockOf("[data-home-hero-lock]")).toBe("answerIsTokenOverCapacity");
     await waitFor(() => expect(document.querySelector("[data-home-billed]")!.getAttribute("data-home-billed")).toBe("3.75"));
     expect(document.querySelector("[data-home-billed-usd]")!.textContent).toBe(fmtUSD(3.75));
-    expect(document.querySelector("[data-home-door='details'] [data-no-figure]")!.getAttribute("data-no-figure")).toBe("notAtThisLevel");
+    // The details door keeps the work at token price under billed, with the chip (bills are per API key).
+    expect(document.querySelector("[data-home-door='details'] .cost-home-door-value")!.textContent).toBe(fmtUSD(tableOf().list));
+    expect(lockOf("[data-home-door-lock='details']")).toBe("billedPerKey");
     await waitFor(() => expect(lockOf("[data-home-door-lock='run']")).toBe("noCredentialOnRun"));
     expect(document.body.textContent).not.toContain("$0.00");
   });
@@ -192,9 +197,28 @@ describe("the cost home under a basis", () => {
     expect(billedKeys({ ...WINDOW, totals: [] })).toBeNull();
     expect(billedKeys({ ...WINDOW, totals: [total("k3", false, "9.00")] })).toBeNull();
     expect(billedKeys(WINDOW)).toEqual({ usd: 3.75, until: WINDOW.compared_until });
-    serveHome("/costs?days=1&tz=utc&basis=billed", { bucket: "hour", points: [], window: { ...WINDOW, totals: [total("k3", false, "0")] }, sync: SYNC });
+    serveHome("/costs?days=1&tz=utc&basis=billed", { bucket: "hour", points: [], window: { ...WINDOW, totals: [] }, sync: SYNC });
     await waitFor(() => expect(document.querySelector("[data-home-billed]")?.getAttribute("data-home-billed")).toBe("none"));
     expect(document.querySelector("[data-home-billed] [data-no-figure]")!.getAttribute("data-no-figure")).toBe("noBilledKeys");
+  });
+
+  it("billed: keys mapped but no bill landed is notLanded; a bill that could not be fetched is loadError (H)", async () => {
+    expect(billedAbsentReason(false, { ...WINDOW, totals: [total("k3", false, "0")] })).toBe("notLanded");
+    expect(billedAbsentReason(false, { ...WINDOW, totals: null })).toBe("noBilledKeys");
+    expect(billedAbsentReason(false, null)).toBe("noBilledKeys");
+    expect(billedAbsentReason(true, WINDOW)).toBe("loadError");
+    const first = serveHome("/costs?days=1&tz=utc&basis=billed", { bucket: "hour", points: [], window: { ...WINDOW, totals: [total("k3", false, "0")] }, sync: SYNC });
+    await waitFor(() => expect(document.querySelector("[data-home-billed] [data-no-figure]")?.getAttribute("data-no-figure")).toBe("notLanded"));
+    first.unmount();
+    // No /cost/billed route: the request fails (404), and the line says so.
+    mockFetch({
+      "/api/v1/cost/cells": cells(),
+      "/api/v1/cost/runs": [run("r1", null, 4)],
+      "/api/v1/cost/models": { rows: [], runs_without_breakdown: 0, usd_without_breakdown: 0 },
+    });
+    renderWithProviders(<CostHome />, { route: "/costs?days=1&tz=utc&basis=billed", path: "/costs" });
+    await waitFor(() => expect(document.querySelector("[data-home-billed] [data-no-figure]")?.getAttribute("data-no-figure")).toBe("loadError"));
+    expect(document.querySelector("[data-home-billed]")!.textContent).not.toContain("$0.00");
   });
 
   it("the top-run door is the run's token price as Work shows it (runUSD), not measured_usd alone", async () => {
@@ -286,5 +310,183 @@ describe("Outside under a basis", () => {
     serveOutside("/costs/outside?days=1&bucket=hour");
     await waitFor(() => expect(document.querySelector(`[data-source-figure="${OP}"]`)!.textContent).toBe(fmtUSD(3)));
     expect(document.querySelector("[data-basis-lock]")).toBeNull();
+  });
+});
+
+// --- Review fixes (A–K) ------------------------------------------------------------------------------------------------
+
+describe("the contract after review", () => {
+  it("A: the home hero is honoured under capacity (it is token ÷ capacity), locked only under billed", () => {
+    expect(basisSupport("home", "hero", "token")).toEqual({ state: "honoured" });
+    expect(basisSupport("home", "hero", "capacity")).toEqual({ state: "honoured" });
+    expect(basisSupport("home", "hero", "billed")).toEqual({ state: "locked", reason: "answerIsTokenOverCapacity" });
+  });
+
+  it("C/D/E: the details door, the outside sections and the meter card name what they show", () => {
+    expect(basisSupport("home", "doorDetails", "capacity")).toEqual({ state: "honoured" });
+    expect(basisSupport("home", "doorDetails", "billed")).toEqual({ state: "locked", reason: "billedPerKey" });
+    expect(basisSupport("details", "outsideOverview", "token")).toEqual({ state: "honoured" });
+    expect(basisSupport("details", "outsideOverview", "capacity")).toEqual({ state: "locked", reason: "outsideSeeSources" });
+    expect(basisSupport("details", "outsideOverview", "billed")).toEqual({ state: "locked", reason: "outsideNoBill" });
+    expect(basisSupport("outside", "overview", "capacity")).toEqual({ state: "locked", reason: "outsideTokenOnly" });
+    expect(basisSupport("outside", "overview", "billed")).toEqual({ state: "locked", reason: "outsideNoBill" });
+    expect(basisSupport("details", "insightsMeter", "billed")).toEqual({ state: "locked", reason: "meterPerSeat" });
+  });
+
+  it("D: the lock chip claims no token price of its own; the reason says what is shown", async () => {
+    await i18n.changeLanguage("en");
+    expect(i18n.t("costs.basisSwitch.lockChip", { basis: "X", reason: "r" })).toBe("X not applied here: r");
+  });
+});
+
+/** The home's data with no plan price on the seat: the meter moved, but none of it is priced (K). */
+function cellsNoPrice(): CostCells {
+  const c = cells();
+  const m = c.external!.meter;
+  m.unpriced_steps = m.step_count; m.unpriced_points = m.points;
+  for (const x of m.credentials) { x.unpriced_steps = x.step_count; x.unpriced_points = x.points; }
+  return c;
+}
+
+describe("capacity with no plan price (K)", () => {
+  beforeEach(async () => { await i18n.changeLanguage("en"); });
+
+  it("the parts column and its total say no plan price, not no data", async () => {
+    expect(partsMoney(row({ real: null }), "capacity", { noPlanPrice: true })).toEqual({ none: "noPlanPrice" });
+    expect(partsMoney(row({ real: null }), "capacity", { noPlanPrice: true, usage: true })).toEqual({ none: "usageBasis" });
+    expect(partsMoney(row({ real: null }), "capacity")).toEqual({ none: "noData" });
+    mockFetch({
+      "/api/v1/cost/cells": cellsNoPrice(),
+      "/api/v1/cost/runs": [],
+      "/api/v1/cost/models": { rows: [], runs_without_breakdown: 0, usd_without_breakdown: 0 },
+    });
+    renderWithProviders(<CostHome />, { route: "/costs?days=1&tz=utc&basis=capacity", path: "/costs" });
+    await ready();
+    const rows = [...document.querySelectorAll("[data-answer-row] [data-answer-real] [data-no-figure]")].map((x) => x.getAttribute("data-no-figure"));
+    expect(rows.length).toBeGreaterThan(0);
+    expect(new Set(rows)).toEqual(new Set(["noPlanPrice"]));
+    expect(document.querySelector("[data-answer-total] [data-answer-real] [data-no-figure]")!.getAttribute("data-no-figure")).toBe("noPlanPrice");
+    expect(document.querySelector("[data-home-door='details'] [data-no-figure]")!.getAttribute("data-no-figure")).toBe("noPlanPrice");
+    expect(document.querySelector("[data-answer]")!.textContent).not.toContain("$0.00");
+  });
+});
+
+function serveDetails(route: string) {
+  mockFetch({
+    "/api/v1/cost/cells": cells(),
+    "/api/v1/cost/billed": { bucket: "hour", points: [], window: WINDOW, sync: SYNC },
+    "/api/v1/cost/runs": [],
+    "/api/v1/cost/models": { rows: [], runs_without_breakdown: 0, usd_without_breakdown: 0 },
+    "/api/v1/cost/usage-readings": [],
+  });
+  return renderWithProviders(<Costs />, { route, path: "/costs/details" });
+}
+const colsOf = () => [...document.querySelectorAll("[data-answer-col]")].map((x) => x.getAttribute("data-answer-col"));
+
+describe("Details: the answer table and the outside section under a basis (B, C)", () => {
+  beforeEach(async () => { await i18n.changeLanguage("en"); });
+
+  it("capacity: the capacity column leads as on the home; the hero has no chip; the outside section has its chip", async () => {
+    serveDetails("/costs/details?days=1&tz=utc&basis=capacity");
+    await ready();
+    expect(colsOf()).toEqual(["real", "list"]);
+    expect(document.querySelector("[data-answer-col='real'] [data-basis-tag='capacity']")).not.toBeNull();
+    expect(document.querySelector("[data-answer-hero]")).not.toBeNull();
+    expect(document.querySelector("[data-answer-hero] [data-basis-lock]")).toBeNull();
+    await waitFor(() => expect(lockOf("[data-outside-overview-lock]")).toBe("outsideSeeSources"));
+  });
+
+  it("billed: the bill column leads with no figure per party; the hero chip; the outside section has no bill", async () => {
+    serveDetails("/costs/details?days=1&tz=utc&basis=billed");
+    await ready();
+    expect(colsOf()).toEqual(["billed", "list", "real"]);
+    expect(document.querySelector("[data-answer-row='covey'] [data-answer-billed] [data-no-figure]")!.getAttribute("data-no-figure")).toBe("notAtThisLevel");
+    expect(lockOf("[data-answer-hero]")).toBe("answerIsTokenOverCapacity");
+    await waitFor(() => expect(lockOf("[data-outside-overview-lock]")).toBe("outsideNoBill"));
+  });
+
+  it("token: as before, no chip anywhere", async () => {
+    serveDetails("/costs/details?days=1&tz=utc");
+    await ready();
+    expect(colsOf()).toEqual(["list", "real"]);
+    await waitFor(() => expect(document.querySelector("[data-outside]")).not.toBeNull());
+    expect(document.querySelector("[data-basis-lock]")).toBeNull();
+  });
+});
+
+describe("the switch itself (F, G)", () => {
+  beforeEach(async () => { await i18n.changeLanguage("en"); });
+
+  it("F: /costs/outside says a cash link awaits sign-off, with the switch (once)", async () => {
+    serveOutside("/costs/outside?days=1&bucket=hour&basis=cash");
+    await waitFor(() => expect(document.querySelector("[data-basis-pruned]")).not.toBeNull());
+    expect(document.querySelectorAll("[data-basis-pruned]").length).toBe(1);
+    expect(document.querySelector("[data-basis-pruned]")!.getAttribute("data-basis-pruned")).toBe("cash");
+    expect(document.querySelector("[data-basis-control]")!.getAttribute("data-basis-control")).toBe("token");
+  });
+
+  it("F: an unknown basis on the home is said once, in the bar", async () => {
+    serveHome("/costs?days=1&tz=utc&basis=gold");
+    await ready();
+    expect([...document.querySelectorAll("[data-basis-pruned]")].map((x) => x.getAttribute("data-basis-pruned"))).toEqual(["unknown"]);
+  });
+
+  it("G: below 1600px the select is described by visible lines (the basis, and why cash is off); the group is not", async () => {
+    serveOutside("/costs/outside?days=1&bucket=hour&basis=capacity");
+    const select = await waitFor(() => {
+      const s = document.querySelector<HTMLSelectElement>(".cost-basis-select");
+      if (!s) throw new Error("no select yet");
+      return s;
+    });
+    const ids = select.getAttribute("aria-describedby")!.split(" ");
+    expect(ids).toHaveLength(2);
+    const lines = ids.map((id) => document.getElementById(id)!);
+    expect(lines.map((l) => l.getAttribute("data-basis-desc"))).toEqual(["capacity", "cash"]);
+    for (const l of lines) expect(l.classList.contains("sr-only")).toBe(false);
+    expect(lines[0].textContent).toBe(i18n.t("costs.basisSwitch.desc.capacity"));
+    expect(lines[1].textContent).toBe(i18n.t("costs.basisSwitch.desc.cash"));
+    expect(document.querySelector("[data-basis-control]")!.hasAttribute("aria-describedby")).toBe(false);
+  });
+});
+
+describe("Outside capacity chips: why a source has no figure (J)", () => {
+  const meter = () => external().meter;
+  const src = (over: Partial<{ first_at: string | null; last_at: string | null }>) =>
+    ({ source: OP, meter_credential: { secret_key: SEAT, secret_slot: 0 }, list_usd: 3, first_at: H18, last_at: H19, ...over });
+  const none = new Map<string, number>();
+
+  it("pending: all its calls after the seat's last reading", () => {
+    expect(sourceFigure("capacity", src({ first_at: "2026-11-17T20:00:00Z", last_at: "2026-11-17T21:00:00Z" }), none, meter())).toEqual({ none: "pending" });
+  });
+
+  it("beforeMeter: all its calls before the seat's first reading", () => {
+    expect(sourceFigure("capacity", src({ first_at: "2026-11-17T16:00:00Z", last_at: "2026-11-17T17:00:00Z" }), none, meter())).toEqual({ none: "beforeMeter" });
+  });
+
+  it("noPlanPrice: the seat moved at no plan price (checked first)", () => {
+    const m = meter();
+    m.credentials = m.credentials.map((c) => ({ ...c, unpriced_steps: c.step_count }));
+    expect(sourceFigure("capacity", src({ first_at: "2026-11-17T20:00:00Z" }), none, m)).toEqual({ none: "noPlanPrice" });
+  });
+
+  it("notSplit: calls within the readings but no part; and without the meter (cannot tell)", () => {
+    expect(sourceFigure("capacity", src({}), none, meter())).toEqual({ none: "notSplit" });
+    expect(sourceFigure("capacity", src({ first_at: "2026-11-17T20:00:00Z" }), none)).toEqual({ none: "notSplit" });
+    const m = meter(); m.steps = [];
+    expect(sourceFigure("capacity", src({ first_at: "2026-11-17T20:00:00Z" }), none, m)).toEqual({ none: "notSplit" });
+  });
+
+  it("on the page: a source with calls only after the last reading reads pending, never ≈ $0.00", async () => {
+    await i18n.changeLanguage("en");
+    const ext = external();
+    ext.sources = ext.sources.map((s) => (s.source === SY ? { ...s, first_at: "2026-11-17T20:00:00Z", last_at: "2026-11-17T20:30:00Z" } : s));
+    ext.meter.credentials = ext.meter.credentials.map((c) => ({ ...c, source_parts: (c.source_parts ?? []).filter((p) => p.source !== SY) }));
+    ext.meter.source_parts = (ext.meter.source_parts ?? []).filter((p) => p.source !== SY);
+    ext.meter.steps = ext.meter.steps.map((x) => ({ ...x, source_parts: (x.source_parts ?? []).filter((p) => p.source !== SY) }));
+    mockFetch({ "/api/v1/cost/external-usage": { bucket: "hour", since: H18, source: null, sources: ext.sources, models: [],
+      cells: ext.cells.map((c) => ({ ...c, model: "claude-opus-5-5", type_usd: {} })), meter: ext.meter } });
+    renderWithProviders(<OutsideCosts />, { route: "/costs/outside?days=1&bucket=hour&basis=capacity", path: "/costs/outside" });
+    await waitFor(() => expect(document.querySelector(`[data-source-figure="${SY}"] [data-no-figure]`)?.getAttribute("data-no-figure")).toBe("pending"));
+    expect(document.querySelector(`[data-source-figure="${SY}"]`)!.textContent).not.toContain("$0.00");
   });
 });

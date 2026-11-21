@@ -7,8 +7,8 @@ import { CostTabs } from "./CostTabs";
 import { api, ApiError, type CostHealthReport, type ModelUsageReport, type RunCost } from "../api";
 import { fmtBucket, fmtNumber, fmtUSD, fmtUSDFixed } from "../format";
 import { CostAnswer } from "./CostAnswer";
-import { answerTable, billedKeys, type AnswerTable } from "./costAnswerModel";
-import { basisSupport, useBasis, type Basis, type BasisSupport } from "./costBasisSwitch";
+import { answerTable, billedAbsentReason, billedKeys, noCapacityReason, type AnswerTable } from "./costAnswerModel";
+import { basisSupport, useBasis, type Basis, type BasisSupport, type NoFigureReason } from "./costBasisSwitch";
 import { BasisLockChip, BasisTag } from "./BasisControl";
 import { NoFigure } from "./NoFigure";
 import { headline, subscriptionDent, type Headline } from "./costFigures";
@@ -102,11 +102,13 @@ function Trust({ rep, seats }: { rep: CostHealthReport | undefined; seats: numbe
 }
 
 /** Which span the meter covers: before its first reading, between its readings, after its last. */
-function Coverage({ h, since, until, first, last, seats, basis = "token", real = null }: {
+function Coverage({ h, since, until, first, last, seats, basis = "token", real = null, noReal = "noPlanPrice" }: {
   h: Headline; since: number; until: number; first: number | null; last: number | null; seats: number;
   /** The page's basis: under capacity the metered span carries the capacity used (≈), the spans around it have none
    *  (before the meter, pending); under billed no span has a bill (bills are per API key). */
   basis?: Basis; real?: number | null;
+  /** Why the metered span has no capacity figure (no plan price, or the usage basis). */
+  noReal?: NoFigureReason;
 }) {
   const { t } = useTranslation();
   if (first == null || last == null || !(until > since)) return null;
@@ -131,7 +133,7 @@ function Coverage({ h, since, until, first, last, seats, basis = "token", real =
         <span data-home-cov-metered>{basis === "token"
           ? t("costs.home.covMetered", { from: at(Math.max(first, since)), to: at(Math.min(last, until)), usd: fmtUSD(h.metered) })
           : <>{t("costs.basisViews.home.covMetered", { from: at(Math.max(first, since)), to: at(Math.min(last, until)) })}{" "}
-            {basis === "capacity" && real != null ? `≈ ${fmtUSD(real)}` : <NoFigure reason={basis === "capacity" ? "noData" : "notAtThisLevel"} />}</>}</span>
+            {basis === "capacity" && real != null ? `≈ ${fmtUSD(real)}` : <NoFigure reason={basis === "capacity" ? noReal : "notAtThisLevel"} />}</>}</span>
         {(h.after >= 0.005 || (strip && c > 0)) && <span data-home-cov-after>{basis === "token"
           ? t("costs.home.covAfter", { usd: fmtUSD(h.after) })
           : <>{t("costs.basisViews.home.covAfter")} <NoFigure reason={basis === "capacity" ? "pending" : "notAtThisLevel"} /></>}</span>}
@@ -160,13 +162,13 @@ function Door({ to, label, value, sub, testid, lock }: {
 
 /** B1 (cost home PR 9): under billed, what Anthropic billed the mapped API keys, on its own line under the hero and
  *  never in the equation: pay-per-token keys, whole keys (not only covey's use of them), whole billed buckets. */
-function BilledLine({ figure, loading }: { figure: { usd: number; until: string } | null; loading: boolean }) {
+function BilledLine({ figure, loading, absent }: { figure: { usd: number; until: string } | null; loading: boolean; absent: NoFigureReason }) {
   const { t } = useTranslation();
   return (
     <p className="text-sm mt-2 mb-0" data-home-billed={loading ? "loading" : figure ? figure.usd.toFixed(2) : "none"}>
       <BasisTag basis="billed" />{" "}
       <span>{t("costs.basisViews.home.billedLabel")}: </span>
-      {loading ? <span className="muted">…</span> : figure ? <b data-home-billed-usd>{fmtUSD(figure.usd)}</b> : <NoFigure reason="noBilledKeys" />}
+      {loading ? <span className="muted">…</span> : figure ? <b data-home-billed-usd>{fmtUSD(figure.usd)}</b> : <NoFigure reason={absent} />}
       {!loading && figure && <span className="muted text-xs"> · {t("costs.basisViews.home.billedUntil", { until: fmtBucket(figure.until, "hour") })}</span>}
     </p>
   );
@@ -239,9 +241,10 @@ export default function CostHome() {
             {heroSupport.state === "locked" && <div className="mb-2" data-home-hero-lock><BasisLockChip support={heroSupport} basis={basis} /></div>}
             <Hero a={a} />
             <Trust rep={health.data} seats={cov.length} />
-            {since != null && <Coverage h={head} since={since} until={windowEnd} first={first} last={last} seats={cov.length} basis={basis} real={a.real} />}
+            {since != null && <Coverage h={head} since={since} until={windowEnd} first={first} last={last} seats={cov.length} basis={basis} real={a.real} noReal={noCapacityReason(a)} />}
           </section>
-          {basis === "billed" && <BilledLine figure={billedFigure} loading={billed.isLoading} />}
+          {basis === "billed" && <BilledLine figure={billed.isError ? null : billedFigure} loading={billed.isLoading}
+            absent={billedAbsentReason(billed.isError, billed.data?.window)} />}
           <div className="cost-home-split">
             <CostAnswer a={a} h={head} filtered={false} hero={false} basis={basis}
               marks={marks.multiple.length + marks.outside.length + marks.tokenPrice.length > 0 && <>
@@ -252,8 +255,10 @@ export default function CostHome() {
               drawer={<SubscriptionDentRow d={dent} filtered={false} h={head} />} />
             <nav className="cost-home-doors" aria-label={t("costs.home.doorsLabel")}>
               <Door testid="details" to={`/costs/details${q}`} label={t("costs.home.doorDetails")} sub={t("costs.home.doorDetailsSub")}
+                lock={{ support: detailsSupport, basis }}
                 value={detailsSupport.state === "none" ? <NoFigure reason={detailsSupport.reason} />
-                  : basis === "capacity" ? (a.real != null ? `≈ ${fmtUSD(a.real)}` : <NoFigure reason="noData" />)
+                  : basis === "capacity" && detailsSupport.state === "honoured"
+                    ? (a.real != null ? `≈ ${fmtUSD(a.real)}` : <NoFigure reason={noCapacityReason(a)} />)
                   : fmtUSD(a.list)} />
               <Door testid="outside" to={`/costs/outside${q}`} label={t("costs.home.tabOutside")}
                 value={outsideShare != null ? `${fmtNumber(outsideShare * 100, 0)} %` : "–"} sub={t("costs.home.doorOutsideSub")} />

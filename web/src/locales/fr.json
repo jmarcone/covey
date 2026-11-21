@@ -1097,15 +1097,18 @@
         "billed": "Facturé"
       },
       "lock": {
-        "notPerRun": "la capacité du forfait appartient à un compteur, pas à une exécution.",
-        "noCredentialOnRun": "une exécution ne porte aucun identifiant, donc aucune facture.",
-        "notPerModel": "la capacité du forfait n'est pas encore répartie par modèle.",
-        "billedPerKey": "les factures sont par clé API, pas par agent ni par modèle.",
+        "notPerRun": "la capacité du forfait appartient à un compteur, pas à une exécution ; affiché ici au prix des jetons.",
+        "noCredentialOnRun": "une exécution ne porte aucun identifiant, donc aucune facture ; affiché ici au prix des jetons.",
+        "notPerModel": "la capacité du forfait n'est pas encore répartie par modèle ; affiché ici au prix des jetons.",
+        "billedPerKey": "les factures sont par clé API, pas par agent ni par modèle ; affiché ici au prix des jetons.",
         "answerIsTokenOverCapacity": "la réponse est toujours le prix des jetons ÷ la capacité du forfait utilisée.",
-        "perPeriodAgent": "par période, la capacité et les factures appartiennent à un identifiant, pas aux agents.",
-        "outsideTokenOnly": "les tuiles et le graphique de cette page sont au prix des jetons ; la capacité du forfait par source figure dans les pastilles des sources."
+        "perPeriodAgent": "par période, la capacité et les factures appartiennent à un identifiant, pas aux agents ; affiché ici au prix des jetons.",
+        "meterPerSeat": "cette carte montre la capacité du forfait par siège ; les factures sont par clé API.",
+        "outsideTokenOnly": "les tuiles et le graphique de cette page sont au prix des jetons ; la capacité du forfait par source figure dans les pastilles des sources.",
+        "outsideSeeSources": "les montants de cette section sont au prix des jetons ; la capacité du forfait par source figure sur la page Sessions hors de covey.",
+        "outsideNoBill": "les sources hors de covey ne sont liées à aucune clé API, elles n'ont donc pas de facture ; leurs montants sont affichés au prix des jetons."
       },
-      "lockChip": "{{basis}} ne s'applique pas ici : {{reason}} Affiché au prix des jetons.",
+      "lockChip": "{{basis}} ne s'applique pas ici : {{reason}}",
       "toToken": "Passer au prix des jetons",
       "pruned": {
         "cash": "Trésorerie (forfait, au prorata) attend une validation : affichage au prix des jetons.",
@@ -1125,7 +1128,10 @@
         "noReported": "non déclaré",
         "noData": "aucune donnée",
         "bucketTooFine": "trop fin",
-        "noBilledKeys": "aucune clé API"
+        "noBilledKeys": "aucune clé API",
+        "loadError": "non chargé",
+        "notLanded": "pas encore arrivée",
+        "noPlanPrice": "aucun prix de forfait"
       },
       "long": {
         "pending": "En attente : sa part suit le prochain relevé du compteur.",
@@ -1139,7 +1145,10 @@
         "noReported": "Pas de chiffre : Claude Code n'a déclaré aucun prix pour ces appels.",
         "noData": "Aucune donnée sur cette période.",
         "bucketTooFine": "Pas de chiffre à 10 minutes : la capacité du forfait et les factures sont au mieux horaires. Choisissez l'heure ou plus large.",
-        "noBilledKeys": "Pas de chiffre : aucune clé API n'est associée à une facture sur cette période."
+        "noBilledKeys": "Pas de chiffre : aucune clé API n'est associée à une facture sur cette période.",
+        "loadError": "Pas de chiffre : la facture n'a pas pu être récupérée. Réessayez plus tard.",
+        "notLanded": "Pas encore de chiffre : des clés API sont associées, mais aucune facture n'est encore arrivée pour cette période (ou la synchronisation des factures a échoué ou n'est pas configurée).",
+        "noPlanPrice": "Pas de chiffre : les relevés du compteur du siège n'ont pas de prix de forfait. Renseignez le prix du forfait pour voir la capacité du forfait utilisée."
       }
     },
     "basisDetails": {

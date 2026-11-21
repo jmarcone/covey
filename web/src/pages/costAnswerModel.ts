@@ -82,6 +82,11 @@ export function answersSeat(covers: AnswerCovers | undefined, id: string): boole
   return covers != null && covers.seats.size === 1 && covers.seats.has(id);
 }
 
+/** Why the capacity column of a table with no capacity at all has no figure: the usage basis, else no plan price. */
+export function noCapacityReason(a: Pick<AnswerTable, "why">): "usageBasis" | "noPlanPrice" {
+  return a.why === "usage" ? "usageBasis" : "noPlanPrice";
+}
+
 /** The answer table from the headline and the dent. off: the outside sources
  *  switched off in the chart's chips (empty without them). */
 export function answerTable(h: Headline, d: SubscriptionDent, ext: ExternalUsage, coverage: readonly MeterCoverage[],
@@ -254,10 +259,13 @@ export const isRemainderRow = (r: Pick<AnswerRow, "kind">) => r.kind === "unspli
  *  total; a bill exists per API key, never per party. */
 export type PartsMoney = { usd: number; estimate: boolean } | { none: NoFigureReason } | null;
 
-export function partsMoney(r: AnswerRow, basis: Basis): PartsMoney {
+export function partsMoney(r: AnswerRow, basis: Basis, opts: { noPlanPrice?: boolean; usage?: boolean } = {}): PartsMoney {
   const remainder = isRemainderRow(r);
   if (basis === "billed") return remainder ? null : { none: "notAtThisLevel" };
   if (basis === "capacity") {
+    // No reading of the meter has a plan price (AnswerTable.real is null): no row has a capacity figure, and that is why
+    // (on the usage basis, 0151, the movement is the usage charges' money, not unpriced).
+    if (opts.noPlanPrice && r.real == null) return { none: opts.usage ? "usageBasis" : "noPlanPrice" };
     if (r.pending) return { none: "pending" };
     if (r.beforeMeter) return { none: "beforeMeter" };
     if (r.real == null) return { none: r.notSplit ? "notSplit" : "noData" };
@@ -265,6 +273,13 @@ export function partsMoney(r: AnswerRow, basis: Basis): PartsMoney {
   }
   if (remainder) return null;
   return r.list == null ? { none: "unpricedExcluded" } : { usd: r.list, estimate: false };
+}
+
+/** Why B1 (the home's bill line) has no figure: the bill could not be fetched (loadError), keys are mapped but none has a
+ *  bill yet (notLanded: not landed, the sync failed or is not configured), or no key is mapped at all (noBilledKeys). */
+export function billedAbsentReason(error: boolean, w: BilledWindow | null | undefined): NoFigureReason {
+  if (error) return "loadError";
+  return (w?.totals ?? []).length > 0 ? "notLanded" : "noBilledKeys";
 }
 
 /** What Anthropic billed the mapped pay-per-token API keys over the bill's window of whole buckets (B1): the sum of
