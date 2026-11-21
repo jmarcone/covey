@@ -7,6 +7,8 @@ import {
   billedStatus,
   billedWholeDays,
   bucketStart,
+  readingOf,
+  usableReadings,
   coveyElsewhere,
   credentialFigures,
   isSeat,
@@ -571,5 +573,17 @@ describe("coveyElsewhere (#204 re-review)", () => {
   it("sums to the headline's coveyElsewhere with no pay-per-token row", () => {
     const by = { a: 1.25, b: 0.5 };
     expect(coveyElsewhere(by, undefined)).toBeCloseTo(Object.values(by).reduce((x, y) => x + y, 0), 9);
+  });
+});
+
+describe("a merged weekly meter (#153)", () => {
+  const r = (source: string, at: string, pct: number) => ({ secret_key: "seat", secret_slot: 0, source, supported: true, stale: false,
+    week_percent: pct, window_kind: "seven_day", fetched_at: at }) as unknown as Parameters<typeof usableReadings>[0][number];
+  it("takes the readings of every source, oldest first; a per-source meter only its own", () => {
+    const rs = [r("manual", "2026-11-21T10:00:00Z", 26), r("inband", "2026-11-21T00:16:00Z", 19), r("usage_cmd", "2026-11-20T23:25:00Z", 18)];
+    expect(usableReadings(rs, "seat", 0, "merged").map((x) => x.week_percent)).toEqual([18, 19, 26]);
+    expect(usableReadings(rs, "seat", 0, "inband").map((x) => x.week_percent)).toEqual([19]);
+    expect(readingOf("merged", { source: "manual" })).toBe(true);
+    expect(readingOf("inband", { source: "manual" })).toBe(false);
   });
 });

@@ -172,6 +172,7 @@
       "source_usage_cmd": "/usage",
       "source_inband": "in de stroom van de run",
       "source_manual": "met de hand ingevoerd",
+      "source_merged": "alle lezers (runs van agents, /usage, de probe)",
       "unpricedRow": "waarvan modellen zonder lijstprijs ({{count}}): tegen de eigen prijs van Claude Code, zoals in het herberekende bedrag",
       "totalWithUnpriced": "Totaal (herberekend, modellen zonder prijs tegen de gemelde prijs)",
       "meterSpan": "Meter",

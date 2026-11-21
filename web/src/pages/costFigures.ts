@@ -1271,9 +1271,13 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
 
 /** The readings of one credential and source on the weekly window that can be
  *  used: supported, fresh, with a figure; oldest first. */
+/** Whether a raw reading belongs to a meter read from `source`: the server merges every source of the plan's weekly
+ *  and five-hour windows into one meter, labelled "merged" (#153), so that meter takes the readings of any source. */
+export const readingOf = (source: string, r: Pick<UsageReading, "source">): boolean => source === "merged" || r.source === source;
+
 export function usableReadings(rs: readonly UsageReading[], key: string, slot: number, source: string): UsageReading[] {
   return rs
-    .filter((r) => r.secret_key === key && r.secret_slot === slot && r.source === source && r.supported && !r.stale
+    .filter((r) => r.secret_key === key && r.secret_slot === slot && readingOf(source, r) && r.supported && !r.stale
       && r.week_percent != null && (r.window_kind === "seven_day" || r.window_kind === ""))
     .sort((a, b) => Date.parse(a.fetched_at) - Date.parse(b.fetched_at));
 }

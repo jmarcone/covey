@@ -5,7 +5,7 @@ import { Link } from "react-router";
 import { api, type ExternalModelUsage, type ExternalUsage, type ModelUsageReport, type ModelUsageRow, type UsageReading } from "../api";
 import { fmtBucket, fmtCount, fmtNumber, fmtUSD, fmtUSDBelow, fmtUSDFixed } from "../format";
 import { DEFAULT_SOURCES, SOURCES, SOURCE_INFO, isPerModel, modelFigure, sourceHint, sourceLabel, type Source } from "./costSources";
-import { isSeat, perCredentialTotals, scopeFigure, type SourceTotal } from "./costFigures";
+import { isSeat, perCredentialTotals, scopeFigure, type SourceTotal, readingOf } from "./costFigures";
 import { MonthlyMeters, usageList } from "./CostBasis";
 import { Chip } from "./StackedCostChart";
 import { answersSeat, type AnswerCovers } from "./costAnswerModel";
@@ -337,7 +337,7 @@ function MeterFigures({ f, readings, outside = null, answered = false }: {
   const r = f.real;
   const source = t(`costs.insights.source_${m.source}`, { defaultValue: m.source });
   const own = readings.filter((x) => x.secret_key === m.secret_key && x.secret_slot === m.secret_slot);
-  const sameWindow = own.filter((x) => x.source === m.source && (x.window_kind === "seven_day" || x.window_kind === ""));
+  const sameWindow = own.filter((x) => readingOf(m.source, x) && (x.window_kind === "seven_day" || x.window_kind === ""));
   const dropped = sameWindow.length - usableReadings(own, m.secret_key, m.secret_slot, m.source).length;
   const five = own.filter((x) => x.supported && !x.stale && x.window_percent != null).at(-1);
 
