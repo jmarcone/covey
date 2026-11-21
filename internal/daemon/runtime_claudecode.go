@@ -477,7 +477,9 @@ func claudeProjectKey(cwd string) string {
 // cached block: ~/.claude/projects/<cwd>/memory/, and the cwd is the task's
 // scratch directory. With it the system prompt differed from task to task
 // whatever covey sent, and the first turn of every run wrote it into the prompt
-// cache again (#23). The directory was empty in every task anyway.
+// cache again (#23). The directory was empty in every task's scratch
+// directory; the cwds that repeat across tasks (a sub-run's checkout under
+// ~/repos, the home before the scratch directory) were not checked.
 //
 // An environment variable rather than a setting: the handover turn passes
 // --settings already (summaryToolGuard), and a second --settings would replace

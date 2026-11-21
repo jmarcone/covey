@@ -114,6 +114,13 @@ func TestTargetDocsComeInNameOrder(t *testing.T) {
 	if _, err := s.targets.PutManifest(ctx, s.orgID, manifest("alpha-desk")); err != nil {
 		t.Fatal(err)
 	}
+	// With statistics, the planner reads a table this small in one sequential
+	// scan rather than through the (org_id, name) index, so the rows come in
+	// the table's order. Without ANALYZE it guessed a large table and took the
+	// index, whose order is the name's, and the test passed with no ORDER BY.
+	if _, err := s.pool.Exec(ctx, `ANALYZE target_plugins`); err != nil {
+		t.Fatal(err)
+	}
 	if got := order(); got != "alpha-desk,zulu-desk" {
 		t.Fatalf("a re-uploaded manifest must not move its system in the prompt, got %s", got)
 	}
