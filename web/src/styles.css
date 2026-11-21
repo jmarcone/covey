@@ -2242,4 +2242,10 @@ ol.md-list { list-style: decimal; }
 @media (max-width: 600px) {
   .cost-answer .cost-answer-from { display: none; }
   .cost-answer .cost-answer-from-inline { display: block; }
+  /* Three columns in a phone's width: tighter cells, and the figures and headers may wrap, so the real cost stays in view. */
+  .cost-answer [data-answer-table] { font-size: 12px !important; }
+  .cost-answer [data-answer-table] th,
+  .cost-answer [data-answer-table] td { padding-right: 6px !important; white-space: normal !important; }
+  /* Long project names break anywhere; the figures stay whole. */
+  .cost-answer [data-answer-table] th[scope="row"] { overflow-wrap: anywhere; }
 }

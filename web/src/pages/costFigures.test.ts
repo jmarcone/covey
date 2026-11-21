@@ -551,7 +551,7 @@ describe("per credential", () => {
 });
 
 describe("coveyElsewhere (#204 re-review)", () => {
-  const cred = (id: string, coveyList: number) => ({ id, coveyList }) as PayPerTokenHeadline["credentials"][number];
+  const cred = (id: string, coveyLead: number) => ({ id, coveyList: coveyLead, coveyLead }) as PayPerTokenHeadline["credentials"][number];
   it("keeps every credential the pay-per-token row does not show", () => {
     expect(coveyElsewhere({ "key#0": 3, "seat#0": 2 }, null)).toBe(5);
     expect(coveyElsewhere({ "key#0": 3 }, { credentials: [cred("other#0", 3)] })).toBe(3);
@@ -559,6 +559,11 @@ describe("coveyElsewhere (#204 re-review)", () => {
   it("keeps the part of a shown credential outside the row's window, not 0", () => {
     // covey worked $5 on the key; its bill compares only $3 of it: $2 stays in "not in the table".
     expect(coveyElsewhere({ "key#0": 5 }, { credentials: [cred("key#0", 3)] })).toBeCloseTo(2, 9);
+  });
+  it("subtracts the row's lead-price figure, not a bill's reported-only one", () => {
+    // $100 on the key, all inside the bill's window: $70 reported, $30 recomputed. The row covers all $100.
+    const bill = { id: "key#0", coveyList: 70, coveyLead: 100 } as PayPerTokenHeadline["credentials"][number];
+    expect(coveyElsewhere({ "key#0": 100 }, { credentials: [bill] })).toBe(0);
   });
   it("never goes below 0 where the row shows more than the headline", () => {
     expect(coveyElsewhere({ "key#0": 2 }, { credentials: [cred("key#0", 3)] })).toBe(0);

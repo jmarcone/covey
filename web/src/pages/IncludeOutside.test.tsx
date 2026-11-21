@@ -1252,6 +1252,13 @@ describe("the answer table, re-review (#204)", () => {
     expect(a.rows.find((r) => r.source === "projects-late")!.pending).toBe(true);
   });
 
+  it("a late project too small to show a figure still folds, never its own '≈ $0.00' row", () => {
+    const a = tableOf(withProjects(cells(), [{ source: "projects-a", list: 0.4 }, { source: "projects-b", list: 0.3 },
+      { source: "projects-tiny", list: 0.003, firstAt: "2026-11-17T20:00:00Z" }]));
+    expect(a.rows.find((r) => r.kind === "small")!.folded).toEqual(["projects-a", "projects-b", "projects-tiny"]);
+    expect(a.rows.some((r) => r.source === "projects-tiny")).toBe(false);
+  });
+
   it("each row's 'where it comes from' is in the column and, for phones, under the part, the same text", async () => {
     serve(cells());
     await answerReady();

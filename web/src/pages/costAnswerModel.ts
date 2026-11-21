@@ -155,7 +155,7 @@ export function answerTable(h: Headline, d: SubscriptionDent, ext: ExternalUsage
   // which share one row. Folding changes no total: the row's list and real are its sources' sums.
   const projects = shown.filter((x) => !isOperatorSource(x.source));
   // A pending project keeps its own row: folded, its "pending" would be lost in the row's partial real figure.
-  const isSmall = (s: (typeof shown)[number]) => s.list != null && s.list < SMALL_USD && !s.before && s.unpricedTokens === 0 && !sourcePending(s);
+  const isSmall = (s: (typeof shown)[number]) => s.list != null && s.list < SMALL_USD && !s.before && s.unpricedTokens === 0 && !pendingOf([s]);
   const small = projects.filter(isSmall);
   for (const s of projects.filter((x) => small.length < 2 || !isSmall(x))) {
     rows.push(withPending(row({ key: `project:${s.source}`, kind: "project", source: s.source, list: s.list, recomputed: s.recomputed > 0,
