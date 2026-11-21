@@ -1102,7 +1102,8 @@
         "notPerModel": "plan capacity is not split by model yet.",
         "billedPerKey": "bills are per API key, not per agent or model.",
         "answerIsTokenOverCapacity": "the answer is always token price ÷ plan capacity used.",
-        "perPeriodAgent": "per period, capacity and bills belong to a credential, not to agents."
+        "perPeriodAgent": "per period, capacity and bills belong to a credential, not to agents.",
+        "outsideTokenOnly": "the tiles and the chart on this page are at token price; plan capacity per source is in the source chips."
       },
       "lockChip": "{{basis}} not applied here: {{reason}} Shown at token price.",
       "toToken": "Switch to token price",
@@ -1139,6 +1140,36 @@
         "noData": "No data in this window.",
         "bucketTooFine": "No figure at 10 minutes: plan capacity and bills come per hour at the finest. Pick hourly or coarser.",
         "noBilledKeys": "No figure: no API key is mapped to a bill in this window."
+      }
+    },
+    "basisDetails": {
+      "wholeKey": "whole key, not only covey",
+      "chart": {
+        "setByBasis": "set by Basis",
+        "setByBasisTitle": "Set by the Basis switch in the filter bar: change the basis to change it.",
+        "alsoShow": "Also show",
+        "useHourly": "Use hourly",
+        "noCapacityOnKey": "An API key is billed per token: it has no plan capacity.",
+        "noCapacityHere": "No priced meter movement on this seat in the window: no plan capacity estimate.",
+        "noBillOnSeat": "A seat is paid as a plan: no API key bill belongs to it."
+      },
+      "kpi": {
+        "capacityNone": "No seat has a priced meter movement in this window.",
+        "capacitySub": "The seats' estimates added up · range {{low}} – {{high}} · account-wide",
+        "capacityPartial": "{{n}} of {{m}} seats have a priced estimate: the others are not in the sum",
+        "billedPartial": "{{n}} of {{m}} API keys have a bill: the others are not in the sum"
+      }
+    },
+    "basisViews": {
+      "home": {
+        "covNone": "from {{from}}: no meter data",
+        "covMetered": "{{from}} to {{to}}: metered",
+        "covAfter": "after the last reading",
+        "billedLabel": "Billed to mapped API keys (pay-per-token, whole keys, not only covey)",
+        "billedUntil": "whole billed buckets to {{until}}; not part of the answer above"
+      },
+      "outside": {
+        "perModelNone": "per model:"
       }
     }
   },

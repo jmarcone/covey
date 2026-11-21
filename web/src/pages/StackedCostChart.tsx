@@ -1,4 +1,4 @@
-import { Fragment, createContext, useContext, useEffect, useId, useMemo, useState } from "react";
+import { Fragment, cloneElement, createContext, isValidElement, useContext, useEffect, useId, useMemo, useState, type ReactElement } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -32,6 +32,9 @@ import {
   EMPTY_SPLIT_PERIOD,
 } from "./costFigures";
 import { PlanPrice } from "./PlanPrice";
+import { BASIS_SOURCE, basisSupport, useBasis, type Basis } from "./costBasisSwitch";
+import { BasisLockChip } from "./BasisControl";
+import { NoFigure } from "./NoFigure";
 import { CostBasisPanel, MonthlyMeters, fmtMoney, usageSub } from "./CostBasis";
 import {
   OTHER_SOURCES,
@@ -427,8 +430,12 @@ export function AgentFilter({ agents, selected, onChange }: {
  *  nothing where no check failed. */
 export type CredentialMarks = { multiple?: React.ReactNode; outside?: React.ReactNode };
 
-function Tile({ label, value, sub, span, note, check, color, hatched, parts, orgWide, mark }: {
+function Tile({ label, value, sub, span, note, check, color, hatched, parts, orgWide, mark, lead, tag }: {
   label: string; value: string; sub?: string; span?: string; note?: string; color?: string; hatched?: boolean;
+  /** The tile that leads under the page's basis (cost home PR 9): first in its row, marked. */
+  lead?: Basis;
+  /** A word beside the label on what the figure covers (a bill is the whole key's, not only covey's). */
+  tag?: React.ReactNode;
   /** A failed data check's mark beside the label (#178): the figure is short. */
   mark?: React.ReactNode;
   /** covey's price table where it differs from the figure (priceTableLine). */
@@ -439,11 +446,12 @@ function Tile({ label, value, sub, span, note, check, color, hatched, parts, org
   orgWide?: boolean;
 }) {
   return (
-    <div role="group" aria-label={label} data-tile
+    <div role="group" aria-label={label} data-tile data-basis-lead={lead}
       style={{ padding: "10px 14px", borderRadius: 8, border: "1px solid var(--border)", minWidth: 170, flex: "1 1 170px" }}>
       <div className="muted text-xs" style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
         {color && <Swatch color={color} hatched={hatched} />}
         {label}
+        {tag}
         {orgWide && <OrgWide />}
         {mark}
       </div>
@@ -1027,8 +1035,11 @@ function realSpan(t: TFunction, f: CredentialFigures, key = "costs.fig.realSince
 }
 
 /** The tiles of one credential. */
-function CredentialTiles({ f, filtered, narrowed, out, split, seatSplit, full, marks = {}, answered }: {
+function CredentialTiles({ f, filtered, narrowed, out, split, seatSplit, full, marks = {}, answered, basis = "token" }: {
   f: CredentialFigures; filtered: boolean; out: OutsideKpis | null;
+  /** The basis the tiles lead with (cost home PR 9): capacity puts the seat's estimate first, billed the key's bill.
+   *  The view passes token where the contract does not honour the basis here (an agent selection, the per-agent layout). */
+  basis?: Basis;
   /** The marks of failed data checks on this credential's figures (#178). */
   marks?: CredentialMarks;
   /** The same sources in two parts: the covey operator and the other projects (#163). */
@@ -1213,6 +1224,17 @@ function CredentialTiles({ f, filtered, narrowed, out, split, seatSplit, full, m
           + (f.usageShared ? ` · ${t("costs.basis.usageMultipleShared", { sources: f.usageShared.join(", ") })}` : "")} />);
     }
   }
+  // Under capacity or billed the tile of that basis leads (cost home PR 9); the token tiles follow, unchanged. A bill is
+  // the whole key's: what else used the key is in it too, said beside the label.
+  const leadKey = basis === "capacity" ? "real" : basis === "billed" ? "billed" : null;
+  const at = leadKey ? tiles.findIndex((x) => isValidElement(x) && x.key === leadKey) : -1;
+  if (at >= 0) {
+    const [first] = tiles.splice(at, 1);
+    tiles.unshift(cloneElement(first as ReactElement<{ lead?: Basis; tag?: React.ReactNode }>, {
+      lead: basis,
+      tag: basis === "billed" ? <span className="muted" data-whole-key>· {t("costs.basisDetails.wholeKey")}</span> : undefined,
+    }));
+  }
   return <div className="flex flex-wrap gap-3 mb-2">{tiles}</div>;
 }
 
@@ -1261,7 +1283,8 @@ function NoMultiple({ f, answered = false }: { f: CredentialFigures; answered?: 
 }
 
 /** One credential: its tiles, its chart, its agents. */
-function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPeriod, selected, src, split, types, layout, view, sharedScale, asTable, outside, full, marks, answered }: {
+function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPeriod, selected, src, split, types, layout, view, sharedScale, asTable, outside, full, marks, answered,
+  lead = null, tileBasis = "token", noBars = false }: {
   f: CredentialFigures; data: CostCells; billed: BilledReport | undefined; readings: readonly UsageReading[]; canSetPlan: boolean; bucket: string; fmtPeriod: (p: string, utc?: boolean) => string;
   selected: Set<string>; src: Record<Source, boolean>; split: Split; types: Set<string>; layout: Layout; view: View; sharedScale: boolean; asTable: boolean;
   /** The full view of covey's price table (the toggle): Reported and Recomputed apart. */
@@ -1272,6 +1295,13 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
   marks?: CredentialMarks;
   /** What the page's answer table covers (#195): a seat of its meter has its figures there, its tiles leave them out. */
   answered?: AnswerCovers;
+  /** The series the page's basis leads with (cost home PR 9): real under capacity, billed under billed; null under token
+   *  or where the contract does not honour the basis. */
+  lead?: Source | null;
+  /** The basis the tiles lead with (token where the contract locks it). */
+  tileBasis?: Basis;
+  /** The bucket is finer than the basis exists at (10 minutes): no bars, the reason instead. */
+  noBars?: boolean;
 }) {
   const { t } = useTranslation();
   const planLabel = usePlanLabel();
@@ -1521,6 +1551,14 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
   // bar. Without movement, the plan's own price per point.
   const rate = stepRate(steps);
   const pointPrice = rate.mixed ? null : rate.rate ?? (f.plan ? pricePerPoint(f.plan) : null);
+  // The basis's series has no figure on this credential (cost home PR 9): a seat has no bill, an API key no plan
+  // capacity, a seat without a priced meter no estimate. Said, never drawn as an empty or $0 bar.
+  const leadAbsent = lead === "real" ? !showReal : lead === "billed" ? !showBilled : false;
+  const absentWhy = lead === "real" ? (f.kind === "api_key" ? "usageBasis" : "noData") : "notAtThisLevel";
+  const absentText = lead === "real"
+    ? t(f.kind === "api_key" ? "costs.basisDetails.chart.noCapacityOnKey" : "costs.basisDetails.chart.noCapacityHere")
+    : t("costs.basisDetails.chart.noBillOnSeat");
+  const nothingElse = leadAbsent && !src.reported && !(full && src.recomputed) && !vs;
 
   return (
     <section className="mb-5" aria-label={name} data-credential={f.id}>
@@ -1531,7 +1569,8 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
       {subscription && <PlanPrice f={f} name={name} readings={readings} editable={canSetPlan} />}
       {f.secretKey != null && <CostBasisPanel f={f} name={name} editable={canSetPlan} />}
       <MonthlyMeters f={f} readings={readings} />
-      <CredentialTiles f={f} filtered={filtered || layout === "agents"} narrowed={filtered} out={mineKpis} split={mineSplit} seatSplit={seatSplit} full={full} marks={marks} answered={tableAnswers} />
+      <CredentialTiles f={f} filtered={filtered || layout === "agents"} narrowed={filtered} out={mineKpis} split={mineSplit} seatSplit={seatSplit} full={full} marks={marks} answered={tableAnswers}
+        basis={tileBasis} />
       <NoMultiple f={f} answered={tableAnswers} />
       {/* Outside every reading's span: before the meter's first reading
           (no meter data, never a real share) and after its last (pending). */}
@@ -1553,7 +1592,12 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
       )}
       {f.bookedWithoutLine > 0.0005 && <p className="muted text-xs mb-2 mt-0">{t("costs.fig.bookedWithoutLine", { usd: fmtUSD(f.bookedWithoutLine) })}</p>}
 
-      {periods.length === 0 ? (
+      {leadAbsent && !noBars && (
+        <p className="muted text-xs mb-2 mt-0" data-basis-absent={lead!}><NoFigure reason={absentWhy} /> {absentText}</p>
+      )}
+      {noBars ? (
+        <p className="muted text-sm" data-bucket-too-fine-block><NoFigure reason="bucketTooFine" /></p>
+      ) : nothingElse ? null : periods.length === 0 ? (
         <div className="muted text-sm" style={{ padding: "20px 0", textAlign: "center" }}>{t("costs.empty")}</div>
       ) : layout === "combined" ? (
         <BarChart title={`${t("costs.chartCost")} · ${name}`} periods={periods} groups={combined} fmtPeriod={fmtPeriod}
@@ -1811,7 +1855,7 @@ function ColourKey({ split, sources = [], other = [], full = true, list = full }
 }
 
 export function CostExplorer({ data, billed, readings = [], canSetPlan = false, selected, bucket, fmtPeriod, outside = null, full: fullProp, onFull,
-  off: offProp, onToggleSource, answered, marks }: {
+  off: offProp, onToggleSource, answered, marks, onBucket }: {
   data: CostCells | undefined; billed?: BilledReport; readings?: readonly UsageReading[]; canSetPlan?: boolean;
   selected: Set<string>; bucket: string; fmtPeriod: (p: string, utc?: boolean) => string;
   /** The sessions outside covey, included (#120, the default); null: covey only. */
@@ -1827,6 +1871,8 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
   answered?: AnswerCovers;
   /** The marks of failed data checks on a credential's own figures (#178), per secret and slot. */
   marks?: (key: string, slot: number) => CredentialMarks;
+  /** Sets the page's bucket: the way out of a bucket finer than the basis exists at. */
+  onBucket?: (bucket: string) => void;
 }) {
   const { t } = useTranslation();
   // One list-price figure leads (#120): the lead series. covey's price
@@ -1850,6 +1896,19 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
     setHiddenSrc((h) => { const cur = { reported: !h.has("reported"), recomputed: !h.has("recomputed"), real: !h.has("real"), billed: !h.has("billed") };
       const n = f(cur); return new Set((Object.keys(n) as Source[]).filter((k) => !n[k])); });
   const [types, setTypes] = useState<Set<string>>(new Set(COST_TYPES));
+  // The page's basis (cost home PR 9), read through the contract: per period, capacity and bills are a credential's,
+  // so an agent selection or the per-agent layout keeps the token price (locked); at 10 minutes neither exists (none).
+  // Honoured, the basis's series leads, set by the basis and not switchable off; the others are "also shown" only when
+  // asked for (?also=). Old ?hide= links still parse: they govern the token view and never hide the lead.
+  const { basis } = useBasis();
+  const agentsLevel = selected.size > 0 || layout === "agents";
+  const chartSupport = basisSupport("details", "chart", basis, { bucket, whoSelected: agentsLevel });
+  // The tiles are range totals: the bucket does not touch them, an agent selection does.
+  const kpiSupport = basisSupport("details", "kpis", basis, { whoSelected: agentsLevel });
+  const lead: Source | null = basis !== "token" && chartSupport.state === "honoured" ? BASIS_SOURCE[basis] : null;
+  const tileBasis: Basis = kpiSupport.state === "honoured" ? basis : "token";
+  const noBars = chartSupport.state === "none";
+  const [also, setAlso] = useParamState<ReadonlySet<string>>("also", NO_HIDDEN, asSet.parse, asSet.show);
 
   const figures = useMemo(() => (data ? credentialFigures({
     cells: data, billed, bucketMs: BUCKET_MS[bucket] ?? BUCKET_MS.day, windowEnd: data.until ? new Date(data.until) : new Date(), agents: selected, layout,
@@ -1867,21 +1926,39 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
   const loose = onChart ? sourcesWithoutSeat(outside, new Set(figures.map((f) => f.id))).filter((x) => onChart.on.has(x.source)) : [];
 
   const toggleType = (k: string) => setTypes((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
-  const toggleSrc = (s: Source) => setSrc((v) => {
-    const n = { ...v, [s]: !v[s] };
-    // Keep at least one on show: Recomputed counts only in the full view.
-    return n.reported || (full && n.recomputed) || n.real || n.billed ? n : v;
-  });
+  const toggleSrc = (s: Source) => {
+    if (lead) {
+      // Under a basis the lead stays; another source is shown beside it or not.
+      if (s !== lead) setAlso((v) => { const x = new Set(v); if (x.has(s)) x.delete(s); else x.add(s); return x; });
+      return;
+    }
+    setSrc((v) => {
+      const n = { ...v, [s]: !v[s] };
+      // Keep at least one on show: Recomputed counts only in the full view.
+      return n.reported || (full && n.recomputed) || n.real || n.billed ? n : v;
+    });
+  };
   // The meter and the bill are hourly (#120): at 10 minutes Real and Billed
   // are off and say why; the user's choice comes back at a coarser bucket.
   const hourly = (s: Source) => bucket === "10min" && (s === "real" || s === "billed");
   const tenMinId = `${useId().replace(/[^a-zA-Z0-9_-]/g, "")}-tenmin`;
-  const own: Record<Source, boolean> = full ? src : { ...src, recomputed: false };
+  const own: Record<Source, boolean> = lead
+    ? { reported: also.has("reported"), recomputed: full && also.has("recomputed"), real: lead === "real" || also.has("real"), billed: lead === "billed" || also.has("billed") }
+    : full ? src : { ...src, recomputed: false };
   const shown: Record<Source, boolean> = bucket === "10min"
     ? full ? { ...own, real: false, billed: false, recomputed: own.recomputed || !own.reported } : { ...own, real: false, billed: false, reported: true }
     : own;
   const chips = full ? SOURCES : SOURCES.filter((s) => s !== "recomputed");
   const chipLabel = (s: Source) => (!full && s === "reported" ? t("costs.lead.label") : sourceLabel(t, s));
+  const sourceChip = (s: Source) => (
+    <span key={s} data-source-chip={s} style={{ display: "contents" }}>
+      <Chip on={shown[s]} color={SOURCE_COLOR[s]} hatched={s === "real"} onClick={() => toggleSrc(s)}
+        disabled={hourly(s)} title={hourly(s) ? t("costs.outside.tenMinNoMeter") : undefined}
+        describedBy={hourly(s) ? tenMinId : undefined}>
+        {chipLabel(s)}
+      </Chip>
+    </span>
+  );
 
   return (
     <div>
@@ -1889,14 +1966,24 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
         sources={onChart ? listed.filter((x) => onChart.on.has(x.source) && onChart.styles.series(x.source) !== OTHER_SOURCES)
           .map((x) => ({ name: x.source, ...onChart.styles.style(x.source) })) : []}
         other={onChart ? onChart.styles.folded.filter((n) => onChart.on.has(n)) : []} />
+      {chartSupport.state === "locked" && <div className="mb-2" data-chart-lock><BasisLockChip support={chartSupport} basis={basis} /></div>}
+      {chartSupport.state === "none" && (
+        <p className="text-sm mb-2 mt-0" data-bucket-too-fine>
+          <NoFigure reason={chartSupport.reason} />{" "}
+          {onBucket && <button type="button" className="btn sm" data-use-hourly onClick={() => onBucket("hour")}>{t("costs.basisDetails.chart.useHourly")}</button>}
+        </p>
+      )}
       <Row label={t("costs.filter.source")}>
-        {chips.map((s) => (
-          <Chip key={s} on={shown[s]} color={SOURCE_COLOR[s]} hatched={s === "real"} onClick={() => toggleSrc(s)}
-            disabled={hourly(s)} title={hourly(s) ? t("costs.outside.tenMinNoMeter") : undefined}
-            describedBy={hourly(s) ? tenMinId : undefined}>
-            {chipLabel(s)}
-          </Chip>
-        ))}
+        {lead ? <>
+          {/* The basis's series: set by the basis, not switchable off. */}
+          <span data-source-chip={lead} data-basis-lead-chip={lead} style={{ display: "contents" }}>
+            <Chip on color={SOURCE_COLOR[lead]} hatched={lead === "real"} locked onClick={() => undefined} title={t("costs.basisDetails.chart.setByBasisTitle")}>
+              {chipLabel(lead)} <span className="muted" data-basis-set>· {t("costs.basisDetails.chart.setByBasis")}</span>
+            </Chip>
+          </span>
+          <span className="muted text-xs" data-also-show style={{ marginLeft: 8 }}>{t("costs.basisDetails.chart.alsoShow")}</span>
+          {chips.filter((s) => s !== lead).map(sourceChip)}
+        </> : chips.map(sourceChip)}
         {bucket === "10min" && <span id={tenMinId} className="muted text-xs" data-ten-min-note>{t("costs.outside.tenMinNoMeter")}</span>}
         {/* The secondary toggle: covey's price table as a figure of its own. */}
         <label className="text-xs muted" data-full-prices title={t("costs.lead.toggleTitle")}
@@ -1960,9 +2047,10 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
       ) : figures.map((f) => (
         <CredentialBlock key={f.id} f={f} data={data!} billed={billed} readings={readings} canSetPlan={canSetPlan} bucket={bucket} fmtPeriod={fmtPeriod} selected={selected}
           src={shown} split={split} types={types} layout={layout} view={view} sharedScale={sharedScale} asTable={asTable} outside={onChart} full={full} answered={answered}
-          marks={f.secretKey != null ? marks?.(f.secretKey, f.slot!) : undefined} />
+          marks={f.secretKey != null ? marks?.(f.secretKey, f.slot!) : undefined} lead={lead} tileBasis={tileBasis} noBars={noBars} />
       ))}
-      {onChart && loose.length > 0 && (
+      {/* The sources without a seat carry token prices only: under a basis they stand when a token series is also shown. */}
+      {onChart && loose.length > 0 && !noBars && (!lead || shown.reported || (full && shown.recomputed)) && (
         <OutsideBlock o={onChart} sources={loose} src={shown} fmtPeriod={fmtPeriod} asTable={asTable} filtered={selected.size > 0} full={full} />
       )}
     </div>

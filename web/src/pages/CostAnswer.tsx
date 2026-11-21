@@ -3,7 +3,10 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { fmtBucket, fmtCount, fmtNumber, fmtUSD, fmtUSDFixed } from "../format";
 import type { Headline } from "./costFigures";
-import type { AnswerRow, AnswerTable } from "./costAnswerModel";
+import { isRemainderRow, partsMoney, type AnswerRow, type AnswerTable } from "./costAnswerModel";
+import { basisSupport, type Basis } from "./costBasisSwitch";
+import { BasisLockChip, BasisTag } from "./BasisControl";
+import { NoFigure } from "./NoFigure";
 import { OrgWide, outsideMoney, priceTableLine } from "./StackedCostChart";
 import { usageList } from "./CostBasis";
 
@@ -35,7 +38,23 @@ function listCell(t: TFunction, r: AnswerRow): ReactNode {
 }
 
 /** The rows for the rest of the real cost: they hold no work of their own, so no token price. */
-const remainder = (r: AnswerRow) => r.kind === "unsplit" || r.kind === "unattributed" || r.kind === "outsideRest";
+const remainder = isRemainderRow;
+
+/** The money columns in the order the basis leads with (cost home PR 9): token price first under token (as before),
+ *  capacity first under capacity, the bill (no figure per party) first under billed; the others follow it. */
+type MoneyCol = "list" | "real" | "billed";
+const COLS: Record<Basis, MoneyCol[]> = { token: ["list", "real"], capacity: ["real", "list"], billed: ["billed", "list", "real"] };
+
+/** The capacity column where capacity leads: each row's server figure ≈, or the reason it has none (never ≈ $0.00). */
+function capacityCell(t: TFunction, r: AnswerRow): ReactNode {
+  const m = partsMoney(r, "capacity");
+  if (m == null) return null;
+  if ("none" in m) return <NoFigure reason={m.none} detail={m.none === "beforeMeter" && r.beforeMeter ? ` (${fmtBucket(r.beforeMeter, "hour")})` : undefined} />;
+  return <>
+    <span data-answer-capacity={m.usd}>≈ {fmtUSD(m.usd)}</span>
+    {r.partlySplit && <div className="muted text-xs" style={{ fontWeight: 400, whiteSpace: "normal" }} data-answer-partly>{t("costs.answer.partlyNotSplit")}</div>}
+  </>;
+}
 
 function label(t: TFunction, r: AnswerRow): { name: string; from: string } {
   switch (r.kind) {
@@ -67,8 +86,10 @@ function realCell(t: TFunction, r: AnswerRow): ReactNode {
 const cell = { padding: "8px 12px 8px 0", verticalAlign: "top" } as const;
 const num = { ...cell, textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" } as const;
 
-export function CostAnswer({ a, h, filtered, drawer, elsewhere: elsewhereUsd, marks, hero = true }: {
+export function CostAnswer({ a, h, filtered, drawer, elsewhere: elsewhereUsd, marks, hero = true, basis = "token" }: {
   a: AnswerTable; h: Headline; filtered: boolean;
+  /** The page's basis (cost home PR 9): which money column leads. Token (the default) is the table as before. */
+  basis?: Basis;
   /** The at-a-glance equation beside the table: off where the page shows the answer larger itself (the cost home). */
   hero?: boolean;
   /** The data checks' marks on what the answer rests on (#178): beside the title, never hiding a figure. */
@@ -81,6 +102,8 @@ export function CostAnswer({ a, h, filtered, drawer, elsewhere: elsewhereUsd, ma
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  const cols = COLS[basis];
+  const heroSupport = basisSupport("home", "hero", basis);
   const drawerId = useId().replace(/[^a-zA-Z0-9_-]/g, "");
   const hidden = a.hidden.length > 0;
   const rateText = a.rate != null ? fmtUSDFixed(a.rate, 4) : null;
@@ -146,6 +169,7 @@ export function CostAnswer({ a, h, filtered, drawer, elsewhere: elsewhereUsd, ma
       {/* The answer as an equation: the multiple never stands without what it divides and what it divides by (the
           cost home proposal's first honesty rule). Without a multiple: the work at token prices and the capacity used. */}
       {hero && <div className="cost-answer-hero" data-answer-hero>
+        {heroSupport.state === "locked" && <div style={{ flexBasis: "100%" }}><BasisLockChip support={heroSupport} basis={basis} /></div>}
         <div>
           <div className="muted cost-answer-hero-label">{t(a.multiple != null ? "costs.answer.heroMetered" : "costs.answer.heroList")}</div>
           <div className="cost-answer-hero-figure" data-hero-list>{fmtUSD(a.multiple != null ? a.metered : a.list)}</div>
@@ -176,8 +200,11 @@ export function CostAnswer({ a, h, filtered, drawer, elsewhere: elsewhereUsd, ma
           <tr className="muted" style={{ textAlign: "left" }}>
             <th scope="col" style={{ ...cell, fontWeight: 500 }}>{t("costs.answer.colPart")}</th>
             <th scope="col" className="cost-answer-from" style={{ ...cell, fontWeight: 500 }}>{t("costs.answer.colFrom")}</th>
-            <th scope="col" style={{ ...num, fontWeight: 500 }}>{t("costs.answer.colList")}</th>
-            <th scope="col" style={{ ...num, fontWeight: 500, paddingRight: 0 }}>{t("costs.answer.colReal")}</th>
+            {cols.map((c, i) => (
+              <th key={c} scope="col" style={{ ...num, fontWeight: 500, ...(i === cols.length - 1 ? { paddingRight: 0 } : {}) }} data-answer-col={c}>
+                {i === 0 && basis !== "token" ? <BasisTag basis={basis} /> : t(c === "real" ? "costs.answer.colReal" : "costs.answer.colList")}
+              </th>
+            ))}
           </tr>
         </thead>
         <tbody>
@@ -191,10 +218,16 @@ export function CostAnswer({ a, h, filtered, drawer, elsewhere: elsewhereUsd, ma
                   <div className="muted text-xs cost-answer-from-inline" style={{ fontWeight: 400 }}>{l.from}</div>
                 </th>
                 <td className="muted cost-answer-from" style={cell}>{l.from}</td>
-                <td style={r.list == null || r.unpricedTokens > 0 || r.before ? { ...num, whiteSpace: "normal" } : num} data-answer-list>
-                  {remainder(r) ? "" : listCell(t, r)}
-                </td>
-                <td style={{ ...num, paddingRight: 0 }} data-answer-real>{realCell(t, r)}</td>
+                {cols.map((c, i) => {
+                  const last = i === cols.length - 1 ? { paddingRight: 0 } : {};
+                  if (c === "list") return <td key={c} style={{ ...(r.list == null || r.unpricedTokens > 0 || r.before ? { ...num, whiteSpace: "normal" } : num), ...last }}
+                    data-answer-list>{remainder(r) ? "" : listCell(t, r)}</td>;
+                  if (c === "billed") {
+                    const m = partsMoney(r, "billed");
+                    return <td key={c} style={{ ...num, whiteSpace: "normal", ...last }} data-answer-billed>{m && "none" in m ? <NoFigure reason={m.none} /> : ""}</td>;
+                  }
+                  return <td key={c} style={{ ...num, ...last }} data-answer-real>{basis === "capacity" ? capacityCell(t, r) : realCell(t, r)}</td>;
+                })}
               </tr>
             );
           })}
@@ -204,8 +237,13 @@ export function CostAnswer({ a, h, filtered, drawer, elsewhere: elsewhereUsd, ma
               {totalSub && <div className="muted text-xs cost-answer-from-inline" style={{ fontWeight: 400 }}>{totalSub}</div>}
             </th>
             <td className="muted cost-answer-from" style={cell}>{totalSub}</td>
-            <td style={{ ...num, fontWeight: 600 }} data-answer-list>{fmtUSD(a.list)}</td>
-            <td style={{ ...num, fontWeight: 600, paddingRight: 0 }} data-answer-real>{a.real != null ? `≈ ${fmtUSD(a.real)}` : "–"}</td>
+            {cols.map((c, i) => {
+              const style = { ...num, fontWeight: 600, ...(i === cols.length - 1 ? { paddingRight: 0 } : {}) };
+              if (c === "list") return <td key={c} style={style} data-answer-list>{fmtUSD(a.list)}</td>;
+              if (c === "billed") return <td key={c} style={{ ...style, whiteSpace: "normal" }} data-answer-billed><NoFigure reason="notAtThisLevel" /></td>;
+              return <td key={c} style={style} data-answer-real>{a.real != null ? `≈ ${fmtUSD(a.real)}`
+                : basis === "capacity" ? <NoFigure reason="noData" /> : "–"}</td>;
+            })}
           </tr>
           <tr style={{ borderTop: "1px solid var(--border)" }} data-answer-difference>
             <th scope="row" style={{ ...cell, textAlign: "left", fontWeight: 600 }}>
@@ -213,8 +251,8 @@ export function CostAnswer({ a, h, filtered, drawer, elsewhere: elsewhereUsd, ma
               <div className="muted text-xs cost-answer-from-inline" style={{ fontWeight: 400 }}>{diffFrom}</div>
             </th>
             <td className="muted cost-answer-from" style={cell} data-answer-multiple-from>{diffFrom}</td>
-            <td style={num} />
-            <td style={{ ...num, paddingRight: 0 }} data-answer-multiple>
+            {cols.slice(0, cols.indexOf("real")).map((c) => <td key={c} style={num} />)}
+            <td style={{ ...num, paddingRight: cols[cols.length - 1] === "real" ? 0 : undefined }} data-answer-multiple>
               {a.multiple != null ? (
                 <>
                   <span style={{ fontWeight: 600 }}>≈ {times(a.multiple)}</span>
@@ -222,6 +260,7 @@ export function CostAnswer({ a, h, filtered, drawer, elsewhere: elsewhereUsd, ma
                 </>
               ) : <span className="muted">–</span>}
             </td>
+            {cols.slice(cols.indexOf("real") + 1).map((c) => <td key={c} style={num} />)}
           </tr>
         </tbody>
       </table>

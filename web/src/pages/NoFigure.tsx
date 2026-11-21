@@ -9,7 +9,7 @@ export function NoFigure({ reason, detail }: { reason: NoFigureReason; detail?: 
   const id = `${useId().replace(/[^a-zA-Z0-9_-]/g, "")}-nf`;
   const long = t(`costs.noFigure.long.${reason}`, { detail: detail ?? "" });
   return (
-    <span className="cost-nofigure muted" data-no-figure={reason} title={long} aria-describedby={id} tabIndex={0}>
+    <span className="cost-nofigure muted" data-no-figure={reason} title={long} aria-describedby={id}>
       – {t(`costs.noFigure.short.${reason}`)}
       <span id={id} className="sr-only">{long}</span>
     </span>

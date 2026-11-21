@@ -24,7 +24,8 @@ export type LockReason =
   | "notPerModel" // capacity is not split by model
   | "billedPerKey" // bills are per API key, not per agent or model
   | "answerIsTokenOverCapacity" // the answer is always token price ÷ capacity
-  | "perPeriodAgent"; // per period, capacity and bills are per credential, not per agent
+  | "perPeriodAgent" // per period, capacity and bills are per credential, not per agent
+  | "outsideTokenOnly"; // the outside page's tiles and chart are at token price; capacity per source is in its chips
 
 /** Why a figure is absent (never $0.00). */
 export type NoFigureReason =
@@ -42,7 +43,7 @@ export type BlockId =
   | "table" | "tiles" // models, work
   | "priceList" | "runs" // work, details
   | "kpis" | "chart" | "insightsModels" | "insightsMeter" // details
-  | "sources" | "perModel"; // outside
+  | "sources" | "perModel" | "overview"; // outside
 
 const HONOURED: BasisSupport = { state: "honoured" };
 const lock = (reason: LockReason): BasisSupport => ({ state: "locked", reason });
@@ -76,6 +77,7 @@ export function basisSupport(view: CostViewId, block: BlockId, basis: Basis, ctx
     case "outside":
       if (block === "sources") return capacity ? HONOURED : none("notAtThisLevel");
       if (block === "perModel") return capacity ? lock("notPerModel") : none("usageBasis");
+      if (block === "overview") return lock("outsideTokenOnly");
       break;
   }
   return HONOURED;

@@ -1,5 +1,6 @@
 import type { TFunction } from "i18next";
 import type { ModelUsageRow } from "../api";
+import type { Basis } from "./costBasisSwitch";
 
 /* The four money sources of the Costs page, defined once: the chart's chips,
  * its colour key and the per-model table's columns all read them from here,
@@ -37,6 +38,13 @@ export const SOURCE_INFO: Record<Source, SourceInfo> = {
 export const DEFAULT_SOURCES: readonly Source[] = SOURCES.filter((s) => SOURCE_INFO[s].defaultOn);
 
 export const isPerModel = (s: Source): boolean => SOURCE_INFO[s].granularity === "model";
+
+/** The sources that carry a basis (cost home PR 9): token price is Claude Code's figure and covey's list (the lead and
+ *  its price-table check), plan capacity the meter's estimate, billed the API keys' bill. Under capacity or billed the
+ *  chart leads with this one series; the others are "also shown" only when asked for. */
+export function basisSources(basis: Basis): readonly Source[] {
+  return basis === "capacity" ? ["real"] : basis === "billed" ? ["billed"] : ["reported", "recomputed"];
+}
 
 /** A per-model source's figure for one model line; null where it has none
  *  (a model the list does not price has no recomputed figure). */
