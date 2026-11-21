@@ -810,6 +810,9 @@
       "tokens": "Token",
       "recomputedMark": "aus den Tokens zu Anthropics Listenpreisen berechnet (kein gemeldeter Preis)",
       "rowSmall": "weitere kleine Projekte: {{count}}",
+      "heroList": "Zu Preisen pro Token",
+      "heroReal": "Echte Kosten im Pauschaltarif",
+      "heroPoints": "{{pts}} Zählerpunkte",
       "pending": "ausstehend",
       "pendingWhy": "nach der letzten Zählerablesung"
     }

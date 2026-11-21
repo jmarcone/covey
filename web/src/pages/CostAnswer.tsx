@@ -123,7 +123,27 @@ export function CostAnswer({ a, h, filtered, drawer, elsewhere: elsewhereUsd }: 
         {t("costs.answer.title")}
         {filtered && <OrgWide />}
       </div>
-      <div style={{ overflowX: "auto" }}>
+      <div className="cost-answer-body">
+      {/* The answer at a glance: beside the table on a wide screen, above it otherwise. The multiple says what it divides. */}
+      <div className="cost-answer-hero" data-answer-hero>
+        <div>
+          <div className="muted cost-answer-hero-label">{t("costs.answer.heroList")}</div>
+          <div className="cost-answer-hero-figure" data-hero-list>{fmtUSD(a.list)}</div>
+        </div>
+        <div>
+          <div className="muted cost-answer-hero-label">{t("costs.answer.heroReal")}</div>
+          <div className="cost-answer-hero-figure" data-hero-real>{a.real != null ? `≈ ${fmtUSD(a.real)}` : "–"}</div>
+          {a.real != null && a.points != null && <div className="muted cost-answer-hero-sub">{t("costs.answer.heroPoints", { pts: pts(a.points) })}</div>}
+        </div>
+        {a.multiple != null && (
+          <div>
+            <div className="muted cost-answer-hero-label">{t("costs.answer.rowDifference")}</div>
+            <div className="cost-answer-hero-figure cost-answer-hero-multiple" data-hero-multiple>≈ {times(a.multiple)}</div>
+            <div className="muted cost-answer-hero-sub">{diffFrom}</div>
+          </div>
+        )}
+      </div>
+      <div style={{ overflowX: "auto", minWidth: 0 }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }} data-answer-table>
         <thead>
           <tr className="muted" style={{ textAlign: "left" }}>
@@ -178,6 +198,7 @@ export function CostAnswer({ a, h, filtered, drawer, elsewhere: elsewhereUsd }: 
           </tr>
         </tbody>
       </table>
+      </div>
       </div>
       <p className="text-sm mt-3 mb-1" style={{ fontWeight: 600 }} data-answer-sentence>{sentence}</p>
       {a.multiple == null && a.real != null && <p className="muted text-xs mb-1" data-answer-no-multiple>{noMultiple}</p>}

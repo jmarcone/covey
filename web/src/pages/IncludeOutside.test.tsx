@@ -1259,6 +1259,20 @@ describe("the answer table, re-review (#204)", () => {
     expect(a.rows.some((r) => r.source === "projects-tiny")).toBe(false);
   });
 
+  it("the answer at a glance shows the table's total, real cost and multiple, and says what the multiple divides", async () => {
+    const data = cells();
+    const a = tableOf(data);
+    serve(data);
+    await answerReady();
+    const hero = document.querySelector("[data-answer-hero]")!;
+    expect(hero.querySelector("[data-hero-list]")!.textContent).toBe(document.querySelector("[data-answer-total] [data-answer-list]")!.textContent);
+    expect(hero.querySelector("[data-hero-real]")!.textContent).toBe(document.querySelector("[data-answer-total] [data-answer-real]")!.textContent);
+    expect(hero.querySelector("[data-hero-multiple]")!.textContent).toBe(`≈ ${times(a.multiple!)}`);
+    // Not "list ÷ real": the numerator is named, the same text as the Difference row's.
+    expect(hero.textContent).toContain(t("costs.answer.fromDifferenceOf", { metered: fmtUSD(a.metered) }));
+    expect(hero.textContent).toContain(t("costs.answer.heroPoints", { pts: "6" }));
+  });
+
   it("each row's 'where it comes from' is in the column and, for phones, under the part, the same text", async () => {
     serve(cells());
     await answerReady();

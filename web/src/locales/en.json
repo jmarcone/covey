@@ -810,6 +810,9 @@
       "tokens": "Tokens",
       "recomputedMark": "priced from its tokens at Anthropic's list prices (no reported cost)",
       "rowSmall": "other projects ({{count}} small)",
+      "heroList": "At pay-per-token prices",
+      "heroReal": "Real cost on the flat plan",
+      "heroPoints": "{{pts}} meter points",
       "pending": "pending",
       "pendingWhy": "after the last meter reading"
     }

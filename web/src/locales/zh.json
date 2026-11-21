@@ -810,6 +810,9 @@
       "tokens": "Token",
       "recomputedMark": "按 Anthropic 标价由 token 计算（无报告成本）",
       "rowSmall": "其他小项目：{{count}}",
+      "heroList": "按 token 价格计",
+      "heroReal": "包月套餐的实际成本",
+      "heroPoints": "{{pts}} 个计量点",
       "pending": "待定",
       "pendingWhy": "在最后一次计量读数之后"
     }

@@ -810,6 +810,9 @@
       "tokens": "Tokeny",
       "recomputedMark": "wyliczone z tokenów według cen katalogowych Anthropic (brak zgłoszonego kosztu)",
       "rowSmall": "inne małe projekty: {{count}}",
+      "heroList": "Według cen za token",
+      "heroReal": "Rzeczywisty koszt planu ryczałtowego",
+      "heroPoints": "punkty licznika: {{pts}}",
       "pending": "oczekuje",
       "pendingWhy": "po ostatnim odczycie licznika"
     }

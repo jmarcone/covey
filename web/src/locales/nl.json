@@ -810,6 +810,9 @@
       "tokens": "Tokens",
       "recomputedMark": "berekend uit de tokens tegen de lijstprijzen van Anthropic (geen gemelde kosten)",
       "rowSmall": "overige kleine projecten: {{count}}",
+      "heroList": "Tegen tokenprijzen",
+      "heroReal": "Echte kosten met het vaste abonnement",
+      "heroPoints": "{{pts}} meterpunten",
       "pending": "volgt",
       "pendingWhy": "na de laatste meterstand"
     }

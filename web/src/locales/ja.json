@@ -810,6 +810,9 @@
       "tokens": "トークン",
       "recomputedMark": "トークンから Anthropic の定価で算出（報告されたコストなし）",
       "rowSmall": "その他の小規模プロジェクト：{{count}}",
+      "heroList": "トークン単価での額",
+      "heroReal": "定額プランの実コスト",
+      "heroPoints": "メーター {{pts}} ポイント",
       "pending": "保留中",
       "pendingWhy": "最後のメーター読み取りの後"
     }

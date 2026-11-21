@@ -810,6 +810,9 @@
       "tokens": "Tokens",
       "recomputedMark": "calculé à partir de ses jetons aux prix catalogue d'Anthropic (aucun coût déclaré)",
       "rowSmall": "autres petits projets : {{count}}",
+      "heroList": "Aux prix par token",
+      "heroReal": "Coût réel avec le forfait",
+      "heroPoints": "{{pts}} points du compteur",
       "pending": "en attente",
       "pendingWhy": "après le dernier relevé du compteur"
     }

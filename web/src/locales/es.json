@@ -810,6 +810,9 @@
       "tokens": "Tokens",
       "recomputedMark": "calculado a partir de sus tokens con los precios de lista de Anthropic (sin coste informado)",
       "rowSmall": "otros proyectos pequeños: {{count}}",
+      "heroList": "A precios por token",
+      "heroReal": "Coste real con la tarifa plana",
+      "heroPoints": "{{pts}} puntos del contador",
       "pending": "pendiente",
       "pendingWhy": "después de la última lectura del contador"
     }
