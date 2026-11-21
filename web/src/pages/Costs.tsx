@@ -269,7 +269,8 @@ export default function Costs({ me }: { me?: Principal }) {
     enabled: !badRange,
   })) });
   // A merged list only once every agent's own is in: a missing one would read as "this agent had no expensive run".
-  const runsFailed = runFetches.some((f) => f.isError);
+  // A failed fetch with no list yet says so; a failed refetch keeps the list it had (the next one tries again).
+  const runsFailed = runFetches.some((f) => f.isError && f.data === undefined);
   const runList = runFetches.every((f) => f.data !== undefined) ? runFetches.flatMap((f) => f.data ?? []) : null;
 
   // The price list hangs on the same scope and period as everything else on

@@ -42,11 +42,6 @@ export const asSet = {
 
 /** The days the page offers, and the bucket each opens with. 24 hours until the 30-day default the human chose
  *  (2026-11-21) lands in its own change, with the page's tests moved to explicit ranges. */
-/** A run's token price on the basis the server ranks by and the cost home, Details and Work show: its lines priced with
- * covey's list (measured), else Claude Code's price, else its booked total; null for a run with no figure at all. */
-export const runUSD = (x: { measured_usd?: number | null; engine_usd?: number | null; total_usd: number }): number | null =>
-  x.measured_usd ?? x.engine_usd ?? (x.total_usd > 0 ? x.total_usd : null);
-
 export const DEFAULT_DAYS = 1;
 export const BUCKETS = ["10min", "hour", "10hour", "day", "week", "month"] as const;
 export const defaultBucket = (days: number) => RANGES.find((r) => r.v === days)?.bucket ?? "day";
@@ -89,3 +84,8 @@ export function useCostQuery(drop: readonly string[] = []): string {
   const s = p.toString();
   return s ? `?${s}` : "";
 }
+
+/** A run's token price on the basis the server ranks by and the cost home, Details and Work show: its lines priced with
+ * covey's list (measured), else Claude Code's price, else its booked total; null for a run with no figure at all. */
+export const runUSD = (x: { measured_usd?: number | null; engine_usd?: number | null; total_usd: number }): number | null =>
+  x.measured_usd ?? x.engine_usd ?? (x.total_usd > 0 ? x.total_usd : null);
