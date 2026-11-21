@@ -2,12 +2,16 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -89,32 +93,308 @@ func loadMigrations(fsys fs.FS) ([]migration, error) {
 	return out, nil
 }
 
-// MigrateUp applies all pending migrations, guarded by pg_advisory_lock.
+// NameMismatch is one disagreement between a migration file and the
+// schema_migrations rows of a database. There are two shapes, and both end in a
+// migration that is skipped or run twice:
+//
+//   - the same number under another name (Applied != File, AppliedVersion ==
+//     Version): the file is skipped silently and forever, because
+//     MigrateUp sees "version applied";
+//   - the same migration under another number (Renumbered): a branch build ran
+//     it as 0085, main renumbered it to 0087 on merge. By version the file is
+//     new, and it would run a second time.
+//
+// Two refinements of those, for rows that cannot simply be moved:
+//
+//   - RecordedAs: the row of the first shape is for a migration main carries
+//     under another number, and that number already has its own row. The row to
+//     move has nowhere to go; it is the stale one.
+//   - Candidates: the row of the second shape fits more than one file. Which one
+//     the database ran is not something the names can say.
+type NameMismatch struct {
+	Version        int       // the number of the file on disk
+	File           string    // the name on disk
+	AppliedVersion int       // the number the database recorded
+	Applied        string    // the name the database recorded
+	AppliedAt      time.Time // when that row was written
+	RecordedAs     string    // the file the row's migration is already recorded as, if any
+	Candidates     []string  // every file that fits the row, when more than one does
+}
+
+// Ambiguous reports that the row fits more than one file.
+func (m NameMismatch) Ambiguous() bool { return len(m.Candidates) > 1 }
+
+// Renumbered reports the second shape: the database ran this migration, under
+// another number.
+func (m NameMismatch) Renumbered() bool { return m.Version != m.AppliedVersion }
+
+// String names both sides. It does not say which side is the right one: the
+// guard cannot tell a database that ran a branch build from a binary that is
+// the branch, and it cannot tell the same migration from a different one with
+// the same name.
+func (m NameMismatch) String() string {
+	at := m.AppliedAt.UTC().Format(time.RFC3339)
+	if m.Ambiguous() {
+		return fmt.Sprintf("this database carries a migration of the same name, %s, as version %d (applied at %s); this binary has %s — ambiguous: check which one the database ran",
+			m.Applied, m.AppliedVersion, at, strings.Join(m.Candidates, " and "))
+	}
+	if m.Renumbered() {
+		return fmt.Sprintf("this database carries a migration of the same name, %s, as version %d (applied at %s); this binary has it as %s under version %d. If it is the same migration, it would run a second time",
+			m.Applied, m.AppliedVersion, at, m.File, m.Version)
+	}
+	s := fmt.Sprintf("this database applied version %d as %s (at %s), from another build; this binary carries %s under the same number",
+		m.Version, m.Applied, at, m.File)
+	if m.RecordedAs != "" {
+		s += fmt.Sprintf("; that migration is already recorded as %s", m.RecordedAs)
+	}
+	return s
+}
+
+// Statement is the one-row change that settles the row, or empty where the
+// names cannot say what to do:
+//
+//   - a renumbered migration: the update that records it under the number this
+//     binary carries it as;
+//   - a row whose migration is already recorded under main's number (RecordedAs):
+//     the delete of the stale row — an update would collide with the row that is
+//     already there;
+//   - a row that fits several files, or a number applied under another name with
+//     nothing to move the row to: none, which side is wrong is a decision.
+//
+// It is printed for a person to run, after a backup and after they have checked
+// that the SQL of the two files is the same; nothing here runs it.
+func (m NameMismatch) Statement() string {
+	if m.Ambiguous() {
+		return ""
+	}
+	if m.RecordedAs != "" {
+		return fmt.Sprintf("DELETE FROM schema_migrations WHERE version=%d", m.AppliedVersion)
+	}
+	if !m.Renumbered() {
+		return ""
+	}
+	return fmt.Sprintf("UPDATE schema_migrations SET version=%d, name='%s' WHERE version=%d",
+		m.Version, strings.ReplaceAll(m.File, "'", "''"), m.AppliedVersion)
+}
+
+// NameMismatchError says that migration files and the database disagree on a
+// number or a name. loadMigrations refuses two files with one number in one
+// tree; this is the same rule against the database. Every mismatch is listed,
+// so that fixing the first does not reveal the second only at the next start.
+type NameMismatchError struct {
+	Mismatches []NameMismatch
+}
+
+// NameMismatchRemedy is what to do about it, worded by who can act, because
+// which side is wrong depends on which build ran against the database:
+//
+//   - the binary is an unmerged branch: its migration is renumbered in the
+//     source (CLAUDE.md);
+//   - the database ran a branch build whose numbering main changed: the operator
+//     records the row under main's number — after a backup, and after checking
+//     that the SQL is the same;
+//   - a row of a migration main never got is a developer's decision.
+const NameMismatchRemedy = "if this binary is an unmerged branch, renumber its migration in the source (CLAUDE.md); if the database ran a branch build whose numbering main changed, record the row under main's number after a backup and after checking that the SQL is the same (`covey doctor` prints the statement); a row of a migration main never got is a developer's decision. `covey serve` refuses until rows and files agree"
+
+func (e *NameMismatchError) Error() string {
+	lines := make([]string, len(e.Mismatches))
+	for i, m := range e.Mismatches {
+		lines[i] = m.String()
+	}
+	return strings.Join(lines, "\n") + "\n" + NameMismatchRemedy
+}
+
+type appliedMigration struct {
+	name      string
+	appliedAt time.Time
+}
+
+// appliedMigrations reads schema_migrations per version, not as a water mark —
+// see MigrateUp for why a MAX(version) is the wrong question.
+func appliedMigrations(ctx context.Context, q interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+}) (map[int]appliedMigration, error) {
+	rows, err := q.Query(ctx, "SELECT version, name, applied_at FROM schema_migrations")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int]appliedMigration{}
+	for rows.Next() {
+		var v int
+		var a appliedMigration
+		if err := rows.Scan(&v, &a.name, &a.appliedAt); err != nil {
+			return nil, err
+		}
+		out[v] = a
+	}
+	return out, rows.Err()
+}
+
+// slug is a migration name without its number: "0087_stage_keys" → "stage_keys".
+// A migration renumbered on merge keeps it.
+func slug(name string) string {
+	_, rest, ok := strings.Cut(name, "_")
+	if !ok {
+		return name
+	}
+	return rest
+}
+
+// isUndefinedTable is Postgres's "no such table" (42P01), matched by code: the
+// text of other errors mentions the table too ("permission denied for table
+// schema_migrations").
+func isUndefinedTable(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "42P01"
+}
+
+// unapplied returns the migrations this database has not seen, and refuses —
+// listing every case at once — when files and rows disagree about a name:
+//
+//   - a version the database has seen carries another name than the file;
+//   - a file the database has not seen by version has the name of a row whose own
+//     file is gone (same name after the number, another number). That is a
+//     migration renumbered after the database ran it; without this it runs a
+//     second time. A new file that merely repeats the name of a migration still
+//     in the tree is not that, and is left alone.
+//
+// One row that several unapplied files fit is one mismatch naming every
+// candidate. A same-number mismatch whose migration is already recorded under
+// the number of another file says so (RecordedAs).
+//
+// A database row without any file (a database ahead of the binary) is left alone.
+func unapplied(ms []migration, applied map[int]appliedMigration) ([]migration, error) {
+	onDisk := make(map[string]bool, len(ms))
+	// The file of a slug applied under its own name, the lowest: an orphan row
+	// of that slug may be a stale row of it, or the branch run of a second
+	// file of the slug waiting to run. The names cannot tell which, so such a
+	// row is ambiguous: refused with every candidate, no statement.
+	recorded := map[string]string{}
+	for _, m := range ms {
+		onDisk[m.name] = true
+		if a, ok := applied[m.version]; ok && a.name == m.name {
+			if _, seen := recorded[slug(m.name)]; !seen {
+				recorded[slug(m.name)] = m.name
+			}
+		}
+	}
+	// Rows whose name no file carries, by slug — the lowest version wins, so the
+	// message does not depend on map order.
+	versions := make([]int, 0, len(applied))
+	for v := range applied {
+		versions = append(versions, v)
+	}
+	sort.Ints(versions)
+	orphans := map[string]int{}
+	for _, v := range versions {
+		if onDisk[applied[v].name] {
+			continue
+		}
+		if _, dup := orphans[slug(applied[v].name)]; !dup {
+			orphans[slug(applied[v].name)] = v
+		}
+	}
+
+	var out []migration
+	var bad []NameMismatch
+	// The mismatch a row's slug already has, so that a second file of that slug
+	// joins it as a candidate instead of moving the same row again.
+	moved := map[string]int{}
+	for _, m := range ms {
+		a, ok := applied[m.version]
+		switch {
+		case ok && a.name != m.name:
+			bad = append(bad, NameMismatch{Version: m.version, File: m.name, AppliedVersion: m.version, Applied: a.name, AppliedAt: a.appliedAt,
+				RecordedAs: recordedAs(ms, applied, m, a)})
+		case ok:
+		default:
+			v, orphan := orphans[slug(m.name)]
+			if !orphan {
+				out = append(out, m)
+				continue
+			}
+			if i, seen := moved[slug(m.name)]; seen {
+				c := &bad[i]
+				if c.Candidates == nil {
+					c.Candidates = []string{c.File}
+				}
+				c.Candidates = append(c.Candidates, m.name)
+				continue
+			}
+			moved[slug(m.name)] = len(bad)
+			mm := NameMismatch{Version: m.version, File: m.name, AppliedVersion: v, Applied: applied[v].name, AppliedAt: applied[v].appliedAt}
+			if r, ok := recorded[slug(m.name)]; ok {
+				mm.Candidates = []string{r, m.name}
+			}
+			bad = append(bad, mm)
+		}
+	}
+	if len(bad) > 0 {
+		return nil, &NameMismatchError{Mismatches: bad}
+	}
+	return out, nil
+}
+
+// recordedAs is the file that the migration of a mismatched row is already
+// recorded as: another file with the row's name after the number, whose own
+// version carries its own name in the database. The row at m's number is then
+// the stale one — this is what a build from before the guard leaves, when it
+// skipped m by version and ran the same migration again under main's number.
+// None while a file of the row's name has not run: the row may be its branch
+// run, and deleting it would run that file a second time.
+func recordedAs(ms []migration, applied map[int]appliedMigration, m migration, row appliedMigration) string {
+	found := ""
+	for _, f := range ms {
+		if f.version == m.version || slug(f.name) != slug(row.name) {
+			continue
+		}
+		a, ok := applied[f.version]
+		if !ok {
+			// A file of the row's name still waits to run: the row may be its
+			// branch run, not a stale copy of the recorded one. No DELETE.
+			return ""
+		}
+		if found == "" && a.name == f.name {
+			found = f.name
+		}
+	}
+	return found
+}
+
 // Pending names the migrations this database has not seen yet — read, without
 // applying anything. It exists so that an operator can ask what a restart is
 // about to do to their database BEFORE they restart, which is the moment they
-// would want to have a backup.
+// would want to have a backup. It asks the question MigrateUp asks, version by
+// version, and returns a *NameMismatchError where MigrateUp would refuse.
 func Pending(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) ([]string, error) {
 	all, err := loadMigrations(fsys)
 	if err != nil {
 		return nil, err
 	}
-	var current int
 	// A database that has never been migrated has no table yet — and then
 	// everything is pending, which is the right answer and not an error.
-	err = pool.QueryRow(ctx, "SELECT COALESCE(MAX(version),0) FROM schema_migrations").Scan(&current)
-	if err != nil && !strings.Contains(err.Error(), "schema_migrations") {
+	applied, err := appliedMigrations(ctx, pool)
+	if err != nil {
+		// Only "no such table" means never migrated. Any other error — a
+		// permission denied on the table, say — is not an empty database.
+		if !isUndefinedTable(err) {
+			return nil, err
+		}
+		applied = nil
+	}
+	todo, err := unapplied(all, applied)
+	if err != nil {
 		return nil, err
 	}
 	var out []string
-	for _, m := range all {
-		if m.version > current {
-			out = append(out, m.name)
-		}
+	for _, m := range todo {
+		out = append(out, m.name)
 	}
 	return out, nil
 }
 
+// MigrateUp applies all pending migrations, guarded by pg_advisory_lock.
 func MigrateUp(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) (applied int, err error) {
 	ms, err := loadMigrations(fsys)
 	if err != nil {
@@ -141,27 +421,20 @@ func MigrateUp(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) (applied int
 	// merge: two branches hand out their numbers against the same main, the
 	// second merges with the smaller one. Skipped silently and forever, because
 	// on the next start the mark is unchanged and still as high.
-	seen := map[int]bool{}
-	rows, err := conn.Query(ctx, "SELECT version FROM schema_migrations")
+	//
+	// The name counts too: a version applied under another name, or a name applied
+	// under another version, is the same collision one step later (the branch
+	// merged after the other one ran). It is refused before anything is applied,
+	// like two files with one number.
+	seen, err := appliedMigrations(ctx, conn)
 	if err != nil {
 		return 0, err
 	}
-	for rows.Next() {
-		var v int
-		if err := rows.Scan(&v); err != nil {
-			rows.Close()
-			return 0, err
-		}
-		seen[v] = true
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
+	todo, err := unapplied(ms, seen)
+	if err != nil {
 		return 0, err
 	}
-	for _, m := range ms {
-		if seen[m.version] {
-			continue
-		}
+	for _, m := range todo {
 		tx, err := conn.Begin(ctx)
 		if err != nil {
 			return applied, err

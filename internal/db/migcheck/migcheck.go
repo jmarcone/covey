@@ -4,10 +4,10 @@
 //
 // Two branches hand out their numbers against the same main, and each one is
 // fine on its own. Review sees one diff, `loadMigrations` (migrate.go) rejects
-// a shared number only once both files sit in one tree, and `MigrateUp` skips
-// by version alone — so a collision shows up after review, or as a migration
-// that never ran. This package is the comparison that closes that gap before
-// the merge.
+// a shared number only once both files sit in one tree, and `MigrateUp` refuses
+// a version, or a name, that a database applied under another one (migrate.go,
+// `unapplied`) — but only at start-up, so a collision shows up after review.
+// This package is the comparison that closes that gap before the merge.
 //
 // It does no I/O and has no database: callers read the files, the pull
 // requests or the schema_migrations rows and hand over plain values. The CI

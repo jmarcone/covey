@@ -8,6 +8,53 @@ Migrations run by themselves: `covey serve` applies what is missing at startup,
 under an advisory lock, so several instances against one database do not race.
 An upgrade is therefore usually "pull the new binary, restart".
 
+The one start that is refused: a migration number the database applied under
+another name, or a migration name it applied under another number — what a
+branch build leaves behind when the numbering was changed on merge. `covey serve`
+then applies nothing and names both sides, and `covey doctor` shows the same
+finding as blocking. Who fixes it depends on which side is the unmerged one:
+
+- **The binary is the branch.** Its migration is renumbered in the source, so
+  that it does not take a number main already has. That is a developer's change.
+- **The database ran a branch build, and the binary is main.** Every file in the
+  binary is main's; the side that is not on main exists only as a row in
+  `schema_migrations`, and no source change can fix it. The operator records
+  that row under the number main gave the migration. Take a database backup
+  first, and check that the SQL is the same (`git diff` of the branch's file
+  against main's). `covey doctor` prints the exact statement for a migration
+  that main renumbered:
+
+  ```sql
+  UPDATE schema_migrations SET version=<main's number>, name='<main's file name, without .up.sql>' WHERE version=<the number in the database>;
+  ```
+
+  If the row's migration is already recorded under another number (a file of
+  the same name after the number, applied under its own name) and no other
+  file of that name is waiting to run, the doctor prints a DELETE for the
+  stale row instead; the same `git diff` check applies. Where a file of that
+  name is still waiting, the row may be its branch run rather than a stale
+  copy, and the doctor prints no statement. For a row that fits more than one
+  file (several files of the same name after the number) it prints no
+  statement either. Check which one the database ran: a stale copy of a file
+  already recorded under its own number is deleted (the DELETE above); the
+  branch run of a waiting file is moved to that file's number (the UPDATE
+  above). Moving a stale copy onto a waiting file would mark it applied
+  without running it.
+
+  Nothing runs it for you, and `covey serve` does not rewrite the row itself;
+  after it, the next start applies what is missing and does not run the moved
+  migration a second time. A migration whose number agrees but whose name does
+  not, or a row of a migration main never got, has nothing to move the row to
+  and is a developer's decision.
+
+The guard matches names after the number, so a row from a migration that was
+later dropped from its branch can meet an unrelated new file of the same name.
+It then refuses and says the migration "would run a second time" — that holds
+only if it is the same migration. Refusing is the safe side; check the two files
+before you move anything. A migration that was renamed on merge, not only
+renumbered, is not recognised: its second run fails or repeats, as it did before
+the guard.
+
 This page lists the upgrades where that is **not** enough — where something has
 to be built, backed up or decided beforehand. Newest first.
 
