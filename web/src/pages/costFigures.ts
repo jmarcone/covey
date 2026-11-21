@@ -1547,6 +1547,11 @@ export type Headline = {
   /** At the lead price (#120: reported where a call carries it, else list):
    *  list = coveyList + outsideList, and its parts below. */
   list: number; coveyList: number;
+  /** covey's work on credentials the meters above do not read (an API key, a seat with no weekly reading in the range), at
+   *  the lead price: in no figure of this headline (#204). */
+  coveyElsewhere: number;
+  /** coveyElsewhere per credential (credId): the page leaves out those another row already shows (the pay-per-token row). */
+  coveyElsewhereBy: Record<string, number>;
   /** null: the sessions on the meters had calls, none with a price of either kind — never $0. */
   outsideList: number | null;
   /** The outside calls priced at the list for want of a reported cost (marked). */
@@ -1597,9 +1602,11 @@ export function headline(cells: CostCells | null | undefined): Headline | null {
   const m = ext?.meter;
   if (!cells || !m || m.credentials.length === 0) return null;
   const seats = new Set(m.credentials.map((c) => credId(c.secret_key, c.secret_slot)));
-  let coveyReported = 0;
+  let coveyReported = 0, coveyElsewhere = 0;
+  const coveyElsewhereBy: Record<string, number> = {};
   for (const c of cells.cells) {
-    if (!seats.has(credId(c.secret_key, c.secret_slot))) continue;
+    const id = credId(c.secret_key, c.secret_slot);
+    if (!seats.has(id)) { const v = leadOf(c); coveyElsewhere += v; coveyElsewhereBy[id] = (coveyElsewhereBy[id] ?? 0) + v; continue; }
     coveyReported += c.engine_usd ?? 0;
   }
   const realParts = sourceRealParts(ext);
@@ -1652,7 +1659,7 @@ export function headline(cells: CostCells | null | undefined): Headline | null {
   else if (m.points < 3 || m.point_rate_mixed && real / Math.max(m.point_rate, 1e-12) < 3) why = "movement";
   else if (!(metered >= 0.01) || !(real > 0)) why = "list";
   return {
-    list: coveyList + (outsideList ?? 0), coveyList, outsideList, outsideRecomputed, table,
+    list: coveyList + (outsideList ?? 0), coveyList, coveyElsewhere, coveyElsewhereBy, outsideList, outsideRecomputed, table,
     reported: coveyReported + (outsideReported ?? 0), coveyReported, outsideReported, outsideCalls, outsideReportedCalls,
     outsideUnpricedTokens: outsideLeadUnpricedTokens,
     sources: own.map((s) => ({ source: s.source, list: byLead.get(s.source)?.lead ?? null, reported: s.reported_usd, calls: s.calls,
@@ -1761,6 +1768,9 @@ export type PayPerTokenCredential = {
   /** The lead figure over those spans: covey's agents, and the outside
    *  sessions linked to the credential (their calls' lead price). */
   coveyList: number;
+  /** covey's work on the credential at the lead price over the same window or spans: where the row shows it, on the basis
+   *  the headline's coveyElsewhereBy uses (a bill's coveyList is Claude Code's reported figure only). */
+  coveyLead: number;
   outsideList: number;
   billed: number | null;
   currencies: UsageCurrency[];
@@ -1822,6 +1832,14 @@ function unionSpans(spans: readonly [number, number][]): [number, number][] {
  *  API key with a measured bill counts by its bill (a charge entered beside
  *  it would be the same money); any other credential by its counted usage
  *  charges where it was billed by usage all through the range. */
+/** covey's own work no row of the page covers, at token prices: the headline's per credential, less what the
+ *  pay-per-token row shows of it. That row covers a credential only over its bill's window or its counted spans, so the
+ *  rest of the credential's work stays here; never below 0. */
+export function coveyElsewhere(byCred: Readonly<Record<string, number>>, ppt: Pick<PayPerTokenHeadline, "credentials"> | null | undefined): number {
+  return Object.entries(byCred).reduce((acc, [id, v]) =>
+    acc + Math.max(0, v - (ppt?.credentials.find((c) => c.id === id)?.coveyLead ?? 0)), 0);
+}
+
 export function payPerTokenHeadline(cells: CostCells | null | undefined, figures: readonly CredentialFigures[], bucketMs: number,
   windowEnd: Date): PayPerTokenHeadline | null {
   if (!cells) return null;
@@ -1842,9 +1860,11 @@ export function payPerTokenHeadline(cells: CostCells | null | undefined, figures
     const outCells = (ext?.cells ?? []).filter((c) => linked.has(c.source));
     const outside = (spans: [number, number][]) => listOverSpans(outCells, spans, bucketMs, from, to, (c) => cellLead(c).lead ?? 0);
     const name = `${key} #${slot}`;
+    const own = cells.cells.filter((c) => credId(c.secret_key, c.secret_slot) === f.id);
     if (f.kind === "api_key" && f.billed?.state === "measured") {
       const w = f.billed.window;
       creds.push({ id: f.id, name, money: "bill", coveyList: f.billed.reported,
+        coveyLead: w ? listOverSpans(own, [[w.start.getTime(), w.comparedUntil.getTime()]], bucketMs, from, to, leadOf) : 0,
         outsideList: w ? outside([[w.start.getTime(), w.comparedUntil.getTime()]]) : 0, billed: f.billed.usd, currencies: [] });
       if (f.billed.status.state === "pending") pending = true;
       continue;
@@ -1852,8 +1872,8 @@ export function payPerTokenHeadline(cells: CostCells | null | undefined, figures
     const u = f.usage;
     if (!u || u.currencies.length === 0 || !u.regimes.every((r) => r === "usage")) continue;
     const spans = unionSpans(countedSpans(u, cells.cost_bases, key, slot, from, to));
-    const own = cells.cells.filter((c) => credId(c.secret_key, c.secret_slot) === f.id);
-    creds.push({ id: f.id, name, money: "charges", coveyList: listOverSpans(own, spans, bucketMs, from, to, leadOf),
+    const coveyLead = listOverSpans(own, spans, bucketMs, from, to, leadOf);
+    creds.push({ id: f.id, name, money: "charges", coveyList: coveyLead, coveyLead,
       outsideList: outside(spans), billed: null, currencies: u.currencies });
     for (const c of u.charges) {
       const cur = c.currency.toUpperCase();

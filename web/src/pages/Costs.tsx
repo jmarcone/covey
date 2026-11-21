@@ -6,7 +6,9 @@ import { api, ApiError, type IndicatorReport, type Principal, type RunCost } fro
 import { exact, fmtBucket, fmtCount, fmtUSD } from "../format";
 import { PriceList } from "../components/PriceList";
 import { CostInsights } from "./CostInsights";
-import { credentialFigures, headline, payPerTokenHeadline, subscriptionDent } from "./costFigures";
+import { CostAnswer } from "./CostAnswer";
+import { answerTable } from "./costAnswerModel";
+import { coveyElsewhere, credentialFigures, headline, payPerTokenHeadline, subscriptionDent } from "./costFigures";
 import { PayPerTokenRow, SubscriptionDentRow } from "./SubscriptionDent";
 import { canSetPlan } from "./PlanPrice";
 import { OutsideOverview } from "./OutsideSessions";
@@ -226,6 +228,9 @@ function ExpensiveRuns({ runs }: { runs: RunCost[] }) {
   );
 }
 
+/** No outside source switched off: the chips are gone in "covey only", and so is what they switched off. */
+const NO_SOURCES: ReadonlySet<string> = new Set();
+
 export default function Costs({ me }: { me?: Principal }) {
   const { t } = useTranslation();
 
@@ -257,6 +262,10 @@ export default function Costs({ me }: { me?: Principal }) {
     else n.delete(PRICES_PARAM);
     return n;
   }, { replace: true });
+  // The outside sources switched off in the chart's chips: the answer table's
+  // rows follow them (#195).
+  const [offSources, setOffSources] = useState<Set<string>>(new Set());
+  const toggleSource = (n: string) => setOffSources((v) => { const x = new Set(v); if (x.has(n)) x.delete(n); else x.add(n); return x; });
   const scope = selected.size === 1 ? [...selected][0] : "org";
   const cells = useCostCells(days, bucket);
   const billed = useBilled(days, bucket);
@@ -321,6 +330,9 @@ export default function Costs({ me }: { me?: Principal }) {
   // and the sessions outside covey (#120): null until a source names a meter.
   const dent = useMemo(() => subscriptionDent(cells.data?.external), [cells.data]);
   const head = useMemo(() => headline(cells.data), [cells.data]);
+  // The answer table (#195): the headline's and the dent's figures as rows.
+  const answer = useMemo(() => (head && dent && cells.data?.external ? answerTable(head, dent, cells.data.external, cells.data.meter ?? [], coveyOnly ? NO_SOURCES : offSources) : null),
+    [head, dent, cells.data, offSources, coveyOnly]);
   const ppt = useMemo(() => payPerTokenHeadline(cells.data, orgFigures, BUCKET_MS[bucket] ?? BUCKET_MS.day, new Date()),
     [cells.data, orgFigures, bucket]);
 
@@ -364,6 +376,31 @@ export default function Costs({ me }: { me?: Principal }) {
         : t("costs.filter.nSelected", { count: selected.size });
   const fmtPeriod = (p: string) => fmtBucket(p, bucket);
 
+  // The agent filter and the "covey only" chip. With the answer table they stand under it, next to the chart they
+  // drive; its rows name the outside sources, so the inclusion note is only said where there is no table (#204).
+  const hasAnswer = !!(answer && head && dent);
+  const filters = (
+    <>
+      <div className="mb-4">
+        <AgentFilter agents={agentList} selected={selected} onChange={setSelected} />
+      </div>
+      {/* The sessions outside covey: in every figure below by default, each
+          figure naming its parts; "covey only" leaves them out (#120). */}
+      {sourcesListed.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 mb-4" data-inclusion>
+          <Chip on={coveyOnly} onClick={() => setCoveyOnly(!coveyOnly)} title={t("costs.incl.coveyOnlyTitle")}>{t("costs.incl.coveyOnly")}</Chip>
+          {(!hasAnswer || coveyOnly || filtered) && (
+            <span className="muted text-xs" data-inclusion-note style={{ maxWidth: 760 }}>
+              {t(coveyOnly ? "costs.incl.coveyOnlyNote" : filtered ? "costs.incl.includedNoteSelected" : "costs.incl.includedNote",
+                { sources: sourcesListed.map((s) => s.source).join(", ") })}
+            </span>
+          )}
+        </div>
+      )}
+    </>
+  );
+  // covey's own work no row of the page covers: the headline's, less what the pay-per-token row shows of each credential.
+  const elsewhere = head ? coveyElsewhere(head.coveyElsewhereBy, ppt) : 0;
   return (
     <div>
       <div className="flex items-baseline gap-3 mb-1">
@@ -379,57 +416,46 @@ export default function Costs({ me }: { me?: Principal }) {
         <Seg value={bucket} onChange={setBucket} options={bucketOptions(t, days)} />
       </div>
 
-      <div className="mb-4">
-        <AgentFilter agents={agentList} selected={selected} onChange={setSelected} />
-      </div>
+      {/* Without an answer table the filters lead, as before; with one they follow it (#204: the answer first). */}
+      {!(answer && head && dent) && filters}
 
-      {/* The sessions outside covey: in every figure below by default, each
-          figure naming its parts; "covey only" leaves them out (#120). */}
-      {sourcesListed.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 mb-4" data-inclusion>
-          <Chip on={coveyOnly} onClick={() => setCoveyOnly(!coveyOnly)} title={t("costs.incl.coveyOnlyTitle")}>{t("costs.incl.coveyOnly")}</Chip>
-          <span className="muted text-xs" data-inclusion-note style={{ maxWidth: 760 }}>
-            {t(coveyOnly ? "costs.incl.coveyOnlyNote" : filtered ? "costs.incl.includedNoteSelected" : "costs.incl.includedNote",
-              { sources: sourcesListed.map((s) => s.source).join(", ") })}
-          </span>
-        </div>
+      {/* The answer, first (#195): one row per consumer of the subscription at
+          token prices and its share of the real cost, the total, the multiple
+          and one sentence. What explains it is in the drawer. */}
+      {answer && head && dent && (
+        <CostAnswer a={answer} h={head} filtered={selected.size > 0} elsewhere={elsewhere}
+          drawer={<SubscriptionDentRow d={dent} filtered={selected.size > 0} h={head}
+            sourceParts={(cells.data?.external?.meter.source_parts ?? []).flatMap((p) => {
+              const s = sourcesListed.find((x) => x.source === p.source);
+              return s ? [{ ...p, before: beforeRange(s, realParts) }] : [];
+            })} />} />
       )}
 
-      {/* The headline: what the subscription really paid, and for whom. */}
-      {dent && <SubscriptionDentRow d={dent} filtered={selected.size > 0} h={head}
-        sourceParts={(cells.data?.external?.meter.source_parts ?? []).flatMap((p) => {
-          const s = sourcesListed.find((x) => x.source === p.source);
-          return s ? [{ ...p, before: beforeRange(s, realParts) }] : [];
-        })} />}
       {/* Pay per token (0152): an API key's bill, usage charges and the
-          monthly meter — its own headline, never added to the seats'. */}
+          monthly meter — its own headline, never added to the seats'. Where
+          the money is per token this is the answer, so it stays directly
+          under the answer table (#195). */}
       {ppt && <PayPerTokenRow h={ppt} filtered={selected.size > 0} />}
 
-      {/* KPIs: over every credential, dollars and tokens of the same lines.
-          One list-price figure leads (#120): Claude Code's price of each
-          call, covey's list price where it reported none (marked), and
-          covey's price table under it only where it differs; the toggle
-          shows the two apart. */}
-      <div className="flex flex-wrap gap-3 mb-4">
-        {fullPrices ? <>
-          <Kpi label={t("costs.fig.reported")} value={fmtUSD(totals.reported + (outside?.reported ?? 0))} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.reported}
-            parts={parts(fmtUSD(totals.reported), (o) => outsideMoney(t, o, "reported"))} />
-          <Kpi label={t("costs.fig.recomputed")} value={fmtUSD(totals.recomputed + (outside?.list ?? 0))} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.recomputed}
-            parts={parts(fmtUSD(totals.recomputed), (o) => outsideMoney(t, o, "list"))} />
-        </> : (
-          <Kpi label={t("costs.lead.label")} value={fmtUSD(lead)} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.reported}
-            parts={outside && split ? <SplitParts stacked lines={leadLines(t, filtered, fmtUSD(totals.reported), split)} /> : undefined}
-            check={priceTableLine(t, lead, totals.recomputed + (outside?.list ?? 0))} />
-        )}
-        <Kpi
-          label={t("costs.inputTokens")}
-          value={fmtCount(input)}
-          sub={t("costs.cachedShare", { pct: input > 0 ? Math.round((cached / input) * 100) : 0 })}
-          parts={tokParts(inputOf)}
-        />
-        <Kpi label={t("costs.outputTokens")} value={fmtCount(output)} sub={exact(output)} parts={tokParts((x) => x.output ?? 0)} />
-        <Kpi label={t("costs.totalTokens")} value={fmtCount(input + output)} parts={tokParts((x) => inputOf(x) + (x.output ?? 0))} />
-      </div>
+      {answer && head && dent && filters}
+
+      {/* Without a subscription meter there is no answer table: the lead
+          figure stands as a tile, as before. One list-price figure leads
+          (#120); the toggle shows covey's price table apart. */}
+      {!answer && (
+        <div className="flex flex-wrap gap-3 mb-4">
+          {fullPrices ? <>
+            <Kpi label={t("costs.fig.reported")} value={fmtUSD(totals.reported + (outside?.reported ?? 0))} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.reported}
+              parts={parts(fmtUSD(totals.reported), (o) => outsideMoney(t, o, "reported"))} />
+            <Kpi label={t("costs.fig.recomputed")} value={fmtUSD(totals.recomputed + (outside?.list ?? 0))} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.recomputed}
+              parts={parts(fmtUSD(totals.recomputed), (o) => outsideMoney(t, o, "list"))} />
+          </> : (
+            <Kpi label={t("costs.lead.label")} value={fmtUSD(lead)} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.reported}
+              parts={outside && split ? <SplitParts stacked lines={leadLines(t, filtered, fmtUSD(totals.reported), split)} /> : undefined}
+              check={priceTableLine(t, lead, totals.recomputed + (outside?.list ?? 0))} />
+          )}
+        </div>
+      )}
 
       {/* Chart */}
       <div className="card mb-4">
@@ -443,7 +469,7 @@ export default function Costs({ me }: { me?: Principal }) {
         </div>
         {metric === "cost" ? (
           <CostExplorer data={cells.data} billed={billed.data} readings={readings.data ?? []} canSetPlan={canSetPlan(me?.Role ?? "")} selected={selected} bucket={bucket} fmtPeriod={fmtPeriod}
-            outside={included} full={fullPrices} onFull={setFullPrices} />
+            outside={included} full={fullPrices} onFull={setFullPrices} off={offSources} onToggleSource={toggleSource} answered={answer?.covers} />
         ) : (
           <TokenExplorer data={cells.data} selected={selected} fmtPeriod={fmtPeriod} outside={included} />
         )}
@@ -451,6 +477,24 @@ export default function Costs({ me }: { me?: Principal }) {
 
       {/* The sessions outside covey (#120): apart or combined, never folded in unannounced. */}
       <OutsideOverview data={cells.data} selected={selected} days={days} bucket={bucket} fmtPeriod={fmtPeriod} />
+
+      {/* The token counts: collapsed, they answer another question (#195). */}
+      <details className="card mb-4" data-tokens>
+        <summary style={{ fontWeight: 600, cursor: "pointer" }}>{t("costs.answer.tokens")}</summary>
+        <div className="flex flex-wrap gap-3 mt-3 mb-4">
+          <Kpi
+            label={t("costs.inputTokens")}
+            value={fmtCount(input)}
+            sub={t("costs.cachedShare", { pct: input > 0 ? Math.round((cached / input) * 100) : 0 })}
+            parts={tokParts(inputOf)}
+          />
+          <Kpi label={t("costs.outputTokens")} value={fmtCount(output)} sub={exact(output)} parts={tokParts((x) => x.output ?? 0)} />
+          <Kpi label={t("costs.totalTokens")} value={fmtCount(input + output)} parts={tokParts((x) => inputOf(x) + (x.output ?? 0))} />
+        </div>
+        <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.mix.title")}</div>
+        <p className="muted text-xs mb-3" style={{ maxWidth: 620 }}>{t("costs.mix.hint")}</p>
+        <TokenMix tokens={tok} split={tokParts((x) => inputOf(x) + (x.output ?? 0))} />
+      </details>
 
       {/* Price list + token types + priciest runs: they hold for every scope */}
       <div className="grid gap-4 mb-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(320px, 100%), 1fr))" }}>
@@ -463,11 +507,6 @@ export default function Costs({ me }: { me?: Principal }) {
             <PriceList rep={indicators.data} />
           )}
         </div>
-        <div className="card">
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.mix.title")}</div>
-          <p className="muted text-xs mb-3">{t("costs.mix.hint")}</p>
-          <TokenMix tokens={tok} split={tokParts((x) => inputOf(x) + (x.output ?? 0))} />
-        </div>
         <div className="card" style={{ gridColumn: "span 1" }}>
           <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.runs.title")}{scope === "org" && selected.size > 0 && <OrgWide />}</div>
           <p className="muted text-xs mb-3">{t("costs.runs.hint")}</p>
@@ -478,7 +517,7 @@ export default function Costs({ me }: { me?: Principal }) {
       {/* Cost insights: per model as Claude Code reported it, and the
           subscription meter per credential. The model lines follow the agent
           filter; what is per credential stays org-wide and says so. */}
-      <CostInsights days={days} figures={orgFigures} agents={selected} outside={included} />
+      <CostInsights days={days} figures={orgFigures} agents={selected} outside={included} answered={answer?.covers} />
     </div>
   );
 }
