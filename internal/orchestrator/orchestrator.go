@@ -2795,7 +2795,7 @@ func (o *Orchestrator) processTask(ctx context.Context, agent agents.Agent, link
 	// a run killed, paused at its budget or cut off with its sandbox never
 	// sends its cost message (the control plane stops reading the moment it
 	// kills), and its lines would stay without a booking.
-	defer o.bookUnreported(context.WithoutCancel(ctx), agent, taskID)
+	defer o.bookUnreported(context.WithoutCancel(ctx), agent, taskID, s.credential())
 
 	// Message loop until blocked/task_done.
 	for {
@@ -2938,11 +2938,22 @@ func engineResultUsage(engine string) bool {
 // what its lines say it spent would be in the measured figures but not in the
 // booked ones, not in the budget and not in the capacity steering.
 //
+// A line whose filing failed has no rows to book. Where the run did not
+// report, it is filed once more first, against cred, the run's credential
+// (FileFailedLines): nothing else would book it where no later line of its
+// session comes. A failure there is logged, and the rows the run has are
+// booked all the same.
+//
 // It cannot book twice: it takes only lines no entry holds and links them, and
 // after the loop no cost message of that run can arrive any more.
-func (o *Orchestrator) bookUnreported(ctx context.Context, agent agents.Agent, taskID uuid.UUID) {
+func (o *Orchestrator) bookUnreported(ctx context.Context, agent agents.Agent, taskID uuid.UUID, cred observability.CredentialRef) {
 	if o.Obs == nil || !engineResultUsage(agent.Runtime) {
 		return
+	}
+	if n, err := o.Obs.FileFailedLines(ctx, agent.ID, taskID, cred); err != nil {
+		o.Log.Warn("filing a run's failed lines again failed", "agent", agent.Slug, "task", taskID, "filed", n, "err", err)
+	} else if n > 0 {
+		o.Log.Info("filed a run's failed lines again", "agent", agent.Slug, "task", taskID, "lines", n)
 	}
 	b, err := o.Obs.BookUnreported(ctx, agent.ID, taskID)
 	if err != nil {
