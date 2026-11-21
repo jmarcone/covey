@@ -384,10 +384,41 @@ func TestHeartbeatSignatureAdvancesAfterASuccessfulRun(t *testing.T) {
 // Cancelling the task does not cancel the run, so this is the one way to reach
 // the release branch from outside: the refresh advances, Complete refuses.
 func TestHeartbeatWatermarkReleasedWhenTheTaskIsDiscardedDuringTheCheck(t *testing.T) {
+	discardHeartbeatDuringTheCheck(t, "puls-verworfen", nil)
+}
+
+// The advance's UPDATE fails, and its outcome is unknown: a kill or shutdown
+// that cancels the run context while the autocommit UPDATE is in flight aborts
+// the read, the server may have committed anyway. So a failed write counts as
+// "may have moved" and the release must still run when Complete then refuses.
+// A trigger makes the advance fail deterministically; the release (to "") goes
+// through, and the watermark must end there, not at the old value.
+func TestHeartbeatWatermarkReleasedWhenTheAdvanceFailsAndTheTaskIsDiscarded(t *testing.T) {
+	discardHeartbeatDuringTheCheck(t, "puls-verworfen-fehler", func(ctx context.Context, s *stack) {
+		if _, err := s.pool.Exec(ctx, `
+			CREATE FUNCTION test_fail_heartbeat_advance() RETURNS trigger AS $$
+			BEGIN
+				IF NEW.last_work_sig = 'issue15!23@42' THEN
+					RAISE EXCEPTION 'advance lost in flight';
+				END IF;
+				RETURN NEW;
+			END $$ LANGUAGE plpgsql;
+			CREATE TRIGGER test_fail_heartbeat_advance BEFORE UPDATE ON agent_heartbeats
+				FOR EACH ROW EXECUTE FUNCTION test_fail_heartbeat_advance();`); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+// discardHeartbeatDuringTheCheck fires a writing heartbeat, waits until its
+// completion check sleeps, runs whileChecking (if any), discards the task over
+// the API and expects the watermark released to "".
+func discardHeartbeatDuringTheCheck(t *testing.T, slug string, whileChecking func(context.Context, *stack)) {
+	t.Helper()
 	s := newStack(t)
 	ctx := context.Background()
 
-	agent, err := s.registry.Create(ctx, s.orgID, "puls-verworfen", "Puls verworfen", "mock", &s.adminID)
+	agent, err := s.registry.Create(ctx, s.orgID, slug, "Puls verworfen", "mock", &s.adminID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -432,6 +463,9 @@ func TestHeartbeatWatermarkReleasedWhenTheTaskIsDiscardedDuringTheCheck(t *testi
 	case <-entered:
 	case <-time.After(20 * time.Second):
 		t.Fatal("the completion check never ran")
+	}
+	if whileChecking != nil {
+		whileChecking(ctx, s)
 	}
 	tasks, err := s.backlog.ListByAgent(ctx, agent.ID, true)
 	if err != nil {

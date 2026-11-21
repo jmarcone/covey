@@ -983,13 +983,18 @@ func (o *Orchestrator) releaseWorkSignature(ctx context.Context, agentID uuid.UU
 
 // rememberWorkSignature advances the signature that was last fired on. Best
 // effort: if it fails, the next tick wakes the agent at most once too often —
-// which is more harmless than a missed run. Reports whether the write went through.
+// which is more harmless than a missed run.
+//
+// Reports whether the watermark MAY have moved: false only when nothing was
+// sent. An error does not prove the write did not land — a kill or shutdown
+// that cancels ctx while the autocommit UPDATE is in flight aborts the read,
+// and the server may already have committed it. The caller's release must
+// then still run; releasing a write that did not land only wakes once more.
 func (o *Orchestrator) rememberWorkSignature(ctx context.Context, agentID uuid.UUID, name, sig string) bool {
 	if _, err := o.Pool.Exec(ctx,
 		"UPDATE agent_heartbeats SET last_work_sig=$3 WHERE agent_id=$1 AND name=$2",
 		agentID, name, sig); err != nil {
 		o.Log.Warn("advance heartbeat signature", "agent", agentID, "name", name, "err", err)
-		return false
 	}
 	return true
 }
@@ -1021,9 +1026,10 @@ func (o *Orchestrator) rememberWorkSignature(ctx context.Context, agentID uuid.U
 // one work check — and only for runs that wrote something at all; a silent run
 // does not even get that far.
 //
-// Reports whether the watermark was actually written: the caller releases it
-// again when the task then fails to end, and must not touch one the run never
-// moved.
+// Reports whether the watermark may have been written (see
+// rememberWorkSignature: a failed UPDATE counts, its outcome is unknown): the
+// caller releases it again when the task then fails to end, and must not touch
+// one the run never moved.
 func (o *Orchestrator) refreshWorkSignature(ctx context.Context, agentID, orgID uuid.UUID, name string, since time.Time) bool {
 	var condition string
 	if err := o.Pool.QueryRow(ctx,
