@@ -1465,22 +1465,38 @@ describe("the incomplete marks of the data checks (#178)", () => {
     expect(parts("[data-chart-title]")).toEqual(["tokenPrice"]);
   });
 
-  it("“covey only” leaves the outside part out, and its mark with it", async () => {
+  it("“covey only” leaves the outside part out of the chips and tiles, but the answer card keeps its outside rows and their marks", async () => {
     serve(cells(), "/costs?only=covey", report(c1, failed("c5", "unpriced", { unpriced: ["x"], unpriced_agents: ["x"] })));
-    expect(await headlineMarks()).toEqual(["tokenPrice"]);
+    // The card is the whole dent under covey only (#195): its operator and project rows stand, and the stopped
+    // uploader's mark with them (#179 merge review).
+    expect(await headlineMarks()).toEqual(["outside", "tokenPrice"]);
+    expect(answerRow("operator")).not.toBeNull();
     expect(parts("[data-inclusion]")).toEqual([]);
   });
 
-  // Review round 2, finding 17: a model only outside calls used marks the
-  // token prices where they are included, and not covey's alone.
-  it("a model only outside calls used: marked with the outside sessions included, not under “covey only”", async () => {
+  // Review round 2, finding 17: a model only outside calls used marks the token prices where the outside sessions are
+  // counted: everywhere they are included, and on the answer card always (its outside rows stand under covey only too).
+  it("a model only outside calls used: marked where the outside sessions are counted, the answer card always", async () => {
     const outsideOnly = failed("c5", "unpriced", { unpriced: ["x"], unpriced_outside: ["x"] });
     serve(cells(), "/costs", report(outsideOnly));
     expect(await headlineMarks()).toEqual(["tokenPrice"]);
     cleanup();
     serve(cells(), "/costs?only=covey", report(failed("c3", "drops", { drops: 1, last_drop_at: H19 }), outsideOnly));
-    expect(await headlineMarks()).toEqual(["multiple"]);
-    expect(document.querySelectorAll("[data-incomplete='tokenPrice']").length).toBe(0);
+    expect(await headlineMarks()).toEqual(["multiple", "tokenPrice"]);
+    // Off the card, covey's own figures carry no outside model's mark.
+    expect(document.querySelectorAll("[data-chart-title] [data-incomplete='tokenPrice'], [data-models-title] [data-incomplete='tokenPrice']").length).toBe(0);
+  });
+
+  it("a call booked twice (c4) marks the token counts in the Tokens drawer", async () => {
+    serve(cells(), "/costs", report(failed("c4", "duplicates", { external_duplicates: 0, agent_duplicates: 2 })));
+    await answerReady();
+    await waitFor(() => expect(parts("[data-tokens-incomplete]")).toEqual(["tokenPrice"]));
+    cleanup();
+    serve(cells(), "/costs", report(failed("c5", "unpriced", { unpriced: ["x"], unpriced_agents: ["x"] })));
+    await answerReady();
+    await waitFor(() => expect(parts("[data-answer-incomplete]")).toEqual(["tokenPrice"]));
+    // An unpriced model changes no token count: no mark there.
+    expect(parts("[data-tokens-incomplete]")).toEqual([]);
   });
 
   it("/costs/outside: a stopped uploader and an unpriced model mark the page; an agent line booked twice does not", async () => {

@@ -383,6 +383,9 @@ export default function Costs({ me }: { me?: Principal }) {
   const health = useCostHealth();
   const incomplete = incompleteParts(health.data, { agents: true, outside: included != null });
   const outsideMark = coveyOnly ? [] : incomplete.outside;
+  // The answer card is the whole dent under "covey only" too (#195): its operator and project rows stand, so their
+  // marks do as well, whatever the chips and tiles leave out (#179 merge review).
+  const cardMarks = incompleteParts(health.data, { agents: true, outside: true });
   // Per credential: a reset nobody recorded on its meter, and a stopped
   // uploader of a source on its seat while the outside part is included,
   // leave its own real cost and multiples short — its block and its meter
@@ -442,10 +445,10 @@ export default function Costs({ me }: { me?: Principal }) {
           and one sentence. What explains it is in the drawer. */}
       {answer && head && dent && (
         <CostAnswer a={answer} h={head} filtered={selected.size > 0} elsewhere={elsewhere}
-          marks={incomplete.multiple.length + outsideMark.length + incomplete.tokenPrice.length > 0 && <>
-            <IncompleteMark checks={incomplete.multiple} part="multiple" />
-            <IncompleteMark checks={outsideMark} part="outside" />
-            <IncompleteMark checks={incomplete.tokenPrice} part="tokenPrice" />
+          marks={cardMarks.multiple.length + cardMarks.outside.length + cardMarks.tokenPrice.length > 0 && <>
+            <IncompleteMark checks={cardMarks.multiple} part="multiple" />
+            <IncompleteMark checks={cardMarks.outside} part="outside" />
+            <IncompleteMark checks={cardMarks.tokenPrice} part="tokenPrice" />
           </>}
           drawer={<SubscriptionDentRow d={dent} filtered={selected.size > 0} h={head}
             sourceParts={(cells.data?.external?.meter.source_parts ?? []).flatMap((p) => {
@@ -510,7 +513,11 @@ export default function Costs({ me }: { me?: Principal }) {
 
       {/* The token counts: collapsed, they answer another question (#195). */}
       <details className="card mb-4" data-tokens>
-        <summary style={{ fontWeight: 600, cursor: "pointer" }}>{t("costs.answer.tokens")}</summary>
+        <summary style={{ fontWeight: 600, cursor: "pointer" }}>
+          {t("costs.answer.tokens")}
+          {/* A call booked twice (c4) inflates the token counts: marked where they stand (#179 merge review). */}
+          <span data-tokens-incomplete style={{ marginLeft: 8, fontWeight: 400 }}><IncompleteMark checks={incomplete.tokenPrice.filter((c) => c.id === "c4")} part="tokenPrice" /></span>
+        </summary>
         <div className="flex flex-wrap gap-3 mt-3 mb-4">
           <Kpi
             label={t("costs.inputTokens")}

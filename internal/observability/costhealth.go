@@ -255,10 +255,10 @@ func credName(key string, slot int) string { return fmt.Sprintf("%s #%d", key, s
 
 // readSources is, per seat (credName), the source of weekly readings the
 // page reads that seat's real cost and multiple from: pickCoverage's rule
-// (the most readings in (since, now], then usage_cmd, manual, inband) over
-// the meter's own rows. C2 and C3 look at that source alone, so a reading
-// typed in beside an in-band series neither turns C2 green nor C3 red while
-// the figure does not read it.
+// over the meter's own rows. Since #214 the weekly window is one timeline of
+// every reader (source "merged"), so C2 and C3 read the same merged meter the
+// page does: a reading from any source keeps C2 fresh, and one that falls
+// more than a point below another reader's in the same week is a C3 drop.
 func readSources(rows []meterRow, since, now time.Time) map[string]string {
 	type seat struct {
 		key  string
