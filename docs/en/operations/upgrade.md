@@ -33,9 +33,13 @@ finding as blocking. Who fixes it depends on which side is the unmerged one:
   file of that name is waiting to run, the doctor prints a DELETE for the
   stale row instead; the same `git diff` check applies. Where a file of that
   name is still waiting, the row may be its branch run rather than a stale
-  copy, and the doctor prints no statement. For a row that fits more than one file
-  (several files of the same name after the number) it prints no statement:
-  check which one the database ran, then write the UPDATE yourself.
+  copy, and the doctor prints no statement. For a row that fits more than one
+  file (several files of the same name after the number) it prints no
+  statement either. Check which one the database ran: a stale copy of a file
+  already recorded under its own number is deleted (the DELETE above); the
+  branch run of a waiting file is moved to that file's number (the UPDATE
+  above). Moving a stale copy onto a waiting file would mark it applied
+  without running it.
 
   Nothing runs it for you, and `covey serve` does not rewrite the row itself;
   after it, the next start applies what is missing and does not run the moved
