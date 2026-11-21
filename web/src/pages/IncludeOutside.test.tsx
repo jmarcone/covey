@@ -1399,6 +1399,22 @@ describe("the answer table, re-review (#204)", () => {
     await waitFor(() => expect(document.querySelector("[data-inclusion-note]")).not.toBeNull());
   });
 
+  it("only the bar's row is sticky: a custom range's panel follows the bar, outside it (#218 review)", async () => {
+    serve(cells(), "/costs?from=2026-11-17T17:00:00Z&to=2026-11-17T21:00:00Z&tz=utc");
+    const form = await screen.findByRole("form", { name: t("costs.range.title") });
+    const bar = document.querySelector("[data-filterbar]")!;
+    expect(bar.contains(form)).toBe(false);
+    expect(bar.compareDocumentPosition(form) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("a selection the page has no names for yet still says how many, never 'everyone' (#218 review)", async () => {
+    // A refused range asks no data, so no agent names: the address still selects one agent.
+    serve(cells(), "/costs?from=2026-11-17T21:00:00Z&to=2026-11-17T17:00:00Z&tz=utc&agents=a1");
+    await waitFor(() => expect(document.querySelector("[data-who]")).not.toBeNull());
+    expect(document.querySelector("[data-who]")!.textContent).toContain(t("costs.bar.whoSome", { count: 1 }));
+    expect(document.querySelector("[data-who-clear]")).not.toBeNull();
+  });
+
   it("the Who summary names the selection and clears it in one click; the home says Who is not applied (PR 6)", async () => {
     serve(cells());
     await answerReady();

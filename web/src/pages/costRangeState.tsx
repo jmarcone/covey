@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router";
 import { setDisplayTz } from "../format";
@@ -90,28 +90,30 @@ export type CostRange = ReturnType<typeof useCostRange>;
 
 /** The range and bucket switches, and the custom range's panel when it is open or in force. rangeError: the page's
  *  refusal (the address's own, or the server's code), said in the panel. */
-export function CostRangeControls({ r, rangeError, bucketSwitch = true, leading, trailing }: {
+export function CostRangeControls({ r, rangeError, bucketSwitch = true, leading, trailing, part = "both" }: {
   r: CostRange; rangeError: RangeCode | "unknown" | null;
   /** The bucket matters only where a chart draws periods: the home leaves it out. */
   bucketSwitch?: boolean;
   /** Controls at the start of the row (the filter bar's Who), and at its end (Share). */
   leading?: ReactNode;
   trailing?: ReactNode;
+  /** The switches' row, the custom range's panel, or both: the filter bar keeps only the row sticky. */
+  part?: "row" | "panel" | "both";
 }) {
   const { t } = useTranslation();
   // The meter's readings of the last days, for the picker's helpers (since the last reset, between two readings).
-  const helperReadings = useUsageReadings({ days: 8 }, r.panelOpen || r.custom || r.badRange);
+  const helperReadings = useUsageReadings({ days: 8 }, part !== "row" && (r.panelOpen || r.custom || r.badRange));
   return (
     <>
-      <div className="flex flex-wrap items-center gap-3 mb-4">
+      {part !== "panel" && <div className="flex flex-wrap items-center gap-3 mb-4">
         {leading}
         <div style={{ flex: 1 }} />
         <Seg<number | "custom"> value={r.custom || r.panelOpen || r.badRange ? "custom" : r.days} onChange={r.setRange}
           options={[...rangeOptions(t), { v: "custom", label: t("costs.range.custom") }]} />
         {bucketSwitch && <Seg value={r.bucket} onChange={r.setBucket} options={bucketOptions(t, r.win.days)} />}
         {trailing}
-      </div>
-      {(r.custom || r.panelOpen || r.badRange) && (
+      </div>}
+      {part !== "row" && (r.custom || r.panelOpen || r.badRange) && (
         // Re-made when the range changes from outside (Back, a pasted link), so the fields hold what the address says.
         <RangePanel key={`${r.range.from}-${r.range.to}-${r.tz}`} from={r.shownFrom} to={r.shownTo}
           tz={r.tz} onTz={r.setTz} onApply={r.applyCustom} error={rangeError} readings={helperReadings.data ?? []} />
@@ -125,14 +127,17 @@ export function CostRangeControls({ r, rangeError, bucketSwitch = true, leading,
 export function ShareButton() {
   const { t } = useTranslation();
   const [said, setSaid] = useState<"" | "copied" | "failed">("");
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
   const share = async () => {
+    window.clearTimeout(timer.current);
     try {
       await navigator.clipboard.writeText(window.location.href);
       setSaid("copied");
     } catch {
       setSaid("failed");
     }
-    window.setTimeout(() => setSaid(""), 4000);
+    timer.current = window.setTimeout(() => setSaid(""), 4000);
   };
   return (
     <span className="cost-share">
@@ -144,14 +149,26 @@ export function ShareButton() {
 
 /** Who the page's figures are for: everyone, or a selection with a one-click clear. locked: the page answers for the
  *  whole account and does not apply the selection (the home's answer), said in so many words, never silently. */
-export function WhoSummary({ names, onClear, locked = false }: { names: string[]; onClear?: () => void; locked?: boolean }) {
+export function WhoSummary({ names, count = names.length, onClear, locked = false }: {
+  names: string[];
+  /** How many are selected: more than names while the agents' names are not loaded (a new range, a refused one). */
+  count?: number;
+  onClear?: () => void; locked?: boolean;
+}) {
   const { t } = useTranslation();
-  if (locked) return <span className="cost-who locked" data-who-locked title={t("costs.bar.whoLockedTitle")}>{t("costs.bar.whoLocked")}</span>;
+  const why = `${useId().replace(/[^a-zA-Z0-9_-]/g, "")}-why`;
+  if (locked) {
+    return (
+      <span className="cost-who locked" data-who-locked tabIndex={0} aria-describedby={why} title={t("costs.bar.whoLockedTitle")}>
+        {t("costs.bar.whoLocked")}<span id={why} className="sr-only">{t("costs.bar.whoLockedTitle")}</span>
+      </span>
+    );
+  }
   return (
     <span className="cost-who" data-who>
       <span className="muted">{t("costs.bar.who")}</span>{" "}
-      <b>{names.length === 0 ? t("costs.bar.whoAll") : names.length <= 2 ? names.join(", ") : t("costs.bar.whoSome", { count: names.length })}</b>
-      {names.length > 0 && onClear && <button type="button" className="cost-who-clear" onClick={onClear} aria-label={t("costs.bar.clear")} data-who-clear>×</button>}
+      <b>{count === 0 ? t("costs.bar.whoAll") : names.length === count && count <= 2 ? names.join(", ") : t("costs.bar.whoSome", { count })}</b>
+      {count > 0 && onClear && <button type="button" className="cost-who-clear" onClick={onClear} aria-label={t("costs.bar.clear")} data-who-clear>×</button>}
     </span>
   );
 }
@@ -160,9 +177,14 @@ export function WhoSummary({ names, onClear, locked = false }: { names: string[]
  *  what the figures cover in one place. */
 export function CostFilterBar(props: Parameters<typeof CostRangeControls>[0]) {
   const { t } = useTranslation();
+  // Only the row sticks: the custom range's panel stays open while a custom range is in force, and pinned it would
+  // cover a phone's whole screen (#218 review). It follows the bar in the page instead.
   return (
-    <div className="cost-filterbar" role="region" aria-label={t("costs.bar.label")} data-filterbar>
-      <CostRangeControls {...props} />
-    </div>
+    <>
+      <div className="cost-filterbar" role="region" aria-label={t("costs.bar.label")} data-filterbar>
+        <CostRangeControls {...props} part="row" />
+      </div>
+      <CostRangeControls {...props} part="panel" />
+    </>
   );
 }

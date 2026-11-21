@@ -393,7 +393,7 @@ export default function Costs({ me }: { me?: Principal }) {
       {/* Controls */}
       {/* The filter bar (PR 6): who, covey only, the range and its bucket, and a link that opens this view. */}
       <CostFilterBar r={r} rangeError={rangeError} trailing={<ShareButton />} leading={<>
-        <WhoSummary names={agentList.filter((a) => selected.has(a.id)).map((a) => a.label)} onClear={() => setSelected(new Set())} />
+        <WhoSummary names={agentList.filter((a) => selected.has(a.id)).map((a) => a.label)} count={selected.size} onClear={() => setSelected(new Set())} />
         {sourcesListed.length > 0 && (
           // The sessions outside covey: in every figure by default, each figure naming its parts; "covey only" leaves them out (#120).
           <span className="flex items-center gap-2" data-inclusion>

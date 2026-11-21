@@ -909,7 +909,7 @@
       "whoLockedTitle": "La respuesta abarca toda la cuenta: aquí no se aplica una selección de agentes. La página Detalles filtra por agentes.",
       "share": "Compartir",
       "copied": "Enlace copiado: abre esta vista.",
-      "copyFailed": "Copie la dirección desde la barra del navegador."
+      "copyFailed": "No se pudo copiar: copie la dirección desde la barra del navegador."
     },
     "home": {
       "title": "Costes",
