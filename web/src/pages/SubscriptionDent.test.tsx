@@ -6,6 +6,7 @@ import i18n from "../i18n";
 import { fmtNumber, fmtUSD } from "../format";
 import { mockFetch, renderWithProviders, openDentRow } from "../test/render";
 import { credentialFigures, headline, perCredentialTotals, seatLists, splitPerPeriod, subscriptionDent } from "./costFigures";
+import { SubscriptionDentRow } from "./SubscriptionDent";
 
 // #120, the headline: once Claude Code sessions outside covey report on a
 // subscription meter, the page shows the whole dent in the meters, split
@@ -418,6 +419,186 @@ describe("one rule for the headline, the chart and the agents", () => {
     expect(s.outsideUnreported).toBe(true);
     expect(s.noMultiple).not.toBe("outside");
     for (const a of s.agents) expect(a.realBound).toBe("upTo");
+  });
+});
+
+describe("Costs — the dent's parts without a split reading (#164)", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+  const t = (k: string, o: Record<string, unknown> = {}) => i18n.t(k, o);
+
+  /** A priced reading, covey's and the outside sessions' calls in it, but no
+   *  split step: the hosts send no reported_through watermark yet. */
+  const unreported = () => [
+    step("2026-11-17T18:40:00Z", "2026-11-17T17:40:00Z", 4, false, 300, 151),
+    step("2026-11-17T19:40:00Z", "2026-11-17T18:40:00Z", 2, false, 155, 152),
+  ];
+  const OTHER = "other_token";
+  /** Seat A linked and unreported, seat B named by no source with a covey line (split, L_out = 0). */
+  const mixedSeats = () => {
+    const a = unreported();
+    const bSteps = UNLINKED_STEPS().map((s) => ({ ...s, secret_key: OTHER }));
+    return external([{ steps: a, total: seat(a) }, { steps: bSteps, total: { ...UNLINKED_SEAT(bSteps), secret_key: OTHER } }]);
+  };
+
+  async function dentRow(ext: ExternalUsage) {
+    serve(cells(ext));
+    // The dent row is in the answer table's "How is this computed" drawer (#204).
+    const row = await openDentRow();
+    return { row, group: (name: string) => within(row).getByRole("group", { name }) };
+  }
+  /** A part with no figure: "–", no $0.00 or 0 %, and exactly this reason at the end of its sub. */
+  function expectNoFigure(g: HTMLElement, reason: string) {
+    expect(within(g).getByText("–")).toBeTruthy();
+    expect(g.textContent).not.toMatch(/\$0\.00|0 %/);
+    expect(g.textContent!.endsWith(reason)).toBe(true);
+  }
+  /** The multiple a part's card states (its sub's "≥ n×"). */
+  const cardMultiple = (g: HTMLElement) => g.textContent!.match(/≥ [\d.,]+×/)![0];
+
+  it("marks a part as split only when a split step backs it: covey on any, the outside and both together on a seat with sources", () => {
+    const none = subscriptionDent(external([{ steps: unreported(), total: seat(unreported()) }]))!;
+    expect(none.real).toBeGreaterThan(0);
+    expect([none.covey.split, none.outside.split, none.together.split]).toEqual([false, false, false]);
+    const full = subscriptionDent(EXT())!;
+    expect([full.covey.split, full.outside.split, full.together.split]).toEqual([true, true, true]);
+    // Only a part a split step backs has a multiple.
+    const c = subscriptionDent(mixedSeats())!;
+    expect([c.covey.split, c.outside.split, c.together.split]).toEqual([true, false, false]);
+    expect(c.covey.multiple).not.toBeNull();
+    expect(c.outside.multiple).toBeNull();
+    expect(c.together.multiple).toBeNull();
+  });
+
+  it("(a) one linked seat with nothing reported: covey and the outside part show –, the token price and that the sessions have not reported", async () => {
+    const b = unreported();
+    const ext = external([{ steps: b, total: seat(b) }]);
+    // The outside sessions' calls in the range, at their lead price.
+    ext.cells = [{ period: H18, source: "operator: home", origin: "main", calls: 10, list_usd: 455, measured: {}, reported_usd: 455,
+      reported_calls: 10, tokens: {}, unpriced_tokens: 0, unpriced_calls: 0, lead_usd: 455 }];
+    const { row, group } = await dentRow(ext);
+    expectNoFigure(group("covey agents (internal)"), t("costs.dent.partNotSplit"));
+    expectNoFigure(group("Sessions outside covey"), t("costs.dent.partNotSplit"));
+    // The headline has the work at token prices: it stands in the sub, never a $0.00.
+    expect(group("covey agents (internal)").textContent).toContain(`at token prices ${fmtUSD(343)}`);
+    expect(group("Sessions outside covey").textContent).toContain(`at token prices ${fmtUSD(455)}`);
+    expect(row.querySelector("[data-dent-multiples]")).toBeNull();
+    expect(row.querySelector("[data-dent-sentence]")).toBeNull();
+    expect(row.querySelector("[data-dent-no-multiple]")!.textContent).toBe(t("costs.dent.noMultipleSplit"));
+  });
+
+  it("(b) only outside_unpriced readings: –, and that the outside calls had no price, as the line below says", async () => {
+    const b = [unpricedStep("2026-11-17T18:40:00Z", "2026-11-17T17:40:00Z", 4, 150), unpricedStep("2026-11-17T19:40:00Z", "2026-11-17T18:40:00Z", 2, 100)];
+    const { row, group } = await dentRow(external([{ steps: b, total: seat(b) }]));
+    expectNoFigure(group("covey agents (internal)"), t("costs.dent.partNotSplitUnpriced"));
+    expectNoFigure(group("Sessions outside covey"), t("costs.dent.partNotSplitUnpriced"));
+    expect(row.textContent).not.toMatch(/have not reported/);
+    expect(row.querySelector("[data-dent-multiples]")).toBeNull();
+    expect(row.querySelector("[data-dent-no-multiple]")!.textContent).toBe(t("costs.dent.noMultipleSplitUnpriced"));
+  });
+
+  it("readings that moved with no reported call: –, and that there was no call to split by", async () => {
+    const b = [step("2026-11-17T18:40:00Z", "2026-11-17T17:40:00Z", 4, true, 0, 0), step("2026-11-17T19:40:00Z", "2026-11-17T18:40:00Z", 2, true, 0, 0)];
+    expect(b.every((s) => s.reason === "moved_without_reported_call")).toBe(true);
+    const { row, group } = await dentRow(external([{ steps: b, total: seat(b) }]));
+    expectNoFigure(group("covey agents (internal)"), t("costs.dent.partNotSplitNoCall"));
+    expectNoFigure(group("Sessions outside covey"), t("costs.dent.partNotSplitNoCall"));
+    expect(row.textContent).not.toMatch(/have not reported/);
+    expect(row.querySelector("[data-dent-no-multiple]")!.textContent).toBe(t("costs.dent.noMultipleSplitNoCall"));
+  });
+
+  it("readings not reported and readings with unpriced outside calls: both reasons, on the cards and in the line", async () => {
+    const b = [step("2026-11-17T18:40:00Z", "2026-11-17T17:40:00Z", 4, false, 300, 151),
+      unpricedStep("2026-11-17T19:40:00Z", "2026-11-17T18:40:00Z", 2, 100)];
+    const { row, group } = await dentRow(external([{ steps: b, total: seat(b) }]));
+    expectNoFigure(group("covey agents (internal)"), t("costs.dent.partNotSplitBoth"));
+    expectNoFigure(group("Sessions outside covey"), t("costs.dent.partNotSplitBoth"));
+    expect(row.querySelector("[data-dent-no-multiple]")!.textContent).toBe(t("costs.dent.noMultipleSplitBoth"));
+  });
+
+  it("readings not reported and readings that moved with no call: says some were not reported, on the cards and in the line", async () => {
+    const b = [step("2026-11-17T18:40:00Z", "2026-11-17T17:40:00Z", 4, false, 300, 151),
+      step("2026-11-17T19:40:00Z", "2026-11-17T18:40:00Z", 2, true, 0, 0)];
+    const { row, group } = await dentRow(external([{ steps: b, total: seat(b) }]));
+    expectNoFigure(group("covey agents (internal)"), t("costs.dent.partNotSplitSome"));
+    expectNoFigure(group("Sessions outside covey"), t("costs.dent.partNotSplitSome"));
+    expect(row.textContent).not.toMatch(/through any of them/);
+    expect(row.querySelector("[data-dent-no-multiple]")!.textContent).toBe(t("costs.dent.noMultipleSplitSome"));
+  });
+
+  it("only idle readings: –, and that no priced reading moved the meter", async () => {
+    const b = [step("2026-11-17T18:40:00Z", "2026-11-17T17:40:00Z", 0, true, 0, 0)];
+    const { row, group } = await dentRow(external([{ steps: b, total: seat(b, { split_runs: 0, split_slack_points: 0, split_slack_usd: 0 }) }]));
+    expectNoFigure(group("covey agents (internal)"), t("costs.dent.partNotSplitIdle"));
+    expect(row.querySelector("[data-dent-no-multiple]")!.textContent).toBe(t("costs.dent.noMultipleSplitIdle"));
+  });
+
+  it("(c) seat A linked and unreported, seat B with no source: covey's figure and multiple stand, the outside part and both together –, and every line agrees", async () => {
+    const ext = mixedSeats();
+    const d = subscriptionDent(ext)!;
+    const { row, group } = await dentRow(ext);
+    const covey = group("covey agents (internal)");
+    expect(within(covey).getByText(/^≈ /).textContent).toBe(`≈ ${fmtUSD(d.covey.real)}`);
+    expectNoFigure(group("Sessions outside covey"), t("costs.dent.partNotSplitOutside"));
+    // The line below the cards states covey's multiple as its card does, and – for the rest, with why beneath.
+    expect(row.querySelector("[data-dent-multiples]")!.textContent).toBe(t("costs.dent.multiples", { covey: cardMultiple(covey), outside: "–", together: "–" }));
+    expect(row.querySelector("[data-dent-no-multiple]")!.textContent).toBe(t("costs.dent.noMultipleOutside"));
+    expect(row.textContent).not.toMatch(/No multiples/);
+    expect(row.querySelector("[data-dent-sentence]")).toBeNull();
+    // The per-seat lines: no part a split step does not back is ≈ $0.00.
+    const seats = row.querySelector("[data-dent-seats]")!;
+    expect(seats.textContent).not.toContain(`≈ ${fmtUSD(0)}`);
+    const a = d.seats[0];
+    expect(row.querySelector(`[data-dent-seat="${SEAT} #0"]`)!.textContent).toBe(t("costs.dent.seatLine", { seat: `${SEAT} #0`, real: fmtUSD(a.real!),
+      pts: fmtNumber(a.points, 1), parts: `covey agents (internal) –, outside covey –, not split ≈ ${fmtUSD(a.unsplit)}` }));
+    const bLine = row.querySelector(`[data-dent-seat="${OTHER} #0"]`)!.textContent!;
+    expect(bLine).toContain(`covey agents (internal) ≈ ${fmtUSD(d.seats[1].covey)}, outside covey –, unattributed ≈ ${fmtUSD(PP)}`);
+    expect(bLine.endsWith(t("costs.dent.seatNoSource"))).toBe(true);
+  });
+
+  it("only a seat no source names: covey's multiple stands on the line as on its card; the outside part says no source reports on these meters", async () => {
+    const b = UNLINKED_STEPS();
+    const ext = external([{ steps: b, total: UNLINKED_SEAT(b) }]);
+    const { row, group } = await dentRow(ext);
+    const covey = group("covey agents (internal)");
+    expectNoFigure(group("Sessions outside covey"), t("costs.dent.partNotSplitNoSource"));
+    expect(row.querySelector("[data-dent-multiples]")!.textContent).toBe(t("costs.dent.multiples", { covey: cardMultiple(covey), outside: "–", together: "–" }));
+    expect(row.querySelector("[data-dent-no-multiple]")!.textContent).toBe(t("costs.dent.noMultipleOutsideNoSource"));
+    expect(row.textContent).not.toMatch(/have not reported|a seat they report on/);
+    // The credential view keeps covey's multiple on that seat as a floor too.
+    const [s] = credentialFigures({ cells: cells(ext), bucketMs: 3600_000, windowEnd: new Date("2026-11-17T21:00:00Z") });
+    expect(s.multiple?.kind).toBe("floor");
+  });
+
+  it("states no token price on a – card where the range holds readings billed by usage, which the dent leaves out", () => {
+    const b = unreported();
+    const ext = external([{ steps: b, total: seat(b) }]);
+    const d = subscriptionDent(ext)!, h = headline(cells(ext))!;
+    expect(h.coveyList).toBeGreaterThan(0);
+    const { container, unmount } = renderWithProviders(<SubscriptionDentRow d={d} filtered={false} h={h} />);
+    expect(container.querySelector("[data-dent='covey']")!.textContent).toContain("at token prices");
+    unmount();
+    const { container: c2 } = renderWithProviders(<SubscriptionDentRow d={d} filtered={false} h={{ ...h, usage: 12 }} />);
+    expect(c2.querySelector("[data-dent='covey']")!.textContent).not.toContain("at token prices");
+    expect(c2.querySelector("[data-dent='covey']")!.textContent!.endsWith(t("costs.dent.partNotSplit"))).toBe(true);
+  });
+
+  it("states no token price on a – card where the range holds work before the first or after the last reading, which the dent names as pending", () => {
+    const b = unreported();
+    const ext = external([{ steps: b, total: seat(b) }]);
+    const d = subscriptionDent(ext)!, h = headline(cells(ext))!;
+    const { container } = renderWithProviders(<SubscriptionDentRow d={d} filtered={false} h={{ ...h, unmetered: 3, after: 3 }} />);
+    expect(container.querySelector("[data-dent='covey']")!.textContent).not.toContain("at token prices");
+    expect(container.querySelector("[data-dent='covey']")!.textContent!.endsWith(t("costs.dent.partNotSplit"))).toBe(true);
+  });
+
+  it("keeps every figure and the together multiple when a seat with sources has a split step", async () => {
+    const { row, group } = await dentRow(EXT());
+    expect(within(group("Sessions outside covey")).getByText(/^≈ /)).toBeTruthy();
+    expect(row.querySelector("[data-dent-multiples]")).not.toBeNull();
+    expect(row.querySelector("[data-dent-no-multiple]")).toBeNull();
+    expect(row.querySelector("[data-dent-sentence]")).not.toBeNull();
   });
 });
 

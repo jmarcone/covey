@@ -1432,8 +1432,13 @@ export type FloorMultiple = Extract<Multiple, { kind: "floor" }>;
 
 /** One consumer of the meters: its real cost, its share of the dent, its
  *  points (the steps' attributed points weighted by its share), its list
- *  price over the split steps, and list $ per real $ — a lower bound. */
-export type DentPart = { real: number; share: number | null; points: number; list: number; multiple: FloorMultiple | null };
+ *  price over the split steps, and list $ per real $ — a lower bound.
+ *  split: a split step backs the part (covey's: any step; the outside
+ *  sessions': one on a seat that names a source; both together: the outside
+ *  sessions' too, which implies covey's). Without it `real` is 0 because
+ *  nothing was split, not because the part cost nothing: the page shows no
+ *  figure, never ≈ $0.00, and the part has no multiple (#164). */
+export type DentPart = { real: number; share: number | null; points: number; list: number; multiple: FloorMultiple | null; split: boolean };
 
 /** One seat in the dent. real is null when none of its movement has a plan
  *  price; split: it has a split step. pointsPerList: the seat's k (F3c),
@@ -1699,11 +1704,18 @@ export function subscriptionDent(ext: ExternalUsage | null | undefined): Subscri
   // The meter is shared with whatever does not report (covey can never prove
   // every machine does): a part's real cost is at most r + slack, so its
   // multiple is at least list / (r + slack) — the low end of its range.
-  const part = (r: number, list: number, points: number, slack: number): DentPart => {
+  // Only a part a split step backs has a multiple.
+  const part = (r: number, list: number, points: number, slack: number, split: boolean): DentPart => {
     let mult: FloorMultiple | null = null;
-    if (noMultiple == null && r > 0 && list >= 0.01) mult = { kind: "floor", low: list / (r + slack) };
-    return { real: r, share: share(r), points, list, multiple: mult };
+    if (split && noMultiple == null && r > 0 && list >= 0.01) mult = { kind: "floor", low: list / (r + slack) };
+    return { real: r, share: share(r), points, list, multiple: mult, split };
   };
+  // A split step backs covey's part when there is any; the outside sessions'
+  // part only when a seat that names a source has one (a seat no source
+  // names has no outside calls to split by); both together only with the
+  // outside sessions' part, their work against the money.
+  const coveySplit = m.credentials.some((c) => c.split_steps > 0);
+  const outsideSplit = m.credentials.some((c) => c.sources.length > 0 && c.split_steps > 0);
   // Named only with calls in the range: a project folder with no usage
   // sends claim-only requests (0 calls), and the page never lists those.
   // A source with calls only before the range is named for its real part.
@@ -1715,9 +1727,9 @@ export function subscriptionDent(ext: ExternalUsage | null | undefined): Subscri
     real: priced ? real : null,
     points: m.point_rate_mixed ? null : m.points,
     // The parts' lists at the lead price (#120), an older server's at the list.
-    covey: part(m.covey_real_usd, coveyLead, m.split_covey_points, m.split_covey_slack_usd),
-    outside: part(m.external_real_usd, outsideLead, m.split_external_points, m.split_external_slack_usd),
-    together: part(splitReal, coveyLead + outsideLead, m.split_covey_points + m.split_external_points, m.split_slack_usd),
+    covey: part(m.covey_real_usd, coveyLead, m.split_covey_points, m.split_covey_slack_usd, coveySplit),
+    outside: part(m.external_real_usd, outsideLead, m.split_external_points, m.split_external_slack_usd, outsideSplit),
+    together: part(splitReal, coveyLead + outsideLead, m.split_covey_points + m.split_external_points, m.split_slack_usd, outsideSplit),
     unsplit: { real: m.unsplit_real_usd, share: share(m.unsplit_real_usd), steps: m.unsplit_steps,
       unpricedSteps: m.outside_unpriced_steps, unpricedReal: m.outside_unpriced_real_usd },
     unattributed: { real: m.unattributed_real_usd ?? 0, share: share(m.unattributed_real_usd ?? 0),
