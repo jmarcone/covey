@@ -409,13 +409,13 @@ func TestStageKeyMigration(t *testing.T) {
 			id, agentID, name, pos, color, by)
 		return id
 	}
+	// In SQL, like the columns: the schema stands at 0147 here, and the store
+	// writes the columns of today (topic_key, 0153), which it does not have.
 	task := func(agentID, stageID uuid.UUID, title string) uuid.UUID {
-		tk, err := s.backlog.Create(ctx, s.orgID, agentID, title, "", "manual", 5)
-		if err != nil {
-			t.Fatal(err)
-		}
-		exec("UPDATE backlog_tasks SET stage_id=$2 WHERE id=$1", tk.ID, stageID)
-		return tk.ID
+		id := uuid.New()
+		exec(`INSERT INTO backlog_tasks (id, org_id, agent_id, title, body, origin, priority, stage_id)
+			VALUES ($1,$2,$3,$4,'','manual',5,$5)`, id, s.orgID, agentID, title, stageID)
+		return id
 	}
 	backfilled := func(agentID uuid.UUID) {
 		exec(`UPDATE agent_stages s SET created_at = a.created_at + interval '1 day'
@@ -682,10 +682,9 @@ func TestStageKeyMigration(t *testing.T) {
 		t.Errorf("the rollback must drop stage_keys_merged")
 	}
 	// The name-based auto-follow of the code before 0148, verbatim.
-	back, _ := s.backlog.Create(ctx, s.orgID, a, "nach dem Rollback", "", "manual", 1)
-	exec("UPDATE backlog_tasks SET stage_id=$2 WHERE id=$1", back.ID, aWork)
-	oldFollow(back.ID, "Erledigt")
-	if stageOf(t, s, back.ID) != aDone {
+	back := task(a, aWork, "nach dem Rollback")
+	oldFollow(back, "Erledigt")
+	if stageOf(t, s, back) != aDone {
 		t.Errorf("after the rollback the old auto-follow must find Erledigt")
 	}
 

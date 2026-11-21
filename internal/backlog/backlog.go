@@ -227,12 +227,14 @@ func (s *Store) create(ctx context.Context, orgID, agentID uuid.UUID, title, bod
 	if priority == 0 {
 		priority = 5
 	}
-	// A new task lands in the agent's first stage (if one is defined).
-	row := s.pool.QueryRow(ctx, `INSERT INTO backlog_tasks (id, org_id, agent_id, title, body, origin, priority, stage_id, conversation_id, chat_answer, said_in_call)
+	// A new task lands in the agent's first stage (if one is defined). Its
+	// topic key is written with it, so that an agent's covey/create_task can
+	// route onto a task a person, a webhook or a chat made (#45).
+	row := s.pool.QueryRow(ctx, `INSERT INTO backlog_tasks (id, org_id, agent_id, title, body, origin, priority, stage_id, conversation_id, chat_answer, said_in_call, topic_key)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,
-			(SELECT id FROM agent_stages WHERE agent_id=$3 ORDER BY position, created_at LIMIT 1), $8, $9, $10)
+			(SELECT id FROM agent_stages WHERE agent_id=$3 ORDER BY position, created_at LIMIT 1), $8, $9, $10, NULLIF($11,''))
 		RETURNING `+taskCols,
-		uuid.New(), orgID, agentID, title, body, origin, priority, conversationID, chatAnswer, saidInCall)
+		uuid.New(), orgID, agentID, title, body, origin, priority, conversationID, chatAnswer, saidInCall, TopicKey(title))
 	t, err := scanTask(row)
 	if err != nil {
 		return t, err
@@ -256,13 +258,28 @@ type ChildSpec struct {
 	Priority    int
 	SessionID   string
 	ResumeInput string
+	// Topic is the topic the creator named for the task (covey/create_task's
+	// "topic"); empty means the one its title names (TopicKey).
+	Topic string
 }
 
 // CreateChild creates a task that hangs off an originating task. It inherits
 // the organization and (by default) the agent from it — a task can therefore
 // never fall out of the org of its parent task.
 func (s *Store) CreateChild(ctx context.Context, parentID uuid.UUID, spec ChildSpec) (Task, error) {
-	parent, err := s.Get(ctx, parentID)
+	t, err := createChild(ctx, s.pool, parentID, spec)
+	if err != nil {
+		return t, err
+	}
+	s.notify(ctx, t.AgentID)
+	return t, nil
+}
+
+// createChild is CreateChild on q, without the wake: inside a transaction
+// the NOTIFY has to wait for the commit (TopicTx), or the dispatcher could
+// look for the row before it is there.
+func createChild(ctx context.Context, q querier, parentID uuid.UUID, spec ChildSpec) (Task, error) {
+	parent, err := scanTask(q.QueryRow(ctx, "SELECT "+taskCols+" FROM backlog_tasks WHERE id=$1", parentID))
 	if err != nil {
 		return Task{}, err
 	}
@@ -283,20 +300,19 @@ func (s *Store) CreateChild(ctx context.Context, parentID uuid.UUID, spec ChildS
 		chatAnswer = parent.ChatAnswer
 		saidInCall = parent.SaidInCall
 	}
-	row := s.pool.QueryRow(ctx, `INSERT INTO backlog_tasks
+	topic := TopicKey(spec.Title)
+	if strings.TrimSpace(spec.Topic) != "" {
+		topic = NormalizeTopic(spec.Topic)
+	}
+	row := q.QueryRow(ctx, `INSERT INTO backlog_tasks
 		(id, org_id, agent_id, title, body, origin, priority, parent_task_id,
-		 runtime_session_id, resume_input, stage_id, conversation_id, chat_answer, said_in_call)
+		 runtime_session_id, resume_input, stage_id, conversation_id, chat_answer, said_in_call, topic_key)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8, NULLIF($9,''), NULLIF($10,''),
-			(SELECT id FROM agent_stages WHERE agent_id=$3 ORDER BY position, created_at LIMIT 1), $11, $12, $13)
+			(SELECT id FROM agent_stages WHERE agent_id=$3 ORDER BY position, created_at LIMIT 1), $11, $12, $13, NULLIF($14,''))
 		RETURNING `+taskCols,
 		uuid.New(), parent.OrgID, agentID, spec.Title, spec.Body, spec.Origin, spec.Priority,
-		parentID, spec.SessionID, spec.ResumeInput, conversationID, chatAnswer, saidInCall)
-	t, err := scanTask(row)
-	if err != nil {
-		return t, err
-	}
-	s.notify(ctx, agentID)
-	return t, nil
+		parentID, spec.SessionID, spec.ResumeInput, conversationID, chatAnswer, saidInCall, topic)
+	return scanTask(row)
 }
 
 // AncestorsWithOrigin counts how many ancestors of a task (including the task
@@ -375,16 +391,82 @@ func (s *Store) CountChildren(ctx context.Context, parentID uuid.UUID) (int, err
 	return n, err
 }
 
-// OpenWithTitle says whether the agent already has a non-terminal task with
-// this title. The duplicate protection for self-created tasks: an agent that
-// creates the same task anew on every run would otherwise build itself a queue
-// that never empties.
-func (s *Store) OpenWithTitle(ctx context.Context, agentID uuid.UUID, title string) (bool, error) {
-	var exists bool
-	err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM backlog_tasks
-		WHERE agent_id=$1 AND title=$2 AND state NOT IN ('done','failed','cancelled'))`,
-		agentID, title).Scan(&exists)
-	return exists, err
+// OpenWithTitle finds a non-terminal task of the agent with this title and
+// answers its id. The duplicate protection for self-created tasks: an agent
+// that creates the same task anew on every run would otherwise build itself a
+// queue that never empties. The id goes back to the agent with the refusal,
+// so that it can add to that task instead (covey/add_note).
+func (s *Store) OpenWithTitle(ctx context.Context, agentID uuid.UUID, title string) (uuid.UUID, bool, error) {
+	return openWithTitle(ctx, s.pool, agentID, title)
+}
+
+func openWithTitle(ctx context.Context, q querier, agentID uuid.UUID, title string) (uuid.UUID, bool, error) {
+	var id uuid.UUID
+	err := q.QueryRow(ctx, `SELECT id FROM backlog_tasks
+		WHERE agent_id=$1 AND title=$2 AND state NOT IN ('done','failed','cancelled')
+		ORDER BY updated_at DESC LIMIT 1`,
+		agentID, title).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, false, nil
+	}
+	if err != nil {
+		return uuid.Nil, false, err
+	}
+	return id, true, nil
+}
+
+// OpenByTopic finds the agent's task on a topic that is still open, running
+// or blocked (#45) — the one covey/create_task routes an addendum onto instead
+// of creating a second task. Several: the one updated last. exclude is the
+// asking run's own task, which is never the target: an agent splitting its
+// own work into a subtask of the same topic would otherwise land on itself.
+func (s *Store) OpenByTopic(ctx context.Context, orgID, agentID uuid.UUID, topic string, exclude uuid.UUID) (Task, bool, error) {
+	return openByTopic(ctx, s.pool, orgID, agentID, topic, exclude)
+}
+
+// openByTopic looks in two places and takes the later of what it finds: the
+// newest row with the stored key, on idx_backlog_tasks_agent_topic, and the
+// newest row without a key whose title names the topic. Rows without a key
+// are tasks from before migration 0153 and tasks whose title names no topic;
+// their key is computed here from the title, with the same rule that writes
+// it (TopicKey), rather than backfilled in SQL — one implementation of the
+// rule, not two.
+func openByTopic(ctx context.Context, q querier, orgID, agentID uuid.UUID, topic string, exclude uuid.UUID) (Task, bool, error) {
+	if topic == "" {
+		return Task{}, false, nil
+	}
+	keyed, err := scanTask(q.QueryRow(ctx, "SELECT "+taskCols+` FROM backlog_tasks
+		WHERE agent_id=$2 AND topic_key=$4 AND archived_at IS NULL
+		  AND state IN ('open','in_progress','blocked') AND org_id=$1 AND id <> $3
+		ORDER BY updated_at DESC LIMIT 1`, orgID, agentID, exclude, topic))
+	found := err == nil
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return Task{}, false, err
+	}
+	rows, err := q.Query(ctx, "SELECT "+taskCols+` FROM backlog_tasks
+		WHERE agent_id=$2 AND topic_key IS NULL AND archived_at IS NULL
+		  AND state IN ('open','in_progress','blocked') AND org_id=$1 AND id <> $3
+		ORDER BY updated_at DESC`, orgID, agentID, exclude)
+	if err != nil {
+		return Task{}, false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var t Task
+		if err := rows.Scan(t.scanDest()...); err != nil {
+			return Task{}, false, err
+		}
+		if TopicKey(t.Title) == topic {
+			if !found || t.UpdatedAt.After(keyed.UpdatedAt) {
+				return t, true, nil
+			}
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return Task{}, false, err
+	}
+	return keyed, found, nil
 }
 
 // InProgressTitles are the titles of an agent's tasks in progress, the one
@@ -1138,9 +1220,11 @@ func (s *Store) ListStages(ctx context.Context, agentID uuid.UUID) ([]Stage, err
 }
 
 // querier abstracts pool and transaction so that stage operations can also run
-// inside a transaction (SetTaskStageByName).
+// inside a transaction (SetTaskStageByName), and the topic lookup and the
+// insert of covey/create_task inside one (TopicTx).
 type querier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 	Begin(ctx context.Context) (pgx.Tx, error)
 }
@@ -1522,6 +1606,15 @@ func (s *Store) AddNote(ctx context.Context, taskID uuid.UUID, author, content s
 		VALUES ($1,$2,$3,$4) RETURNING id, task_id, author, content, created_at`,
 		uuid.New(), taskID, author, content).
 		Scan(&n.ID, &n.TaskID, &n.Author, &n.Content, &n.CreatedAt)
+	return n, err
+}
+
+// CountRouted counts the notes a task's run routed onto other tasks instead
+// of creating them — the other half of its width (CountChildren).
+func (s *Store) CountRouted(ctx context.Context, fromTask uuid.UUID) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx,
+		"SELECT COUNT(*) FROM task_notes WHERE routed_from=$1", fromTask).Scan(&n)
 	return n, err
 }
 
