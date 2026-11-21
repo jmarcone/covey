@@ -1070,6 +1070,12 @@
       "reconUsage": "+ {{usd}} op gebruiksbasis",
       "pending": "volgt",
       "pendingWhy": "na de laatste meterstand"
+    },
+    "who": {
+      "exactNote": "Je selectie telt alleen deze agents. De sessies buiten covey ({{sources}}) horen er niet bij: wis de selectie om ze mee te tellen.",
+      "coveyOnlyLocked": "Er zijn agents geselecteerd: de sessies buiten covey horen niet bij een selectie van agents.",
+      "banner": "Gewijzigd: agents selecteren telt nu precies die agents. De sessies buiten covey worden niet meer bij een selectie opgeteld; de antwoordkaart blijft voor het hele account en zegt dat.",
+      "bannerOk": "Begrepen"
     }
   },
   "lang": {

@@ -1070,6 +1070,12 @@
       "reconUsage": "+ {{usd}} on the usage basis",
       "pending": "pending",
       "pendingWhy": "after the last meter reading"
+    },
+    "who": {
+      "exactNote": "Your selection counts these agents only. The sessions outside covey ({{sources}}) are not part of it: clear the selection to include them.",
+      "coveyOnlyLocked": "Agents are selected: the sessions outside covey are not part of a selection of agents.",
+      "banner": "Changed: selecting agents now counts exactly those agents. The sessions outside covey are no longer added to a selection; the answer card stays account-wide and says so.",
+      "bannerOk": "Got it"
     }
   },
   "lang": {

@@ -1070,6 +1070,12 @@
       "reconUsage": "+ {{usd}} auf Nutzungsbasis",
       "pending": "ausstehend",
       "pendingWhy": "nach der letzten Zählerablesung"
+    },
+    "who": {
+      "exactNote": "Ihre Auswahl zählt nur diese Agenten. Die Sitzungen außerhalb von covey ({{sources}}) gehören nicht dazu: Heben Sie die Auswahl auf, um sie einzubeziehen.",
+      "coveyOnlyLocked": "Agenten sind ausgewählt: Die Sitzungen außerhalb von covey gehören nicht zu einer Auswahl von Agenten.",
+      "banner": "Geändert: Eine Auswahl von Agenten zählt jetzt genau diese Agenten. Die Sitzungen außerhalb von covey werden einer Auswahl nicht mehr hinzugefügt; die Antwortkarte bleibt kontoweit und sagt das.",
+      "bannerOk": "Verstanden"
     }
   },
   "lang": {

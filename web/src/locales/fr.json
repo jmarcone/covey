@@ -1070,6 +1070,12 @@
       "reconUsage": "+ {{usd}} sur la base de l'usage",
       "pending": "en attente",
       "pendingWhy": "après le dernier relevé du compteur"
+    },
+    "who": {
+      "exactNote": "Votre sélection ne compte que ces agents. Les sessions hors de covey ({{sources}}) n'en font pas partie : effacez la sélection pour les inclure.",
+      "coveyOnlyLocked": "Des agents sont sélectionnés : les sessions hors de covey ne font pas partie d'une sélection d'agents.",
+      "banner": "Changement : sélectionner des agents compte désormais exactement ces agents. Les sessions hors de covey ne sont plus ajoutées à une sélection ; la carte de réponse reste à l'échelle du compte et l'indique.",
+      "bannerOk": "Compris"
     }
   },
   "lang": {

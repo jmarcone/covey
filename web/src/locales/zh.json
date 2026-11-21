@@ -1070,6 +1070,12 @@
       "reconUsage": "+ 按用量计费 {{usd}}",
       "pending": "待定",
       "pendingWhy": "在最后一次计量读数之后"
+    },
+    "who": {
+      "exactNote": "你的选择只统计这些代理。covey 之外的会话（{{sources}}）不在其中：清除选择即可将其包含在内。",
+      "coveyOnlyLocked": "已选择代理：covey 之外的会话不属于代理的选择。",
+      "banner": "变更：选择代理后，现在只统计这些代理。covey 之外的会话不再加入选择；答案卡片仍覆盖整个账户，并会注明。",
+      "bannerOk": "知道了"
     }
   },
   "lang": {

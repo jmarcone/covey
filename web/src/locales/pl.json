@@ -1070,6 +1070,12 @@
       "reconUsage": "+ {{usd}} rozliczane według użycia",
       "pending": "oczekuje",
       "pendingWhy": "po ostatnim odczycie licznika"
+    },
+    "who": {
+      "exactNote": "Twój wybór obejmuje tylko tych agentów. Sesje poza covey ({{sources}}) do niego nie należą: wyczyść wybór, aby je uwzględnić.",
+      "coveyOnlyLocked": "Wybrano agentów: sesje poza covey nie należą do wyboru agentów.",
+      "banner": "Zmiana: wybór agentów liczy teraz dokładnie tych agentów. Sesje poza covey nie są już dodawane do wyboru; karta odpowiedzi nadal dotyczy całego konta i to zaznacza.",
+      "bannerOk": "Rozumiem"
     }
   },
   "lang": {

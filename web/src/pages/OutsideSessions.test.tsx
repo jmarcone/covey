@@ -162,14 +162,16 @@ const outsideTile = () => screen.getByRole("group", { name: t("costs.outside.til
 describe("the operator sessions on the cost page (#120)", () => {
   beforeEach(() => { i18n.changeLanguage("en"); });
 
-  it("shows the series by default, under an agent filter too (one rule for the page), and lets the user switch it off and on", async () => {
+  it("shows the series by default, not under an agent filter (no part of a selection: PR 7), and lets the user switch it off and on", async () => {
     serveCosts();
     await screen.findByRole("group", { name: t("costs.outside.tile") });
     expect(seriesChip().getAttribute("aria-pressed")).toBe("true");
 
     fireEvent.click(screen.getAllByRole("button", { name: /Coordinator/ })[0]);
+    expect(screen.queryByRole("group", { name: t("costs.outside.tile") })).toBeNull();
+    fireEvent.click(screen.getAllByRole("button", { name: /Coordinator/ })[0]);
+    await screen.findByRole("group", { name: t("costs.outside.tile") });
     expect(seriesChip().getAttribute("aria-pressed")).toBe("true");
-    expect(outsideTile()).toBeTruthy();
 
     fireEvent.click(seriesChip());
     expect(seriesChip().getAttribute("aria-pressed")).toBe("false");
@@ -247,15 +249,12 @@ describe("the operator sessions on the cost page (#120)", () => {
     expect(within(tile).getByText(t("costs.outside.unpricedReadings", counted(1)))).toBeTruthy();
   });
 
-  it("says selected agents in combined mode once the page is narrowed to agents", async () => {
-    serveCosts();
-    await screen.findByRole("group", { name: t("costs.outside.tile") });
+  it("never adds the outside sessions to a selection of agents, combined mode or not (PR 7)", async () => {
+    serveCosts(cells(), "/costs?outmode=combined");
+    await screen.findByRole("group", { name: t("costs.outside.combinedTotal") });
     fireEvent.click(screen.getAllByRole("button", { name: /Coordinator/ })[0]);
-    fireEvent.click(screen.getByRole("button", { name: t("costs.outside.modeCombined") }));
-    const combined = screen.getByRole("group", { name: t("costs.outside.combinedTotal") });
-    // The page's own words for a narrowed figure: "selected agents … plus outside sessions".
-    expect(combined.textContent).toContain(`selected agents ${fmtUSD(7)} · plus outside sessions ${fmtUSD(15.75)}`);
-    expect(combined.textContent).not.toContain(`covey agents (internal) ${fmtUSD(7)}`);
+    expect(screen.queryByRole("group", { name: t("costs.outside.combinedTotal") })).toBeNull();
+    expect(document.body.textContent).not.toContain("plus outside sessions");
   });
 
   it("changes the total only when combined, says so, and leaves the agents' own figure alone", async () => {
@@ -361,12 +360,12 @@ describe("the operator sessions on the cost page (#120)", () => {
     // Defaults are left out of the address.
     expect(screen.getByRole("link", { name: t("costs.outside.details") }).getAttribute("href")).toBe("/costs/outside");
     cleanup();
-    // A range, a bucket, the agents and the chart's toggles all travel to the detailed view.
-    serveCosts(cells(), "/costs?days=7&bucket=10hour&agents=a1&layout=agents&outmode=combined");
-    await screen.findByRole("group", { name: t("costs.outside.tile") });
+    // A range, a bucket and the chart's toggles all travel to the detailed view (with agents selected it is not shown: PR 7).
+    serveCosts(cells(), "/costs?days=7&bucket=10hour&layout=agents&outmode=combined");
+    await screen.findByRole("group", { name: t("costs.outside.combinedTotal") });
     const href = screen.getByRole("link", { name: t("costs.outside.details") }).getAttribute("href")!;
     const q = new URLSearchParams(href.split("?")[1]);
-    expect([q.get("days"), q.get("bucket"), q.get("agents"), q.get("layout"), q.get("outmode")]).toEqual(["7", "10hour", "a1", "agents", "combined"]);
+    expect([q.get("days"), q.get("bucket"), q.get("layout"), q.get("outmode")]).toEqual(["7", "10hour", "agents", "combined"]);
   });
 
   it("a new range keeps the chosen bucket where it still fits, else takes the range's own", async () => {
