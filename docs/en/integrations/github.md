@@ -340,10 +340,15 @@ move. The alternative (the contents API) writes one file per commit, so a change
 across five files would arrive as five commits and every intermediate state
 would be a broken tree in the history.
 
-Two guarantees the action enforces itself, not by prompt discipline:
+Three guarantees the action enforces itself, not by prompt discipline:
 
 - **A direct commit onto the default branch is refused.** The route into the
   main branch leads exclusively through a pull request.
+- **The author is the platform's, not the token's.** The commit goes over the
+  API, so GitHub would record the account behind the token and its own address.
+  With `COVEY_GIT_AUTHOR_EMAIL` set (see
+  [deployment](../operations/deployment.md)) the commit carries
+  `<agent slug> (covey agent)` as author and committer, with that address.
 - **No force push.** If the branch has moved on since the checkout, the action
   fails with a message telling the agent to fetch the branch afresh — instead of
   erasing somebody else's work.

@@ -459,6 +459,53 @@ The `Skill` tool is added per run and only when skills have been materialized
 for the agent — it pulls the descriptions of all built-in skills into the prompt
 (+2.454 tokens) and is dead weight without skills of its own.
 
+### `COVEY_GIT_AUTHOR_EMAIL`
+
+The address an agent's commits are attributed to; the name is
+`<agent slug> (covey agent)`. Empty = not set.
+
+The github plugin's `commit` action writes the commit over the GitHub API and
+sends no author, so GitHub records the account the token belongs to — with that
+account's own address, on a public repository. A `git config` in the agent's
+checkout never reaches that request. With this variable the platform adds author
+and committer to the request itself, and puts `GIT_AUTHOR_*`/`GIT_COMMITTER_*`
+into the environment of the run's own process, for an agent that runs
+`git commit` in its sandbox. Two kinds of git process do not get them: a
+`dev agent` sub-run, and the shells `dev exec` and `dev start` open. Nothing
+pushes local git history from there; what a sub-run changes reaches GitHub as
+files through the `commit` action, which does carry the identity.
+
+Use the account's noreply address, `<id>+<login>@users.noreply.github.com`
+(GitHub → Settings → Emails): the commit stays linked to the account and the
+private address stays out of the history.
+
+```bash
+COVEY_GIT_AUTHOR_EMAIL="<id>+<login>@users.noreply.github.com"
+```
+
+It applies to commits made after the change takes effect; existing history is
+not rewritten. A commit a workflow step makes runs in the control plane, so it
+carries the address after the control plane restarts. An agent commits from its
+sandbox, where the daemon (`coveyd`) adds the identity: its commits carry it once
+the sandbox runs an image with this change, so rebuild and roll out the sandbox
+image as well.
+
+Both compose files pass the variable on (`x-covey-base`), so a line in the
+`.env` is enough there; another way of starting covey has to set it in the
+control plane's environment itself.
+
+A commit request too large to rewrite (a body over 1 MiB; the commit message is
+the agent's and has no cap of its own) is refused with an error, not sent
+without an author. A body that is not JSON, or that already carries an author
+or committer key, goes out unchanged. A redirect to
+`/repositories/{id}/git/commits`, which GitHub sends for a renamed or moved
+repository, is rewritten like the original request. Only the github plugin is
+covered; the GitLab commit action sets no identity.
+
+The address is not checked. A mistyped one makes GitHub refuse every commit an
+agent makes (`422` on `author.email`) until it is corrected, so test it with one
+commit after setting it.
+
 ### Where the money went
 
 Two views answer that, both under **Costs**:

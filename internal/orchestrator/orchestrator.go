@@ -34,6 +34,7 @@ import (
 	"covey/internal/daemon"
 	"covey/internal/egress"
 	"covey/internal/engines"
+	"covey/internal/gitauthor"
 	"covey/internal/guardrails"
 	"covey/internal/homestore"
 	"covey/internal/identity"
@@ -139,6 +140,10 @@ type Options struct {
 	// Empty → daemon.DefaultAllowedTools. The list decides not only what a run
 	// may use but what exists for it at all — see daemon.DefaultAllowedTools.
 	RuntimeTools []string
+	// GitAuthorEmail is the address agents' commits carry (COVEY_GIT_AUTHOR_EMAIL),
+	// with the agent's slug as the name. Empty = no identity is set and GitHub
+	// attributes a commit to the token's account (package gitauthor).
+	GitAuthorEmail string
 	// Chat and Org carry covey/message (#537): the agent writes to a person
 	// of its organisation, into their direct conversation. nil = the action
 	// answers that it is not available on this instance.
@@ -2085,6 +2090,26 @@ func (o *Orchestrator) reapIdleWarm(ctx context.Context) {
 	}
 }
 
+// gitIdentity is who the commits of this agent are attributed to: the same
+// identity for a commit made from its sandbox and one a workflow step makes.
+func (o *Orchestrator) gitIdentity(agent agents.Agent) gitauthor.Identity {
+	return gitauthor.ForAgent(agent.Slug, o.GitAuthorEmail)
+}
+
+// injectConfig is the run's configuration as the daemon receives it.
+func (o *Orchestrator) injectConfig(agent agents.Agent, systemPrompt string, maxTurns int, actionTools []daemon.ActionTool) daemon.InjectConfig {
+	return daemon.InjectConfig{
+		SystemPrompt: systemPrompt,
+		Runtime:      agent.Runtime,
+		Model:        agent.Model,
+		Effort:       agent.Effort,
+		AllowedTools: o.RuntimeTools,
+		MaxTurns:     maxTurns,
+		ActionTools:  actionTools,
+		GitAuthor:    o.gitIdentity(agent),
+	}
+}
+
 func (o *Orchestrator) sendMsg(ctx context.Context, link DaemonLink, msgType string, payload any) error {
 	msg, err := daemon.Encode(msgType, payload)
 	if err != nil {
@@ -2761,15 +2786,7 @@ func (o *Orchestrator) processTask(ctx context.Context, agent agents.Agent, link
 	if maxTurns <= 0 {
 		maxTurns = agents.DefaultMaxTurns
 	}
-	if err := o.sendMsg(ctx, link, daemon.TypeInjectConfig, daemon.InjectConfig{
-		SystemPrompt: compiled,
-		Runtime:      agent.Runtime,
-		Model:        agent.Model,
-		Effort:       agent.Effort,
-		AllowedTools: o.RuntimeTools,
-		MaxTurns:     maxTurns,
-		ActionTools:  actionTools,
-	}); err != nil {
+	if err := o.sendMsg(ctx, link, daemon.TypeInjectConfig, o.injectConfig(agent, compiled, maxTurns, actionTools)); err != nil {
 		return err
 	}
 

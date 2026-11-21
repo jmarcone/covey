@@ -2,6 +2,7 @@ package reqlog
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"covey/internal/gitauthor"
 )
 
 // collect gathers the entries of a sink.
@@ -136,5 +139,39 @@ func TestContextSenkeSchlaegtDefault(t *testing.T) {
 
 	if len(*ctxGot) != 1 || len(*defGot) != 1 {
 		t.Fatalf("distribution wrong: ctx=%d default=%d", len(*ctxGot), len(*defGot))
+	}
+}
+
+// The github plugin's commit request carries no author; the client the SDK
+// hands it adds the agent's identity from the context (#106). Another system's
+// client leaves the same request alone.
+func TestClientAddsGitIdentityForGitHubOnly(t *testing.T) {
+	id := gitauthor.Identity{Name: "covey-dev (covey agent)", Email: "1+covey-bot@users.noreply.github.com"}
+	for system, want := range map[string]bool{"github": true, "gitlab": false} {
+		sink, logged := collect()
+		var got map[string]any
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&got)
+		}))
+		ctx := WithSink(gitauthor.WithIdentity(context.Background(), id), sink)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost,
+			srv.URL+"/repos/o/r/git/commits", strings.NewReader(`{"message":"m","tree":"t"}`))
+		resp, err := Client(system, time.Second).Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		srv.Close()
+		who, has := got["author"].(map[string]any)
+		if has != want || (want && who["email"] != id.Email) {
+			t.Errorf("%s: author = %v, want identity %v", system, got["author"], want)
+		}
+		// The log shows what was sent, so the author is in the logged body.
+		if len(*logged) != 1 {
+			t.Fatalf("%s: %d log entries, want 1", system, len(*logged))
+		}
+		if has := strings.Contains((*logged)[0].ReqBody, id.Email); has != want {
+			t.Errorf("%s: logged body %q, address in it = %v, want %v", system, (*logged)[0].ReqBody, has, want)
+		}
 	}
 }

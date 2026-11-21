@@ -1441,6 +1441,7 @@ func runServe(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		TidyEntriesAbove: cfg.TidyHomeAboveEntries,
 		Blobs:            blobs,
 		RuntimeTools:     cfg.RuntimeTools,
+		GitAuthorEmail:   cfg.GitAuthorEmail,
 		Notify:           notifyStore,
 		Log:              log,
 	})

@@ -626,7 +626,7 @@ func (c *Client) runTask(ctx context.Context, task AssignTask) {
 	c.mu.Unlock()
 	defer cancel()
 
-	proxy, err := c.startActionProxy(runCtx, task.TaskID, cfg.ActionTools)
+	proxy, err := c.startActionProxy(runCtx, task.TaskID, cfg.ActionTools, cfg.GitAuthor)
 	if err != nil {
 		_ = c.send(TypeTaskDone, TaskDone{TaskID: task.TaskID, Status: "failed", Error: err.Error()})
 		return
@@ -634,6 +634,11 @@ func (c *Client) runTask(ctx context.Context, task AssignTask) {
 	defer proxy.Close()
 
 	env := append([]string{"COVEY_ACTION_PORT=" + proxy.Port()}, c.runtimeKeyEnv()...)
+	// An agent's own process that runs git in its sandbox commits as the
+	// identity the platform chose, whatever its git config says (package
+	// gitauthor). Sub-runs (subagent.go) and `dev` shells do not get it: no
+	// action pushes their local history.
+	env = append(env, cfg.GitAuthor.Env()...)
 	// The same port into the daemon's OWN environment, and not as a
 	// convenience: `dev exec` and `dev start` spawn their shells as children of
 	// this process, and every compiled prompt tells the agent to reach its

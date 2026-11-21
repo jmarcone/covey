@@ -46,6 +46,11 @@ x-covey-base: &covey-base
     COVEY_EGRESS_ENFORCE: ${COVEY_EGRESS_ENFORCE:-true}
     COVEY_EGRESS_LISTEN_ADDR: ":8495"
     COVEY_EGRESS_ALLOW: ${COVEY_EGRESS_ALLOW:-}
+    # The address the agents' commits are attributed to (#106). Compose passes
+    # on only what is written down, so without this line a value in the .env
+    # never reaches the container and the identity stays off. The sandbox image
+    # must carry the same change, see docs/en/operations/deployment.md.
+    COVEY_GIT_AUTHOR_EMAIL: ${COVEY_GIT_AUTHOR_EMAIL:-}
     # Which image stands behind a workplace is said by the PUBLISHED catalogue
     # (spec/16): one JSON file beside the source, pinned per covey version by
     # digest, public on ghcr. So nothing stands here.
