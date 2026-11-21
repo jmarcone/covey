@@ -37,7 +37,10 @@ import (
 //     rate_limit_event a run streams, at the same precision, so its readings
 //     continue the in-band series of the seat rather than start one of their
 //     own: the split reads one source per seat, the one with the most
-//     readings, and a seat covey also runs on has its in-band series picked.
+//     readings, usage_cmd winning a tie. So the in-band series is usually the
+//     one read for a seat covey runs on, and on a seat where /usage answers
+//     equal or outnumber the in-band lines the polled readings count once
+//     that series is the larger one.
 //     Filed as usage_cmd (the `claude -p /usage` prose, whole percents,
 //     possibly stale) they would lose that count to the in-band readings and
 //     never close a step;
@@ -207,6 +210,10 @@ func (s *Store) MeterPollDue(ctx context.Context, now time.Time, fresh, active t
 // readings extend the seat's in-band series. at is the instant the call
 // returned on the control plane's clock, the one its watermark carries, and
 // becomes the readings' fetched_at and received_at.
+//
+// migrations/0145_meter_readings.down.sql deletes every inband row, which is
+// rebuildable from the recordings; a polled reading has no recording, so a
+// down and up of 0145 loses it.
 func (s *Store) AddPolledReadings(ctx context.Context, orgID uuid.UUID, cred CredentialRef, payload json.RawMessage, at time.Time) error {
 	at = at.UTC()
 	return s.addEventReadings(ctx, orgID, cred, payload, &at)
@@ -231,6 +238,14 @@ func (s *Store) AddPolledReadings(ctx context.Context, orgID uuid.UUID, cred Cre
 // first here, dated now like a push would (the table's CHECK keeps the two
 // together). pushed_at is left alone: it says when the poll last booked a
 // call, not when covey vouched for it.
+//
+// With more than one control-plane process there is a race: another process's
+// round can move the poll host's watermark past this process's call start t0
+// while its call runs, and the booking then lands behind the watermark. For up
+// to the call timeout, steps ending in that gap read as reported without the
+// poll's tokens. It is transient, because the split is computed on read. One
+// process alone is safe: its advance runs at the start of a round, before
+// every t0.
 func (s *Store) AdvanceMeterPollMarks(ctx context.Context, now time.Time) error {
 	_, err := s.pool.Exec(ctx, `UPDATE external_usage_hosts SET
 			reported_through = GREATEST(reported_through, $1),

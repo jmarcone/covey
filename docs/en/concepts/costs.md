@@ -166,8 +166,8 @@ windows are shown and never priced, because they count the same work again.
   engine's subscription is never handed to the CLI. A seat is polled only when
   an outside source is linked to it (the poll's own source does not count): a
   seat no outside source names has no outside work to split, and stays all
-  covey's. Of those, a seat is polled when no supported reading of it (in band,
-  polled, or from `/usage`; one entered by hand does not count) arrived in the
+  covey's. Of those, a seat is polled when no supported reading of it (in band (a
+  run's stream or covey's poll), or from `/usage`; one entered by hand does not count) arrived in the
   last 10 minutes and either such a source pushed within the last hour or the
   organisation's fleet is paused — the fleet switch is off, or the organisation
   has hired agents and every one of them is killed (a draft agent does not
@@ -177,7 +177,10 @@ windows are shown and never priced, because they count the same work again.
   miss in a row doubles it, up to 6 hours, and a try that files one starts it
   over. The readings are the same `rate_limit_event` a run streams, at the same
   precision, and are filed as in-band readings: they continue the seat's
-  in-band series, the one the page already reads for a seat covey runs on. The
+  in-band series, which the page usually reads for a seat covey runs on: it
+  reads the source with more readings, `/usage` winning a tie, so on a seat
+  where `/usage` answers equal or outnumber the in-band lines, polled readings
+  count once the in-band series is the larger one. The
   call moves the meter it reads, so it is booked as outside usage of a source of
   its own, `meter poll: <secret>#<slot>` (shortened with a hash where the
   secret's name is long), linked to the seat and dated at the call's start, and

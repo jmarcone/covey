@@ -170,7 +170,7 @@
       "fiveHourNotReported": "5 時間枠：報告なし",
       "dropped": "{{count}} 回の読み取りを除外（古い、または値なし）",
       "source_usage_cmd": "/usage",
-      "source_inband": "実行ストリーム内",
+      "source_inband": "実行または covey のポーリングのストリーム内",
       "source_manual": "手入力",
       "unpricedRow": "うち定価のないモデル（{{count}}）：再計算の数値と同じく Claude Code 自身の価格で計上",
       "totalWithUnpriced": "合計（再計算、定価のないモデルは報告値の価格）",

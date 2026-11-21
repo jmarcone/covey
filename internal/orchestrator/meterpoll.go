@@ -297,7 +297,9 @@ func (o *Orchestrator) pollMeter(ctx context.Context, st meterPollStore, c obser
 	// Both instants on this clock, so nothing is dated by another one: t0,
 	// when the call starts, dates its booking, the time its tokens were
 	// spent; at, when it has returned, dates its readings and its source's
-	// watermark, which has to cover the booking.
+	// watermark, which has to cover the booking. With several control-plane
+	// processes another one's round can move the poll host's watermark past
+	// t0 while this call runs; see AdvanceMeterPollMarks for what that costs.
 	t0 := o.meterPollClock()
 	out, err := o.MeterPoll.Run(ctx, value)
 	if err != nil {

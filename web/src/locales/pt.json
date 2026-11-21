@@ -170,7 +170,7 @@
       "fiveHourNotReported": "Janela de 5 horas: não informada",
       "dropped": "{{count}} leitura(s) descartada(s) (desatualizadas ou sem valor)",
       "source_usage_cmd": "/usage",
-      "source_inband": "no fluxo da execução",
+      "source_inband": "no fluxo de uma execução ou da sondagem do covey",
       "source_manual": "introduzido à mão",
       "unpricedRow": "dos quais modelos sem preço de tabela ({{count}}): ao preço próprio do Claude Code, como no valor recalculado",
       "totalWithUnpriced": "Total (recalculado, modelos sem preço ao preço informado)",

@@ -170,7 +170,7 @@
       "fiveHourNotReported": "Finestra di 5 ore: non riportata",
       "dropped": "{{count}} lettura/e scartata/e (obsolete o senza valore)",
       "source_usage_cmd": "/usage",
-      "source_inband": "nel flusso dell'esecuzione",
+      "source_inband": "nel flusso di un'esecuzione o del sondaggio di covey",
       "source_manual": "inserito a mano",
       "unpricedRow": "di cui modelli senza prezzo di listino ({{count}}): al prezzo proprio di Claude Code, come nella cifra ricalcolata",
       "totalWithUnpriced": "Totale (ricalcolato, modelli senza prezzo al prezzo riportato)",

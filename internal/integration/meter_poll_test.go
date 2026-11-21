@@ -24,7 +24,10 @@ import (
 // and what the split makes of it, the poll sources' watermarks
 // (AdvanceMeterPollMarks), and the push endpoint keeping uploaders out of the
 // poll's sources. Every time is measured from
-// pollNow, never from the wall clock.
+// pollNow, never from the wall clock, with one exception:
+// TestMeterPollReadingExtendsTheInbandSeries uses time.Now() with relative
+// offsets, because the orchestrator clock and the cells endpoint cannot be
+// injected from this package.
 
 var pollNow = time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
 

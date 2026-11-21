@@ -182,7 +182,7 @@ bewertet, weil sie dieselbe Arbeit noch einmal zählen.
   ist (die eigene Quelle der Abfrage zählt nicht): Ein Zugang, den keine Quelle
   von außen nennt, hat keine fremde Arbeit, die aufzuteilen wäre, und bleibt
   ganz coveys. Von diesen wird ein Zugang abgefragt, wenn in den letzten 10
-  Minuten keine gültige Ablesung von ihm kam (aus dem Lauf, abgefragt oder von
+  Minuten keine gültige Ablesung von ihm kam (aus dem Lauf oder von covey abgefragt, oder von
   `/usage`; eine von Hand eingetragene zählt nicht) und entweder eine solche
   Quelle in der letzten Stunde gemeldet hat oder die Flotte der Organisation
   pausiert ist – der Flottenschalter ist aus, oder die Organisation hat
@@ -195,7 +195,10 @@ bewertet, weil sie dieselbe Arbeit noch einmal zählen.
   Die Ablesungen sind dasselbe `rate_limit_event`, das ein Lauf streamt, mit
   derselben Genauigkeit, und werden als Ablesungen aus dem Lauf abgelegt: Sie
   setzen die Reihe aus dem Lauf fort, die die Seite für einen Zugang, auf dem
-  covey arbeitet, ohnehin liest. Der Aufruf bewegt den Zähler, den er liest;
+  covey arbeitet, meist liest: Sie liest die Quelle mit mehr Ablesungen, bei
+  Gleichstand `/usage`; auf einem Zugang, auf dem die Antworten von `/usage`
+  die Zeilen aus dem Lauf erreichen oder übertreffen, zählen abgefragte
+  Ablesungen erst, wenn die Reihe aus dem Lauf die größere ist. Der Aufruf bewegt den Zähler, den er liest;
   deshalb wird er als Nutzung von außen unter einer eigenen Quelle gebucht,
   `meter poll: <secret>#<slot>` (bei langen Namen des Secrets mit einem Hash
   gekürzt), verknüpft mit dem Zugang und auf den Beginn des Aufrufs datiert,
