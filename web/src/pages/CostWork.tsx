@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import { api, ApiError, type IndicatorReport, type RunCost } from "../api";
@@ -13,36 +13,43 @@ import { asSet, useParamState } from "./costView";
 /* Work (cost home views): which runs burned the money, and what came of it. The runs are ranked by their token price
  * (Claude Code's own price where it reported one, else covey's list price); a run that ended without a result (failed,
  * cancelled) is waste, said in its own tile; a run with no action changed nothing outside itself. The runs follow the
- * page's Who. The server ranks at most 500 runs per window: where it returns that many, the page says the waste is
- * over those. */
+ * page's Who: with agents selected, each agent's own runs are fetched (a cut of the org's top runs would lose them).
+ * The server ranks at most 500 runs per fetch: where one returns that many, the page says the figures are over those. */
 
 const NONE: ReadonlySet<string> = new Set();
 const LIMIT = 500;
 const WASTE = new Set(["failed", "cancelled", "killed"]);
-/** A run's token price on the page's lead basis: Claude Code's price, else covey's list price, else its booked total. */
-export const runUSD = (x: RunCost): number | null => x.engine_usd ?? x.measured_usd ?? (x.total_usd > 0 ? x.total_usd : null);
+/** A run's token price on the basis the server ranks by and the cost home and Details show: its lines priced with
+ * covey's list (measured), else Claude Code's price, else its booked total. */
+export const runUSD = (x: RunCost): number | null => x.measured_usd ?? x.engine_usd ?? (x.total_usd > 0 ? x.total_usd : null);
 
 export default function CostWork() {
   const { t } = useTranslation();
   const r = useCostRange();
   const [agents, setAgents] = useParamState<ReadonlySet<string>>("agents", NONE, asSet.parse, asSet.show);
-  const runs = useQuery({ queryKey: ["cost", "runs", "org", r.wq, LIMIT], queryFn: () => api<RunCost[] | null>(`/cost/runs?${r.wq}&limit=${LIMIT}`),
-    enabled: !r.badRange });
+  const scopes = agents.size > 0 ? [...agents].sort() : ["org"];
+  const fetches = useQueries({ queries: scopes.map((s) => ({
+    queryKey: ["cost", "runs", s, r.wq, LIMIT],
+    queryFn: () => api<RunCost[] | null>(s === "org" ? `/cost/runs?${r.wq}&limit=${LIMIT}` : `/agents/${s}/cost/runs?${r.wq}&limit=${LIMIT}`),
+    enabled: !r.badRange,
+  })) });
+  const runs = { error: fetches.find((f) => f.error)?.error ?? null, isLoading: fetches.some((f) => f.isLoading),
+    data: fetches.every((f) => f.data !== undefined) ? fetches.flatMap((f) => f.data ?? []) : undefined };
   // The price list is over whole quick ranges (its trend compares the span with the one before it).
   const indicators = useQuery({ queryKey: ["cost", "indicators", "org", r.days], queryFn: () => api<IndicatorReport>(`/cost/indicators?days=${r.days}`),
     enabled: !r.custom && !r.badRange, retry: false });
   const apiCode: RangeCode | "unknown" | null = runs.error instanceof ApiError && runs.error.status === 400
     ? (isRangeCode(runs.error.code) ? runs.error.code : "unknown") : null;
   const refused = r.badRange || apiCode != null;
+  const failed = !refused && runs.error != null;
   const all = runs.data ?? [];
-  const shown = useMemo(() => (agents.size > 0 ? all.filter((x) => agents.has(x.agent_id)) : all)
-    .slice().sort((a, b) => (runUSD(b) ?? -1) - (runUSD(a) ?? -1)), [all, agents]);
+  const shown = useMemo(() => all.slice().sort((a, b) => (runUSD(b) ?? -1) - (runUSD(a) ?? -1)), [all]);
   const total = shown.reduce((a, x) => a + (runUSD(x) ?? 0), 0);
   const wasted = shown.filter((x) => WASTE.has(x.state));
   const waste = wasted.reduce((a, x) => a + (runUSD(x) ?? 0), 0);
   const idle = shown.filter((x) => x.actions === 0).length;
-  const capped = all.length >= LIMIT;
-  const names = [...new Set(all.filter((x) => agents.has(x.agent_id)).map((x) => x.slug))];
+  const capped = fetches.some((f) => (f.data?.length ?? 0) >= LIMIT);
+  const names = agents.size > 0 ? [...new Set(all.map((x) => x.slug))] : [];
 
   return (
     <div className="cost-view">
@@ -53,14 +60,15 @@ export default function CostWork() {
       <CostFilterBar r={r} rangeError={r.range.error ?? apiCode} bucketSwitch={false} trailing={<ShareButton />}
         leading={<WhoSummary names={names} count={agents.size} onClear={() => setAgents(new Set())} />} />
       {refused && <p className="muted text-sm" data-range-refused>{t("costs.range.refused")}</p>}
+      {failed && <p className="muted text-sm" data-work-error role="alert">{t("costs.home.loadError")}</p>}
       {!refused && runs.isLoading && <p className="muted text-sm">{t("costs.home.loading")}</p>}
-      {!refused && runs.data && shown.length === 0 && <p className="muted text-sm" data-work-empty>{t("costs.work.empty")}</p>}
-      {!refused && shown.length > 0 && (
+      {!refused && !failed && runs.data && shown.length === 0 && <p className="muted text-sm" data-work-empty>{t("costs.work.empty")}</p>}
+      {!refused && !failed && shown.length > 0 && (
         <>
           <div className="cost-view-tiles" data-work-tiles>
             <div className="cost-view-tile" data-work-top><span className="cost-home-label">{t("costs.work.top")}</span>
               <span className="cost-view-tile-value">{runUSD(shown[0]) != null ? fmtUSD(runUSD(shown[0])!) : "–"}</span>
-              <span className="cost-home-sub cost-view-ellipsis">{shown[0].title}</span></div>
+              <Link className="cost-home-sub cost-view-ellipsis" to={`/agents/${shown[0].agent_id}`} title={shown[0].title}>{shown[0].title}</Link></div>
             <div className="cost-view-tile" data-work-waste><span className="cost-home-label">{t("costs.work.waste")}</span>
               <span className="cost-view-tile-value">{fmtUSD(waste)}</span>
               <span className="cost-home-sub">{t("costs.work.wasteSub", { count: wasted.length, pct: total > 0 ? Math.round((waste / total) * 100) : 0 })}</span></div>

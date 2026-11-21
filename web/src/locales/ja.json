@@ -917,7 +917,10 @@
       "colPrice": "トークン単価換算",
       "colShare": "割合",
       "colPerRun": "実行あたり",
-      "runs": "{{count}} 実行",
+      "runs_one": "{{count}} 回の実行",
+      "runs_few": "{{count}} 回の実行",
+      "runs_many": "{{count}} 回の実行",
+      "runs_other": "{{count}} 回の実行",
       "whoAgents": "エージェント",
       "whoOutside": "covey 外",
       "note": "エージェント: 各実行について Claude Code 自身が示した価格。covey 外: Claude Code が報告した場合はその価格、なければ covey の定価 (*)。数えるのは実行ではなく呼び出しです。エージェントを選択すると、その実行だけを表示します。"
@@ -929,20 +932,30 @@
       "waste": "結果のない実行",
       "wasteSub": "{{count}} 件が失敗または取り消し、費用の {{pct}} %",
       "idle": "アクションのない実行",
-      "idleSub": "{{count}} 実行のうち: 自身の外では何も変えなかった実行",
+      "idleSub_one": "{{count}} 回の実行のうち: 外部に何も変更を加えていません",
+      "idleSub_few": "{{count}} 回の実行のうち: 外部に何も変更を加えていません",
+      "idleSub_many": "{{count}} 回の実行のうち: 外部に何も変更を加えていません",
+      "idleSub_other": "{{count}} 回の実行のうち: 外部に何も変更を加えていません",
       "total": "全実行",
-      "totalSub": "トークン単価換算での {{count}} 実行",
+      "totalSub_one": "{{count}} 回の実行（トークン価格）",
+      "totalSub_few": "{{count}} 回の実行（トークン価格）",
+      "totalSub_many": "{{count}} 回の実行（トークン価格）",
+      "totalSub_other": "{{count}} 回の実行（トークン価格）",
       "totalCapped": "トークン単価換算で最も高い {{count}} 実行",
       "colOutcome": "結果",
       "colPrice": "トークン単価換算",
-      "more": "より安い {{count}} 実行は表示していません。",
+      "more_one": "より安い {{count}} 回の実行は表示していません。",
+      "more_few": "より安い {{count}} 回の実行は表示していません。",
+      "more_many": "より安い {{count}} 回の実行は表示していません。",
+      "more_other": "より安い {{count}} 回の実行は表示していません。",
       "state": {
         "done": "完了",
         "failed": "失敗",
         "cancelled": "取り消し",
         "killed": "強制終了",
         "in_progress": "実行中",
-        "blocked": "ブロック"
+        "blocked": "ブロック",
+        "open": "待機中"
       }
     },
     "bar": {
@@ -990,7 +1003,8 @@
       "noRuns": "この期間に実行なし",
       "doorHealthSub": "件のチェックに合格",
       "loading": "コストの数値を読み込み中…",
-      "noMeter": "この期間にサブスクリプションのメーターがありません: 答えになるプラン容量の数値がありません。トークン単価は詳細ページにあります。"
+      "noMeter": "この期間にサブスクリプションのメーターがありません: 答えになるプラン容量の数値がありません。トークン単価は詳細ページにあります。",
+      "loadError": "この表示を読み込めませんでした。少ししてからもう一度お試しください。"
     },
     "answer": {
       "title": "かかった費用",

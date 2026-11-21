@@ -917,7 +917,10 @@
       "colPrice": "Tokenprijs",
       "colShare": "Aandeel",
       "colPerRun": "Per run",
-      "runs": "{{count}} runs",
+      "runs_one": "{{count}} run",
+      "runs_few": "{{count}} runs",
+      "runs_many": "{{count}} runs",
+      "runs_other": "{{count}} runs",
       "whoAgents": "agenten",
       "whoOutside": "buiten covey",
       "note": "Agenten: de eigen prijs van Claude Code voor elke run. Buiten covey: de prijs van Claude Code waar het er een meldde, anders de catalogusprijs van covey (*); geteld worden aanroepen, geen runs. Met agenten geselecteerd worden alleen hun runs getoond."
@@ -929,20 +932,30 @@
       "waste": "Runs zonder resultaat",
       "wasteSub": "{{count}} mislukt of geannuleerd, {{pct}} % van het geld",
       "idle": "Runs zonder actie",
-      "idleSub": "van {{count}} runs: ze veranderden niets buiten zichzelf",
+      "idleSub_one": "van {{count}} run: die veranderde niets buiten zichzelf",
+      "idleSub_few": "van {{count}} runs: ze veranderden niets buiten zichzelf",
+      "idleSub_many": "van {{count}} runs: ze veranderden niets buiten zichzelf",
+      "idleSub_other": "van {{count}} runs: ze veranderden niets buiten zichzelf",
       "total": "Alle runs",
-      "totalSub": "{{count}} runs tegen tokenprijzen",
+      "totalSub_one": "{{count}} run tegen tokenprijzen",
+      "totalSub_few": "{{count}} runs tegen tokenprijzen",
+      "totalSub_many": "{{count}} runs tegen tokenprijzen",
+      "totalSub_other": "{{count}} runs tegen tokenprijzen",
       "totalCapped": "de {{count}} duurste runs tegen tokenprijzen",
       "colOutcome": "Uitkomst",
       "colPrice": "Tokenprijs",
-      "more": "{{count}} goedkopere runs niet getoond.",
+      "more_one": "{{count}} goedkopere run niet getoond.",
+      "more_few": "{{count}} goedkopere runs niet getoond.",
+      "more_many": "{{count}} goedkopere runs niet getoond.",
+      "more_other": "{{count}} goedkopere runs niet getoond.",
       "state": {
         "done": "klaar",
         "failed": "mislukt",
         "cancelled": "geannuleerd",
         "killed": "afgebroken",
         "in_progress": "bezig",
-        "blocked": "geblokkeerd"
+        "blocked": "geblokkeerd",
+        "open": "in de wachtrij"
       }
     },
     "bar": {
@@ -990,7 +1003,8 @@
       "noRuns": "geen run in deze periode",
       "doorHealthSub": "controles geslaagd",
       "loading": "Kostencijfers laden…",
-      "noMeter": "Geen abonnementsmeter in deze periode: er is geen capaciteitscijfer om mee te antwoorden. De detailpagina heeft de tokenprijzen."
+      "noMeter": "Geen abonnementsmeter in deze periode: er is geen capaciteitscijfer om mee te antwoorden. De detailpagina heeft de tokenprijzen.",
+      "loadError": "Deze weergave kon niet worden geladen. Probeer het zo opnieuw."
     },
     "answer": {
       "title": "Wat dit heeft gekost",

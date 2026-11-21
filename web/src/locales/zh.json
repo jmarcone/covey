@@ -917,7 +917,10 @@
       "colPrice": "token 价格",
       "colShare": "占比",
       "colPerRun": "每次运行",
-      "runs": "{{count}} 次运行",
+      "runs_one": "{{count}} 次运行",
+      "runs_few": "{{count}} 次运行",
+      "runs_many": "{{count}} 次运行",
+      "runs_other": "{{count}} 次运行",
       "whoAgents": "智能体",
       "whoOutside": "covey 之外",
       "note": "智能体：Claude Code 为每次运行给出的价格。covey 之外：Claude Code 报告了价格时用其价格，否则用 covey 的标价 (*)；计数的是调用，而不是运行。选中智能体时，只显示它们的运行。"
@@ -929,20 +932,30 @@
       "waste": "没有结果的运行",
       "wasteSub": "{{count}} 次失败或取消，占费用的 {{pct}}%",
       "idle": "没有动作的运行",
-      "idleSub": "{{count}} 次运行中：它们没有改变自身以外的任何东西",
+      "idleSub_one": "共 {{count}} 次运行：没有改变自身以外的任何东西",
+      "idleSub_few": "共 {{count}} 次运行：没有改变自身以外的任何东西",
+      "idleSub_many": "共 {{count}} 次运行：没有改变自身以外的任何东西",
+      "idleSub_other": "共 {{count}} 次运行：没有改变自身以外的任何东西",
       "total": "全部运行",
-      "totalSub": "按 token 价格计的 {{count}} 次运行",
+      "totalSub_one": "{{count}} 次运行（按 token 价格）",
+      "totalSub_few": "{{count}} 次运行（按 token 价格）",
+      "totalSub_many": "{{count}} 次运行（按 token 价格）",
+      "totalSub_other": "{{count}} 次运行（按 token 价格）",
       "totalCapped": "按 token 价格计最贵的 {{count}} 次运行",
       "colOutcome": "结果",
       "colPrice": "token 价格",
-      "more": "未列出 {{count}} 次更便宜的运行。",
+      "more_one": "另有 {{count}} 次较便宜的运行未列出。",
+      "more_few": "另有 {{count}} 次较便宜的运行未列出。",
+      "more_many": "另有 {{count}} 次较便宜的运行未列出。",
+      "more_other": "另有 {{count}} 次较便宜的运行未列出。",
       "state": {
         "done": "完成",
         "failed": "失败",
         "cancelled": "已取消",
         "killed": "已终止",
         "in_progress": "运行中",
-        "blocked": "已阻塞"
+        "blocked": "已阻塞",
+        "open": "排队中"
       }
     },
     "bar": {
@@ -990,7 +1003,8 @@
       "noRuns": "此时间段内没有运行",
       "doorHealthSub": "项检查通过",
       "loading": "正在加载成本数字…",
-      "noMeter": "此时间段内没有订阅计量：没有可用于回答的套餐容量数字。详情页有 token 价格。"
+      "noMeter": "此时间段内没有订阅计量：没有可用于回答的套餐容量数字。详情页有 token 价格。",
+      "loadError": "无法加载此视图，请稍后重试。"
     },
     "answer": {
       "title": "这花了多少",

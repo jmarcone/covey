@@ -917,7 +917,10 @@
       "colPrice": "Cena za token",
       "colShare": "Udział",
       "colPerRun": "Na uruchomienie",
-      "runs": "uruchomienia: {{count}}",
+      "runs_one": "{{count}} uruchomienie",
+      "runs_few": "{{count}} uruchomienia",
+      "runs_many": "{{count}} uruchomień",
+      "runs_other": "{{count}} uruchomienia",
       "whoAgents": "agenci",
       "whoOutside": "poza covey",
       "note": "Agenci: cena podana przez Claude Code dla każdego uruchomienia. Poza covey: cena z Claude Code, jeśli ją zgłosił, w przeciwnym razie cena katalogowa covey (*); liczone są wywołania, nie uruchomienia. Gdy wybrano agentów, widać tylko ich uruchomienia."
@@ -929,20 +932,30 @@
       "waste": "Uruchomienia bez wyniku",
       "wasteSub": "nieudane lub anulowane: {{count}}, {{pct}} % pieniędzy",
       "idle": "Uruchomienia bez działania",
-      "idleSub": "z {{count}} uruchomień: nie zmieniły niczego poza sobą",
+      "idleSub_one": "z {{count}} uruchomienia: nie zmieniło niczego poza sobą",
+      "idleSub_few": "z {{count}} uruchomień: nie zmieniły niczego poza sobą",
+      "idleSub_many": "z {{count}} uruchomień: nie zmieniły niczego poza sobą",
+      "idleSub_other": "z {{count}} uruchomień: nie zmieniły niczego poza sobą",
       "total": "Wszystkie uruchomienia",
-      "totalSub": "uruchomienia według cen za token: {{count}}",
+      "totalSub_one": "{{count}} uruchomienie po cenach tokenów",
+      "totalSub_few": "{{count}} uruchomienia po cenach tokenów",
+      "totalSub_many": "{{count}} uruchomień po cenach tokenów",
+      "totalSub_other": "{{count}} uruchomienia po cenach tokenów",
       "totalCapped": "najdroższe uruchomienia według cen za token: {{count}}",
       "colOutcome": "Wynik",
       "colPrice": "Cena za token",
-      "more": "Nie pokazano tańszych uruchomień: {{count}}.",
+      "more_one": "{{count}} tańsze uruchomienie niewymienione.",
+      "more_few": "{{count}} tańsze uruchomienia niewymienione.",
+      "more_many": "{{count}} tańszych uruchomień niewymienionych.",
+      "more_other": "{{count}} tańsze uruchomienia niewymienione.",
       "state": {
         "done": "zakończone",
         "failed": "nieudane",
         "cancelled": "anulowane",
         "killed": "przerwane",
         "in_progress": "w toku",
-        "blocked": "zablokowane"
+        "blocked": "zablokowane",
+        "open": "w kolejce"
       }
     },
     "bar": {
@@ -990,7 +1003,8 @@
       "noRuns": "brak uruchomień w tym okresie",
       "doorHealthSub": "kontroli zaliczonych",
       "loading": "Wczytywanie danych o kosztach…",
-      "noMeter": "Brak licznika subskrypcji w tym okresie: nie ma liczby pojemności, by odpowiedzieć. Ceny za token są na stronie szczegółów."
+      "noMeter": "Brak licznika subskrypcji w tym okresie: nie ma liczby pojemności, by odpowiedzieć. Ceny za token są na stronie szczegółów.",
+      "loadError": "Nie udało się wczytać tego widoku. Spróbuj ponownie za chwilę."
     },
     "answer": {
       "title": "Ile to kosztowało",

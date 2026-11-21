@@ -917,7 +917,10 @@
       "colPrice": "Token price",
       "colShare": "Share",
       "colPerRun": "Per run",
-      "runs": "{{count}} runs",
+      "runs_one": "{{count}} run",
+      "runs_few": "{{count}} runs",
+      "runs_many": "{{count}} runs",
+      "runs_other": "{{count}} runs",
       "whoAgents": "agents",
       "whoOutside": "outside covey",
       "note": "Agents: Claude Code's own price of each run. Outside covey: Claude Code's price where it reported one, else covey's list price (*); their count is calls, not runs. With agents selected, only their runs are shown."
@@ -929,20 +932,30 @@
       "waste": "Runs without a result",
       "wasteSub": "{{count}} failed or cancelled, {{pct}} % of the money",
       "idle": "Runs with no action",
-      "idleSub": "of {{count}} runs: they changed nothing outside themselves",
+      "idleSub_one": "of {{count}} run: it changed nothing outside itself",
+      "idleSub_few": "of {{count}} runs: they changed nothing outside themselves",
+      "idleSub_many": "of {{count}} runs: they changed nothing outside themselves",
+      "idleSub_other": "of {{count}} runs: they changed nothing outside themselves",
       "total": "All runs",
-      "totalSub": "{{count}} runs at token prices",
+      "totalSub_one": "{{count}} run at token prices",
+      "totalSub_few": "{{count}} runs at token prices",
+      "totalSub_many": "{{count}} runs at token prices",
+      "totalSub_other": "{{count}} runs at token prices",
       "totalCapped": "the {{count}} most expensive runs at token prices",
       "colOutcome": "Outcome",
       "colPrice": "Token price",
-      "more": "{{count}} cheaper runs not listed.",
+      "more_one": "{{count}} cheaper run not listed.",
+      "more_few": "{{count}} cheaper runs not listed.",
+      "more_many": "{{count}} cheaper runs not listed.",
+      "more_other": "{{count}} cheaper runs not listed.",
       "state": {
         "done": "done",
         "failed": "failed",
         "cancelled": "cancelled",
         "killed": "killed",
         "in_progress": "running",
-        "blocked": "blocked"
+        "blocked": "blocked",
+        "open": "queued"
       }
     },
     "bar": {
@@ -990,7 +1003,8 @@
       "noRuns": "no run in this window",
       "doorHealthSub": "checks passing",
       "loading": "Loading the cost figures…",
-      "noMeter": "No subscription meter in this window: there is no capacity figure to answer with. The details page has the token prices."
+      "noMeter": "No subscription meter in this window: there is no capacity figure to answer with. The details page has the token prices.",
+      "loadError": "Could not load this view. Try again in a moment."
     },
     "answer": {
       "title": "What this cost",

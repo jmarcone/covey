@@ -4,7 +4,7 @@ import type { ExternalModelUsage, ModelUsageReport, RunCost } from "../api";
 import i18n from "../i18n";
 import { fmtUSD } from "../format";
 import { mockFetch, renderWithProviders } from "../test/render";
-import CostModels, { modelRows } from "./CostModels";
+import CostModels, { modelRows, topModel } from "./CostModels";
 import CostWork, { runUSD } from "./CostWork";
 
 /* The cost views (Models, Work): one row per model at its lead token price, agents and outside sessions apart; the
@@ -32,8 +32,10 @@ const run = (id: string, agent: string, state: string, engine: number | null, ac
 } as unknown as RunCost);
 const RUNS = [run("r1", "a1", "done", 5), run("r2", "a2", "failed", 9), run("r3", "a1", "cancelled", 1, 0), run("r4", "a2", "done", null, 2, 3)];
 
-function serve(route: string, page: "models" | "work") {
-  mockFetch({ "/api/v1/cost/models": MODELS, "/api/v1/cost/external-usage": OUTSIDE, "/api/v1/cost/runs": RUNS,
+function serve(route: string, page: "models" | "work", runs: unknown = RUNS) {
+  // The agent's own runs first: the org route would match its path's end too.
+  mockFetch({ "/api/v1/agents/a1/cost/runs": [RUNS[0], RUNS[2], run("r9", "a1", "done", 0.5)],
+    "/api/v1/cost/models": MODELS, "/api/v1/cost/external-usage": OUTSIDE, ...(runs ? { "/api/v1/cost/runs": runs } : {}),
     "/api/v1/cost/indicators": { indicators: [], failed: 0, total_usd: 0, quality: {} } });
   return renderWithProviders(page === "models" ? <CostModels /> : <CostWork />, { route, path: page === "models" ? "/costs/models" : "/costs/work" });
 }
@@ -60,10 +62,26 @@ describe("the Models view", () => {
     expect(rows.map((r) => `${r.who}:${r.model}:${r.usd}`)).toEqual(["agents:sonnet:4", "agents:opus:2"]);
   });
 
+  it("an outside cell with a price for only some of its calls is priced at the list over all of them, marked", () => {
+    const part = { ...OUTSIDE, cells: [{ ...cell("opus", 30, 6, 1), reported_calls: 10 }, cell("haiku", 4, 0.4, 0.3)] } as unknown as ExternalModelUsage;
+    const rows = modelRows(undefined, part, new Set());
+    expect(rows.map((r) => [r.model, r.usd, r.recomputed])).toEqual([["opus", 6, true], ["haiku", 0.3, false]]);
+  });
+
+  it("an agent on two credential kinds is one line; the top model adds agents and outside sessions", () => {
+    const two: ModelUsageReport = { ...MODELS, rows: [...(MODELS.rows ?? []), { ...mrow("a1", "opus", 2, 1), credential_kind: "api_key" }] };
+    const rows = modelRows(two, OUTSIDE, new Set());
+    expect(rows[0].agents.map((a) => [a.label, a.runs, a.usd])).toEqual([["A1", 12, 9], ["A2", 5, 2]]);
+    // opus: $11 agents + $6 outside.
+    expect(topModel(rows)).toEqual({ model: "opus", usd: 17 });
+    expect(topModel([{ ...rows[0], model: "x", who: "agents", usd: 5 }, { ...rows[0], model: "y", who: "agents", usd: 3 }, { ...rows[0], model: "y", who: "outside", usd: 3 }])!.model).toBe("y");
+  });
+
+  // opus: $10 agents + $6 outside of $20 in all.
   it("the page leads with the model that took most of the money and says per run; unpriced reads as tokens", async () => {
     serve("/costs/models?tz=utc", "models");
     await waitFor(() => expect(document.querySelector("[data-models-tiles]")).not.toBeNull());
-    expect(document.querySelector("[data-models-tiles]")!.textContent).toContain(t("costs.models.share", { pct: "50", usd: fmtUSD(10) }));
+    expect(document.querySelector("[data-models-tiles]")!.textContent).toContain(t("costs.models.share", { pct: "80", usd: fmtUSD(16) }));
     const fable = document.querySelector("[data-model-row='outside:fable']")!;
     expect(fable.textContent).toContain(t("costs.incl.noListTokens", { n: "1,000" }));
     expect(fable.textContent).not.toContain("$0.00");
@@ -93,9 +111,21 @@ describe("the Work view", () => {
     expect(document.querySelector("[data-work-row='r2'] [data-work-outcome]")!.textContent).toBe(t("costs.work.state.failed"));
   });
 
-  it("follows the page's Who: an agent's runs only", async () => {
+  it("follows the page's Who: the agent's own runs, fetched for it (not a cut of the org's top runs)", async () => {
     serve("/costs/work?tz=utc&agents=a1", "work");
-    await waitFor(() => expect(document.querySelectorAll("[data-work-row]").length).toBe(2));
+    await waitFor(() => expect(document.querySelectorAll("[data-work-row]").length).toBe(3));
+    expect(document.querySelector("[data-work-row='r9']")).not.toBeNull();
     expect(screen.getByText(/^a1$/, { selector: "b" })).toBeTruthy();
+  });
+
+  it("ranks on the measured basis, as the server and the cost home do", () => {
+    expect(runUSD(run("x", "a1", "done", 0, 1, 4))).toBe(4);
+    expect(runUSD(run("y", "a1", "done", 2, 1, null))).toBe(2);
+  });
+
+  it("says so when the runs cannot be loaded, instead of a blank page", async () => {
+    serve("/costs/work?tz=utc", "work", null);
+    await waitFor(() => expect(document.querySelector("[data-work-error]")).not.toBeNull());
+    expect(document.querySelector("[data-work-tiles]")).toBeNull();
   });
 });

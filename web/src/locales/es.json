@@ -917,7 +917,10 @@
       "colPrice": "Precio por token",
       "colShare": "Parte",
       "colPerRun": "Por ejecución",
-      "runs": "{{count}} ejecuciones",
+      "runs_one": "{{count}} ejecución",
+      "runs_few": "{{count}} ejecuciones",
+      "runs_many": "{{count}} ejecuciones",
+      "runs_other": "{{count}} ejecuciones",
       "whoAgents": "agentes",
       "whoOutside": "fuera de covey",
       "note": "Agentes: el precio propio de Claude Code de cada ejecución. Fuera de covey: el precio de Claude Code cuando lo informó, si no el precio de lista de covey (*); se cuentan llamadas, no ejecuciones. Con agentes seleccionados, solo se muestran sus ejecuciones."
@@ -929,20 +932,30 @@
       "waste": "Ejecuciones sin resultado",
       "wasteSub": "{{count}} fallidas o canceladas, {{pct}} % del dinero",
       "idle": "Ejecuciones sin acción",
-      "idleSub": "de {{count}} ejecuciones: no cambiaron nada fuera de sí mismas",
+      "idleSub_one": "de {{count}} ejecución: no cambió nada fuera de sí misma",
+      "idleSub_few": "de {{count}} ejecuciones: no cambiaron nada fuera de sí mismas",
+      "idleSub_many": "de {{count}} ejecuciones: no cambiaron nada fuera de sí mismas",
+      "idleSub_other": "de {{count}} ejecuciones: no cambiaron nada fuera de sí mismas",
       "total": "Todas las ejecuciones",
-      "totalSub": "{{count}} ejecuciones a precios por token",
+      "totalSub_one": "{{count}} ejecución a precio de tokens",
+      "totalSub_few": "{{count}} ejecuciones a precio de tokens",
+      "totalSub_many": "{{count}} ejecuciones a precio de tokens",
+      "totalSub_other": "{{count}} ejecuciones a precio de tokens",
       "totalCapped": "las {{count}} ejecuciones más caras a precios por token",
       "colOutcome": "Resultado",
       "colPrice": "Precio por token",
-      "more": "{{count}} ejecuciones más baratas no listadas.",
+      "more_one": "{{count}} ejecución más barata no listada.",
+      "more_few": "{{count}} ejecuciones más baratas no listadas.",
+      "more_many": "{{count}} ejecuciones más baratas no listadas.",
+      "more_other": "{{count}} ejecuciones más baratas no listadas.",
       "state": {
         "done": "hecha",
         "failed": "fallida",
         "cancelled": "cancelada",
         "killed": "detenida",
         "in_progress": "en curso",
-        "blocked": "bloqueada"
+        "blocked": "bloqueada",
+        "open": "en cola"
       }
     },
     "bar": {
@@ -990,7 +1003,8 @@
       "noRuns": "ninguna ejecución en este periodo",
       "doorHealthSub": "comprobaciones superadas",
       "loading": "Cargando las cifras de coste…",
-      "noMeter": "No hay contador de suscripción en este periodo: no hay cifra de capacidad para responder. La página de detalles tiene los precios por token."
+      "noMeter": "No hay contador de suscripción en este periodo: no hay cifra de capacidad para responder. La página de detalles tiene los precios por token.",
+      "loadError": "No se pudo cargar esta vista. Inténtalo de nuevo en un momento."
     },
     "answer": {
       "title": "Lo que ha costado",
