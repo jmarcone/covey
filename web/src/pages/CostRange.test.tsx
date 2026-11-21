@@ -231,6 +231,24 @@ describe("Kosten — eigener Zeitraum", () => {
     }
   });
 
+  // #200 merge review: after Back from an applied custom range the control shows the quick range the page reads.
+  it("zeigt nach Zurück aus einem eigenen Zeitraum den Schnellbereich, den die Seite liest, nicht „eigener Zeitraum“", async () => {
+    const Back = () => { const nav = useNavigate(); return <button onClick={() => nav(-1)}>zurück</button>; };
+    const GoTo = ({ to }: { to: string }) => { const nav = useNavigate(); return <button onClick={() => nav(to)}>{`gehe ${to}`}</button>; };
+    const m = mockFetch(routes());
+    const custom = `/costs?from=${FROM}&to=${TO}&tz=utc`;
+    renderWithProviders(<><Costs /><Probe /><GoTo to={custom} /><Back /></>, { route: "/costs?tz=utc" });
+    // Open the panel, then the range arrives in the address (as Apply writes it).
+    fireEvent.click(await screen.findByRole("button", { name: "Eigener Zeitraum…" }));
+    fireEvent.click(screen.getByRole("button", { name: `gehe ${custom}` }));
+    await waitFor(() => expect(search().get("from")).toBe(FROM));
+    fireEvent.click(screen.getByRole("button", { name: "zurück" }));
+    await waitFor(() => expect(search().get("from")).toBeNull());
+    expect(screen.getByRole("button", { name: "Eigener Zeitraum…" }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.queryByRole("form", { name: "Eigener Zeitraum" })).toBeNull();
+    expect(m.calls.filter((c) => c.includes("/cost/cells")).pop()).toContain("days=1");
+  });
+
   it("lässt eine gewählte Intervallbreite stehen, solange der Zeitraum derselbe bleibt", async () => {
     const m = serve(`/costs?from=${FROM}&to=${TO}&tz=utc`);
     fireEvent.click(await screen.findByRole("button", { name: "Stunde" }));

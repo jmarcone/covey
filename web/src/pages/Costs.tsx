@@ -217,6 +217,11 @@ export default function Costs({ me }: { me?: Principal }) {
   const win: CostWindow = customOk ? customWindow(range.from!, range.to!) : { days };
   const custom = isCustom(win);
   const [panelOpen, setPanelOpen] = useState(false);
+  // The panel follows the address: once it holds no custom range (Back from an applied one), the control shows the
+  // quick range the page really reads, not a stale "Custom" (#200 merge review).
+  useEffect(() => {
+    if (range.from == null && range.to == null) setPanelOpen(false);
+  }, [range.from, range.to]);
   const wq = windowQuery(win);
   // A custom range's bucket: the one the address names where it fits the span, else the span's own.
   const spanDays = custom ? Math.max(1, Math.ceil((range.to! - range.from!) / 86_400_000)) : days;
@@ -329,11 +334,14 @@ export default function Costs({ me }: { me?: Principal }) {
       return p;
     });
   };
-  const applyCustom = (from: number, to: number) => setParams((prev) => {
-    const p = writeRange(prev, customWindow(from, to), tz);
-    p.delete("bucket");
-    return p;
-  });
+  const applyCustom = (from: number, to: number) => {
+    setPanelOpen(false); // the custom range keeps the panel shown while it is in force
+    setParams((prev) => {
+      const p = writeRange(prev, customWindow(from, to), tz);
+      p.delete("bucket");
+      return p;
+    });
+  };
   const setTz = (next: typeof tz) => setParams((prev) => {
     const n = new URLSearchParams(prev);
     n.set("tz", next);
@@ -403,17 +411,22 @@ export default function Costs({ me }: { me?: Principal }) {
   // The token-price checks count where the page holds the calls they
   // concern: covey's lines always, the outside sessions where included.
   const health = useCostHealth();
-  const incomplete = incompleteParts(health.data, { agents: true, outside: included != null });
+  // The checks run at now. They say something about a window that reaches now (a quick range, or a custom one ending
+  // within the hour); on a window in the past their marks would be today's, not its own (#200 merge review): none.
+  const windowEndMs = cells.data?.until ? Date.parse(cells.data.until) : custom ? range.to! : Date.now();
+  const windowIsNow = !custom || Date.now() - windowEndMs < 3_600_000;
+  const healthData = windowIsNow ? health.data : undefined;
+  const incomplete = incompleteParts(healthData, { agents: true, outside: included != null });
   const outsideMark = coveyOnly ? [] : incomplete.outside;
   // The answer card is the whole dent under "covey only" too (#195): its operator and project rows stand, so their
   // marks do as well, whatever the chips and tiles leave out (#179 merge review).
-  const cardMarks = incompleteParts(health.data, { agents: true, outside: true });
+  const cardMarks = incompleteParts(healthData, { agents: true, outside: true });
   // Per credential: a reset nobody recorded on its meter, and a stopped
   // uploader of a source on its seat while the outside part is included,
   // leave its own real cost and multiples short — its block and its meter
   // in the insights say so where those figures stand.
   const credentialMarks = (key: string, slot: number): CredentialMarks => {
-    const m = credentialIncomplete(health.data, `${key} #${slot}`, included ? seatSources(included, key, slot).map((x) => x.source) : null);
+    const m = credentialIncomplete(healthData, `${key} #${slot}`, included ? seatSources(included, key, slot).map((x) => x.source) : null);
     return { multiple: <IncompleteMark checks={m.multiple} part="multiple" />, outside: <IncompleteMark checks={m.outside} part="outside" /> };
   };
 

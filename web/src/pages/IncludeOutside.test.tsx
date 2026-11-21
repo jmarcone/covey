@@ -1487,6 +1487,17 @@ describe("the incomplete marks of the data checks (#178)", () => {
     expect(document.querySelectorAll("[data-chart-title] [data-incomplete='tokenPrice'], [data-models-title] [data-incomplete='tokenPrice']").length).toBe(0);
   });
 
+  it("a custom range in the past carries no marks: the checks run at now, not over that window (#200 merge review)", async () => {
+    serve(cells(), "/costs?from=2026-11-17T17:00:00Z&to=2026-11-17T21:00:00Z&tz=utc", report(c1, failed("c5", "unpriced", { unpriced: ["x"], unpriced_agents: ["x"] })));
+    await answerReady();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(document.querySelectorAll("[data-incomplete]").length).toBe(0);
+    cleanup();
+    // The same checks on a quick range (it ends now) mark the card.
+    serve(cells(), "/costs?tz=utc", report(c1));
+    expect(await headlineMarks()).toEqual(["outside"]);
+  });
+
   it("a call booked twice (c4) marks the token counts in the Tokens drawer", async () => {
     serve(cells(), "/costs", report(failed("c4", "duplicates", { external_duplicates: 0, agent_duplicates: 2 })));
     await answerReady();
