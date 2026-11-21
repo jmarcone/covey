@@ -263,18 +263,34 @@ function stepDigits(step: number): number {
   return 10;
 }
 
-// fmtBucket labels a cost bucket in the UI's language. Buckets are UTC (the
-// server truncates in UTC), so they are shown in UTC and say so — a local
-// clock would shift every bar by the offset, and a UTC day is not the
-// reader's day. A week is named by its first day (Monday, UTC): "week of".
-export function fmtBucket(iso: string, bucket: string): string {
+// The time zone the cost page shows its times in. UTC unless the page says
+// otherwise (the Costs page sets it from its ?tz=, see costRange.ts): one
+// switch for every label on the page, so a tile and the axis never show two
+// clocks.
+export type DisplayTz = "utc" | "local";
+let displayTz: DisplayTz = "utc";
+export function setDisplayTz(tz: DisplayTz) {
+  displayTz = tz;
+}
+export const getDisplayTz = (): DisplayTz => displayTz;
+
+// fmtBucket labels a cost bucket in the UI's language. Buckets are cut in UTC
+// (the server truncates in UTC): a day, a week and a month are UTC's and are
+// shown so and say so — a local clock would shift every bar by the offset, and
+// a UTC day is not the reader's day. The buckets below a day follow the
+// display time zone (UTC by default, the reader's clock when the page asks
+// for it, with the zone named). A week is named by its first day (Monday,
+// UTC): "week of".
+export function fmtBucket(iso: string, bucket: string, tz: DisplayTz = displayTz): string {
   const d = new Date(iso);
   const lang = uiLocale();
   switch (bucket) {
     case "10min":
     case "hour":
     case "10hour":
-      return `${d.toLocaleString(lang, { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "UTC" })} UTC`;
+      return tz === "local"
+        ? d.toLocaleString(lang, { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZoneName: "short" })
+        : `${d.toLocaleString(lang, { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "UTC" })} UTC`;
     case "month":
       return d.toLocaleDateString(lang, { month: "short", year: "numeric", timeZone: "UTC" });
     case "week":

@@ -411,10 +411,12 @@ export function billedStatus(windowEnd: Date, dataRefreshedAt: string | null | u
  *  - unmapped:     the credential is not mapped to an Anthropic API key;
  *  - failed:       nothing billed in the window and the last sync failed;
  *  - not_landed:   nothing billed yet and the window is not complete;
+ *  - no_bucket:    the range holds no whole billed hour or day (the window is
+ *                  empty): there is nothing to sum, which is not "$0.00";
  *  - measured:     a figure — $0.00 only when configured, mapped and complete.
  *  Only "measured" carries a dollar figure; every other state is "no figure",
  *  never "$0.00". */
-export type BilledState = "unavailable" | "unconfigured" | "unmapped" | "failed" | "not_landed" | "measured";
+export type BilledState = "unavailable" | "unconfigured" | "unmapped" | "failed" | "not_landed" | "no_bucket" | "measured";
 
 export type BilledFigure = {
   state: BilledState;
@@ -450,6 +452,10 @@ export function billedFigure(report: BilledReport | null | undefined, key: strin
   if (!sync.configured) return { ...base, state: "unconfigured" };
   const tot = (w.totals ?? []).find((t) => t.secret_key === key && t.secret_slot === slot);
   if (!tot) return { ...base, state: "unmapped" };
+  // A range inside one hour, or one without a whole UTC day beyond the hourly
+  // reach, ends where it starts (the server's BilledWindowFor): its totals
+  // are empty, and the sync being complete says nothing about them.
+  if (window && window.end.getTime() <= window.start.getTime()) return { ...base, state: "no_bucket" };
   const usd = Number(tot.billed_usd) || 0, list = Number(tot.billed_list_usd) || 0;
   const fig: BilledFigure = { ...base, usd, listUsd: list, ratio: list > 0 ? usd / list : null,
     reported: tot.reported_usd, recomputed: tot.list_usd };

@@ -198,7 +198,7 @@ func TestModelUsageFromResultLine(t *testing.T) {
 		t.Fatalf("recording events = %d, want 3", n)
 	}
 
-	rep, err := s.obs.ModelUsage(ctx, agent.OrgID, time.Now().Add(-time.Hour), observability.CredentialFilter{})
+	rep, err := s.obs.ModelUsage(ctx, agent.OrgID, time.Now().Add(-time.Hour), time.Time{}, observability.CredentialFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +271,7 @@ func TestCostCellsReportedAndMeasured(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cells, err := s.obs.CostCellsFor(ctx, agent.OrgID, "day", time.Now().Add(-24*time.Hour))
+	cells, err := s.obs.CostCellsFor(ctx, agent.OrgID, "day", time.Now().Add(-24*time.Hour), time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -374,7 +374,7 @@ func TestCostCellsReportedAndMeasured(t *testing.T) {
 	}
 
 	// Narrowed to the key: its line, and nothing of the seat.
-	rep, err := s.obs.ModelUsage(ctx, agent.OrgID, time.Now().Add(-time.Hour),
+	rep, err := s.obs.ModelUsage(ctx, agent.OrgID, time.Now().Add(-time.Hour), time.Time{},
 		observability.CredentialFilter{SecretKey: key.SecretKey, SecretSlot: key.SecretSlot})
 	if err != nil {
 		t.Fatal(err)
@@ -424,7 +424,7 @@ func TestRunCostsRankedByRecomputedCost(t *testing.T) {
 	if engine <= 1.0 {
 		t.Fatalf("the fixture's lines cost %v; the test needs more than the bare run's booking", engine)
 	}
-	runs, err := s.obs.RunCosts(ctx, agent.OrgID, nil, time.Now().Add(-time.Hour), 10)
+	runs, err := s.obs.RunCosts(ctx, agent.OrgID, nil, time.Now().Add(-time.Hour), time.Time{}, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -456,7 +456,7 @@ func TestCumulativeSessionAndMeterSteps(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	rep, err := s.obs.ModelUsage(ctx, agent.OrgID, time.Now().Add(-time.Hour), observability.CredentialFilter{})
+	rep, err := s.obs.ModelUsage(ctx, agent.OrgID, time.Now().Add(-time.Hour), time.Time{}, observability.CredentialFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -480,7 +480,7 @@ func TestCumulativeSessionAndMeterSteps(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	cells, err := s.obs.CostCellsFor(ctx, agent.OrgID, "hour", base.Add(-time.Minute))
+	cells, err := s.obs.CostCellsFor(ctx, agent.OrgID, "hour", base.Add(-time.Minute), time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -541,7 +541,7 @@ func TestUsageReadingsMeasuredPerCredential(t *testing.T) {
 	reading(seat, 11, true, "")
 	reading(other, 20, true, "")
 
-	rs, err := s.obs.UsageReadings(ctx, agent.OrgID, start)
+	rs, err := s.obs.UsageReadings(ctx, agent.OrgID, start, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1001,7 +1001,7 @@ func TestMeterStepsCases(t *testing.T) {
 		}
 	}
 
-	cells, err := s.obs.CostCellsFor(ctx, agent.OrgID, "hour", since)
+	cells, err := s.obs.CostCellsFor(ctx, agent.OrgID, "hour", since, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1092,7 +1092,7 @@ func TestMeterMeasuredSpendIndependentOfBucket(t *testing.T) {
 		}
 	}
 	for _, bucket := range []string{"hour", "day", "week", "month"} {
-		cells, err := s.obs.CostCellsFor(ctx, agent.OrgID, bucket, since)
+		cells, err := s.obs.CostCellsFor(ctx, agent.OrgID, bucket, since, time.Time{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1180,7 +1180,7 @@ func TestCredentialPlanValidity(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	cells, err := s.obs.CostCellsFor(ctx, agent.OrgID, "hour", since)
+	cells, err := s.obs.CostCellsFor(ctx, agent.OrgID, "hour", since, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}

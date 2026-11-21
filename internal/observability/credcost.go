@@ -109,15 +109,16 @@ type WindowCharge struct {
 	Spans []span `json:"-"`
 }
 
-// costBasesFor returns the organisation's bases valid at any point since
-// `since`, per credential in order of validity — one entered to start later
-// than now among them: a reader takes the basis in effect at each moment
-// (basisAt), and lists a later one as what will hold from its start.
-func (s *Store) costBasesFor(ctx context.Context, orgID uuid.UUID, since time.Time) ([]CredentialBasis, error) {
+// costBasesFor returns the organisation's bases valid at any point in
+// [since, until) (a zero until is open), per credential in order of validity —
+// one entered to start later than now among them: a reader takes the basis in
+// effect at each moment (basisAt), and lists a later one as what will hold
+// from its start.
+func (s *Store) costBasesFor(ctx context.Context, orgID uuid.UUID, since, until time.Time) ([]CredentialBasis, error) {
 	rows, err := s.pool.Query(ctx, `SELECT secret_key, secret_slot, basis, valid_from, valid_to
 		FROM credential_cost_bases
-		WHERE org_id = $1 AND (valid_to IS NULL OR valid_to > $2)
-		ORDER BY secret_key, secret_slot, valid_from`, orgID, since)
+		WHERE org_id = $1 AND (valid_to IS NULL OR valid_to > $2) AND `+beforeSQL("valid_from", 3)+`
+		ORDER BY secret_key, secret_slot, valid_from`, orgID, since, untilArg(until))
 	if err != nil {
 		return nil, err
 	}

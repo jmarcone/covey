@@ -129,7 +129,7 @@ const modelCell = (source: string, model: string, calls: number, list: number | 
   unpriced_tokens: list == null ? output + 13 : 0, unpriced_calls: list == null ? calls : 0,
 });
 
-function serve(data: CostCells = cells(), route = "/costs", health?: CostHealthReport) {
+function serve(data: CostCells = cells(), route = "/costs?tz=utc", health?: CostHealthReport) {
   const ext = data.external;
   mockFetch({
     ...(health ? { "/api/v1/cost/health": health } : {}),
@@ -723,7 +723,7 @@ describe("the outside review's minors (#120)", () => {
       "/api/v1/cost/usage-readings": [],
       "/api/v1/cost/indicators": null,
     });
-    const { container } = renderWithProviders(<Costs />, { route: "/costs", path: "/costs" });
+    const { container } = renderWithProviders(<Costs />, { route: "/costs?tz=utc", path: "/costs" });
     const note = await waitFor(() => {
       const n = container.querySelector(`[data-credential="${KEY}#0"] [data-billed-hourly-from]`);
       if (!n) throw new Error("no note yet");
@@ -1485,6 +1485,17 @@ describe("the incomplete marks of the data checks (#178)", () => {
     expect(await headlineMarks()).toEqual(["multiple", "tokenPrice"]);
     // Off the card, covey's own figures carry no outside model's mark.
     expect(document.querySelectorAll("[data-chart-title] [data-incomplete='tokenPrice'], [data-models-title] [data-incomplete='tokenPrice']").length).toBe(0);
+  });
+
+  it("a custom range in the past carries no marks: the checks run at now, not over that window (#200 merge review)", async () => {
+    serve(cells(), "/costs?from=2026-11-17T17:00:00Z&to=2026-11-17T21:00:00Z&tz=utc", report(c1, failed("c5", "unpriced", { unpriced: ["x"], unpriced_agents: ["x"] })));
+    await answerReady();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(document.querySelectorAll("[data-incomplete]").length).toBe(0);
+    cleanup();
+    // The same checks on a quick range (it ends now) mark the card.
+    serve(cells(), "/costs?tz=utc", report(c1));
+    expect(await headlineMarks()).toEqual(["outside"]);
   });
 
   it("a call booked twice (c4) marks the token counts in the Tokens drawer", async () => {

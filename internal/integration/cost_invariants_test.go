@@ -71,7 +71,7 @@ func TestMeterDropInsideAPeriodSplitsTheWindow(t *testing.T) {
 		want[key] = m
 	}
 
-	cells, err := s.obs.CostCellsFor(ctx, agent.OrgID, "hour", since)
+	cells, err := s.obs.CostCellsFor(ctx, agent.OrgID, "hour", since, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}

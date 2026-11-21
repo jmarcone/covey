@@ -1,10 +1,11 @@
-import { Fragment, useEffect, useId, useMemo, useState } from "react";
+import { Fragment, createContext, useContext, useEffect, useId, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { answersSeat, type AnswerCovers } from "./costAnswerModel";
 import { api, type BilledReport, type CellAgent, type CostCell, type CostCells, type ExternalSource, type ExternalUsage, type UsageReading } from "../api";
 import { fmtBucket, fmtClockUTC, fmtCount, fmtCountAxis, fmtNumber, fmtUSD, fmtUSDAxis, fmtUSDBelow, fmtUSDFixed } from "../format";
+import { windowQuery, type CostWindow } from "./costRange";
 import { SOURCES, SOURCE_COLOR, SPLIT_COLOR, SPLIT_HATCH, sourceHint, sourceLabel, type Source } from "./costSources";
 import { asBool, asEnum, asSet, useParamState } from "./costView";
 
@@ -101,35 +102,43 @@ const AGENT_COLORS = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => `var(--agent-${i})`);
 
 export const BUCKET_MS: Record<string, number> = { "10min": 600_000, hour: 3600_000, "10hour": 36_000_000, day: 86400_000, week: 7 * 86400_000, month: 30 * 86400_000 };
 
-export function useCostCells(days: number, bucket: string) {
+/** The window is the quick range's days or a custom range's from and to
+ *  (costRange.ts); the hooks below key their queries by the query itself. */
+export function useCostCells(win: CostWindow, bucket: string, enabled = true) {
+  const q = windowQuery(win);
   return useQuery({
-    queryKey: ["cost", "cells", days, bucket],
-    queryFn: () => api<CostCells>(`/cost/cells?days=${days}&bucket=${bucket}`),
+    queryKey: ["cost", "cells", q, bucket],
+    queryFn: () => api<CostCells>(`/cost/cells?${q}&bucket=${bucket}`),
     refetchInterval: 30000,
+    enabled,
   });
 }
 
 /** The provider's meter readings of the period: the cards below the chart
  *  show them, and the plan form takes a credential's place and its weekly
  *  reset from them. */
-export function useUsageReadings(days: number) {
+export function useUsageReadings(win: CostWindow, enabled = true) {
+  const q = windowQuery(win);
   return useQuery({
-    queryKey: ["cost", "usage-readings", days],
-    queryFn: () => api<UsageReading[] | null>(`/cost/usage-readings?days=${days}`),
+    queryKey: ["cost", "usage-readings", q],
+    queryFn: () => api<UsageReading[] | null>(`/cost/usage-readings?${q}`),
     refetchInterval: 30000,
+    enabled,
   });
 }
 
 /** What Anthropic billed, per bucket and API key; an organisation without an
  *  admin key gets an empty bill, not an error. */
-export function useBilled(days: number, bucket: string) {
+export function useBilled(win: CostWindow, bucket: string, enabled = true) {
   // Hours or days, summed into the chart's bucket on the page (billedPerPeriod).
-  const fetchBucket = billedFetchBucket(days, bucket);
+  const fetchBucket = billedFetchBucket(win.days, bucket);
+  const q = windowQuery(win);
   return useQuery({
-    queryKey: ["cost", "billed", days, fetchBucket],
-    queryFn: () => api<BilledReport>(`/cost/billed?days=${days}&bucket=${fetchBucket}`),
+    queryKey: ["cost", "billed", q, fetchBucket],
+    queryFn: () => api<BilledReport>(`/cost/billed?${q}&bucket=${fetchBucket}`),
     refetchInterval: 60000,
     retry: false,
+    enabled,
   });
 }
 
@@ -497,7 +506,8 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
   title: string;
   periods: string[];
   groups: Bar[][];
-  fmtPeriod: (p: string) => string;
+  /** utc: the same period in UTC, where the labels follow the reader's clock (the tooltip names both). */
+  fmtPeriod: (p: string, utc?: boolean) => string;
   fmtValue: (v: number) => string;
   /** A tick label; step is the distance between ticks, so a tick can carry its precision. */
   fmtAxis: (v: number, step: number) => string;
@@ -719,6 +729,9 @@ export function BarChart({ title, periods, groups, fmtPeriod, fmtValue, fmtAxis,
           padding: "8px 10px", fontSize: 12, boxShadow: "0 6px 20px var(--shadow-md)",
         }}>
           <div className="muted" style={{ fontSize: 11, marginBottom: 6 }}>{fmtPeriod(periods.at(open) ?? "")}</div>
+          {fmtPeriod(periods.at(open) ?? "", true) !== fmtPeriod(periods.at(open) ?? "") && (
+            <div className="muted" data-tip-utc style={{ fontSize: 11, marginBottom: 6 }}>{fmtPeriod(periods.at(open) ?? "", true)}</div>
+          )}
           {groups.at(open)!.filter((b) => sum(b.segs) > 0).map((b) => (
             <div key={b.key} style={{ marginBottom: 6 }}>
               <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 600, gap: 8 }}>
@@ -1031,6 +1044,7 @@ function CredentialTiles({ f, filtered, narrowed, out, split, seatSplit, full, m
   answered?: boolean;
 }) {
   const { t } = useTranslation();
+  const custom = useContext(CustomRangeContext);
   // With the outside sessions on this seat included, each figure names its
   // parts — the range's, where the multiple of everything on the meter
   // stands beside them with the parts within the meter's readings (L5).
@@ -1145,6 +1159,7 @@ function CredentialTiles({ f, filtered, narrowed, out, split, seatSplit, full, m
         : b.state === "unmapped" ? t("costs.fig.billedUnmapped")
         : b.state === "failed" ? t("costs.fig.billedSyncFailed", { error: b.error || "–" })
         : b.state === "not_landed" ? t("costs.fig.billedNotLanded")
+        : b.state === "no_bucket" ? t("costs.fig.billedNoBucket")
         : t("costs.fig.billedUnavailable");
       tiles.push(<Tile key="billed" label={t("costs.fig.billed")} value="–" sub={why} color={SOURCE_COLOR.billed} />);
     } else {
@@ -1156,8 +1171,9 @@ function CredentialTiles({ f, filtered, narrowed, out, split, seatSplit, full, m
       const w = b.window;
       const until = w && (w.comparedUntil.toISOString().slice(0, 10) === w.end.toISOString().slice(0, 10)
         ? fmtClockUTC(w.comparedUntil) : fmtBucket(w.comparedUntil.toISOString(), "hour"));
-      const win = w ? t("costs.fig.billedWindow", {
-        from: fmtBucket(w.start.toISOString(), "hour"),
+      // A custom range's bill ends where the range does, not now.
+      const win = w ? t(custom ? "costs.fig.billedWindowTo" : "costs.fig.billedWindow", {
+        from: fmtBucket(w.start.toISOString(), "hour"), to: fmtBucket(w.end.toISOString(), "hour"),
         unit: t(w.width === "1h" ? "costs.fig.billedUnitHours" : "costs.fig.billedUnitDays"),
         reported: fmtUSD(b.reported), list: fmtUSD(b.recomputed), until,
       }) : undefined;
@@ -1200,9 +1216,14 @@ function CredentialTiles({ f, filtered, narrowed, out, split, seatSplit, full, m
   return <div className="flex flex-wrap gap-3 mb-2">{tiles}</div>;
 }
 
+/** The page shows a custom range: a seat without a meter reading in it says
+ *  so, where a quick range says nothing (its readings are there). */
+export const CustomRangeContext = createContext(false);
+
 /** Why there is no multiple, in words. answered: the page's answer table says it for the meter's own multiple (#195). */
 function NoMultiple({ f, answered = false }: { f: CredentialFigures; answered?: boolean }) {
   const { t } = useTranslation();
+  const custom = useContext(CustomRangeContext);
   if (f.everything && f.everything.why !== "usage") {
     if (answered) return null;
     // The multiple of everything on the meter replaces covey's own. On a
@@ -1214,7 +1235,12 @@ function NoMultiple({ f, answered = false }: { f: CredentialFigures; answered?: 
       : t("costs.incl.everythingNoList");
     return <p className="muted text-xs mb-2 mt-0" data-no-multiple data-everything-why={e.why}>{text}</p>;
   }
-  if (f.kind === "api_key" || f.noMultiple == null || f.noMultiple === "meter") return null;
+  if (f.kind === "api_key" || f.noMultiple == null) return null;
+  if (f.noMultiple === "meter") {
+    // No real cost and no multiple outside a metered stretch: never the list
+    // over the whole segment divided by a real cost of part of it.
+    return custom ? <p className="muted text-xs mb-2 mt-0" data-no-multiple data-no-meter>{t("costs.range.noMeter")}</p> : null;
+  }
   let text: string;
   if (f.noMultiple === "agents") text = t("costs.fig.noMultipleAgents");
   else if (f.noMultiple === "outside") text = t("costs.split.noMultipleOutside");
@@ -1236,7 +1262,7 @@ function NoMultiple({ f, answered = false }: { f: CredentialFigures; answered?: 
 
 /** One credential: its tiles, its chart, its agents. */
 function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPeriod, selected, src, split, types, layout, view, sharedScale, asTable, outside, full, marks, answered }: {
-  f: CredentialFigures; data: CostCells; billed: BilledReport | undefined; readings: readonly UsageReading[]; canSetPlan: boolean; bucket: string; fmtPeriod: (p: string) => string;
+  f: CredentialFigures; data: CostCells; billed: BilledReport | undefined; readings: readonly UsageReading[]; canSetPlan: boolean; bucket: string; fmtPeriod: (p: string, utc?: boolean) => string;
   selected: Set<string>; src: Record<Source, boolean>; split: Split; types: Set<string>; layout: Layout; view: View; sharedScale: boolean; asTable: boolean;
   /** The full view of covey's price table (the toggle): Reported and Recomputed apart. */
   full: boolean;
@@ -1787,7 +1813,7 @@ function ColourKey({ split, sources = [], other = [], full = true, list = full }
 export function CostExplorer({ data, billed, readings = [], canSetPlan = false, selected, bucket, fmtPeriod, outside = null, full: fullProp, onFull,
   off: offProp, onToggleSource, answered, marks }: {
   data: CostCells | undefined; billed?: BilledReport; readings?: readonly UsageReading[]; canSetPlan?: boolean;
-  selected: Set<string>; bucket: string; fmtPeriod: (p: string) => string;
+  selected: Set<string>; bucket: string; fmtPeriod: (p: string, utc?: boolean) => string;
   /** The sessions outside covey, included (#120, the default); null: covey only. */
   outside?: ExternalUsage | null;
   /** The full view of covey's price table (Reported and Recomputed apart),
@@ -1826,7 +1852,7 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
   const [types, setTypes] = useState<Set<string>>(new Set(COST_TYPES));
 
   const figures = useMemo(() => (data ? credentialFigures({
-    cells: data, billed, bucketMs: BUCKET_MS[bucket] ?? BUCKET_MS.day, windowEnd: new Date(), agents: selected, layout,
+    cells: data, billed, bucketMs: BUCKET_MS[bucket] ?? BUCKET_MS.day, windowEnd: data.until ? new Date(data.until) : new Date(), agents: selected, layout,
     includeOutside: outside != null,
   }) : []), [data, billed, bucket, selected, layout, outside]);
   // The outside sources with calls in the range, each a series of its own,
@@ -1948,7 +1974,7 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
  *  reported cost and list price, hatched per source, and a row each. No real
  *  cost: no meter of theirs is read here. */
 function OutsideBlock({ o, sources, src, fmtPeriod, asTable, filtered, full }: {
-  o: OutsideOnChart; sources: ExternalSource[]; src: Record<Source, boolean>; fmtPeriod: (p: string) => string; asTable: boolean; filtered: boolean;
+  o: OutsideOnChart; sources: ExternalSource[]; src: Record<Source, boolean>; fmtPeriod: (p: string, utc?: boolean) => string; asTable: boolean; filtered: boolean;
   full: boolean;
 }) {
   const { t } = useTranslation();
@@ -2041,7 +2067,7 @@ function OutsideBlock({ o, sources, src, fmtPeriod, asTable, filtered, full }: {
  *  every credential, narrowed by the agent filter. With the outside sessions
  *  included, a hatched bar of theirs beside the agents' in each period. */
 export function TokenExplorer({ data, selected, fmtPeriod, outside = null }: {
-  data: CostCells | undefined; selected: Set<string>; fmtPeriod: (p: string) => string;
+  data: CostCells | undefined; selected: Set<string>; fmtPeriod: (p: string, utc?: boolean) => string;
   outside?: ExternalUsage | null;
 }) {
   const { t } = useTranslation();

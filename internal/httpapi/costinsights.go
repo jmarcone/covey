@@ -22,11 +22,16 @@ import (
 // the subscription meter's movement, priced by the plan valid when it was
 // read, its coverage, and the plan rows of the window. The UI filters and
 // splits it; nothing is summed across credentials here.
-// ?days= and ?bucket= as on the other cost endpoints.
+// ?days= and ?bucket= as on the other cost endpoints; ?from= and ?to= (RFC
+// 3339, [from, to)) instead of ?days= — see costRange.
 func (s *Server) handleCostCells(w http.ResponseWriter, r *http.Request) {
 	p := principalFrom(r)
-	bucket, since := costWindow(r)
-	cells, err := s.Obs.CostCellsFor(r.Context(), p.OrgID, bucket, since)
+	bucket, since, until, err := costRange(r, time.Now())
+	if err != nil {
+		writeRangeErr(w, err)
+		return
+	}
+	cells, err := s.Obs.CostCellsFor(r.Context(), p.OrgID, bucket, since, until)
 	if err != nil {
 		mapErr(w, err)
 		return
@@ -37,11 +42,15 @@ func (s *Server) handleCostCells(w http.ResponseWriter, r *http.Request) {
 // handleModelUsage: the organisation's usage per agent and model as Claude
 // Code reported it (tokens per type, cache writes split by TTL, the engine's
 // own price) next to the same tokens priced with covey's list. ?days= as on
-// the other cost endpoints; ?secret_key= (and ?secret_slot=, default 0)
-// narrows it to the runs of one credential value.
+// the other cost endpoints, or ?from= and ?to= (costRange); ?secret_key= (and
+// ?secret_slot=, default 0) narrows it to the runs of one credential value.
 func (s *Server) handleModelUsage(w http.ResponseWriter, r *http.Request) {
 	p := principalFrom(r)
-	_, since := costWindow(r)
+	_, since, until, err := costRange(r, time.Now())
+	if err != nil {
+		writeRangeErr(w, err)
+		return
+	}
 	f := observability.CredentialFilter{SecretKey: r.URL.Query().Get("secret_key")}
 	if v := r.URL.Query().Get("secret_slot"); v != "" {
 		n, err := strconv.Atoi(v)
@@ -51,7 +60,7 @@ func (s *Server) handleModelUsage(w http.ResponseWriter, r *http.Request) {
 		}
 		f.SecretSlot = n
 	}
-	rep, err := s.Obs.ModelUsage(r.Context(), p.OrgID, since, f)
+	rep, err := s.Obs.ModelUsage(r.Context(), p.OrgID, since, until, f)
 	if err != nil {
 		mapErr(w, err)
 		return
@@ -66,8 +75,12 @@ func (s *Server) handleModelUsage(w http.ResponseWriter, r *http.Request) {
 // Served as /cost/usage-readings and, for the existing page, /cost/subscription.
 func (s *Server) handleUsageReadings(w http.ResponseWriter, r *http.Request) {
 	p := principalFrom(r)
-	_, since := costWindow(r)
-	rows, err := s.Obs.UsageReadings(r.Context(), p.OrgID, since)
+	_, since, until, err := costRange(r, time.Now())
+	if err != nil {
+		writeRangeErr(w, err)
+		return
+	}
+	rows, err := s.Obs.UsageReadings(r.Context(), p.OrgID, since, until)
 	if err != nil {
 		mapErr(w, err)
 		return
@@ -100,13 +113,17 @@ func (s *Server) handleBilled(w http.ResponseWriter, r *http.Request) {
 	// One instant for since and the window's end: ?days=2 is a window of
 	// exactly two days, inside the hourly reach.
 	now := time.Now().UTC()
-	bucket, since := costWindowAt(r, now)
-	series, err := s.Obs.BilledSeries(r.Context(), p.OrgID, bucket, since)
+	bucket, since, until, err := costRange(r, now)
+	if err != nil {
+		writeRangeErr(w, err)
+		return
+	}
+	series, err := s.Obs.BilledSeries(r.Context(), p.OrgID, bucket, since, until)
 	if err != nil {
 		mapErr(w, err)
 		return
 	}
-	window, err := s.Obs.BilledWindowFor(r.Context(), p.OrgID, since, now)
+	window, err := s.Obs.BilledWindowFor(r.Context(), p.OrgID, since, until, now)
 	if err != nil {
 		mapErr(w, err)
 		return
@@ -134,11 +151,19 @@ func (s *Server) handleBilled(w http.ResponseWriter, r *http.Request) {
 // handleReconcile: per UTC day × mapped credential × model, what Claude Code
 // reported, covey's list of the same tokens, and what Anthropic billed the
 // mapped API key; token diffs per type, the residual and whether the day is
-// complete. ?days= as on the other cost endpoints.
+// complete. ?days= or ?from=&to= as on the other cost endpoints — but the days
+// are whole: a window asked for as [from, to) is read from the UTC midnight
+// before from to the one after to, model_usage and cost_entries included, and
+// the answer's `until` says where. A figure here can therefore cover more than
+// the page's range does.
 func (s *Server) handleReconcile(w http.ResponseWriter, r *http.Request) {
 	p := principalFrom(r)
-	_, since := costWindow(r)
-	rec, err := s.Obs.Reconcile(r.Context(), p.OrgID, since)
+	_, since, until, err := costRange(r, time.Now())
+	if err != nil {
+		writeRangeErr(w, err)
+		return
+	}
+	rec, err := s.Obs.Reconcile(r.Context(), p.OrgID, since, until)
 	if err != nil {
 		mapErr(w, err)
 		return

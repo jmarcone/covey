@@ -380,7 +380,7 @@ func (s *Store) checkUploaderFresh(ctx context.Context, orgID uuid.UUID, now tim
 func (s *Store) checkMeterFresh(ctx context.Context, orgID uuid.UUID, now time.Time, _ HealthInputs) (HealthCheck, error) {
 	c := HealthCheck{ID: "c2"}
 	since := now.Add(-basisWindow)
-	meter, err := s.meterRowsAt(ctx, orgID, "day", since)
+	meter, err := s.meterRowsAt(ctx, orgID, "day", since, time.Time{}) // open: the check cuts at its own instant below
 	if err != nil {
 		return c, fmt.Errorf("cost health c2: %w", err)
 	}
@@ -504,7 +504,7 @@ func (s *Store) checkMeterFresh(ctx context.Context, orgID uuid.UUID, now time.T
 func (s *Store) checkMeterMonotonic(ctx context.Context, orgID uuid.UUID, now time.Time, _ HealthInputs) (HealthCheck, error) {
 	c := HealthCheck{ID: "c3"}
 	from := now.Add(-meterDropWindow)
-	rows, err := s.meterRowsAt(ctx, orgID, "day", from)
+	rows, err := s.meterRowsAt(ctx, orgID, "day", from, time.Time{}) // open: cut at now below
 	if err != nil {
 		return c, fmt.Errorf("cost health c3: %w", err)
 	}

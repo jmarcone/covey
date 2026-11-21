@@ -122,10 +122,12 @@ export function outsideLines(t: T, o: OutsideTotals): string[] {
   return lines;
 }
 
-export function OutsideOverview({ data, selected, days, bucket, fmtPeriod, incomplete }: {
-  data: CostCells | undefined; selected: Set<string>; days: number; bucket: string; fmtPeriod: (p: string) => string;
+export function OutsideOverview({ data, selected, days, bucket, fmtPeriod, incomplete, detailLink = true }: {
+  data: CostCells | undefined; selected: Set<string>; days: number; bucket: string; fmtPeriod: (p: string, utc?: boolean) => string;
   /** A failed data check's mark (#178): the uploads behind these figures stopped. */
   incomplete?: React.ReactNode;
+  /** False where the detailed view cannot show the window (a custom range). */
+  detailLink?: boolean;
 }) {
   const { t } = useTranslation();
   const filtered = selected.size > 0;
@@ -171,7 +173,7 @@ export function OutsideOverview({ data, selected, days, bucket, fmtPeriod, incom
         <div style={{ fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 6 }}>
           <Swatch color={OUTSIDE_COLOR} /> {seriesLabel}{incomplete}
         </div>
-        <Link to={detail} className="text-sm" data-outside-detail>{t("costs.outside.details")}</Link>
+        {detailLink && <Link to={detail} className="text-sm" data-outside-detail>{t("costs.outside.details")}</Link>}
       </div>
       <p className="muted text-xs mb-3" style={{ maxWidth: 760 }}>{t("costs.outside.hint")}</p>
       <div className="flex flex-wrap items-center gap-2 mb-3">

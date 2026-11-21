@@ -66,7 +66,7 @@ func TestBillingWindowComparedUntilDataRefreshed(t *testing.T) {
 	f.line(t, cred, now.Add(-12*time.Hour), 50000) // before data_refreshed_at: $1
 	f.line(t, cred, now.Add(-2*time.Hour), 125000) // after it: $2.50, not yet billable
 
-	w, err := f.s.obs.BilledWindowFor(f.ctx, f.s.orgID, since, now)
+	w, err := f.s.obs.BilledWindowFor(f.ctx, f.s.orgID, since, time.Time{}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestBillingWindowComparedUntilDataRefreshed(t *testing.T) {
 		amount_cents, list_amount_cents, data_refreshed_at, fetched_at)
 		VALUES ($1,'1h',$2,$3,'apikey_stand','claude-opus-5-5','tokens','output_tokens',100,100,$4,$5)`,
 		f.s.orgID, at, at.Add(time.Hour), refreshed, now.Add(-time.Hour))
-	w, err = f.s.obs.BilledWindowFor(f.ctx, f.s.orgID, since, now)
+	w, err = f.s.obs.BilledWindowFor(f.ctx, f.s.orgID, since, time.Time{}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestBilledSeriesMappingAtBucketTime(t *testing.T) {
 			VALUES ($1,'1h',$2,$3,'apikey_moved','claude-opus-5-5','tokens','output_tokens',100,100,$4,$4)`,
 			f.s.orgID, at, at.Add(time.Hour), now)
 	}
-	series, err := f.s.obs.BilledSeries(f.ctx, f.s.orgID, "hour", now.Add(-7*24*time.Hour))
+	series, err := f.s.obs.BilledSeries(f.ctx, f.s.orgID, "hour", now.Add(-7*24*time.Hour), time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +253,7 @@ func TestBilledWindowOneMappingPerBucket(t *testing.T) {
 	}
 
 	since := now.Add(-5 * 24 * time.Hour)
-	w, err := f.s.obs.BilledWindowFor(f.ctx, f.s.orgID, since, now)
+	w, err := f.s.obs.BilledWindowFor(f.ctx, f.s.orgID, since, time.Time{}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +275,7 @@ func TestBilledWindowOneMappingPerBucket(t *testing.T) {
 		}
 	}
 
-	series, err := f.s.obs.BilledSeries(f.ctx, f.s.orgID, "day", since)
+	series, err := f.s.obs.BilledSeries(f.ctx, f.s.orgID, "day", since, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +325,7 @@ func TestBilledWindowHolderMappedAfterNow(t *testing.T) {
 	}
 
 	since := now.Add(-24 * time.Hour)
-	w, err := f.s.obs.BilledWindowFor(f.ctx, f.s.orgID, since, now)
+	w, err := f.s.obs.BilledWindowFor(f.ctx, f.s.orgID, since, time.Time{}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +346,7 @@ func TestBilledWindowHolderMappedAfterNow(t *testing.T) {
 		}
 	}
 
-	series, err := f.s.obs.BilledSeries(f.ctx, f.s.orgID, "hour", since)
+	series, err := f.s.obs.BilledSeries(f.ctx, f.s.orgID, "hour", since, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -86,7 +86,10 @@ type CostCell struct {
 type CostCells struct {
 	// Since is the window's start: every line and source total is from it
 	// on, while a meter step's span (from, at] may begin before it (#120).
-	Since   time.Time   `json:"since"`
+	Since time.Time `json:"since"`
+	// Until is the window's end, exclusive, when the range was asked for as
+	// from/to; absent for a window that runs to now.
+	Until   *time.Time  `json:"until,omitempty"`
 	Periods []time.Time `json:"periods"`
 	Agents  []CellAgent `json:"agents"`
 	Types   []string    `json:"types"`
@@ -171,10 +174,13 @@ type BookingBasis struct {
 	USD        float64 `json:"usd"`
 }
 
-// CostCellsFor builds the data set for the organisation since `since`.
-func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time) (CostCells, error) {
+// CostCellsFor builds the data set for the organisation over [since, until);
+// a zero until is a window that runs to now (the relative ranges). Everything
+// the window reads ends at until, so the answer is the one covey would have
+// given at that instant: the meter's last reading in it is the window's last.
+func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string, since, until time.Time) (CostCells, error) {
 	bucket = normalizeBucket(bucket)
-	out := CostCells{Since: since.UTC(), Periods: []time.Time{}, Agents: []CellAgent{}, Types: CostTypes, Cells: []CostCell{}, Bookings: []BookingBasis{}}
+	out := CostCells{Since: since.UTC(), Until: untilPtr(until), Periods: []time.Time{}, Agents: []CellAgent{}, Types: CostTypes, Cells: []CostCell{}, Bookings: []BookingBasis{}}
 	type key struct {
 		p    time.Time
 		a    uuid.UUID
@@ -216,8 +222,8 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 		ce.secret_key, ce.secret_slot, COALESCE(MAX(rc.kind),''), COALESCE(SUM(ce.usd),0)::float8
 		FROM cost_entries ce JOIN agents a ON a.id = ce.agent_id
 		LEFT JOIN runtime_credentials rc ON rc.runtime_id = ce.runtime_id AND rc.ord = ce.credential_ord
-		WHERE a.org_id = $1 AND ce.created_at >= $2
-		GROUP BY 1,2,3,4,5`, orgID, since)
+		WHERE a.org_id = $1 AND ce.created_at >= $2 AND `+beforeSQL("ce.created_at", 3)+`
+		GROUP BY 1,2,3,4,5`, orgID, since, untilArg(until))
 	if err != nil {
 		return out, err
 	}
@@ -251,8 +257,8 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 		SUM(mu.cache_write_5m_tokens), SUM(mu.cache_write_1h_tokens), SUM(mu.web_search_requests),
 		SUM(mu.engine_usd)::float8
 		FROM model_usage mu JOIN agents a ON a.id = mu.agent_id
-		WHERE mu.org_id = $1 AND mu.created_at >= $2
-		GROUP BY 1,2,3,4,5,6,7`, orgID, since)
+		WHERE mu.org_id = $1 AND mu.created_at >= $2 AND `+beforeSQL("mu.created_at", 3)+`
+		GROUP BY 1,2,3,4,5,6,7`, orgID, since, untilArg(until))
 	if err != nil {
 		return out, err
 	}
@@ -307,9 +313,9 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 		ce.secret_key, ce.secret_slot, COALESCE(MAX(rc.kind),''), COALESCE(SUM(ce.usd),0)::float8
 		FROM cost_entries ce JOIN agents a ON a.id = ce.agent_id
 		LEFT JOIN runtime_credentials rc ON rc.runtime_id = ce.runtime_id AND rc.ord = ce.credential_ord
-		WHERE a.org_id = $1 AND ce.created_at >= $2
+		WHERE a.org_id = $1 AND ce.created_at >= $2 AND `+beforeSQL("ce.created_at", 3)+`
 		  AND NOT EXISTS (SELECT 1 FROM model_usage m WHERE m.cost_entry_id = ce.id)
-		GROUP BY 1,2,3,4`, orgID, since)
+		GROUP BY 1,2,3,4`, orgID, since, untilArg(until))
 	if err != nil {
 		return out, err
 	}
@@ -374,8 +380,8 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 	// The booking-check: what the window's entries were booked from.
 	rows, err = s.pool.Query(ctx, `SELECT ce.secret_key, ce.secret_slot, ce.basis, count(*), COALESCE(SUM(ce.usd),0)::float8
 		FROM cost_entries ce JOIN agents a ON a.id = ce.agent_id
-		WHERE a.org_id = $1 AND ce.created_at >= $2
-		GROUP BY 1,2,3 ORDER BY 1,2,3`, orgID, since)
+		WHERE a.org_id = $1 AND ce.created_at >= $2 AND `+beforeSQL("ce.created_at", 3)+`
+		GROUP BY 1,2,3 ORDER BY 1,2,3`, orgID, since, untilArg(until))
 	if err != nil {
 		return out, err
 	}
@@ -392,46 +398,46 @@ func (s *Store) CostCellsFor(ctx context.Context, orgID uuid.UUID, bucket string
 		return out, err
 	}
 
-	plans, err := s.CredentialPlans(ctx, orgID, since)
+	plans, err := s.CredentialPlans(ctx, orgID, since, until)
 	if err != nil {
 		return out, err
 	}
 	out.Plans = plans
 	// The basis of each credential (0151): while it is usage, the plan prices
 	// nothing. Without a basis the plans price the meter as they always did.
-	bases, err := s.costBasesFor(ctx, orgID, since)
+	bases, err := s.costBasesFor(ctx, orgID, since, until)
 	if err != nil {
 		return out, err
 	}
 	out.CostBases = bases
 	priced := seatPlans(plans, bases)
-	steps, coverage, err := s.meterSteps(ctx, orgID, bucket, since, priced, bases)
+	steps, coverage, err := s.meterSteps(ctx, orgID, bucket, since, until, priced, bases)
 	if err != nil {
 		return out, err
 	}
 	out.Subscription, out.Meter = steps, coverage
 
-	if out.External, err = s.externalFor(ctx, orgID, bucket, since, coverage, priced, bases); err != nil {
+	if out.External, err = s.externalFor(ctx, orgID, bucket, since, until, coverage, priced, bases); err != nil {
 		return out, err
 	}
 	// A monthly usage limit (0152) turns its meter's movement into money,
 	// and over the spans that money covers a charge entered by hand is not
 	// counted again: the meter charges come first, and their spans go into
 	// the hand-entered ones.
-	limits, err := s.usageLimitsFor(ctx, orgID, since)
+	limits, err := s.usageLimitsFor(ctx, orgID, since, until)
 	if err != nil {
 		return out, err
 	}
 	var meter []WindowCharge
 	if len(limits) > 0 {
 		out.UsageLimits = limits
-		rows, err := s.meterRows(ctx, orgID, since)
+		rows, err := s.meterRows(ctx, orgID, since, until)
 		if err != nil {
 			return out, err
 		}
 		meter = meterLimitCharges(rows, since, limits, bases)
 	}
-	if out.UsageCharges, err = s.usageChargesFor(ctx, orgID, since, time.Now(), bases, meter); err != nil {
+	if out.UsageCharges, err = s.usageChargesFor(ctx, orgID, since, windowEnd(until, time.Now()), bases, meter); err != nil {
 		return out, err
 	}
 	out.UsageCharges = append(out.UsageCharges, meter...)
@@ -572,13 +578,14 @@ func WeeklyUSD(amount, fxToUSD float64, period string) float64 {
 }
 
 // CredentialPlans returns the organisation's plan rows valid at any point
-// since `since`, per credential in order of validity.
-func (s *Store) CredentialPlans(ctx context.Context, orgID uuid.UUID, since time.Time) ([]CredentialPlan, error) {
+// in [since, until), per credential in order of validity (a zero until is
+// open).
+func (s *Store) CredentialPlans(ctx context.Context, orgID uuid.UUID, since, until time.Time) ([]CredentialPlan, error) {
 	rows, err := s.pool.Query(ctx, `SELECT runtime_id, ord, secret_key, secret_slot, plan_name, amount::float8,
 		currency, period, tax_basis, fx_to_usd::float8, to_char(fx_date, 'YYYY-MM-DD'), valid_from, valid_to
 		FROM credential_plans
-		WHERE org_id = $1 AND (valid_to IS NULL OR valid_to > $2)
-		ORDER BY secret_key, secret_slot, valid_from`, orgID, since)
+		WHERE org_id = $1 AND (valid_to IS NULL OR valid_to > $2) AND `+beforeSQL("valid_from", 3)+`
+		ORDER BY secret_key, secret_slot, valid_from`, orgID, since, untilArg(until))
 	if err != nil {
 		return nil, err
 	}
@@ -658,6 +665,7 @@ WITH r0 AS (
 			ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS seen_resets
 	FROM usage_readings
 	WHERE org_id = $1 AND supported AND NOT stale AND week_percent IS NOT NULL AND secret_key IS NOT NULL
+	  AND ($3::timestamptz IS NULL OR fetched_at < $3)
 	  AND (fetched_at >= $2::timestamptz - interval '8 days'
 	    OR (window_kind NOT LIKE 'seven\_day%' AND fetched_at >= $2::timestamptz - interval '35 days'))),
 r AS (
@@ -697,7 +705,8 @@ SELECT secret_key, secret_slot, MAX(credential_kind) OVER (PARTITION BY secret_k
 FROM m
 ORDER BY secret_key, secret_slot, msrc, window_kind, fetched_at, id`
 
-// meterQuery is meterQueryTemplate with the bucket's period: $1 org, $2 since.
+// meterQuery is meterQueryTemplate with the bucket's period: $1 org, $2 since,
+// $3 the window's end (NULL: open).
 func meterQuery(bucket string) string {
 	return strings.Replace(meterQueryTemplate, "{{period}}", periodSQL(bucket, "fetched_at"), 1)
 }
@@ -721,8 +730,8 @@ type meterRow struct {
 
 // meterRowsAt are the readings with their steps (meterQuery), in partition
 // and time order, each with the bucket's period.
-func (s *Store) meterRowsAt(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time) ([]meterRow, error) {
-	rows, err := s.pool.Query(ctx, meterQuery(bucket), orgID, since)
+func (s *Store) meterRowsAt(ctx context.Context, orgID uuid.UUID, bucket string, since, until time.Time) ([]meterRow, error) {
+	rows, err := s.pool.Query(ctx, meterQuery(bucket), orgID, since, untilArg(until))
 	if err != nil {
 		return nil, err
 	}
@@ -742,16 +751,16 @@ func (s *Store) meterRowsAt(ctx context.Context, orgID uuid.UUID, bucket string,
 
 // meterRows are the readings with their steps, for the meter share, which
 // splits per reading whatever the chart's bucket.
-func (s *Store) meterRows(ctx context.Context, orgID uuid.UUID, since time.Time) ([]meterRow, error) {
-	return s.meterRowsAt(ctx, orgID, "hour", since)
+func (s *Store) meterRows(ctx context.Context, orgID uuid.UUID, since, until time.Time) ([]meterRow, error) {
+	return s.meterRowsAt(ctx, orgID, "hour", since, until)
 }
 
 // meterSteps turns the readings into movement per period, per credential and
 // source, and says how well each was covered. Points of the weekly all-models
 // window are priced with the plan valid when they were read; those read while
 // the credential's basis was usage (0151) are its usage points instead.
-func (s *Store) meterSteps(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time, plans []CredentialPlan, bases []CredentialBasis) ([]MeterStep, []MeterCoverage, error) {
-	all, err := s.meterRowsAt(ctx, orgID, bucket, since)
+func (s *Store) meterSteps(ctx context.Context, orgID uuid.UUID, bucket string, since, until time.Time, plans []CredentialPlan, bases []CredentialBasis) ([]MeterStep, []MeterCoverage, error) {
+	all, err := s.meterRowsAt(ctx, orgID, bucket, since, until)
 	if err != nil {
 		return nil, nil, err
 	}

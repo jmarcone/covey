@@ -1392,6 +1392,79 @@ func costWindowAt(r *http.Request, now time.Time) (string, time.Time) {
 // maxTenMinuteDays is how far back costWindow reaches at ?bucket=10min.
 const maxTenMinuteDays = 2
 
+// maxCustomRange is the longest span ?from= and ?to= may ask for.
+const maxCustomRange = 31 * 24 * time.Hour
+
+// rangeError is a refused ?from=/?to=: Code is what the client maps to its own
+// words (the UI shows no server text), Msg says it for a person with curl.
+type rangeError struct{ Code, Msg string }
+
+func (e rangeError) Error() string { return e.Msg }
+
+// costRange is costWindowAt with an explicit range: ?from= and ?to= (RFC 3339,
+// half-open [from, to)) replace the computed window, and ?days= is ignored
+// then. It returns the bucket, since and until; until is zero for a relative
+// range, which runs to now. A to after now is cut to now — nothing exists
+// beyond it, and a reader that fills the rest of a window (a charge's days)
+// must not fill the future.
+//
+// The same rules stand in web/src/pages/costRange.ts (validRange): from and to
+// come together, parse as RFC 3339, from is before to and before now, the span
+// is at most 31 days, and 10-minute buckets hold at most two days. Keep both in
+// step.
+//
+// The endpoints that take from and to are the ones that call costRange:
+// /cost/cells, /cost/org, /cost/models, /cost/usage-readings, /cost/billed,
+// /cost/reconcile, /cost/runs, /agents/{id}/cost/runs and /cost/external-usage.
+// The others (/cost/indicators, /agents/{id}/cost/indicators,
+// /agents/{id}/cost/series, the work record) stay on costWindow: they read
+// whole quick ranges (their trend sets the span against the one before it) and
+// ignore from and to, answering for ?days= or the default.
+func costRange(r *http.Request, now time.Time) (bucket string, since, until time.Time, err error) {
+	q := r.URL.Query()
+	from, to := q.Get("from"), q.Get("to")
+	if from == "" && to == "" {
+		bucket, since = costWindowAt(r, now)
+		return bucket, since, time.Time{}, nil
+	}
+	if from == "" || to == "" {
+		return "", since, until, rangeError{"range_incomplete", "from and to go together: give both, or use days"}
+	}
+	f, ferr := time.Parse(time.RFC3339, from)
+	t, terr := time.Parse(time.RFC3339, to)
+	if ferr != nil || terr != nil {
+		return "", since, until, rangeError{"range_time", "from and to are RFC 3339 times, e.g. 2026-11-20T16:00:00Z"}
+	}
+	f, t = f.UTC(), t.UTC()
+	if !t.After(f) {
+		return "", since, until, rangeError{"range_order", "to must be after from"}
+	}
+	if t.Sub(f) > maxCustomRange {
+		return "", since, until, rangeError{"range_span", "the range may span at most 31 days"}
+	}
+	if !f.Before(now) {
+		return "", since, until, rangeError{"range_future", "from lies in the future"}
+	}
+	if t.After(now) {
+		t = now.UTC()
+	}
+	bucket = q.Get("bucket")
+	if bucket == "10min" && t.Sub(f) > maxTenMinuteDays*24*time.Hour {
+		return "", since, until, rangeError{"range_bucket", "10-minute buckets hold at most 2 days of a range"}
+	}
+	return bucket, f, t, nil
+}
+
+// writeRangeErr answers a refused range: 400 with its reason and code.
+func writeRangeErr(w http.ResponseWriter, err error) {
+	var re rangeError
+	if errors.As(err, &re) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": re.Msg, "code": re.Code})
+		return
+	}
+	writeErr(w, http.StatusBadRequest, err.Error())
+}
+
 // handleCostSeries returns an agent's cost time series for the chart.
 func (s *Server) handleCostSeries(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r)
@@ -1412,8 +1485,12 @@ func (s *Server) handleCostSeries(w http.ResponseWriter, r *http.Request) {
 // per agent, per model) for the cost/token chart.
 func (s *Server) handleOrgCost(w http.ResponseWriter, r *http.Request) {
 	p := principalFrom(r)
-	bucket, since := costWindow(r)
-	rep, err := s.Obs.OrgCostReport(r.Context(), p.OrgID, bucket, since)
+	bucket, since, until, err := costRange(r, time.Now())
+	if err != nil {
+		writeRangeErr(w, err)
+		return
+	}
+	rep, err := s.Obs.OrgCostReport(r.Context(), p.OrgID, bucket, since, until)
 	if err != nil {
 		mapErr(w, err)
 		return
@@ -1423,12 +1500,16 @@ func (s *Server) handleOrgCost(w http.ResponseWriter, r *http.Request) {
 
 // handleOrgRunCosts ranks the organization's runs by cost — the answer to
 // "which run burned the money", which the aggregates cannot give. ?limit=
-// caps the list, ?days= the window.
+// caps the list, ?days= the window — or ?from= and ?to= (costRange).
 func (s *Server) handleOrgRunCosts(w http.ResponseWriter, r *http.Request) {
 	p := principalFrom(r)
-	_, since := costWindow(r)
+	_, since, until, err := costRange(r, time.Now())
+	if err != nil {
+		writeRangeErr(w, err)
+		return
+	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	runs, err := s.Obs.RunCosts(r.Context(), p.OrgID, nil, since, limit)
+	runs, err := s.Obs.RunCosts(r.Context(), p.OrgID, nil, since, until, limit)
 	if err != nil {
 		mapErr(w, err)
 		return
@@ -1444,9 +1525,13 @@ func (s *Server) handleAgentRunCosts(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	_, since := costWindow(r)
+	_, since, until, err := costRange(r, time.Now())
+	if err != nil {
+		writeRangeErr(w, err)
+		return
+	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	runs, err := s.Obs.RunCosts(r.Context(), p.OrgID, &id, since, limit)
+	runs, err := s.Obs.RunCosts(r.Context(), p.OrgID, &id, since, until, limit)
 	if err != nil {
 		mapErr(w, err)
 		return

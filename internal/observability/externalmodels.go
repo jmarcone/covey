@@ -22,8 +22,10 @@ import (
 type ExternalModelUsage struct {
 	// Bucket: the bucket the cells are cut in, after normalizeBucket.
 	Bucket string `json:"bucket"`
-	// Since: the window's start.
-	Since time.Time `json:"since"`
+	// Since: the window's start; Until its end (exclusive) when the range was
+	// asked for as from/to.
+	Since time.Time  `json:"since"`
+	Until *time.Time `json:"until,omitempty"`
 	// Source: the source the cells are narrowed to; nil for every source.
 	Source *string `json:"source"`
 	// Sources: every source of the window, whatever ?source= says — the
@@ -76,9 +78,9 @@ type ExternalModelCell struct {
 // ExternalUsageByModel reads the outside series of the window per model.
 // source narrows the cells ("" = every source); the sources and the meter
 // stay whole.
-func (s *Store) ExternalUsageByModel(ctx context.Context, orgID uuid.UUID, bucket string, since time.Time, source string) (ExternalModelUsage, error) {
+func (s *Store) ExternalUsageByModel(ctx context.Context, orgID uuid.UUID, bucket string, since, until time.Time, source string) (ExternalModelUsage, error) {
 	bucket = normalizeBucket(bucket)
-	out := ExternalModelUsage{Bucket: bucket, Since: since.UTC(), Sources: []ExternalSource{},
+	out := ExternalModelUsage{Bucket: bucket, Since: since.UTC(), Until: untilPtr(until), Sources: []ExternalSource{},
 		Models: []ExternalModelName{}, Cells: []ExternalModelCell{},
 		Meter: emptyMeter()}
 	if source != "" {
@@ -89,22 +91,22 @@ func (s *Store) ExternalUsageByModel(ctx context.Context, orgID uuid.UUID, bucke
 	// The sources and the meter share, as /cost/cells has them: the same
 	// plans and coverage CostCellsFor hands externalFor, which splits the
 	// meter per reading step whatever the bucket.
-	plans, err := s.CredentialPlans(ctx, orgID, since)
+	plans, err := s.CredentialPlans(ctx, orgID, since, until)
 	if err != nil {
 		return out, err
 	}
 	// The cost basis (0151) as CostCellsFor reads it: a plan prices nothing
 	// while its credential is billed by usage.
-	bases, err := s.costBasesFor(ctx, orgID, since)
+	bases, err := s.costBasesFor(ctx, orgID, since, until)
 	if err != nil {
 		return out, err
 	}
 	priced := seatPlans(plans, bases)
-	_, coverage, err := s.meterSteps(ctx, orgID, bucket, since, priced, bases)
+	_, coverage, err := s.meterSteps(ctx, orgID, bucket, since, until, priced, bases)
 	if err != nil {
 		return out, err
 	}
-	ext, err := s.externalFor(ctx, orgID, bucket, since, coverage, priced, bases)
+	ext, err := s.externalFor(ctx, orgID, bucket, since, until, coverage, priced, bases)
 	if err != nil {
 		return out, err
 	}
@@ -114,8 +116,8 @@ func (s *Store) ExternalUsageByModel(ctx context.Context, orgID uuid.UUID, bucke
 		SUM(input), SUM(output), SUM(cache_read), SUM(cache_write_5m), SUM(cache_write_1h),
 		SUM(reported_usd)::float8, count(reported_usd)
 		FROM external_usage
-		WHERE org_id = $1 AND ts >= $2 AND ($3 = '' OR source = $3)
-		GROUP BY 1, 2, 3, 4`, orgID, since, source)
+		WHERE org_id = $1 AND ts >= $2 AND ($3 = '' OR source = $3) AND `+beforeSQL("ts", 4)+`
+		GROUP BY 1, 2, 3, 4`, orgID, since, source, untilArg(until))
 	if err != nil {
 		return out, err
 	}

@@ -538,9 +538,10 @@ type CredentialFilter struct {
 	SecretSlot int
 }
 
-// ModelUsage sums model_usage per agent, model and credential kind since
-// `since`. The rows are deltas, so this is a plain SUM over an index range.
-func (s *Store) ModelUsage(ctx context.Context, orgID uuid.UUID, since time.Time, f CredentialFilter) (ModelUsageReport, error) {
+// ModelUsage sums model_usage per agent, model and credential kind over
+// [since, until) (a zero until runs to now). The rows are deltas, so this is a
+// plain SUM over an index range.
+func (s *Store) ModelUsage(ctx context.Context, orgID uuid.UUID, since, until time.Time, f CredentialFilter) (ModelUsageReport, error) {
 	rep := ModelUsageReport{Rows: []ModelUsageRow{}}
 	rows, err := s.pool.Query(ctx, `SELECT mu.agent_id, a.slug, a.display_name, mu.model, mu.credential_kind,
 		COUNT(DISTINCT COALESCE(mu.task_id::text, mu.event_id::text)),
@@ -548,9 +549,9 @@ func (s *Store) ModelUsage(ctx context.Context, orgID uuid.UUID, since time.Time
 		SUM(mu.cache_write_5m_tokens), SUM(mu.cache_write_1h_tokens), SUM(mu.web_search_requests),
 		SUM(mu.engine_usd)::float8
 		FROM model_usage mu JOIN agents a ON a.id = mu.agent_id
-		WHERE mu.org_id = $1 AND mu.created_at >= $2
+		WHERE mu.org_id = $1 AND mu.created_at >= $2 AND `+beforeSQL("mu.created_at", 5)+`
 		  AND ($3::text = '' OR (mu.secret_key = $3 AND mu.secret_slot = $4::smallint))
-		GROUP BY 1,2,3,4,5 ORDER BY SUM(mu.engine_usd) DESC`, orgID, since, f.SecretKey, f.SecretSlot)
+		GROUP BY 1,2,3,4,5 ORDER BY SUM(mu.engine_usd) DESC`, orgID, since, f.SecretKey, f.SecretSlot, untilArg(until))
 	if err != nil {
 		return rep, err
 	}
@@ -574,10 +575,10 @@ func (s *Store) ModelUsage(ctx context.Context, orgID uuid.UUID, since time.Time
 	// A booking without a breakdown is one no line was linked to (0144).
 	err = s.pool.QueryRow(ctx, `SELECT COUNT(DISTINCT ce.task_id), COALESCE(SUM(ce.usd),0)::float8
 		FROM cost_entries ce JOIN agents a ON a.id = ce.agent_id
-		WHERE a.org_id = $1 AND ce.created_at >= $2 AND ce.task_id IS NOT NULL
+		WHERE a.org_id = $1 AND ce.created_at >= $2 AND `+beforeSQL("ce.created_at", 5)+` AND ce.task_id IS NOT NULL
 		  AND ($3::text = '' OR (ce.secret_key = $3 AND ce.secret_slot = $4::smallint))
 		  AND NOT EXISTS (SELECT 1 FROM model_usage mu WHERE mu.cost_entry_id = ce.id)`,
-		orgID, since, f.SecretKey, f.SecretSlot).Scan(&rep.RunsWithout, &rep.USDWithout)
+		orgID, since, f.SecretKey, f.SecretSlot, untilArg(until)).Scan(&rep.RunsWithout, &rep.USDWithout)
 	return rep, err
 }
 
@@ -757,22 +758,23 @@ type UsageReading struct {
 	CostUSD *float64 `json:"cost_usd"`
 }
 
-// UsageReadings returns the readings since `since`, oldest first — the
+// UsageReadings returns the readings in [since, until) (a zero until runs to
+// now), oldest first — the
 // unsupported ones too, with their reason, so a credential that cannot be read
 // shows as such — each with the measured cost on its credential up to it.
 //
 // One window-function stream: the credential's model_usage lines and its
 // readings in time order, the lines' cost summed as it goes. A line at the
 // same instant as a reading counts before it.
-func (s *Store) UsageReadings(ctx context.Context, orgID uuid.UUID, since time.Time) ([]UsageReading, error) {
+func (s *Store) UsageReadings(ctx context.Context, orgID uuid.UUID, since, until time.Time) ([]UsageReading, error) {
 	rows, err := s.pool.Query(ctx, `WITH ev AS (
 		SELECT mu.secret_key, mu.secret_slot, mu.created_at AS at, 0 AS o, mu.engine_usd AS usd, NULL::bigint AS reading
 		FROM model_usage mu
-		WHERE mu.org_id = $1 AND mu.created_at >= $2 AND mu.secret_key IS NOT NULL
+		WHERE mu.org_id = $1 AND mu.created_at >= $2 AND `+beforeSQL("mu.created_at", 3)+` AND mu.secret_key IS NOT NULL
 		UNION ALL
 		SELECT r.secret_key, r.secret_slot, r.fetched_at, 1, 0, r.id
 		FROM usage_readings r
-		WHERE r.org_id = $1 AND r.fetched_at >= $2),
+		WHERE r.org_id = $1 AND r.fetched_at >= $2 AND `+beforeSQL("r.fetched_at", 3)+`),
 	c AS (
 		SELECT reading, SUM(usd) OVER (PARTITION BY secret_key, secret_slot ORDER BY at, o
 			ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cum
@@ -782,7 +784,7 @@ func (s *Store) UsageReadings(ctx context.Context, orgID uuid.UUID, since time.T
 		r.status, r.reason, r.stale, r.fetched_at, r.received_at,
 		CASE WHEN r.secret_key IS NOT NULL THEN c.cum::float8 END
 	FROM c JOIN usage_readings r ON r.id = c.reading
-	ORDER BY r.fetched_at, r.id`, orgID, since)
+	ORDER BY r.fetched_at, r.id`, orgID, since, untilArg(until))
 	if err != nil {
 		return nil, err
 	}

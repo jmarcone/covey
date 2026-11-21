@@ -1,10 +1,14 @@
-import { useEffect, useId, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link, useSearchParams } from "react-router";
-import { asEnum, asSet, useCostWindow, useParamState } from "./costView";
+import { asEnum, asSet, bucketFits, useCostWindow, useParamState } from "./costView";
+import { RangePanel } from "./RangePanel";
+import { Seg } from "./Seg";
+import { bucketForSpan, customWindow, isCustom, isRangeCode, readRange, windowQuery, writeRange,
+  type CostWindow, type RangeCode } from "./costRange";
 import { api, ApiError, type IndicatorReport, type Principal, type RunCost } from "../api";
-import { exact, fmtBucket, fmtCount, fmtUSD } from "../format";
+import { exact, fmtBucket, fmtCount, fmtUSD, setDisplayTz } from "../format";
 import { PriceList } from "../components/PriceList";
 import { CostInsights } from "./CostInsights";
 import { CostAnswer } from "./CostAnswer";
@@ -21,6 +25,7 @@ import {
   BUCKET_MS,
   Chip,
   CostExplorer,
+  CustomRangeContext,
   type CredentialMarks,
   OrgWide,
   SOURCE_COLOR,
@@ -72,62 +77,7 @@ function Kpi({ label, value, sub, color, parts, check }: { label: string; value:
 
 // --- Segmented switches ------------------------------------------------------
 
-export function Seg<T extends string | number>({
-  value,
-  options,
-  onChange,
-}: {
-  value: T;
-  options: { v: T; label: string; disabled?: boolean; title?: string }[];
-  onChange: (v: T) => void;
-}) {
-  // A disabled option says why in visible text under the switch, and is
-  // described by it (not by its title alone, which a touch screen or a
-  // keyboard never shows).
-  const uid = useId().replace(/[^a-zA-Z0-9_-]/g, "");
-  const reasons = [...new Set(options.filter((o) => o.disabled && o.title).map((o) => o.title!))];
-  const reasonId = (title?: string) => (title && reasons.includes(title) ? `${uid}-r${reasons.indexOf(title)}` : undefined);
-  return (
-    <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-end", maxWidth: "100%" }}>
-    {/* One option per agent grows past any width with a large fleet: the
-       control scrolls inside itself rather than widening the page (#463). */}
-    <div style={{ display: "inline-flex", gap: 2, maxWidth: "100%", overflowX: "auto", scrollbarWidth: "thin", background: "var(--surface-1)", border: "0.5px solid var(--border)", borderRadius: 8, padding: 2 }}>
-      {options.map((o) => {
-        const active = o.v === value;
-        return (
-          <button
-            key={String(o.v)}
-            onClick={() => onChange(o.v)}
-            aria-pressed={active}
-            disabled={o.disabled}
-            title={o.title}
-            aria-describedby={o.disabled ? reasonId(o.title) : undefined}
-            style={{
-              border: "none",
-              flexShrink: 0,
-              whiteSpace: "nowrap",
-              borderRadius: 6,
-              padding: "5px 12px",
-              fontSize: 13,
-              cursor: o.disabled ? "not-allowed" : "pointer",
-              opacity: o.disabled ? 0.45 : 1,
-              background: active ? "var(--surface-2)" : "transparent",
-              color: active ? "var(--text-primary)" : "var(--text-secondary)",
-              fontWeight: active ? 600 : 400,
-              boxShadow: active ? "0 1px 3px var(--shadow-xs)" : "none",
-            }}
-          >
-            {o.label}
-          </button>
-        );
-      })}
-    </div>
-    {reasons.map((r, i) => (
-      <span key={r} id={`${uid}-r${i}`} className="muted" data-seg-reason style={{ fontSize: 11, marginTop: 2, textAlign: "right" }}>{r}</span>
-    ))}
-    </span>
-  );
-}
+export { Seg };
 
 // --- Page --------------------------------------------------------------------
 
@@ -240,7 +190,46 @@ export default function Costs({ me }: { me?: Principal }) {
 
   // The whole view lives in the address (cost home PR 2): a link opens what its sender saw. A new range keeps the
   // chosen bucket where it still fits.
-  const { days, bucket, setDays, setBucket } = useCostWindow();
+  const [params, setParams] = useSearchParams();
+  // A quick range and its bucket are in the address (PR 2, useCostWindow); a custom range is ?from=&to= (RFC 3339,
+  // [from, to)) with ?tz= (#193), so a segment can be shared, reloaded and walked back to.
+  const { days, bucket: quickBucket, setBucket: setQuickBucket } = useCostWindow();
+  const range = useMemo(() => readRange(params, Date.now()), [params]);
+  const tz = range.tz;
+  // One clock for every label of the page (the tiles, the axis, the tables).
+  // Set in the render, for this pass's labels, and again in the effect: under
+  // StrictMode the simulated unmount runs the cleanup after the first commit,
+  // and a child that re-renders on its own query would read UTC from then on.
+  setDisplayTz(tz);
+  useEffect(() => {
+    setDisplayTz(tz);
+    return () => setDisplayTz("utc");
+  }, [tz]);
+  const customOk = range.from != null && range.to != null && range.error == null;
+  // from/to given but not usable: no query is asked, the panel says why.
+  const badRange = range.error != null;
+  // The fields show what the address says whenever both values parse, a refused
+  // range too, so the error points at them; only an unparseable one falls back
+  // to the panel's default.
+  const parsed = Number.isFinite(range.from) && Number.isFinite(range.to);
+  const shownFrom = parsed ? range.from : null;
+  const shownTo = parsed ? range.to : null;
+  const win: CostWindow = customOk ? customWindow(range.from!, range.to!) : { days };
+  const custom = isCustom(win);
+  const [panelOpen, setPanelOpen] = useState(false);
+  // The panel follows the address: once it holds no custom range (Back from an applied one), the control shows the
+  // quick range the page really reads, not a stale "Custom" (#200 merge review).
+  useEffect(() => {
+    if (range.from == null && range.to == null) setPanelOpen(false);
+  }, [range.from, range.to]);
+  const wq = windowQuery(win);
+  // A custom range's bucket: the one the address names where it fits the span, else the span's own.
+  const spanDays = custom ? Math.max(1, Math.ceil((range.to! - range.from!) / 86_400_000)) : days;
+  const want = params.get("bucket");
+  const bucket = custom ? (want != null && bucketFits(spanDays, want) ? want : bucketForSpan(range.to! - range.from!)) : quickBucket;
+  const setBucket = (b: string) => (custom
+    ? setParams((prev) => { const p = new URLSearchParams(prev); p.set("bucket", b); return p; }, { replace: true })
+    : setQuickBucket(b));
   const [metric, setMetric] = useParamState<Metric>("metric", "cost", METRIC.parse, METRIC.show);
   // The agent filter replaces the scope tabs: none selected = the whole
   // organisation, any combination for the charts and the KPIs; exactly one
@@ -250,7 +239,6 @@ export default function Costs({ me }: { me?: Principal }) {
   const setSelected = setSelectedRO as (v: Set<string> | ((prev: Set<string>) => Set<string>)) => void;
   // The sessions outside covey are included by default and labelled
   // everywhere (#120); ?only=covey shows covey's agents alone, as before.
-  const [params, setParams] = useSearchParams();
   const coveyOnly = params.get(COVEY_ONLY_PARAM) === COVEY_ONLY_VALUE;
   const setCoveyOnly = (v: boolean) => setParams((prev) => {
     const n = new URLSearchParams(prev);
@@ -273,9 +261,18 @@ export default function Costs({ me }: { me?: Principal }) {
   const [offSources, setOffSources] = useParamState<ReadonlySet<string>>("off", NO_SOURCES, asSet.parse, asSet.show);
   const toggleSource = (n: string) => setOffSources((v) => { const x = new Set(v); if (x.has(n)) x.delete(n); else x.add(n); return x; });
   const scope = selected.size === 1 ? [...selected][0] : "org";
-  const cells = useCostCells(days, bucket);
-  const billed = useBilled(days, bucket);
-  const readings = useUsageReadings(days);
+  const cells = useCostCells(win, bucket, !badRange);
+  const billed = useBilled(win, bucket, !badRange);
+  const readings = useUsageReadings(win, !badRange);
+  // The meter's readings of the last days, for the picker's helpers (since the
+  // last reset, between two readings).
+  const helperReadings = useUsageReadings({ days: 8 }, panelOpen || custom || badRange);
+  // The server refused the range (a 400 with its code): said in the panel, in
+  // the reader's language.
+  const apiCode: RangeCode | "unknown" | null = cells.error instanceof ApiError && cells.error.status === 400
+    ? (isRangeCode(cells.error.code) ? cells.error.code : "unknown") : null;
+  const rangeError: RangeCode | "unknown" | null = range.error ?? apiCode;
+  const refused = badRange || apiCode != null;
 
   // A new range can lose agents the selection still names: they would narrow
   // every figure to nothing while no chip shows them. Drop them.
@@ -289,12 +286,13 @@ export default function Costs({ me }: { me?: Principal }) {
 
   // The most expensive runs of the period — org-wide or for the chosen agent.
   const runs = useQuery({
-    queryKey: ["cost", "runs", scope, days],
+    queryKey: ["cost", "runs", scope, wq],
     queryFn: () =>
       api<RunCost[] | null>(
-        scope === "org" ? `/cost/runs?days=${days}&limit=25` : `/agents/${scope}/cost/runs?days=${days}&limit=25`,
+        scope === "org" ? `/cost/runs?${wq}&limit=25` : `/agents/${scope}/cost/runs?${wq}&limit=25`,
       ),
     refetchInterval: 30000,
+    enabled: !badRange,
   });
 
   // The price list hangs on the same scope and period as everything else on
@@ -312,20 +310,52 @@ export default function Costs({ me }: { me?: Principal }) {
     // every 30 seconds for an answer that does not change.
     // Performance.tsx does the same on the same route.
     retry: false,
+    // The price list is over whole quick ranges (its trend sets the span
+    // against the one before it): not asked for a custom range.
+    enabled: !custom && !badRange,
   });
   // A role that may not see something should not get it as an empty box:
   // empty means "there are no metrics", and that is a different statement
   // than "you do not see them".
   const indicatorsForbidden = indicators.error instanceof ApiError && indicators.error.status === 403;
 
-  const setRange = (v: number) => setDays(v);
+  // A change of range is a step in the history: Back returns to the one before. A quick range keeps a chosen bucket
+  // where it fits (PR 2); a custom range starts at its span's own.
+  const setRange = (v: number | "custom") => {
+    if (v === "custom") {
+      setPanelOpen(true);
+      return;
+    }
+    setPanelOpen(false);
+    setParams((prev) => {
+      const p = writeRange(prev, { days: v }, tz);
+      const b = p.get("bucket");
+      if (b != null && !bucketFits(v, b)) p.delete("bucket");
+      return p;
+    });
+  };
+  const applyCustom = (from: number, to: number) => {
+    setPanelOpen(false); // the custom range keeps the panel shown while it is in force
+    setParams((prev) => {
+      const p = writeRange(prev, customWindow(from, to), tz);
+      p.delete("bucket");
+      return p;
+    });
+  };
+  const setTz = (next: typeof tz) => setParams((prev) => {
+    const n = new URLSearchParams(prev);
+    n.set("tz", next);
+    return n;
+  }, { replace: true });
 
   // The credentials' figures over the whole organisation, for the meter card:
   // the same the tiles show without an agent filter.
+  // The end of the window: now, or a custom range's end (cut to now).
+  const end = useMemo(() => (cells.data?.until ? new Date(cells.data.until) : new Date()), [cells.data]);
   const orgFigures = useMemo(() => (cells.data ? credentialFigures({
-    cells: cells.data, billed: billed.data, bucketMs: BUCKET_MS[bucket] ?? BUCKET_MS.day, windowEnd: new Date(),
+    cells: cells.data, billed: billed.data, bucketMs: BUCKET_MS[bucket] ?? BUCKET_MS.day, windowEnd: end,
     includeOutside: !coveyOnly && listedSources(cells.data.external).length > 0,
-  }) : []), [cells.data, billed.data, bucket, coveyOnly]);
+  }) : []), [cells.data, billed.data, bucket, coveyOnly, end]);
 
   // The whole dent in the subscription meters, split between covey's agents
   // and the sessions outside covey (#120): null until a source names a meter.
@@ -334,8 +364,8 @@ export default function Costs({ me }: { me?: Principal }) {
   // The answer table (#195): the headline's and the dent's figures as rows.
   const answer = useMemo(() => (head && dent && cells.data?.external ? answerTable(head, dent, cells.data.external, cells.data.meter ?? [], coveyOnly ? NO_SOURCES : offSources) : null),
     [head, dent, cells.data, offSources, coveyOnly]);
-  const ppt = useMemo(() => payPerTokenHeadline(cells.data, orgFigures, BUCKET_MS[bucket] ?? BUCKET_MS.day, new Date()),
-    [cells.data, orgFigures, bucket]);
+  const ppt = useMemo(() => payPerTokenHeadline(cells.data, orgFigures, BUCKET_MS[bucket] ?? BUCKET_MS.day, end),
+    [cells.data, orgFigures, bucket, end]);
 
   // KPIs over the same lines as the charts, narrowed by the same filter.
   const totals = useMemo(() => cellTotals(cells.data, selected), [cells.data, selected]);
@@ -375,23 +405,28 @@ export default function Costs({ me }: { me?: Principal }) {
       : selected.size === 1
         ? agentList.find((a) => a.id === scope)?.label ?? ""
         : t("costs.filter.nSelected", { count: selected.size });
-  const fmtPeriod = (p: string) => fmtBucket(p, bucket);
+  const fmtPeriod = (p: string, utc?: boolean) => fmtBucket(p, bucket, utc ? "utc" : tz);
   // A failed data check marks the part it affects "incomplete" (#178); the
   // figure stays as it is.
   // The token-price checks count where the page holds the calls they
   // concern: covey's lines always, the outside sessions where included.
   const health = useCostHealth();
-  const incomplete = incompleteParts(health.data, { agents: true, outside: included != null });
+  // The checks run at now. They say something about a window that reaches now (a quick range, or a custom one ending
+  // within the hour); on a window in the past their marks would be today's, not its own (#200 merge review): none.
+  const windowEndMs = cells.data?.until ? Date.parse(cells.data.until) : custom ? range.to! : Date.now();
+  const windowIsNow = !custom || Date.now() - windowEndMs < 3_600_000;
+  const healthData = windowIsNow ? health.data : undefined;
+  const incomplete = incompleteParts(healthData, { agents: true, outside: included != null });
   const outsideMark = coveyOnly ? [] : incomplete.outside;
   // The answer card is the whole dent under "covey only" too (#195): its operator and project rows stand, so their
   // marks do as well, whatever the chips and tiles leave out (#179 merge review).
-  const cardMarks = incompleteParts(health.data, { agents: true, outside: true });
+  const cardMarks = incompleteParts(healthData, { agents: true, outside: true });
   // Per credential: a reset nobody recorded on its meter, and a stopped
   // uploader of a source on its seat while the outside part is included,
   // leave its own real cost and multiples short — its block and its meter
   // in the insights say so where those figures stand.
   const credentialMarks = (key: string, slot: number): CredentialMarks => {
-    const m = credentialIncomplete(health.data, `${key} #${slot}`, included ? seatSources(included, key, slot).map((x) => x.source) : null);
+    const m = credentialIncomplete(healthData, `${key} #${slot}`, included ? seatSources(included, key, slot).map((x) => x.source) : null);
     return { multiple: <IncompleteMark checks={m.multiple} part="multiple" />, outside: <IncompleteMark checks={m.outside} part="outside" /> };
   };
 
@@ -433,9 +468,19 @@ export default function Costs({ me }: { me?: Principal }) {
       {/* Controls */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <div style={{ flex: 1 }} />
-        <Seg value={days} onChange={setRange} options={rangeOptions(t)} />
-        <Seg value={bucket} onChange={setBucket} options={bucketOptions(t, days)} />
+        <Seg<number | "custom"> value={custom || panelOpen || badRange ? "custom" : days} onChange={setRange}
+          options={[...rangeOptions(t), { v: "custom", label: t("costs.range.custom") }]} />
+        <Seg value={bucket} onChange={setBucket} options={bucketOptions(t, win.days)} />
       </div>
+      {(custom || panelOpen || badRange) && (
+        // Re-made when the range changes from outside (Back, a pasted link), so the fields hold what the address says.
+        <RangePanel key={`${range.from}-${range.to}-${tz}`} from={shownFrom} to={shownTo}
+          tz={tz} onTz={setTz} onApply={applyCustom} error={rangeError} readings={helperReadings.data ?? []} />
+      )}
+      {refused && <p className="muted text-sm" data-range-refused>{t("costs.range.refused")}</p>}
+
+      {!refused && (
+      <CustomRangeContext.Provider value={custom}>
 
       {/* Without an answer table the filters lead, as before; with one they follow it (#204: the answer first). */}
       {!(answer && head && dent) && filters}
@@ -508,7 +553,7 @@ export default function Costs({ me }: { me?: Principal }) {
       </div>
 
       {/* The sessions outside covey (#120): apart or combined, never folded in unannounced. */}
-      <OutsideOverview data={cells.data} selected={selected} days={days} bucket={bucket} fmtPeriod={fmtPeriod}
+      <OutsideOverview data={cells.data} selected={selected} days={days} bucket={bucket} fmtPeriod={fmtPeriod} detailLink={!custom}
         incomplete={<IncompleteMark checks={incomplete.outside} part="outside" />} />
 
       {/* The token counts: collapsed, they answer another question (#195). */}
@@ -538,7 +583,9 @@ export default function Costs({ me }: { me?: Principal }) {
         <div className="card">
           <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.indicators.title")}{scope === "org" && selected.size > 0 && <OrgWide />}</div>
           <p className="muted text-xs mb-3">{t("costs.indicators.hint")}</p>
-          {indicatorsForbidden ? (
+          {custom ? (
+            <p className="muted text-xs" data-indicators-custom>{t("costs.range.indicatorsCustom")}</p>
+          ) : indicatorsForbidden ? (
             <p className="muted text-xs">{t("costs.indicators.restricted")}</p>
           ) : (
             <PriceList rep={indicators.data} />
@@ -554,8 +601,10 @@ export default function Costs({ me }: { me?: Principal }) {
       {/* Cost insights: per model as Claude Code reported it, and the
           subscription meter per credential. The model lines follow the agent
           filter; what is per credential stays org-wide and says so. */}
-      <CostInsights days={days} figures={orgFigures} agents={selected} outside={included} answered={answer?.covers}
+      <CostInsights days={win.days} win={custom ? win : undefined} figures={orgFigures} agents={selected} outside={included} answered={answer?.covers}
         incomplete={<IncompleteMark checks={incomplete.tokenPrice} part="tokenPrice" />} marks={credentialMarks} />
+      </CustomRangeContext.Provider>
+      )}
     </div>
   );
 }

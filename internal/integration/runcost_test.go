@@ -55,7 +55,7 @@ func TestRunCostsRankRunsAndExposeIdleOnes(t *testing.T) {
 		}
 	}
 
-	runs, err := s.obs.RunCosts(ctx, s.orgID, nil, time.Now().Add(-time.Hour), 50)
+	runs, err := s.obs.RunCosts(ctx, s.orgID, nil, time.Now().Add(-time.Hour), time.Time{}, 50)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestRunCostsRankRunsAndExposeIdleOnes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	nur, err := s.obs.RunCosts(ctx, s.orgID, &fremd.ID, time.Now().Add(-time.Hour), 50)
+	nur, err := s.obs.RunCosts(ctx, s.orgID, &fremd.ID, time.Now().Add(-time.Hour), time.Time{}, 50)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestRunCostsRankRunsAndExposeIdleOnes(t *testing.T) {
 	}
 
 	// The window cuts: nothing was booked before the last hour.
-	alt, err := s.obs.RunCosts(ctx, s.orgID, nil, time.Now().Add(time.Hour), 50)
+	alt, err := s.obs.RunCosts(ctx, s.orgID, nil, time.Now().Add(time.Hour), time.Time{}, 50)
 	if err != nil {
 		t.Fatal(err)
 	}
