@@ -1064,3 +1064,31 @@ func TestStickyWakeDroppedStaysFresh(t *testing.T) {
 		t.Fatalf("decision %s/%s", d, r)
 	}
 }
+
+// A holder that let go of a session on a refused wake never frees its claim
+// on the predecessor, even once it is cancelled: the next round must not
+// resume the refused session judged by the predecessor's stale figures.
+func TestStickyDroppedHolderKeepsTheClaim(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	dev := s.stickyAgent("dropped-claim-dev", agents.StickyAlways)
+	p, _ := s.runTopic(dev, "Round 1", "pr:example/app#41", "")
+	holder := uuid.New()
+	if _, err := s.pool.Exec(ctx, `INSERT INTO backlog_tasks (id, org_id, agent_id, title, body, origin, priority, state, wake_dropped)
+		VALUES ($1,$2,$3,'dropped','', 'manual', 9, 'cancelled', true)`, holder, s.orgID, dev.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE backlog_tasks SET session_successor=$2 WHERE id=$1`, p.ID, holder); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := s.backlog.ClaimSession(ctx, p.ID, uuid.New()); ok {
+		t.Fatal("a dropped holder's claim must not be free")
+	}
+	n, vn := s.runTopic(dev, "Round 2", "pr:example/app#41", "")
+	if vn.Resume != "" {
+		t.Fatalf("round 2 resumed the refused session %q", vn.Resume)
+	}
+	if d, r := s.decision(n.ID); d != backlog.DecisionFresh || r != backlog.ReasonBusy {
+		t.Fatalf("round 2: %s/%s", d, r)
+	}
+}

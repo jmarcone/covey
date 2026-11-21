@@ -167,11 +167,10 @@ func (o *Orchestrator) planSticky(ctx context.Context, agent agents.Agent, task 
 			if state.PausedAt != nil {
 				self.FinishedAt = *state.PausedAt
 			}
+			// The checks and the record use the policy in force now, as for a
+			// new round: the record says what was applied.
 			policy := effectiveStickyPolicy(agent.StickyPolicy, topic)
 			recorded := policy
-			if state.Policy != "" {
-				recorded = state.Policy // the task's A/B arm is the one it was dispatched in
-			}
 			if reason := stickyVerdict(policy, true, self, now, agent.StickyWindowMinutes, agent.StickyContextCap,
 				credentialKey(s), basis); reason != "" {
 				plan.wake = "fresh:" + reason
@@ -215,8 +214,15 @@ func (o *Orchestrator) planSticky(ctx context.Context, agent agents.Agent, task 
 		plan.decision.Decision = backlog.DecisionFresh
 		plan.decision.Reason = "wake"
 		if policy != agents.StickyFresh {
-			plan.workDirKey = topicWorkDir(agent.ID, topic)
-			plan.record = &sessionPrompt{compiled, memCtx, basis}
+			// Beside a round in play it keeps out of the topic's directory
+			// like any busy round.
+			open, err := o.Backlog.OpenSessionOnTopic(ctx, agent.OrgID, agent.ID, topic, task.ID)
+			if err != nil || open {
+				plan.decision.Reason = backlog.ReasonBusy
+			} else {
+				plan.workDirKey = topicWorkDir(agent.ID, topic)
+				plan.record = &sessionPrompt{compiled, memCtx, basis}
+			}
 			if found {
 				plan.handover = o.stickyHandover(ctx, agent, topic, pred)
 			}

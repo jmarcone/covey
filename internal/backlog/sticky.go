@@ -112,12 +112,16 @@ func (s *Store) OpenSessionOnTopic(ctx context.Context, orgID, agentID uuid.UUID
 //
 // A claim whose holder ended failed or cancelled is free again — unless the
 // holder was cut off at the turn limit and its continuation still carries the
-// session on. Otherwise one failed round would turn every later one on the
+// session on, or let go of it on a refused routed wake. Otherwise one failed round would turn every later one on the
 // topic away as busy until a fresh round finished.
 func (s *Store) ClaimSession(ctx context.Context, predecessor, successor uuid.UUID) (bool, error) {
 	tag, err := s.pool.Exec(ctx, `UPDATE backlog_tasks p SET session_successor=$2
 		WHERE p.id=$1 AND (p.session_successor IS NULL OR p.session_successor=$2 OR EXISTS (
 			SELECT 1 FROM backlog_tasks h WHERE h.id=p.session_successor AND h.state IN ('failed','cancelled')
+			  -- A holder that let go of the session on a refused wake
+			  -- keeps the claim: the session was refused, and the
+			  -- predecessor's own figures no longer describe it.
+			  AND NOT h.wake_dropped
 			  AND NOT EXISTS (SELECT 1 FROM backlog_tasks c WHERE c.parent_task_id=h.id
 			    AND c.origin LIKE 'continuation:%' AND c.state IN ('open','in_progress','blocked'))))`,
 		predecessor, successor)
