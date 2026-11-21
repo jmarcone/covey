@@ -527,6 +527,11 @@ func (s *Store) fileModelUsage(ctx context.Context, id int64, cred CredentialRef
 //     later filed copy (the same running total: a line without a uuid sent
 //     again, whose rows are the failed line's share). since_last is NULL,
 //     not false, for a line without the field.
+//   - Not where a filed line of the session after it has a lower running
+//     total (a late copy of an earlier line): that line becomes the bound of
+//     the lines after it, whose gap then holds the failed line's share
+//     instead of subtracting it as followed assumes. Where no line follows,
+//     the share stays unbooked, as main leaves it: too little, never twice.
 //
 // Copies of one line count once, the first: the same session and running
 // total, as the gap counts them (a copy carries the line's uuid, and a line
@@ -575,6 +580,10 @@ WHERE NOT EXISTS (
 	SELECT 1 FROM model_usage p JOIN recording_events f ON f.id = p.event_id
 	WHERE u.session_id <> '' AND p.session_id = u.session_id AND p.event_id > u.id
 	  AND ` + lineTotal("f.payload") + ` = u.total)
+  AND NOT EXISTS (
+	SELECT 1 FROM model_usage p JOIN recording_events f ON f.id = p.event_id
+	WHERE u.session_id <> '' AND p.session_id = u.session_id AND p.event_id > u.id
+	  AND p.basis <> 'gap' AND ` + lineTotal("f.payload") + ` < u.total)
 ORDER BY u.id`
 
 // FileFailedLines files once more the result lines of the task's latest run
