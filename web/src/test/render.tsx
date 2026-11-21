@@ -1,8 +1,8 @@
 import type { ReactElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router";
-import { render } from "@testing-library/react";
-import { vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { expect, vi } from "vitest";
 import i18n from "../i18n";
 import type { Principal } from "../api";
 
@@ -87,4 +87,13 @@ export function mockFetch(routes: Record<string, unknown>) {
   });
   vi.stubGlobal("fetch", fn);
   return { calls, unmatched };
+}
+
+/** Opens the answer table's "How is this computed" drawer (#195) and returns
+ *  the dent's section inside it: the explanations stand there, not on the page. */
+export async function openDentRow(): Promise<HTMLElement> {
+  const how = await screen.findByRole("button", { name: i18n.t("costs.answer.how") as string });
+  if (how.getAttribute("aria-expanded") !== "true") fireEvent.click(how);
+  await waitFor(() => expect(document.querySelector("[data-dent-row]")).not.toBeNull());
+  return document.querySelector<HTMLElement>("[data-dent-row]")!;
 }

@@ -2236,3 +2236,40 @@ ol.md-list { list-style: decimal; }
 /* Eine Phase, die nicht durchgelaufen ist. Sie steht ruhig wie die anderen,
    aber ohne Balken: was gescheitert ist, hat keinen Fortschritt. */
 .act-feed .act-phase.failed .ph b { color: var(--danger, #b3261e); }
+
+/* The cost answer table (#195/#204): on a phone the "Where it comes from"
+   column gives way to a muted line under the part, so the figures fit. */
+.cost-answer .cost-answer-from-inline { display: none; }
+/* The answer at a glance: a row of three figures above the table; on a wide screen (a 27" monitor) a column beside a
+   table of reading width, so no row's name sits a screen's width from its figures. */
+.cost-answer .cost-answer-hero { display: flex; flex-wrap: wrap; gap: 12px 40px; margin: 4px 0 16px; }
+.cost-answer .cost-answer-hero > div { min-width: 0; }
+.cost-answer .cost-answer-hero-label { font-size: 12px; }
+.cost-answer .cost-answer-hero-figure { font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.cost-answer .cost-answer-hero-capacity { color: var(--cost-real, inherit); }
+.cost-answer .cost-answer-hero-op { color: var(--text-secondary); font-weight: 400; }
+.cost-answer .cost-answer-hero-recon { flex-basis: 100%; margin: 0; font-size: 13px; color: var(--text-secondary); max-width: 80ch; }
+.cost-answer .cost-answer-hero-sub { font-size: 12px; max-width: 32ch; }
+.cost-answer [data-answer-sentence] { max-width: 1240px; }
+@media (min-width: 1600px) {
+  .cost-answer .cost-answer-body { display: grid; grid-template-columns: minmax(0, 1240px) minmax(260px, 420px); gap: 48px; align-items: start; }
+  .cost-answer .cost-answer-hero { order: 2; flex-direction: column; gap: 10px; margin: 8px 0 0; padding-left: 40px; border-left: 1px solid var(--border); }
+  .cost-answer .cost-answer-hero-recon { font-size: 14px; margin-top: 12px; }
+  .cost-answer .cost-answer-hero-label { font-size: 14px; }
+  .cost-answer .cost-answer-hero-figure { font-size: 40px; }
+  .cost-answer .cost-answer-hero-sub { font-size: 13px; }
+  .cost-answer [data-answer-table] { font-size: 15px !important; }
+  .cost-answer [data-answer-table] .text-xs { font-size: 13px !important; }
+  .cost-answer [data-answer-sentence] { font-size: 17px !important; line-height: 1.45; }
+  .cost-answer > p.text-xs, .cost-answer [data-answer-drawer] .text-xs { font-size: 13px !important; }
+}
+@media (max-width: 600px) {
+  .cost-answer .cost-answer-from { display: none; }
+  .cost-answer .cost-answer-from-inline { display: block; }
+  /* Three columns in a phone's width: tighter cells, and the figures and headers may wrap, so the real cost stays in view. */
+  .cost-answer [data-answer-table] { font-size: 12px !important; }
+  .cost-answer [data-answer-table] th,
+  .cost-answer [data-answer-table] td { padding-right: 6px !important; white-space: normal !important; }
+  /* Long project names break anywhere; the figures stay whole. */
+  .cost-answer [data-answer-table] th[scope="row"] { overflow-wrap: anywhere; }
+}

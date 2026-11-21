@@ -7,6 +7,9 @@ import {
   billedStatus,
   billedWholeDays,
   bucketStart,
+  readingOf,
+  usableReadings,
+  coveyElsewhere,
   credentialFigures,
   isSeat,
   meterCrossings,
@@ -21,6 +24,7 @@ import {
   realCost,
   realFromWeeks,
   type CredentialFigures,
+  type PayPerTokenHeadline,
 } from "./costFigures";
 
 // The figures the Costs page shows are argued with, so every rule that turns
@@ -545,5 +549,41 @@ describe("per credential", () => {
     const seat = figs.find((f) => f.id === `${SEAT}#0`)!;
     expect(seat.multiple).toBeNull();
     expect(seat.noMultiple).toBe("movement");
+  });
+});
+
+describe("coveyElsewhere (#204 re-review)", () => {
+  const cred = (id: string, coveyLead: number) => ({ id, coveyList: coveyLead, coveyLead }) as PayPerTokenHeadline["credentials"][number];
+  it("keeps every credential the pay-per-token row does not show", () => {
+    expect(coveyElsewhere({ "key#0": 3, "seat#0": 2 }, null)).toBe(5);
+    expect(coveyElsewhere({ "key#0": 3 }, { credentials: [cred("other#0", 3)] })).toBe(3);
+  });
+  it("keeps the part of a shown credential outside the row's window, not 0", () => {
+    // covey worked $5 on the key; its bill compares only $3 of it: $2 stays in "not in the table".
+    expect(coveyElsewhere({ "key#0": 5 }, { credentials: [cred("key#0", 3)] })).toBeCloseTo(2, 9);
+  });
+  it("subtracts the row's lead-price figure, not a bill's reported-only one", () => {
+    // $100 on the key, all inside the bill's window: $70 reported, $30 recomputed. The row covers all $100.
+    const bill = { id: "key#0", coveyList: 70, coveyLead: 100 } as PayPerTokenHeadline["credentials"][number];
+    expect(coveyElsewhere({ "key#0": 100 }, { credentials: [bill] })).toBe(0);
+  });
+  it("never goes below 0 where the row shows more than the headline", () => {
+    expect(coveyElsewhere({ "key#0": 2 }, { credentials: [cred("key#0", 3)] })).toBe(0);
+  });
+  it("sums to the headline's coveyElsewhere with no pay-per-token row", () => {
+    const by = { a: 1.25, b: 0.5 };
+    expect(coveyElsewhere(by, undefined)).toBeCloseTo(Object.values(by).reduce((x, y) => x + y, 0), 9);
+  });
+});
+
+describe("a merged weekly meter (#153)", () => {
+  const r = (source: string, at: string, pct: number) => ({ secret_key: "seat", secret_slot: 0, source, supported: true, stale: false,
+    week_percent: pct, window_kind: "seven_day", fetched_at: at }) as unknown as Parameters<typeof usableReadings>[0][number];
+  it("takes the readings of every source, oldest first; a per-source meter only its own", () => {
+    const rs = [r("manual", "2026-11-21T10:00:00Z", 26), r("inband", "2026-11-21T00:16:00Z", 19), r("usage_cmd", "2026-11-20T23:25:00Z", 18)];
+    expect(usableReadings(rs, "seat", 0, "merged").map((x) => x.week_percent)).toEqual([18, 19, 26]);
+    expect(usableReadings(rs, "seat", 0, "inband").map((x) => x.week_percent)).toEqual([19]);
+    expect(readingOf("merged", { source: "manual" })).toBe(true);
+    expect(readingOf("inband", { source: "manual" })).toBe(false);
   });
 });

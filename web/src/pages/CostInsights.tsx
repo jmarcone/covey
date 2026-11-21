@@ -5,9 +5,10 @@ import { Link } from "react-router";
 import { api, type ExternalModelUsage, type ExternalUsage, type ModelUsageReport, type ModelUsageRow, type UsageReading } from "../api";
 import { fmtBucket, fmtCount, fmtNumber, fmtUSD, fmtUSDBelow, fmtUSDFixed } from "../format";
 import { DEFAULT_SOURCES, SOURCES, SOURCE_INFO, isPerModel, modelFigure, sourceHint, sourceLabel, type Source } from "./costSources";
-import { isSeat, perCredentialTotals, scopeFigure, type SourceTotal } from "./costFigures";
+import { isSeat, perCredentialTotals, scopeFigure, type SourceTotal, readingOf } from "./costFigures";
 import { MonthlyMeters, usageList } from "./CostBasis";
 import { Chip } from "./StackedCostChart";
+import { answersSeat, type AnswerCovers } from "./costAnswerModel";
 import { usableReadings, type CredentialFigures } from "./costFigures";
 import { OrgWide, OutsideMark, SOURCE_COLOR, Swatch, useUsageReadings, type CredentialMarks } from "./StackedCostChart";
 import { externalStamp, kpiLead, listedSources, outsideModelRows, outsideSplit, seatSources, sourceStyles, type OutsideModelRow, type SourceStyles } from "./outsideFigures";
@@ -324,10 +325,12 @@ function ModelTable({ rep, figures, agents, outside = null }: {
  *  none), the list price of the credential's lines over the same span, and
  *  the multiple. No chart: two independent scales stretched to the same
  *  height agreed by construction, not by the data. */
-function MeterFigures({ f, readings, outside = null, marks = {} }: {
+function MeterFigures({ f, readings, outside = null, marks = {}, answered = false }: {
   f: CredentialFigures; readings: UsageReading[];
   /** The marks of failed data checks on this credential's figures (#178). */
   marks?: CredentialMarks;
+  /** The page's answer table holds the real cost, the list price, its parts and the multiple (#195): the card keeps the meter's span. */
+  answered?: boolean;
   /** The sessions outside covey, to say the seat's outside part as the covey operator and the other projects (#163). */
   outside?: ExternalUsage | null;
 }) {
@@ -336,7 +339,7 @@ function MeterFigures({ f, readings, outside = null, marks = {} }: {
   const r = f.real;
   const source = t(`costs.insights.source_${m.source}`, { defaultValue: m.source });
   const own = readings.filter((x) => x.secret_key === m.secret_key && x.secret_slot === m.secret_slot);
-  const sameWindow = own.filter((x) => x.source === m.source && (x.window_kind === "seven_day" || x.window_kind === ""));
+  const sameWindow = own.filter((x) => readingOf(m.source, x) && (x.window_kind === "seven_day" || x.window_kind === ""));
   const dropped = sameWindow.length - usableReadings(own, m.secret_key, m.secret_slot, m.source).length;
   const five = own.filter((x) => x.supported && !x.stale && x.window_percent != null).at(-1);
 
@@ -417,11 +420,13 @@ function MeterFigures({ f, readings, outside = null, marks = {} }: {
         from: m.baseline_percent, fromAt: fmtBucket(m.baseline_at, "hour"), to: m.last_percent, toAt: fmtBucket(m.last_at, "hour"),
         pts: m.points, n: m.readings,
       }))}
-      {row(t("costs.fig.realEstimate"), real, SOURCE_COLOR.real, true, r?.priced ? marks.multiple : undefined)}
-      {row(t("costs.insights.meterList"), f.aligned != null ? fmtUSD(f.aligned) : "–", SOURCE_COLOR.recomputed)}
-      {e && outsideRows}
-      {e && within?.shared && within.known && <div className="muted text-xs" data-meter-shared>{t("costs.incl.everythingShared")}</div>}
-      {row(e ? t("costs.incl.everything") : t("costs.fig.multiple"), mult, undefined, false, <>{marks.multiple}{e && marks.outside}</>)}
+      {!answered && <>
+        {row(t("costs.fig.realEstimate"), real, SOURCE_COLOR.real, true, r?.priced ? marks.multiple : undefined)}
+        {row(t("costs.insights.meterList"), f.aligned != null ? fmtUSD(f.aligned) : "–", SOURCE_COLOR.recomputed)}
+        {e && outsideRows}
+        {e && within?.shared && within.known && <div className="muted text-xs" data-meter-shared>{t("costs.incl.everythingShared")}</div>}
+        {row(e ? t("costs.incl.everything") : t("costs.fig.multiple"), mult, undefined, false, <>{marks.multiple}{e && marks.outside}</>)}
+      </>}
       <p className="muted text-xs mt-1 mb-0">
         {five
           ? t("costs.insights.fiveHour", { pct: five.window_percent, at: fmtBucket(five.fetched_at, "hour") })
@@ -439,8 +444,10 @@ const times = (v: number) => (Number.isFinite(v) ? `${fmtNumber(v, 1)}×` : "∞
  *  whole organisation — the same the tiles show without an agent filter —
  *  while the model table follows `agents`, the page's agent filter (empty:
  *  all agents). */
-export function CostInsights({ days, figures, agents = NO_AGENTS, outside = null, incomplete, marks }: {
+export function CostInsights({ days, figures, agents = NO_AGENTS, outside = null, answered, incomplete, marks }: {
   days: number; figures: CredentialFigures[]; agents?: ReadonlySet<string>;
+  /** What the page's answer table covers (#195): the seats of its meter have their real cost and multiple there. */
+  answered?: AnswerCovers;
   /** The sessions outside covey, included (#120); null: covey only. */
   outside?: ExternalUsage | null;
   /** A failed data check's mark on the model table's token prices (#178). */
@@ -491,7 +498,8 @@ export function CostInsights({ days, figures, agents = NO_AGENTS, outside = null
         <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.insights.meterTitle")}{filtered && <OrgWide />}</div>
         <p className="muted text-xs mb-3">{t("costs.insights.meterHint")}</p>
         {metered.length === 0 && monthly.length === 0 && <div className="muted text-sm">{t("costs.insights.noReadings")}</div>}
-        {metered.map((f) => <MeterFigures key={f.id} f={f} readings={rs} outside={outside} marks={marks?.(f.meter!.secret_key, f.meter!.secret_slot)} />)}
+        {metered.map((f) => <MeterFigures key={f.id} f={f} readings={rs} outside={outside} answered={answersSeat(answered, f.id) && isSeat(f)}
+          marks={marks?.(f.meter!.secret_key, f.meter!.secret_slot)} />)}
         {/* A monthly usage limit's meter (0152): its own lines, never in the weekly seat meter's figures. */}
         {monthly.map((f) => (
           <div key={`monthly/${f.id}`} className="mb-4" data-monthly={f.id}>

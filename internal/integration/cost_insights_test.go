@@ -956,35 +956,35 @@ func TestMeterStepsCases(t *testing.T) {
 	}{
 		{"a lagging reading adds nothing", "lag", []meterReading{
 			{min: -30, pct: 10}, {min: 10, pct: 9}, {min: 20, pct: 10}, {min: 30, pct: 11}},
-			map[string]float64{"usage_cmd": 1}},
+			map[string]float64{"merged": 1}},
 		{"a stale reading is dropped", "stale", []meterReading{
 			{min: -30, pct: 30}, {min: 10, pct: 20, stale: true}, {min: 20, pct: 31}},
-			map[string]float64{"usage_cmd": 1}},
+			map[string]float64{"merged": 1}},
 		{"two credentials keep their own baselines (a)", "cred-a", []meterReading{
 			{min: -120, pct: 10}, {min: 30, pct: 12}},
-			map[string]float64{"usage_cmd": 2}},
+			map[string]float64{"merged": 2}},
 		{"two credentials keep their own baselines (b)", "cred-b", []meterReading{
 			{min: -60, pct: 20}, {min: 40, pct: 25}},
-			map[string]float64{"usage_cmd": 5}},
+			map[string]float64{"merged": 5}},
 		{"a reset by resets_at counts the new week from 0", "reset", []meterReading{
 			{min: -30, pct: 95, resets: week1}, {min: 10, pct: 3, resets: week2}, {min: 20, pct: 5, resets: week2}},
-			map[string]float64{"usage_cmd": 3 + 2}},
+			map[string]float64{"merged": 3 + 2}},
 		{"a drop within the same week (resets_at unchanged) is a lag", "same-week", []meterReading{
 			{min: -30, pct: 30, resets: week1}, {min: 10, pct: 14, resets: week1}, {min: 20, pct: 31, resets: week1}},
-			map[string]float64{"usage_cmd": 1}},
+			map[string]float64{"merged": 1}},
 		{"in-band 12 after /usage 13: no reset, nothing extra", "sources", []meterReading{
 			{min: -30, pct: 10, resets: week1}, {min: 10, pct: 13, resets: week1},
 			{min: 20, pct: 12, resets: week1, source: "inband"}},
-			map[string]float64{"usage_cmd": 3, "inband": 0}},
+			map[string]float64{"merged": 3}},
 		{"the same secret on two runtimes is one meter", "shared", []meterReading{
 			{min: -30, pct: 10}, {min: 10, pct: 11, rt: other, ord: 2}, {min: 20, pct: 12}, {min: 30, pct: 12, rt: other, ord: 2}},
-			map[string]float64{"usage_cmd": 2}},
+			map[string]float64{"merged": 2}},
 		{"after a Reorder the history follows the secret", "reordered", []meterReading{
 			{min: -30, pct: 10, ord: 0}, {min: 30, pct: 14, ord: 1}},
-			map[string]float64{"usage_cmd": 4}},
+			map[string]float64{"merged": 4}},
 		{"12 -> 3 without reset times is still a new week, counted as 3", "collapse", []meterReading{
 			{min: -30, pct: 12}, {min: 30, pct: 3}},
-			map[string]float64{"usage_cmd": 3}},
+			map[string]float64{"merged": 3}},
 	}
 	for _, c := range cases {
 		rt := uuid.New()
@@ -1023,23 +1023,28 @@ func TestMeterStepsCases(t *testing.T) {
 	for _, m := range cells.Meter {
 		cov[m.SecretKey+"/"+m.Source] = m
 	}
-	if l := cov["lag/usage_cmd"]; !l.BaselineBefore || l.BaselinePercent != 10 || l.Points != 1 ||
+	if l := cov["lag/merged"]; !l.BaselineBefore || l.BaselinePercent != 10 || l.Points != 1 ||
 		l.PointsLow != 0 || l.PointsHigh != 2 || l.LastPercent != 11 || l.Readings != 3 {
 		t.Errorf("coverage of the lagging case: %+v", l)
 	}
 	// The baseline's week ended before the window's first reading: the window
 	// spans one week, begun by a reset and counted from 0.
-	if r := cov["reset/usage_cmd"]; len(r.Segments) != 1 || !r.Segments[0].Reset || r.Segments[0].From != 0 ||
+	if r := cov["reset/merged"]; len(r.Segments) != 1 || !r.Segments[0].Reset || r.Segments[0].From != 0 ||
 		r.Segments[0].Points != 5 || r.Segments[0].To != 5 {
 		t.Errorf("segments of the reset case: %+v", r.Segments)
 	}
 	// A collapse right after the baseline: one week in the window, 3 points,
 	// known to ±1.
-	if c := cov["collapse/usage_cmd"]; len(c.Segments) != 1 || c.PointsLow != 2 || c.PointsHigh != 4 {
+	if c := cov["collapse/merged"]; len(c.Segments) != 1 || c.PointsLow != 2 || c.PointsHigh != 4 {
 		t.Errorf("coverage of the collapse case: %+v", c)
 	}
-	if b := cov["sources/inband"]; b.BaselineBefore || b.Readings != 1 {
-		t.Errorf("the in-band source has no reading before the window: %+v", b)
+	// Two readers of one meter are one timeline (#153): /usage's baseline before the window, its 13 and in-band's 12,
+	// two readings in the window; in-band's 12, a moment behind the top, adds nothing.
+	if b := cov["sources/merged"]; !b.BaselineBefore || b.Readings != 2 || b.Points != 3 || b.LastPercent != 12 {
+		t.Errorf("the two sources of one meter are one timeline: %+v", b)
+	}
+	if _, ok := cov["sources/inband"]; ok {
+		t.Errorf("a weekly meter has no per-source coverage left: %+v", cov["sources/inband"])
 	}
 	if st := cells.Subscription[0]; st.USD != nil || st.UnpricedPoints != st.Points {
 		t.Errorf("without a plan a step is unpriced: %+v", st)

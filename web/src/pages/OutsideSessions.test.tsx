@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { fireEvent, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import Costs from "./Costs";
 import OutsideCosts from "./OutsideCosts";
 import type {
@@ -145,7 +145,7 @@ function cells(ext: ExternalUsage = external()): CostCells {
 const NO_BILL = { bucket: "hour", points: [], sync: { configured: false, last_attempt_at: null, last_success_at: null,
   last_daily_at: null, data_refreshed_at: null, last_status: "", last_error: "" } };
 
-function serveCosts(data: CostCells = cells()) {
+function serveCosts(data: CostCells = cells(), route = "/costs") {
   mockFetch({
     "/api/v1/cost/cells": data,
     "/api/v1/cost/billed": NO_BILL,
@@ -153,7 +153,7 @@ function serveCosts(data: CostCells = cells()) {
     "/api/v1/cost/models": { rows: [], runs_without_breakdown: 0, usd_without_breakdown: 0 },
     "/api/v1/cost/usage-readings": [],
   });
-  return renderWithProviders(<Costs />);
+  return renderWithProviders(<Costs />, { route, path: "/costs" });
 }
 
 const seriesChip = () => screen.getByRole("button", { name: t("costs.outside.show") });
@@ -261,9 +261,9 @@ describe("the operator sessions on the cost page (#120)", () => {
   it("changes the total only when combined, says so, and leaves the agents' own figure alone", async () => {
     serveCosts();
     await screen.findByRole("group", { name: t("costs.outside.tile") });
-    // the page's lead figure (#120): one list-price tile
-    const agentsKpi = () => screen.getAllByText(t("costs.lead.label"), { exact: true })
-      .map((el) => el.closest(".card")).find((c) => c?.parentElement?.className.includes("gap-3"))!.textContent;
+    // the answer table's covey row (#195): the agents' own figure, one list-price figure
+    await waitFor(() => expect(document.querySelector('[data-answer-row="covey"]')).not.toBeNull());
+    const agentsKpi = () => document.querySelector('[data-answer-row="covey"] [data-answer-list]')!.textContent;
     const before = agentsKpi();
     expect(before).toContain(fmtUSD(7));
     expect(screen.queryByRole("group", { name: t("costs.outside.combinedTotal") })).toBeNull();
@@ -355,10 +355,60 @@ describe("the operator sessions on the cost page (#120)", () => {
     expect(chips(t("costs.lead.label")).every((b) => !(b as HTMLButtonElement).disabled)).toBe(true);
   });
 
-  it("links the series to its detailed view with the range", async () => {
+  it("links the series to its detailed view with the page's whole view (cost home PR 2)", async () => {
     serveCosts();
     await screen.findByRole("group", { name: t("costs.outside.tile") });
-    expect(screen.getByRole("link", { name: t("costs.outside.details") }).getAttribute("href")).toBe("/costs/outside?days=1&bucket=hour");
+    // Defaults are left out of the address.
+    expect(screen.getByRole("link", { name: t("costs.outside.details") }).getAttribute("href")).toBe("/costs/outside");
+    cleanup();
+    // A range, a bucket, the agents and the chart's toggles all travel to the detailed view.
+    serveCosts(cells(), "/costs?days=7&bucket=10hour&agents=a1&layout=agents&outmode=combined");
+    await screen.findByRole("group", { name: t("costs.outside.tile") });
+    const href = screen.getByRole("link", { name: t("costs.outside.details") }).getAttribute("href")!;
+    const q = new URLSearchParams(href.split("?")[1]);
+    expect([q.get("days"), q.get("bucket"), q.get("agents"), q.get("layout"), q.get("outmode")]).toEqual(["7", "10hour", "a1", "agents", "combined"]);
+  });
+
+  it("a new range keeps the chosen bucket where it still fits, else takes the range's own", async () => {
+    serveCosts(cells(), "/costs?days=7&bucket=10hour");
+    await screen.findByRole("group", { name: t("costs.outside.tile") });
+    const pressed = (label: string) => screen.getByRole("button", { name: label }).getAttribute("aria-pressed");
+    expect(pressed(t("costs.outside.b10hour"))).toBe("true");
+    // 30 days: 10 hours still fits (up to 30 days), so it stays.
+    fireEvent.click(screen.getByRole("button", { name: t("costs.rangeDays", { count: 30 }) }));
+    await waitFor(() => expect(pressed(t("costs.rangeDays", { count: 30 }))).toBe("true"));
+    expect(pressed(t("costs.outside.b10hour"))).toBe("true");
+    // 90 days: 10 hours no longer fits, so the range's own bucket (week).
+    fireEvent.click(screen.getByRole("button", { name: t("costs.rangeDays", { count: 90 }) }));
+    await waitFor(() => expect(pressed(t("costs.bWeek"))).toBe("true"));
+  });
+
+  it("a range's own bucket is not carried to the next range: 24 h after 30 days is hourly again (#215 review)", async () => {
+    serveCosts();
+    await screen.findByRole("group", { name: t("costs.outside.tile") });
+    const pressed = (label: string) => screen.getByRole("button", { name: label }).getAttribute("aria-pressed");
+    expect(pressed(t("costs.bHour"))).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: t("costs.rangeDays", { count: 30 }) }));
+    await waitFor(() => expect(pressed(t("costs.bDay"))).toBe("true"));
+    fireEvent.click(screen.getByRole("button", { name: t("costs.range24h") }));
+    await waitFor(() => expect(pressed(t("costs.bHour"))).toBe("true"));
+    fireEvent.click(screen.getByRole("button", { name: t("costs.rangeDays", { count: 90 }) }));
+    await waitFor(() => expect(pressed(t("costs.bWeek"))).toBe("true"));
+    // No bucket was chosen, so the address names none.
+    expect(screen.getByRole("link", { name: t("costs.outside.details") }).getAttribute("href")).toBe("/costs/outside?days=90");
+  });
+
+  it("opens with the view the address names, and ignores what it does not know", async () => {
+    // The outside card switched to combined and the series off both come from the address.
+    serveCosts(cells(), "/costs?outmode=combined");
+    await screen.findByRole("group", { name: t("costs.outside.tile") });
+    expect(screen.getByRole("button", { name: t("costs.outside.modeCombined") }).getAttribute("aria-pressed")).toBe("true");
+    cleanup();
+    serveCosts(cells(), "/costs?outmode=sideways&days=13&bucket=10min");
+    await screen.findByRole("group", { name: t("costs.outside.tile") });
+    // An unknown mode falls back to apart; an unknown range to 24 h; a bucket that does not fit to the range's own.
+    expect(screen.getByRole("button", { name: t("costs.outside.modeApart") }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: t("costs.range24h") }).getAttribute("aria-pressed")).toBe("true");
   });
 });
 

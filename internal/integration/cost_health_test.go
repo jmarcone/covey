@@ -487,10 +487,10 @@ func TestCostHealthMeterFreshAgesByWhenRead(t *testing.T) {
 	}
 }
 
-// Outside lane review (finding 4): the page reads a seat's real cost from one
-// source, the one with the most readings (pickCoverage). A single reading
-// typed in beside an in-band series that stopped does not make the figure
-// fresh, so it does not make C2 fresh either.
+// The weekly meter is one timeline of every reader since #214 (merged): a
+// reading from another source (the meter probe, entered through the API)
+// beside an in-band series that stopped keeps the figure fresh, and so C2.
+// That is the point: a paused fleet must not lose the meter.
 func TestCostHealthMeterFreshReadsThePagesSource(t *testing.T) {
 	f := newHealthFixture(t)
 	ord := f.s.seat(t, f.rt, daemon.CredSubscription, "claude_code_oauth_token", "sitz", "Work")
@@ -502,9 +502,9 @@ func TestCostHealthMeterFreshReadsThePagesSource(t *testing.T) {
 	expectCheck(t, f.check(t, "c2"), observability.HealthWarn, "stale")
 	f.readingFrom(t, ord, "claude_code_oauth_token", "manual", 25, nil, healthNow.Add(-5*time.Minute), healthNow.Add(-5*time.Minute), true, false)
 	c := f.check(t, "c2")
-	expectCheck(t, c, observability.HealthWarn, "stale")
-	if *c.Facts.ReadingAgo != 240 {
-		t.Errorf("reading %d minutes old, want 240 (the in-band series the page reads)", *c.Facts.ReadingAgo)
+	expectCheck(t, c, observability.HealthPass, "fresh")
+	if *c.Facts.ReadingAgo != 5 {
+		t.Errorf("reading %d minutes old, want 5 (the merged meter's latest, from any source)", *c.Facts.ReadingAgo)
 	}
 }
 
@@ -633,8 +633,8 @@ func TestCostHealthMeterDropIsOnePerRun(t *testing.T) {
 
 // C3 (review round 1, finding 3): the check reads the meter's own rule. A
 // reset time that jitters by a second is the same week (probe A: the drop
-// counts), and two sources of one seat are two series (probe B: a manual
-// reading a point or two below the in-band one is no drop).
+// counts), and two readers of one seat are one meter within a point (probe
+// B: a reading one point below another reader's is lag, no drop; #214).
 func TestCostHealthMeterDropFollowsTheMeter(t *testing.T) {
 	f := newHealthFixture(t)
 	ord := f.s.seat(t, f.rt, daemon.CredSubscription, "claude_code_oauth_token", "sitz", "Work")
@@ -647,14 +647,13 @@ func TestCostHealthMeterDropFollowsTheMeter(t *testing.T) {
 	g := newHealthFixture(t)
 	ord = g.s.seat(t, g.rt, daemon.CredSubscription, "claude_code_oauth_token", "sitz", "Work")
 	g.readingFrom(t, ord, "claude_code_oauth_token", "inband", 45, &resets, healthNow.Add(-3*time.Hour), healthNow.Add(-3*time.Hour), true, false)
-	g.readingFrom(t, ord, "claude_code_oauth_token", "manual", 43, &resets, healthNow.Add(-2*time.Hour), healthNow.Add(-2*time.Hour), true, false)
+	g.readingFrom(t, ord, "claude_code_oauth_token", "manual", 44, &resets, healthNow.Add(-2*time.Hour), healthNow.Add(-2*time.Hour), true, false)
 	expectCheck(t, g.check(t, "c3"), observability.HealthPass, "monotonic")
 }
 
-// Outside lane review (finding 5): C3 looks at the source the page reads. Two
-// readings typed in by hand, 45 % then 43 %, beside an in-band series of the
-// same seat do not mark a figure that never reads them; the same fall in the
-// in-band series does.
+// Since #214 the page reads one meter from every source: a reading typed in by
+// hand at 45 % beside an in-band series at 30-33 % is a contradiction in that
+// meter, and C3 says so. An in-band series alone stays monotonic until it falls.
 func TestCostHealthMeterDropOnlyInThePagesSource(t *testing.T) {
 	f := newHealthFixture(t)
 	ord := f.s.seat(t, f.rt, daemon.CredSubscription, "claude_code_oauth_token", "sitz", "Work")
@@ -662,12 +661,17 @@ func TestCostHealthMeterDropOnlyInThePagesSource(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		f.reading(t, ord, "claude_code_oauth_token", float64(30+i), &resets, healthNow.Add(time.Duration(i-6)*time.Hour), true, false)
 	}
-	f.readingFrom(t, ord, "claude_code_oauth_token", "manual", 45, &resets, healthNow.Add(-5*time.Hour-30*time.Minute), healthNow, true, false)
-	f.readingFrom(t, ord, "claude_code_oauth_token", "manual", 43, &resets, healthNow.Add(-4*time.Hour-30*time.Minute), healthNow, true, false)
 	expectCheck(t, f.check(t, "c3"), observability.HealthPass, "monotonic")
-
-	f.reading(t, ord, "claude_code_oauth_token", 10, &resets, healthNow.Add(-time.Hour), true, false)
+	f.readingFrom(t, ord, "claude_code_oauth_token", "manual", 45, &resets, healthNow.Add(-5*time.Hour-30*time.Minute), healthNow, true, false)
 	expectCheck(t, f.check(t, "c3"), observability.HealthFail, "drops")
+
+	h := newHealthFixture(t)
+	ord = h.s.seat(t, h.rt, daemon.CredSubscription, "claude_code_oauth_token", "sitz", "Work")
+	for i := 0; i < 4; i++ {
+		h.reading(t, ord, "claude_code_oauth_token", float64(30+i), &resets, healthNow.Add(time.Duration(i-6)*time.Hour), true, false)
+	}
+	h.reading(t, ord, "claude_code_oauth_token", 10, &resets, healthNow.Add(-time.Hour), true, false)
+	expectCheck(t, h.check(t, "c3"), observability.HealthFail, "drops")
 }
 
 // C3 (outside review, 1): an account reset in mid-week moves the reset time

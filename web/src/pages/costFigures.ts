@@ -1271,9 +1271,13 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
 
 /** The readings of one credential and source on the weekly window that can be
  *  used: supported, fresh, with a figure; oldest first. */
+/** Whether a raw reading belongs to a meter read from `source`: the server merges every source of the plan's weekly
+ *  and five-hour windows into one meter, labelled "merged" (#153), so that meter takes the readings of any source. */
+export const readingOf = (source: string, r: Pick<UsageReading, "source">): boolean => source === "merged" || r.source === source;
+
 export function usableReadings(rs: readonly UsageReading[], key: string, slot: number, source: string): UsageReading[] {
   return rs
-    .filter((r) => r.secret_key === key && r.secret_slot === slot && r.source === source && r.supported && !r.stale
+    .filter((r) => r.secret_key === key && r.secret_slot === slot && readingOf(source, r) && r.supported && !r.stale
       && r.week_percent != null && (r.window_kind === "seven_day" || r.window_kind === ""))
     .sort((a, b) => Date.parse(a.fetched_at) - Date.parse(b.fetched_at));
 }
@@ -1432,8 +1436,13 @@ export type FloorMultiple = Extract<Multiple, { kind: "floor" }>;
 
 /** One consumer of the meters: its real cost, its share of the dent, its
  *  points (the steps' attributed points weighted by its share), its list
- *  price over the split steps, and list $ per real $ — a lower bound. */
-export type DentPart = { real: number; share: number | null; points: number; list: number; multiple: FloorMultiple | null };
+ *  price over the split steps, and list $ per real $ — a lower bound.
+ *  split: a split step backs the part (covey's: any step; the outside
+ *  sessions': one on a seat that names a source; both together: the outside
+ *  sessions' too, which implies covey's). Without it `real` is 0 because
+ *  nothing was split, not because the part cost nothing: the page shows no
+ *  figure, never ≈ $0.00, and the part has no multiple (#164). */
+export type DentPart = { real: number; share: number | null; points: number; list: number; multiple: FloorMultiple | null; split: boolean };
 
 /** One seat in the dent. real is null when none of its movement has a plan
  *  price; split: it has a split step. pointsPerList: the seat's k (F3c),
@@ -1547,6 +1556,11 @@ export type Headline = {
   /** At the lead price (#120: reported where a call carries it, else list):
    *  list = coveyList + outsideList, and its parts below. */
   list: number; coveyList: number;
+  /** covey's work on credentials the meters above do not read (an API key, a seat with no weekly reading in the range), at
+   *  the lead price: in no figure of this headline (#204). */
+  coveyElsewhere: number;
+  /** coveyElsewhere per credential (credId): the page leaves out those another row already shows (the pay-per-token row). */
+  coveyElsewhereBy: Record<string, number>;
   /** null: the sessions on the meters had calls, none with a price of either kind — never $0. */
   outsideList: number | null;
   /** The outside calls priced at the list for want of a reported cost (marked). */
@@ -1597,9 +1611,11 @@ export function headline(cells: CostCells | null | undefined): Headline | null {
   const m = ext?.meter;
   if (!cells || !m || m.credentials.length === 0) return null;
   const seats = new Set(m.credentials.map((c) => credId(c.secret_key, c.secret_slot)));
-  let coveyReported = 0;
+  let coveyReported = 0, coveyElsewhere = 0;
+  const coveyElsewhereBy: Record<string, number> = {};
   for (const c of cells.cells) {
-    if (!seats.has(credId(c.secret_key, c.secret_slot))) continue;
+    const id = credId(c.secret_key, c.secret_slot);
+    if (!seats.has(id)) { const v = leadOf(c); coveyElsewhere += v; coveyElsewhereBy[id] = (coveyElsewhereBy[id] ?? 0) + v; continue; }
     coveyReported += c.engine_usd ?? 0;
   }
   const realParts = sourceRealParts(ext);
@@ -1652,7 +1668,7 @@ export function headline(cells: CostCells | null | undefined): Headline | null {
   else if (m.points < 3 || m.point_rate_mixed && real / Math.max(m.point_rate, 1e-12) < 3) why = "movement";
   else if (!(metered >= 0.01) || !(real > 0)) why = "list";
   return {
-    list: coveyList + (outsideList ?? 0), coveyList, outsideList, outsideRecomputed, table,
+    list: coveyList + (outsideList ?? 0), coveyList, coveyElsewhere, coveyElsewhereBy, outsideList, outsideRecomputed, table,
     reported: coveyReported + (outsideReported ?? 0), coveyReported, outsideReported, outsideCalls, outsideReportedCalls,
     outsideUnpricedTokens: outsideLeadUnpricedTokens,
     sources: own.map((s) => ({ source: s.source, list: byLead.get(s.source)?.lead ?? null, reported: s.reported_usd, calls: s.calls,
@@ -1692,11 +1708,18 @@ export function subscriptionDent(ext: ExternalUsage | null | undefined): Subscri
   // The meter is shared with whatever does not report (covey can never prove
   // every machine does): a part's real cost is at most r + slack, so its
   // multiple is at least list / (r + slack) — the low end of its range.
-  const part = (r: number, list: number, points: number, slack: number): DentPart => {
+  // Only a part a split step backs has a multiple.
+  const part = (r: number, list: number, points: number, slack: number, split: boolean): DentPart => {
     let mult: FloorMultiple | null = null;
-    if (noMultiple == null && r > 0 && list >= 0.01) mult = { kind: "floor", low: list / (r + slack) };
-    return { real: r, share: share(r), points, list, multiple: mult };
+    if (split && noMultiple == null && r > 0 && list >= 0.01) mult = { kind: "floor", low: list / (r + slack) };
+    return { real: r, share: share(r), points, list, multiple: mult, split };
   };
+  // A split step backs covey's part when there is any; the outside sessions'
+  // part only when a seat that names a source has one (a seat no source
+  // names has no outside calls to split by); both together only with the
+  // outside sessions' part, their work against the money.
+  const coveySplit = m.credentials.some((c) => c.split_steps > 0);
+  const outsideSplit = m.credentials.some((c) => c.sources.length > 0 && c.split_steps > 0);
   // Named only with calls in the range: a project folder with no usage
   // sends claim-only requests (0 calls), and the page never lists those.
   // A source with calls only before the range is named for its real part.
@@ -1708,9 +1731,9 @@ export function subscriptionDent(ext: ExternalUsage | null | undefined): Subscri
     real: priced ? real : null,
     points: m.point_rate_mixed ? null : m.points,
     // The parts' lists at the lead price (#120), an older server's at the list.
-    covey: part(m.covey_real_usd, coveyLead, m.split_covey_points, m.split_covey_slack_usd),
-    outside: part(m.external_real_usd, outsideLead, m.split_external_points, m.split_external_slack_usd),
-    together: part(splitReal, coveyLead + outsideLead, m.split_covey_points + m.split_external_points, m.split_slack_usd),
+    covey: part(m.covey_real_usd, coveyLead, m.split_covey_points, m.split_covey_slack_usd, coveySplit),
+    outside: part(m.external_real_usd, outsideLead, m.split_external_points, m.split_external_slack_usd, outsideSplit),
+    together: part(splitReal, coveyLead + outsideLead, m.split_covey_points + m.split_external_points, m.split_slack_usd, outsideSplit),
     unsplit: { real: m.unsplit_real_usd, share: share(m.unsplit_real_usd), steps: m.unsplit_steps,
       unpricedSteps: m.outside_unpriced_steps, unpricedReal: m.outside_unpriced_real_usd },
     unattributed: { real: m.unattributed_real_usd ?? 0, share: share(m.unattributed_real_usd ?? 0),
@@ -1761,6 +1784,9 @@ export type PayPerTokenCredential = {
   /** The lead figure over those spans: covey's agents, and the outside
    *  sessions linked to the credential (their calls' lead price). */
   coveyList: number;
+  /** covey's work on the credential at the lead price over the same window or spans: where the row shows it, on the basis
+   *  the headline's coveyElsewhereBy uses (a bill's coveyList is Claude Code's reported figure only). */
+  coveyLead: number;
   outsideList: number;
   billed: number | null;
   currencies: UsageCurrency[];
@@ -1822,6 +1848,14 @@ function unionSpans(spans: readonly [number, number][]): [number, number][] {
  *  API key with a measured bill counts by its bill (a charge entered beside
  *  it would be the same money); any other credential by its counted usage
  *  charges where it was billed by usage all through the range. */
+/** covey's own work no row of the page covers, at token prices: the headline's per credential, less what the
+ *  pay-per-token row shows of it. That row covers a credential only over its bill's window or its counted spans, so the
+ *  rest of the credential's work stays here; never below 0. */
+export function coveyElsewhere(byCred: Readonly<Record<string, number>>, ppt: Pick<PayPerTokenHeadline, "credentials"> | null | undefined): number {
+  return Object.entries(byCred).reduce((acc, [id, v]) =>
+    acc + Math.max(0, v - (ppt?.credentials.find((c) => c.id === id)?.coveyLead ?? 0)), 0);
+}
+
 export function payPerTokenHeadline(cells: CostCells | null | undefined, figures: readonly CredentialFigures[], bucketMs: number,
   windowEnd: Date): PayPerTokenHeadline | null {
   if (!cells) return null;
@@ -1842,9 +1876,11 @@ export function payPerTokenHeadline(cells: CostCells | null | undefined, figures
     const outCells = (ext?.cells ?? []).filter((c) => linked.has(c.source));
     const outside = (spans: [number, number][]) => listOverSpans(outCells, spans, bucketMs, from, to, (c) => cellLead(c).lead ?? 0);
     const name = `${key} #${slot}`;
+    const own = cells.cells.filter((c) => credId(c.secret_key, c.secret_slot) === f.id);
     if (f.kind === "api_key" && f.billed?.state === "measured") {
       const w = f.billed.window;
       creds.push({ id: f.id, name, money: "bill", coveyList: f.billed.reported,
+        coveyLead: w ? listOverSpans(own, [[w.start.getTime(), w.comparedUntil.getTime()]], bucketMs, from, to, leadOf) : 0,
         outsideList: w ? outside([[w.start.getTime(), w.comparedUntil.getTime()]]) : 0, billed: f.billed.usd, currencies: [] });
       if (f.billed.status.state === "pending") pending = true;
       continue;
@@ -1852,8 +1888,8 @@ export function payPerTokenHeadline(cells: CostCells | null | undefined, figures
     const u = f.usage;
     if (!u || u.currencies.length === 0 || !u.regimes.every((r) => r === "usage")) continue;
     const spans = unionSpans(countedSpans(u, cells.cost_bases, key, slot, from, to));
-    const own = cells.cells.filter((c) => credId(c.secret_key, c.secret_slot) === f.id);
-    creds.push({ id: f.id, name, money: "charges", coveyList: listOverSpans(own, spans, bucketMs, from, to, leadOf),
+    const coveyLead = listOverSpans(own, spans, bucketMs, from, to, leadOf);
+    creds.push({ id: f.id, name, money: "charges", coveyList: coveyLead, coveyLead,
       outsideList: outside(spans), billed: null, currencies: u.currencies });
     for (const c of u.charges) {
       const cur = c.currency.toUpperCase();
