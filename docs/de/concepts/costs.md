@@ -168,11 +168,56 @@ bewertet, weil sie dieselbe Arbeit noch einmal zählen.
   Zugangsdaten, wenn ein Agent darauf aufwacht (die Antwort wird fünf Minuten
   gehalten), und liest das eigene `rate_limit_event` von Claude Code, solange ein
   Lauf streamt. Haben beide dieselben Zugangsdaten gelesen, nimmt die Seite die mit
-  mehr Ablesungen und addiert sie nie. Solange kein Agent läuft, kommt keine
-  Ablesung: Arbeit nach der letzten Ablesung wird gesondert genannt (*nach seiner
-  letzten Ablesung, echter Anteil offen, bis der Zähler wieder abgelesen wird*).
-  Der Zähler gehört dem *Konto*, eine andere Person oder Maschine darauf bewegt ihn
-  also auch.
+  mehr Ablesungen und addiert sie nie. Solange kein Agent läuft und covey den
+  Zugang nicht selbst abfragt (siehe unten), kommt keine Ablesung: Arbeit nach der
+  letzten Ablesung wird gesondert genannt (*nach seiner letzten Ablesung, echter
+  Anteil offen, bis der Zähler wieder abgelesen wird*). Der Zähler gehört dem
+  *Konto*, eine andere Person oder Maschine darauf bewegt ihn also auch.
+- **coveys eigene Abfrage.** Liest kein Lauf einen Abo-Zugang, den Arbeit von
+  außen mitbenutzt, liest covey ihn selbst: ein Haiku-Zug über die `claude`-CLI
+  mit dem Token des Zugangs, der dasselbe `rate_limit_event` ausgibt. Abgefragt
+  werden nur Claude-Code-Zugänge mit einem OAuth-Token von Claude
+  (`sk-ant-oat…`); das Abo einer anderen Engine bekommt die CLI nie zu sehen.
+  Abgefragt wird ein Zugang nur, wenn eine Quelle von außen mit ihm verknüpft
+  ist (die eigene Quelle der Abfrage zählt nicht): Ein Zugang, den keine Quelle
+  von außen nennt, hat keine fremde Arbeit, die aufzuteilen wäre, und bleibt
+  ganz coveys. Von diesen wird ein Zugang abgefragt, wenn in den letzten 10
+  Minuten keine gültige Ablesung von ihm kam (aus dem Lauf oder von covey abgefragt, oder von
+  `/usage`; eine von Hand eingetragene zählt nicht) und entweder eine solche
+  Quelle in der letzten Stunde gemeldet hat oder die Flotte der Organisation
+  pausiert ist – der Flottenschalter ist aus, oder die Organisation hat
+  eingestellte Agenten und jeder davon ist gestoppt (ein Agent im Entwurf zählt
+  nicht). Jeder Prozess der Steuerebene versucht einen Zugang höchstens einmal
+  in 10 Minuten; nach dem ersten Versuch in Folge, der keine Ablesung ablegt
+  (der Aufruf schlug fehl oder gab kein `rate_limit_event` aus), bleibt die
+  Wartezeit bei 10 Minuten, jeder weitere Fehlversuch in Folge verdoppelt sie
+  bis höchstens 6 Stunden, und ein Versuch, der eine ablegt, setzt sie zurück.
+  Die Ablesungen sind dasselbe `rate_limit_event`, das ein Lauf streamt, mit
+  derselben Genauigkeit, und werden als Ablesungen aus dem Lauf abgelegt: Sie
+  setzen die Reihe aus dem Lauf fort, die die Seite für einen Zugang, auf dem
+  covey arbeitet, meist liest: Sie liest die Quelle mit mehr Ablesungen, bei
+  Gleichstand `/usage`; auf einem Zugang, auf dem die Antworten von `/usage`
+  die Zeilen aus dem Lauf erreichen oder übertreffen, zählen abgefragte
+  Ablesungen erst, wenn die Reihe aus dem Lauf die größere ist. Der Aufruf bewegt den Zähler, den er liest;
+  deshalb wird er als Nutzung von außen unter einer eigenen Quelle gebucht,
+  `meter poll: <secret>#<slot>` (bei langen Namen des Secrets mit einem Hash
+  gekürzt), verknüpft mit dem Zugang und auf den Beginn des Aufrufs datiert,
+  und trägt seinen Anteil am Schritt wie jede andere Sitzung; ein Aufruf,
+  dessen Kosten die CLI nicht gemeldet hat, wird nicht gebucht, und seine
+  Ablesung wird auch nicht abgelegt. Ein solcher Aufruf, und einer, der erst
+  nach dem Modell fehlschlug, hat den Zähler trotzdem bewegt: Seine paar
+  hundert Haiku-Tokens bleiben ungebucht und fallen den übrigen Nutzern des
+  Schritts zu, dessen Ablesung sie enthält. Uploads unter einer Quelle, die mit
+  `meter poll` beginnt, werden abgelehnt; eine Quelle dieses Namens, die vorher
+  von einem anderen Host als coveys eigenem hochgeladen wurde, bleibt eine
+  Quelle von außen wie jede andere. Die Abfrage braucht
+  die `claude`-CLI auf der Maschine der Steuerebene: `COVEY_METER_POLL` ist
+  `auto` (die Vorgabe: `claude` aus dem `PATH`; das Container-Image hat keine,
+  dort ist die Abfrage aus, und das Log sagt das einmal beim Start), `off`
+  (auch `false`, `no`, `0`) oder der Pfad zum Programm, der einmal beim Start
+  geprüft wird. Ist die Abfrage aus, rücken die Wasserstände früher gebuchter
+  Abfragequellen trotzdem jede Minute vor, damit sie spätere Ablesungen eines
+  Zugangs nie zurückhalten.
 - **Was ein Punkt wert ist.** Der Preis eines Tarifs wird auf die Wochen seines
   Zeitraums verteilt (ein Monat sind 52/12 Wochen, ein Jahr 52), und ein Punkt des
   Wochenzählers ist ein Hundertstel davon: 200 $ im Monat sind 46,15 $ die Woche,
@@ -365,8 +410,10 @@ Organisationsadmins und die Sicherheitsrolle sehen es als bearbeitbar.
   voll. Die Blöcke der Zugangsdaten addieren nie über Zugangsdaten hinweg.
 - **Sitzungen außerhalb kommen per Push.** covey liest keine selbst. Eine Quelle,
   die nicht über eine Zählerablesung hinaus gemeldet hat, lässt diese Ablesung
-  nicht aufgeteilt, und eine pausierte Flotte liest keinen Zähler, seine Bewegung
-  wartet also bis zur nächsten Ablesung.
+  nicht aufgeteilt, und eine pausierte Flotte liest selbst keinen Zähler; wo
+  coveys eigene Abfrage den Zugang nicht liest (keine `claude`-CLI oder keine
+  Quelle von außen verknüpft), wartet seine Bewegung also bis zur nächsten
+  Ablesung.
 - **Die Zuordnung von Schlüsseln zu Zugangsdaten und der Abgleich haben keine
   Oberfläche.** Beides gibt es nur über die API; die Seite zeigt das Ergebnis der
   Rechnung in der Kachel *Von Anthropic berechnet*.

@@ -170,7 +170,7 @@
       "fiveHourNotReported": "Okno 5-godzinne: brak danych",
       "dropped": "{{count}} odczytów pominięto (nieaktualne lub bez wartości)",
       "source_usage_cmd": "/usage",
-      "source_inband": "w strumieniu przebiegu",
+      "source_inband": "w strumieniu przebiegu lub odpytania covey",
       "source_manual": "wpisane ręcznie",
       "unpricedRow": "w tym modele bez ceny katalogowej ({{count}}): według własnej ceny Claude Code, jak w przeliczonej kwocie",
       "totalWithUnpriced": "Suma (przeliczone, modele bez ceny według zgłoszonej ceny)",

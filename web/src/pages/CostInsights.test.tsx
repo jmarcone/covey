@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { CostInsights } from "./CostInsights";
 import type { CredentialFigures } from "./costFigures";
 import { mockFetch, renderWithProviders, useGerman } from "../test/render";
+import i18n from "../i18n";
 
 // The per-model table offers the cost sources as columns that can be switched
 // off, as the chart does. What is pinned: a column and its total go with the
@@ -430,5 +431,27 @@ describe("Nutzung je Modell: Beträge unter einem Cent und Punktpreis", () => {
       return c;
     });
     expect(card.textContent).toMatch(/≈ 1,85 \$ · Spanne 1,38 \$ – 2,31 \$ · 4 Punkte × 0,4615 \$/);
+  });
+});
+
+// #153: covey's meter poll files its readings as inband, the series a run's
+// stream feeds, so the seat's meter says the source covers both.
+describe("Zähler: Quelle in der Reihe aus dem Lauf", () => {
+  beforeEach(() => { i18n.changeLanguage("en"); window.localStorage.removeItem(KEY); });
+  afterEach(() => { vi.restoreAllMocks(); window.localStorage.removeItem(KEY); });
+
+  it("nennt die Quelle inband „in the stream of a run or of covey's poll“", async () => {
+    const meter = {
+      secret_key: "claude_code_oauth_token", secret_slot: 0, source: "inband", window_kind: "seven_day",
+      baseline_at: "2026-11-17T18:00:00Z", baseline_percent: 9, last_at: "2026-11-17T21:00:00Z", last_percent: 13,
+      readings: 4, points: 4,
+    };
+    show([seatOf("seat#0", { meter })]);
+    const card = await waitFor(() => {
+      const c = document.querySelector<HTMLElement>("[data-meter]");
+      if (!c) throw new Error("no meter figures yet");
+      return c;
+    });
+    expect(card.textContent).toContain("claude_code_oauth_token #0 · in the stream of a run or of covey's poll");
   });
 });

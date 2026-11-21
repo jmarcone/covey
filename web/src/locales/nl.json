@@ -170,7 +170,7 @@
       "fiveHourNotReported": "Venster van 5 uur: niet gemeld",
       "dropped": "{{count}} meting(en) weggelaten (verouderd of zonder waarde)",
       "source_usage_cmd": "/usage",
-      "source_inband": "in de stroom van de run",
+      "source_inband": "in de stroom van een run of van de peiling van covey",
       "source_manual": "met de hand ingevoerd",
       "unpricedRow": "waarvan modellen zonder lijstprijs ({{count}}): tegen de eigen prijs van Claude Code, zoals in het herberekende bedrag",
       "totalWithUnpriced": "Totaal (herberekend, modellen zonder prijs tegen de gemelde prijs)",

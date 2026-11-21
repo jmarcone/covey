@@ -201,6 +201,14 @@ type Config struct {
 	// costs an LLM call, and whoever does not want that should be able to turn
 	// it off without stripping the feature from the binary.
 	DreamAt string
+	// MeterPoll is how the control plane reads the subscription meter of a
+	// seat no run reads (#153): one Haiku turn through the claude CLI on this
+	// machine. "auto" (the default) takes `claude` from PATH and switches the
+	// poll off, saying so once, where there is none (the distroless image);
+	// "off" (or "false", "no", "0") switches it off; anything else is the
+	// binary's path, checked once at start (orchestrator.MeterPollFor).
+	// COVEY_METER_POLL.
+	MeterPoll string
 	// SessionTTL for human logins (COVEY_SESSION_TTL, default 7 days). The
 	// session slides: every request in the second half of that window pushes
 	// the end back, so only an UNUSED session runs out. A fixed, short lifetime
@@ -406,6 +414,7 @@ func FromEnv() (Config, error) {
 		UnsignedWebhooks:     unsignedWebhooksFromEnv(),
 		TickInterval:         getenvDuration("COVEY_TICK_INTERVAL", 30*time.Second),
 		DreamAt:              getenv("COVEY_DREAM_AT", "03:00"),
+		MeterPoll:            strings.TrimSpace(getenv("COVEY_METER_POLL", "auto")),
 		SessionTTL:           getenvDuration("COVEY_SESSION_TTL", 7*24*time.Hour),
 		DaemonTokenTTL:       getenvDuration("COVEY_DAEMON_TOKEN_TTL", 15*time.Minute),
 		BoardRetention:       getenvDuration("COVEY_BOARD_RETENTION", 24*time.Hour),

@@ -589,7 +589,9 @@ func (s *Store) ModelUsage(ctx context.Context, orgID uuid.UUID, since time.Time
 //     answer is the engine's cached one (stale), up to an hour old.
 //   - inband: Claude Code's rate_limit_event in the run's own stream — every
 //     window the provider's headers name, its utilisation and its reset as
-//     an epoch. Free, but only there while a run runs.
+//     an epoch. Free, but only there while a run runs; where none runs,
+//     covey's meter poll (meterpoll.go) makes one call to read the same
+//     line, and files it here too.
 //
 // Both are keyed on the secret value (a Reorder moves places, not values), and
 // both read an ACCOUNT-wide meter: whatever else uses the account — a person
@@ -681,17 +683,20 @@ func IsRateLimitEvent(raw []byte) bool {
 }
 
 // inbandInsert files a rate_limit_event's windows ($7) as readings of the
-// credential $2..$6 (runtime_id, ord, secret_key, secret_slot, kind) — the
-// expression of the backfill in 0145: one row per window, five-hour windows in
-// window_percent, the weekly ones in week_percent, the utilisation in percent.
-// A line from before unifiedWindows names its one window in rateLimitType.
+// credential $2..$6 (runtime_id, ord, secret_key, secret_slot, kind), source
+// inband — the expression of the backfill in 0145: one row per window,
+// five-hour windows in window_percent, the weekly ones in week_percent, the
+// utilisation in percent. A line from before unifiedWindows names its one
+// window in rateLimitType. A run's own line (AddInbandReadings) and the line
+// covey's meter poll read (AddPolledReadings) go in alike. fetched_at and
+// received_at are $8, the database's now() where it is NULL.
 const inbandInsert = `
 INSERT INTO usage_readings (org_id, runtime_id, credential_ord, secret_key, secret_slot, credential_kind,
 	source, window_kind, supported, window_percent, week_percent, resets_at, status, stale, fetched_at, received_at)
 SELECT $1::uuid, $2::uuid, $3::int, $4::text, $5::smallint, $6::text, 'inband', w.key, true,
 	CASE WHEN w.key LIKE 'five_hour%' THEN w.pct END,
 	CASE WHEN w.key NOT LIKE 'five_hour%' THEN w.pct END,
-	w.resets_at, w.status, false, now(), now()
+	w.resets_at, w.status, false, COALESCE($8::timestamptz, now()), COALESCE($8::timestamptz, now())
 FROM (SELECT $7::jsonb AS payload) e
 CROSS JOIN LATERAL (
 	SELECT m.key,
@@ -714,11 +719,18 @@ ON CONFLICT DO NOTHING`
 // credential the run went out on. A line of another type, or a run without a
 // credential, files nothing.
 func (s *Store) AddInbandReadings(ctx context.Context, orgID uuid.UUID, cred CredentialRef, payload json.RawMessage) error {
+	return s.addEventReadings(ctx, orgID, cred, payload, nil)
+}
+
+// addEventReadings files a rate_limit_event's windows as in-band readings
+// (inbandInsert), received at at; nil means the database's now().
+func (s *Store) addEventReadings(ctx context.Context, orgID uuid.UUID, cred CredentialRef, payload json.RawMessage,
+	at *time.Time) error {
 	if cred.RuntimeID == uuid.Nil || cred.Ord < 0 || !IsRateLimitEvent(payload) || !json.Valid(payload) {
 		return nil
 	}
 	key, slot := cred.secret()
-	_, err := s.pool.Exec(ctx, inbandInsert, orgID, cred.RuntimeID, cred.Ord, key, slot, cred.Kind, []byte(payload))
+	_, err := s.pool.Exec(ctx, inbandInsert, orgID, cred.RuntimeID, cred.Ord, key, slot, cred.Kind, []byte(payload), at)
 	return err
 }
 
