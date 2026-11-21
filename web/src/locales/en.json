@@ -172,6 +172,7 @@
       "source_usage_cmd": "/usage",
       "source_inband": "in the run's stream",
       "source_manual": "entered by hand",
+      "source_merged": "every reader (agents' runs, /usage, the probe)",
       "unpricedRow": "of which models without a list price ({{count}}): at Claude Code's own price, as in the recomputed figure",
       "totalWithUnpriced": "Total (recomputed, unpriced models at the reported price)",
       "meterSpan": "Meter",

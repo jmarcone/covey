@@ -638,26 +638,36 @@ func planAt(plans []CredentialPlan, key string, slot int, t time.Time) (Credenti
 //     0); the first reading of a credential is its baseline and counts 0.
 //
 // Partitioned by the secret, not the runtime: the same value on two runtimes
-// is one meter, and its history survives a Reorder. The period column comes
+// is one meter, and its history survives a Reorder. The plan's weekly and
+// five-hour windows are one meter whoever reads them: the readings of every
+// source (the agents' runs, /usage, a probe or a hand entered through the API)
+// form one timeline, labelled source "merged", so a pause of one reader (the
+// fleet stopped: no in-band readings) is filled by another instead of the
+// page losing the meter (#153). Each reading's step is the rise of the running
+// top over the previous reading of any source; a reading lower than the top
+// (a reader a moment behind) adds nothing. Other windows (a monthly limit,
+// 0152) keep one timeline per source: meterLimitCharges merges those itself,
+// with its own rules for hand-entered readings. The period column comes
 // from periodSQL (meterQuery).
 const meterQueryTemplate = `
 WITH r0 AS (
 	SELECT id, secret_key, secret_slot, source, window_kind, credential_kind, fetched_at,
 		week_percent AS pct, resets_at,
-		MAX(resets_at) OVER (PARTITION BY secret_key, secret_slot, source, window_kind ORDER BY fetched_at, id
+		CASE WHEN window_kind = '' OR window_kind LIKE 'seven\_day%' OR window_kind LIKE 'five\_hour%' THEN 'merged' ELSE source END AS msrc,
+		MAX(resets_at) OVER (PARTITION BY secret_key, secret_slot, CASE WHEN window_kind = '' OR window_kind LIKE 'seven\_day%' OR window_kind LIKE 'five\_hour%' THEN 'merged' ELSE source END, window_kind ORDER BY fetched_at, id
 			ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS seen_resets
 	FROM usage_readings
 	WHERE org_id = $1 AND supported AND NOT stale AND week_percent IS NOT NULL AND secret_key IS NOT NULL
 	  AND (fetched_at >= $2::timestamptz - interval '8 days'
 	    OR (window_kind NOT LIKE 'seven\_day%' AND fetched_at >= $2::timestamptz - interval '35 days'))),
 r AS (
-	SELECT id, secret_key, secret_slot, source, window_kind, credential_kind, fetched_at, pct, resets_at
+	SELECT id, secret_key, secret_slot, msrc, window_kind, credential_kind, fetched_at, pct, resets_at
 	FROM r0
 	WHERE resets_at IS NULL OR seen_resets IS NULL OR resets_at >= seen_resets - interval '1 hour'),
 l AS (
 	SELECT r.*, LAG(pct) OVER w AS prev_pct, LAG(resets_at) OVER w AS prev_resets, LAG(fetched_at) OVER w AS prev_at
 	FROM r
-	WINDOW w AS (PARTITION BY secret_key, secret_slot, source, window_kind ORDER BY fetched_at, id)),
+	WINDOW w AS (PARTITION BY secret_key, secret_slot, msrc, window_kind ORDER BY fetched_at, id)),
 f AS (
 	SELECT l.*, CASE
 		WHEN prev_pct IS NULL THEN 0
@@ -669,23 +679,23 @@ f AS (
 		ELSE 0 END AS reset
 	FROM l),
 g AS (
-	SELECT f.*, SUM(reset) OVER (PARTITION BY secret_key, secret_slot, source, window_kind
+	SELECT f.*, SUM(reset) OVER (PARTITION BY secret_key, secret_slot, msrc, window_kind
 		ORDER BY fetched_at, id) AS week
 	FROM f),
 m AS (
-	SELECT g.*, MAX(pct) OVER (PARTITION BY secret_key, secret_slot, source, window_kind, week
+	SELECT g.*, MAX(pct) OVER (PARTITION BY secret_key, secret_slot, msrc, window_kind, week
 		ORDER BY fetched_at, id) AS top
 	FROM g)
 SELECT secret_key, secret_slot, MAX(credential_kind) OVER (PARTITION BY secret_key, secret_slot),
-	source, window_kind, fetched_at, {{period}},
+	msrc, window_kind, fetched_at, {{period}},
 	pct, top, week::bigint, reset = 1,
 	CASE WHEN prev_pct IS NULL THEN 0
 	     WHEN reset = 1 THEN top
-	     ELSE top - LAG(top) OVER (PARTITION BY secret_key, secret_slot, source, window_kind ORDER BY fetched_at, id) END,
+	     ELSE top - LAG(top) OVER (PARTITION BY secret_key, secret_slot, msrc, window_kind ORDER BY fetched_at, id) END,
 	COALESCE(EXTRACT(EPOCH FROM fetched_at - prev_at)::float8, 0),
 	resets_at
 FROM m
-ORDER BY secret_key, secret_slot, source, window_kind, fetched_at, id`
+ORDER BY secret_key, secret_slot, msrc, window_kind, fetched_at, id`
 
 // meterQuery is meterQueryTemplate with the bucket's period: $1 org, $2 since.
 func meterQuery(bucket string) string {

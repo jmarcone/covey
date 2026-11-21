@@ -172,6 +172,7 @@
       "source_usage_cmd": "/usage",
       "source_inband": "no fluxo da execução",
       "source_manual": "introduzido à mão",
+      "source_merged": "todos os leitores (execuções dos agentes, /usage, a sonda)",
       "unpricedRow": "dos quais modelos sem preço de tabela ({{count}}): ao preço próprio do Claude Code, como no valor recalculado",
       "totalWithUnpriced": "Total (recalculado, modelos sem preço ao preço informado)",
       "meterSpan": "Medidor",

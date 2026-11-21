@@ -172,6 +172,7 @@
       "source_usage_cmd": "/usage",
       "source_inband": "运行流中",
       "source_manual": "手动录入",
+      "source_merged": "所有读取来源（智能体运行、/usage、探针）",
       "unpricedRow": "其中无标价的模型（{{count}}）：按 Claude Code 自己的价格计入，与重新计算的数字一致",
       "totalWithUnpriced": "合计（重新计算，无标价的模型按报告值的价格）",
       "meterSpan": "计量",

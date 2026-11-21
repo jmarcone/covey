@@ -172,6 +172,7 @@
       "source_usage_cmd": "/usage",
       "source_inband": "im Strom des Laufs",
       "source_manual": "von Hand eingetragen",
+      "source_merged": "alle Leser (Läufe der Agenten, /usage, die Sonde)",
       "unpricedRow": "davon Modelle ohne Listenpreis ({{count}}): zu Claude Codes eigenem Preis, wie in der nachgerechneten Zahl",
       "totalWithUnpriced": "Summe (nachgerechnet, Modelle ohne Listenpreis zum gemeldeten Preis)",
       "meterSpan": "Zähler",
