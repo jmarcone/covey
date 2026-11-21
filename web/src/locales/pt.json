@@ -899,6 +899,18 @@
       "loadErrorStale": "Não foi possível voltar a executar as verificações. Abaixo: o resultado de {{when}}, possivelmente desatualizado.",
       "unnamedModel": "(sem nome de modelo)"
     },
+    "bar": {
+      "label": "Filtros de custos",
+      "who": "Quem:",
+      "whoAll": "todos",
+      "whoSome": "{{count}} selecionados",
+      "clear": "Mostrar todos",
+      "whoLocked": "Toda a conta",
+      "whoLockedTitle": "A resposta abrange toda a conta: aqui não se aplica uma seleção de agentes. A página Detalhes filtra por agentes.",
+      "share": "Partilhar",
+      "copied": "Link copiado: abre esta vista.",
+      "copyFailed": "Copie antes o endereço da barra do navegador."
+    },
     "home": {
       "title": "Custos",
       "tabsLabel": "Vistas de custos",

@@ -899,6 +899,18 @@
       "loadErrorStale": "检查无法再次运行。下面是 {{when}} 的结果，可能已过时。",
       "unnamedModel": "（无模型名）"
     },
+    "bar": {
+      "label": "成本筛选",
+      "who": "范围：",
+      "whoAll": "所有人",
+      "whoSome": "已选 {{count}} 个",
+      "clear": "显示所有人",
+      "whoLocked": "整个账户",
+      "whoLockedTitle": "此答案涵盖整个账户：这里不应用智能体选择。如需按智能体筛选，请用“详情”页面。",
+      "share": "分享",
+      "copied": "链接已复制：它会打开此视图。",
+      "copyFailed": "请改为从浏览器地址栏复制地址。"
+    },
     "home": {
       "title": "成本",
       "tabsLabel": "成本视图",

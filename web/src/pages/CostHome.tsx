@@ -10,7 +10,7 @@ import { CostAnswer } from "./CostAnswer";
 import { answerTable, type AnswerTable } from "./costAnswerModel";
 import { headline, subscriptionDent, type Headline } from "./costFigures";
 import { isRangeCode, type RangeCode } from "./costRange";
-import { CostRangeControls, useCostRange } from "./costRangeState";
+import { CostFilterBar, ShareButton, WhoSummary, useCostRange } from "./costRangeState";
 import { useCostQuery } from "./costView";
 import { CostHealthBadge, IncompleteMark, incompleteParts, useCostHealth } from "./CostHealth";
 import { useCostCells } from "./StackedCostChart";
@@ -185,7 +185,8 @@ export default function CostHome() {
         <h1 className="text-[22px]">{t("costs.home.title")}</h1>
         <CostTabs />
       </div>
-      <CostRangeControls r={r} rangeError={rangeError} bucketSwitch={false} />
+      {/* The answer is account-wide: the bar says Who is not applied here instead of offering a filter that does nothing. */}
+      <CostFilterBar r={r} rangeError={rangeError} bucketSwitch={false} leading={<WhoSummary names={[]} locked />} trailing={<ShareButton />} />
       {refused && <p className="muted text-sm" data-range-refused>{t("costs.range.refused")}</p>}
       {!refused && cells.isLoading && <p className="muted text-sm">{t("costs.home.loading")}</p>}
       {!refused && cells.data && !a && <p className="muted text-sm" data-home-empty>{t("costs.home.noMeter")}</p>}

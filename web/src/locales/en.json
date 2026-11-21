@@ -899,6 +899,18 @@
       "loadErrorStale": "The checks could not run again. Below: the result from {{when}}, possibly out of date.",
       "unnamedModel": "(no model name)"
     },
+    "bar": {
+      "label": "Cost filters",
+      "who": "Who:",
+      "whoAll": "everyone",
+      "whoSome": "{{count}} selected",
+      "clear": "Show everyone",
+      "whoLocked": "Whole account",
+      "whoLockedTitle": "The answer covers the whole account: an agent selection is not applied here. The Details page narrows to agents.",
+      "share": "Share",
+      "copied": "Link copied: it opens this view.",
+      "copyFailed": "Copy the address from the browser bar instead."
+    },
     "home": {
       "title": "Costs",
       "tabsLabel": "Cost views",

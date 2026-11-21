@@ -899,6 +899,18 @@
       "loadErrorStale": "Las comprobaciones no pudieron volver a ejecutarse. Abajo: el resultado de {{when}}, quizá desfasado.",
       "unnamedModel": "(sin nombre de modelo)"
     },
+    "bar": {
+      "label": "Filtros de costes",
+      "who": "Quién:",
+      "whoAll": "todos",
+      "whoSome": "{{count}} seleccionados",
+      "clear": "Mostrar a todos",
+      "whoLocked": "Toda la cuenta",
+      "whoLockedTitle": "La respuesta abarca toda la cuenta: aquí no se aplica una selección de agentes. La página Detalles filtra por agentes.",
+      "share": "Compartir",
+      "copied": "Enlace copiado: abre esta vista.",
+      "copyFailed": "No se pudo copiar: copie la dirección desde la barra del navegador."
+    },
     "home": {
       "title": "Costes",
       "tabsLabel": "Vistas de costes",
