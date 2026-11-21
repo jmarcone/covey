@@ -2273,3 +2273,52 @@ ol.md-list { list-style: decimal; }
   /* Long project names break anywhere; the figures stay whole. */
   .cost-answer [data-answer-table] th[scope="row"] { overflow-wrap: anywhere; }
 }
+
+/* The cost pages' tabs (cost home PR 5). */
+.cost-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-left: 12px; }
+.cost-tabs a { padding: 5px 12px; border-radius: 6px; color: var(--text-secondary); font-size: 14px; text-decoration: none; }
+.cost-tabs a:hover { color: var(--text-primary); background: var(--surface-1); }
+.cost-tabs a.on { color: var(--text-primary); background: var(--surface-2); font-weight: 600; box-shadow: inset 0 -2px 0 var(--text-accent); }
+
+/* The cost home: one equation across the room, its trust beside it, its coverage under it, then the parts and the doors. */
+.cost-home-hero { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; padding: 24px; }
+.cost-home-eq { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 28px; }
+.cost-home-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); }
+.cost-home-fig { font-size: 36px; font-weight: 600; line-height: 1.1; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.cost-home-capacity { color: var(--cost-real); }
+.cost-home-op { font-size: 28px; color: var(--text-secondary); padding-bottom: 4px; }
+.cost-home-sub { font-size: 13px; color: var(--text-secondary); }
+.cost-home-trust { display: grid; gap: 8px; align-content: start; }
+.cost-home-row { display: flex; justify-content: space-between; gap: 16px; font-size: 13px; color: var(--text-secondary); }
+.cost-home-gauge { display: grid; gap: 6px; }
+.cost-home-bar { height: 10px; border-radius: 5px; background: var(--surface-1); border: 1px solid var(--border); overflow: hidden; }
+.cost-home-bar > span { display: block; height: 100%; background: var(--cost-real); }
+.cost-home-coverage { display: grid; gap: 6px; grid-column: 1 / -1; }
+.cost-home-strip { display: flex; height: 12px; border-radius: 4px; overflow: hidden; border: 1px solid var(--border); }
+.cost-home-strip .none { background: repeating-linear-gradient(45deg, var(--surface-1) 0 6px, var(--border) 6px 7px); }
+.cost-home-strip .metered { background: var(--cost-real); }
+.cost-home-strip .after { background: var(--surface-2); }
+.cost-home-strip-labels { display: flex; flex-wrap: wrap; gap: 4px 24px; font-size: 13px; color: var(--text-secondary); }
+.cost-home-split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; margin-top: 16px; }
+.cost-home-doors { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; align-content: start; }
+.cost-home-door { display: grid; gap: 4px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-1);
+  color: var(--text-primary); text-decoration: none; min-width: 0; }
+.cost-home-door:hover { border-color: var(--text-accent); }
+.cost-home-door:focus-visible { outline: 2px solid var(--text-accent); outline-offset: 2px; }
+.cost-home-door-value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.cost-home-door .cost-home-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cost-home-open { font-size: 12px; font-weight: 600; color: var(--text-accent); }
+@media (min-width: 1100px) {
+  .cost-home-hero { grid-template-columns: minmax(0, 1fr) 300px; }
+  .cost-home-trust { border-left: 1px solid var(--border); padding-left: 24px; }
+  .cost-home-fig { font-size: 48px; }
+}
+@media (min-width: 1600px) {
+  .cost-home-fig { font-size: 64px; }
+  .cost-home-op { font-size: 40px; }
+  .cost-home-label { font-size: 13px; }
+  .cost-home-sub, .cost-home-row, .cost-home-strip-labels { font-size: 14px; }
+  .cost-home-split { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); align-items: start; }
+  .cost-home-doors { grid-template-columns: 1fr 1fr; }
+  .cost-home-door-value { font-size: 28px; }
+}
