@@ -1076,6 +1076,101 @@
       "coveyOnlyLocked": "Er zijn agents geselecteerd: de sessies buiten covey horen niet bij een selectie van agents.",
       "banner": "Gewijzigd: agents selecteren telt nu precies die agents. De sessies buiten covey worden niet meer bij een selectie opgeteld. Wat een selectie niet kan volgen, is gemarkeerd met ‘hele organisatie’.",
       "bannerOk": "Begrepen"
+    },
+    "basisSwitch": {
+      "label": "Basis",
+      "option": {
+        "token": "Tokenprijs",
+        "capacity": "Gebruikte abonnementscapaciteit (schatting)",
+        "billed": "Gefactureerd (API-sleutels)",
+        "cash": "Contant (abonnement, naar rato)"
+      },
+      "desc": {
+        "token": "Het werk tegen tokenprijzen: de eigen prijs van Claude Code waar die er een meldde, anders de lijstprijs van covey.",
+        "capacity": "Bewogen meterpunten × de abonnementsprijs per punt. Een schatting, voor het hele account.",
+        "billed": "Wat Anthropic de betalen-per-token-API-sleutels factureerde. Hele sleutels, geen stoelen.",
+        "cash": "Wacht op goedkeuring: de abonnementsprijs verdeeld over de gemeten periode wordt nog niet getoond."
+      },
+      "tag": {
+        "token": "Tokenprijs",
+        "capacity": "≈ Abonnementscapaciteit (schatting)",
+        "billed": "Gefactureerd"
+      },
+      "lock": {
+        "notPerRun": "abonnementscapaciteit hoort bij een meter, niet bij een run.",
+        "noCredentialOnRun": "een run heeft geen inloggegevens, dus geen factuur.",
+        "notPerModel": "abonnementscapaciteit is nog niet per model verdeeld.",
+        "billedPerKey": "facturen gelden per API-sleutel, niet per agent of model.",
+        "answerIsTokenOverCapacity": "het antwoord is altijd tokenprijs ÷ gebruikte abonnementscapaciteit.",
+        "perPeriodAgent": "per periode horen capaciteit en facturen bij inloggegevens, niet bij agents.",
+        "outsideTokenOnly": "de tegels en de grafiek op deze pagina staan op tokenprijs; de abonnementscapaciteit per bron staat in de bronchips."
+      },
+      "lockChip": "{{basis}} hier niet toegepast: {{reason}} Getoond tegen tokenprijs.",
+      "toToken": "Naar tokenprijs",
+      "pruned": {
+        "cash": "Contant (abonnement, naar rato) wacht op goedkeuring: tokenprijs getoond.",
+        "unknown": "De link noemt een basis die deze pagina niet kent: tokenprijs getoond."
+      }
+    },
+    "noFigure": {
+      "short": {
+        "pending": "volgt",
+        "beforeMeter": "vóór de meter",
+        "afterMeter": "na de laatste meterstand",
+        "notSplit": "niet verdeeld",
+        "unpricedExcluded": "geen lijstprijs",
+        "notAtThisLevel": "niet op dit niveau",
+        "usageBasis": "op gebruik gefactureerd",
+        "accountWide": "hele account",
+        "noReported": "niet gemeld",
+        "noData": "geen gegevens",
+        "bucketTooFine": "te fijn",
+        "noBilledKeys": "geen API-sleutels"
+      },
+      "long": {
+        "pending": "Volgt: het aandeel komt na de volgende meterstand.",
+        "beforeMeter": "Geen cijfer: dit werk ligt vóór de eerste meterstand{{detail}}.",
+        "afterMeter": "Nog geen cijfer: dit werk ligt na de laatste meterstand.",
+        "notSplit": "Geen cijfer: de meterstanden over dit werk zijn niet over de delen verdeeld.",
+        "unpricedExcluded": "Geen cijfer: geen lijstprijs voor deze tokens{{detail}}.",
+        "notAtThisLevel": "Geen cijfer op dit niveau: het bestaat per inloggegeven, niet per deel.",
+        "usageBasis": "Geen cijfer: op gebruik gefactureerd, niet via een abonnement.",
+        "accountWide": "Hele account: niet verder verdeeld dan het hele account.",
+        "noReported": "Geen cijfer: Claude Code meldde geen prijs voor deze aanroepen.",
+        "noData": "Geen gegevens in deze periode.",
+        "bucketTooFine": "Geen cijfer per 10 minuten: abonnementscapaciteit en facturen zijn op zijn fijnst per uur. Kies per uur of grover.",
+        "noBilledKeys": "Geen cijfer: in deze periode is geen API-sleutel aan een factuur gekoppeld."
+      }
+    },
+    "basisDetails": {
+      "wholeKey": "hele sleutel, niet alleen covey",
+      "chart": {
+        "setByBasis": "ingesteld door Basis",
+        "setByBasisTitle": "Ingesteld door de Basis-schakelaar in de filterbalk: wijzig de basis om dit te wijzigen.",
+        "alsoShow": "Ook tonen",
+        "useHourly": "Per uur",
+        "noCapacityOnKey": "Een API-sleutel wordt per token gefactureerd: die heeft geen abonnementscapaciteit.",
+        "noCapacityHere": "Geen geprijsde meterbeweging op deze stoel in de periode: geen schatting van de abonnementscapaciteit.",
+        "noBillOnSeat": "Een stoel wordt als abonnement betaald: er hoort geen factuur van een API-sleutel bij."
+      },
+      "kpi": {
+        "capacityNone": "Geen stoel heeft in deze periode een geprijsde meterbeweging.",
+        "capacitySub": "De schattingen van de stoelen opgeteld · bereik {{low}} – {{high}} · hele account",
+        "capacityPartial": "{{n}} van {{m}} stoelen hebben een geprijsde schatting: de andere zitten niet in de som",
+        "billedPartial": "{{n}} van {{m}} API-sleutels hebben een factuur: de andere zitten niet in de som"
+      }
+    },
+    "basisViews": {
+      "home": {
+        "covNone": "vanaf {{from}}: geen metergegevens",
+        "covMetered": "{{from}} tot {{to}}: gemeten",
+        "covAfter": "na de laatste meterstand",
+        "billedLabel": "Gefactureerd aan gekoppelde API-sleutels (betalen per token, hele sleutels, niet alleen covey)",
+        "billedUntil": "volledig gefactureerde blokken tot {{until}}; geen deel van het antwoord hierboven"
+      },
+      "outside": {
+        "perModelNone": "per model:"
+      }
     }
   },
   "lang": {

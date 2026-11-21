@@ -1076,6 +1076,101 @@
       "coveyOnlyLocked": "エージェントが選択されています。covey 外のセッションはエージェントの選択に含まれません。",
       "banner": "変更点：エージェントを選択すると、そのエージェントだけが集計されるようになりました。covey 外のセッションは選択に加算されなくなりました。選択に従えない項目には「組織全体」と表示されます。",
       "bannerOk": "了解"
+    },
+    "basisSwitch": {
+      "label": "基準",
+      "option": {
+        "token": "トークン価格",
+        "capacity": "プラン消費分（推定）",
+        "billed": "請求（API キー）",
+        "cash": "支払額（プラン、按分）"
+      },
+      "desc": {
+        "token": "トークン価格での作業：Claude Code が価格を報告した場合はその価格、それ以外は covey の定価。",
+        "capacity": "メーターの動きのポイント × プランの 1 ポイントあたり価格。アカウント全体の推定値です。",
+        "billed": "Anthropic が従量課金の API キーに請求した額。シートではなく、キー全体の額です。",
+        "cash": "承認待ち：メーター期間に按分したプラン価格はまだ表示されません。"
+      },
+      "tag": {
+        "token": "トークン価格",
+        "capacity": "≈ プラン消費分（推定）",
+        "billed": "請求"
+      },
+      "lock": {
+        "notPerRun": "プラン消費分はメーターに属し、実行には属しません。",
+        "noCredentialOnRun": "実行は認証情報を持たないため、請求もありません。",
+        "notPerModel": "プラン消費分はまだモデル別に分割されていません。",
+        "billedPerKey": "請求は API キーごとで、エージェントやモデルごとではありません。",
+        "answerIsTokenOverCapacity": "答えは常にトークン価格 ÷ プラン消費分です。",
+        "perPeriodAgent": "期間ごとのプラン消費分と請求は認証情報に属し、エージェントには属しません。",
+        "outsideTokenOnly": "このページのタイルとグラフはトークン価格です。ソースごとのプラン消費分はソースのチップにあります。"
+      },
+      "lockChip": "{{basis}} はここでは適用されません：{{reason}} トークン価格で表示しています。",
+      "toToken": "トークン価格に切り替え",
+      "pruned": {
+        "cash": "支払額（プラン、按分）は承認待ちです：トークン価格で表示しています。",
+        "unknown": "リンクの基準はこのページでは不明です：トークン価格で表示しています。"
+      }
+    },
+    "noFigure": {
+      "short": {
+        "pending": "保留",
+        "beforeMeter": "メーター以前",
+        "afterMeter": "最後の読み取り以降",
+        "notSplit": "未配分",
+        "unpricedExcluded": "定価なし",
+        "notAtThisLevel": "この単位ではなし",
+        "usageBasis": "使用量で課金",
+        "accountWide": "アカウント全体",
+        "noReported": "報告なし",
+        "noData": "データなし",
+        "bucketTooFine": "細かすぎます",
+        "noBilledKeys": "API キーなし"
+      },
+      "long": {
+        "pending": "保留：配分は次のメーター読み取りの後に決まります。",
+        "beforeMeter": "数値なし：この作業はメーターの最初の読み取りより前です{{detail}}。",
+        "afterMeter": "まだ数値はありません：この作業はメーターの最後の読み取り以降です。",
+        "notSplit": "数値なし：この作業にかかる読み取りは各部分に配分されていません。",
+        "unpricedExcluded": "数値なし：これらのトークンに定価がありません{{detail}}。",
+        "notAtThisLevel": "この単位では数値なし：数値は部分ごとではなく認証情報ごとにあります。",
+        "usageBasis": "数値なし：プランではなく使用量で課金されています。",
+        "accountWide": "アカウント全体：アカウント全体より細かくは分割されません。",
+        "noReported": "数値なし：Claude Code はこれらの呼び出しの価格を報告していません。",
+        "noData": "この期間にデータはありません。",
+        "bucketTooFine": "10 分単位では数値なし：プラン消費分と請求は最短でも 1 時間ごとです。1 時間以上の単位を選んでください。",
+        "noBilledKeys": "数値なし：この期間に請求に対応付けられた API キーはありません。"
+      }
+    },
+    "basisDetails": {
+      "wholeKey": "covey だけでなくキー全体",
+      "chart": {
+        "setByBasis": "基準で設定",
+        "setByBasisTitle": "フィルターバーの基準スイッチで設定されます。変更するには基準を切り替えてください。",
+        "alsoShow": "併せて表示",
+        "useHourly": "時間単位にする",
+        "noCapacityOnKey": "API キーはトークンごとに課金されるため、プラン消費分はありません。",
+        "noCapacityHere": "この期間、このシートに価格のあるメーターの動きはありません：プラン消費分の推定なし。",
+        "noBillOnSeat": "シートはプランとして支払われるため、API キーの請求は属しません。"
+      },
+      "kpi": {
+        "capacityNone": "この期間、価格のあるメーターの動きがあるシートはありません。",
+        "capacitySub": "各シートの推定の合計 · 範囲 {{low}} – {{high}} · アカウント全体",
+        "capacityPartial": "{{m}} 件中 {{n}} 件のシートに価格のある推定があります：他は合計に含まれません",
+        "billedPartial": "{{m}} 件中 {{n}} 件の API キーに請求があります：他は合計に含まれません"
+      }
+    },
+    "basisViews": {
+      "home": {
+        "covNone": "{{from}} から：メーターデータなし",
+        "covMetered": "{{from}} – {{to}}：メーターあり",
+        "covAfter": "最後の読み取り以降",
+        "billedLabel": "対応付けられた API キーへの請求（従量課金、covey だけでなくキー全体）",
+        "billedUntil": "{{until}} までの確定した請求期間。上の答えには含まれません"
+      },
+      "outside": {
+        "perModelNone": "モデル別："
+      }
     }
   },
   "lang": {

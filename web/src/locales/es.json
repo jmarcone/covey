@@ -1076,6 +1076,101 @@
       "coveyOnlyLocked": "Hay agentes seleccionados: las sesiones fuera de covey no forman parte de una selección de agentes.",
       "banner": "Cambio: seleccionar agentes ahora cuenta exactamente esos agentes. Las sesiones fuera de covey ya no se añaden a una selección. Lo que no puede seguir una selección está marcado como «toda la organización».",
       "bannerOk": "Entendido"
+    },
+    "basisSwitch": {
+      "label": "Base",
+      "option": {
+        "token": "Precio por token",
+        "capacity": "Capacidad del plan usada (est.)",
+        "billed": "Facturado (claves de API)",
+        "cash": "Efectivo (plan, prorrateado)"
+      },
+      "desc": {
+        "token": "El trabajo a precio por token: el precio propio de Claude Code cuando lo informó y, si no, el precio de lista de covey.",
+        "capacity": "Puntos que avanzó el contador × el precio del plan por punto. Una estimación, para toda la cuenta.",
+        "billed": "Lo que Anthropic facturó a las claves de API de pago por token. Claves completas, no puestos.",
+        "cash": "Pendiente de aprobación: aún no se muestra el precio del plan repartido sobre el tramo medido."
+      },
+      "tag": {
+        "token": "Precio por token",
+        "capacity": "≈ Capacidad del plan (est.)",
+        "billed": "Facturado"
+      },
+      "lock": {
+        "notPerRun": "la capacidad del plan pertenece a un contador, no a una ejecución.",
+        "noCredentialOnRun": "una ejecución no lleva credencial, así que no hay factura.",
+        "notPerModel": "la capacidad del plan aún no se reparte por modelo.",
+        "billedPerKey": "las facturas son por clave de API, no por agente ni por modelo.",
+        "answerIsTokenOverCapacity": "la respuesta es siempre el precio por token ÷ la capacidad del plan usada.",
+        "perPeriodAgent": "por periodo, la capacidad y las facturas pertenecen a una credencial, no a los agentes.",
+        "outsideTokenOnly": "los recuadros y el gráfico de esta página están a precio por token; la capacidad del plan por fuente está en las etiquetas de cada fuente."
+      },
+      "lockChip": "{{basis}} no se aplica aquí: {{reason}} Se muestra a precio por token.",
+      "toToken": "Cambiar a precio por token",
+      "pruned": {
+        "cash": "Efectivo (plan, prorrateado) está pendiente de aprobación: se muestra a precio por token.",
+        "unknown": "El enlace indica una base que esta página no conoce: se muestra a precio por token."
+      }
+    },
+    "noFigure": {
+      "short": {
+        "pending": "pendiente",
+        "beforeMeter": "antes del contador",
+        "afterMeter": "tras la última lectura",
+        "notSplit": "sin repartir",
+        "unpricedExcluded": "sin precio de lista",
+        "notAtThisLevel": "no en este nivel",
+        "usageBasis": "facturado por uso",
+        "accountWide": "toda la cuenta",
+        "noReported": "no informado",
+        "noData": "sin datos",
+        "bucketTooFine": "demasiado fino",
+        "noBilledKeys": "sin claves de API"
+      },
+      "long": {
+        "pending": "Pendiente: su parte llega con la próxima lectura del contador.",
+        "beforeMeter": "Sin cifra: este trabajo es anterior a la primera lectura del contador{{detail}}.",
+        "afterMeter": "Aún sin cifra: este trabajo es posterior a la última lectura del contador.",
+        "notSplit": "Sin cifra: las lecturas de este trabajo no se repartieron entre las partes.",
+        "unpricedExcluded": "Sin cifra: no hay precio de lista para estos tokens{{detail}}.",
+        "notAtThisLevel": "Sin cifra en este nivel: existe por credencial, no por parte.",
+        "usageBasis": "Sin cifra: se factura por uso, no por un plan.",
+        "accountWide": "Toda la cuenta: no se reparte por debajo de la cuenta entera.",
+        "noReported": "Sin cifra: Claude Code no informó ningún precio para estas llamadas.",
+        "noData": "No hay datos en este periodo.",
+        "bucketTooFine": "Sin cifra a 10 minutos: la capacidad del plan y las facturas llegan como mucho por hora. Elige por hora o más amplio.",
+        "noBilledKeys": "Sin cifra: ninguna clave de API está asociada a una factura en este periodo."
+      }
+    },
+    "basisDetails": {
+      "wholeKey": "clave completa, no solo covey",
+      "chart": {
+        "setByBasis": "fijado por Base",
+        "setByBasisTitle": "Lo fija el selector Base de la barra de filtros: cambia la base para cambiarlo.",
+        "alsoShow": "Mostrar también",
+        "useHourly": "Usar por hora",
+        "noCapacityOnKey": "Una clave de API se factura por token: no tiene capacidad del plan.",
+        "noCapacityHere": "Ningún avance del contador con precio en este puesto en el periodo: sin estimación de capacidad del plan.",
+        "noBillOnSeat": "Un puesto se paga como plan: no le corresponde ninguna factura de clave de API."
+      },
+      "kpi": {
+        "capacityNone": "Ningún puesto tiene avance del contador con precio en este periodo.",
+        "capacitySub": "Suma de las estimaciones de los puestos · rango {{low}} – {{high}} · toda la cuenta",
+        "capacityPartial": "{{n}} de {{m}} puestos tienen una estimación con precio: los demás no están en la suma",
+        "billedPartial": "{{n}} de {{m}} claves de API tienen factura: las demás no están en la suma"
+      }
+    },
+    "basisViews": {
+      "home": {
+        "covNone": "desde {{from}}: sin datos del contador",
+        "covMetered": "{{from}} a {{to}}: medido",
+        "covAfter": "después de la última lectura",
+        "billedLabel": "Facturado a las claves de API asociadas (pago por token, claves completas, no solo covey)",
+        "billedUntil": "tramos facturados completos hasta {{until}}; no forma parte de la respuesta de arriba"
+      },
+      "outside": {
+        "perModelNone": "por modelo:"
+      }
     }
   },
   "lang": {

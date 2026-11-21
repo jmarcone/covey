@@ -1076,6 +1076,101 @@
       "coveyOnlyLocked": "Wybrano agentów: sesje poza covey nie należą do wyboru agentów.",
       "banner": "Zmiana: wybór agentów liczy teraz dokładnie tych agentów. Sesje poza covey nie są już dodawane do wyboru. To, co nie może uwzględnić wyboru, jest oznaczone jako „cała organizacja”.",
       "bannerOk": "Rozumiem"
+    },
+    "basisSwitch": {
+      "label": "Podstawa",
+      "option": {
+        "token": "Cena za token",
+        "capacity": "Wykorzystana pojemność planu (szac.)",
+        "billed": "Zafakturowane (klucze API)",
+        "cash": "Gotówka (plan, proporcjonalnie)"
+      },
+      "desc": {
+        "token": "Praca w cenach tokenów: własna cena Claude Code, gdy ją zgłosił, w przeciwnym razie cena katalogowa covey.",
+        "capacity": "Ruch licznika w punktach × cena planu za punkt. Szacunek dla całego konta.",
+        "billed": "To, co Anthropic zafakturował kluczom API rozliczanym za token. Całe klucze, nie miejsca.",
+        "cash": "Czeka na zatwierdzenie: cena planu rozłożona na okres objęty licznikiem nie jest jeszcze pokazywana."
+      },
+      "tag": {
+        "token": "Cena za token",
+        "capacity": "≈ Pojemność planu (szac.)",
+        "billed": "Zafakturowane"
+      },
+      "lock": {
+        "notPerRun": "pojemność planu należy do licznika, nie do przebiegu.",
+        "noCredentialOnRun": "przebieg nie ma poświadczenia, więc nie ma rachunku.",
+        "notPerModel": "pojemność planu nie jest jeszcze dzielona według modelu.",
+        "billedPerKey": "rachunki są na klucz API, nie na agenta ani model.",
+        "answerIsTokenOverCapacity": "odpowiedź to zawsze cena za token ÷ wykorzystana pojemność planu.",
+        "perPeriodAgent": "w ujęciu okresowym pojemność i rachunki należą do poświadczenia, nie do agentów.",
+        "outsideTokenOnly": "kafelki i wykres na tej stronie są w cenach tokenów; pojemność planu na źródło jest w etykietach źródeł."
+      },
+      "lockChip": "{{basis}} nie ma tu zastosowania: {{reason}} Pokazano w cenach tokenów.",
+      "toToken": "Przełącz na cenę za token",
+      "pruned": {
+        "cash": "Gotówka (plan, proporcjonalnie) czeka na zatwierdzenie: pokazano cenę za token.",
+        "unknown": "Link wskazuje podstawę, której ta strona nie zna: pokazano cenę za token."
+      }
+    },
+    "noFigure": {
+      "short": {
+        "pending": "oczekuje",
+        "beforeMeter": "przed licznikiem",
+        "afterMeter": "po ostatnim odczycie",
+        "notSplit": "niepodzielone",
+        "unpricedExcluded": "brak ceny katalogowej",
+        "notAtThisLevel": "nie na tym poziomie",
+        "usageBasis": "rozliczane według użycia",
+        "accountWide": "całe konto",
+        "noReported": "nie zgłoszono",
+        "noData": "brak danych",
+        "bucketTooFine": "zbyt drobne",
+        "noBilledKeys": "brak kluczy API"
+      },
+      "long": {
+        "pending": "Oczekuje: udział pojawi się po następnym odczycie licznika.",
+        "beforeMeter": "Brak kwoty: ta praca przypada przed pierwszym odczytem licznika{{detail}}.",
+        "afterMeter": "Jeszcze brak kwoty: ta praca przypada po ostatnim odczycie licznika.",
+        "notSplit": "Brak kwoty: odczytów obejmujących tę pracę nie podzielono między części.",
+        "unpricedExcluded": "Brak kwoty: brak ceny katalogowej dla tych tokenów{{detail}}.",
+        "notAtThisLevel": "Brak kwoty na tym poziomie: istnieje na poświadczenie, nie na część.",
+        "usageBasis": "Brak kwoty: rozliczane według użycia, nie według planu.",
+        "accountWide": "Całe konto: bez podziału poniżej poziomu całego konta.",
+        "noReported": "Brak kwoty: Claude Code nie zgłosił ceny dla tych wywołań.",
+        "noData": "Brak danych w tym okresie.",
+        "bucketTooFine": "Brak kwoty przy 10 minutach: pojemność planu i rachunki są najwyżej godzinowe. Wybierz widok godzinowy lub szerszy.",
+        "noBilledKeys": "Brak kwoty: żaden klucz API nie jest przypisany do rachunku w tym okresie."
+      }
+    },
+    "basisDetails": {
+      "wholeKey": "cały klucz, nie tylko covey",
+      "chart": {
+        "setByBasis": "ustawione przez Podstawę",
+        "setByBasisTitle": "Ustawione przełącznikiem Podstawa na pasku filtrów: zmień podstawę, aby to zmienić.",
+        "alsoShow": "Pokaż też",
+        "useHourly": "Widok godzinowy",
+        "noCapacityOnKey": "Klucz API jest rozliczany za token: nie ma pojemności planu.",
+        "noCapacityHere": "Brak wycenionego ruchu licznika na tym miejscu w okresie: brak szacunku pojemności planu.",
+        "noBillOnSeat": "Miejsce jest opłacane planem: nie należy do niego żaden rachunek za klucz API."
+      },
+      "kpi": {
+        "capacityNone": "Żadne miejsce nie ma wycenionego ruchu licznika w tym okresie.",
+        "capacitySub": "Suma szacunków miejsc · zakres {{low}} – {{high}} · całe konto",
+        "capacityPartial": "{{n}} z {{m}} miejsc ma wyceniony szacunek: pozostałych nie ma w sumie",
+        "billedPartial": "{{n}} z {{m}} kluczy API ma rachunek: pozostałych nie ma w sumie"
+      }
+    },
+    "basisViews": {
+      "home": {
+        "covNone": "od {{from}}: brak danych licznika",
+        "covMetered": "{{from}} do {{to}}: objęte licznikiem",
+        "covAfter": "po ostatnim odczycie",
+        "billedLabel": "Zafakturowane przypisanym kluczom API (rozliczane za token, całe klucze, nie tylko covey)",
+        "billedUntil": "pełne rozliczone przedziały do {{until}}; nie wchodzą do odpowiedzi powyżej"
+      },
+      "outside": {
+        "perModelNone": "według modelu:"
+      }
     }
   },
   "lang": {

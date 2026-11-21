@@ -1076,6 +1076,101 @@
       "coveyOnlyLocked": "Des agents sont sélectionnés : les sessions hors de covey ne font pas partie d'une sélection d'agents.",
       "banner": "Changement : sélectionner des agents compte désormais exactement ces agents. Les sessions hors de covey ne sont plus ajoutées à une sélection. Ce qui ne peut pas suivre une sélection porte la mention « toute l'organisation ».",
       "bannerOk": "Compris"
+    },
+    "basisSwitch": {
+      "label": "Base",
+      "option": {
+        "token": "Prix des jetons",
+        "capacity": "Capacité du forfait utilisée (est.)",
+        "billed": "Facturé (clés API)",
+        "cash": "Trésorerie (forfait, au prorata)"
+      },
+      "desc": {
+        "token": "Le travail au prix des jetons : le prix propre de Claude Code quand il en a déclaré un, sinon le prix catalogue de covey.",
+        "capacity": "Points du compteur parcourus × le prix du forfait par point. Une estimation, pour tout le compte.",
+        "billed": "Ce qu'Anthropic a facturé aux clés API payées au jeton. Clés entières, pas les abonnements.",
+        "cash": "En attente de validation : le prix du forfait réparti sur la période du compteur n'est pas encore affiché."
+      },
+      "tag": {
+        "token": "Prix des jetons",
+        "capacity": "≈ Capacité du forfait (est.)",
+        "billed": "Facturé"
+      },
+      "lock": {
+        "notPerRun": "la capacité du forfait appartient à un compteur, pas à une exécution.",
+        "noCredentialOnRun": "une exécution ne porte aucun identifiant, donc aucune facture.",
+        "notPerModel": "la capacité du forfait n'est pas encore répartie par modèle.",
+        "billedPerKey": "les factures sont par clé API, pas par agent ni par modèle.",
+        "answerIsTokenOverCapacity": "la réponse est toujours le prix des jetons ÷ la capacité du forfait utilisée.",
+        "perPeriodAgent": "par période, la capacité et les factures appartiennent à un identifiant, pas aux agents.",
+        "outsideTokenOnly": "les tuiles et le graphique de cette page sont au prix des jetons ; la capacité du forfait par source figure dans les pastilles des sources."
+      },
+      "lockChip": "{{basis}} ne s'applique pas ici : {{reason}} Affiché au prix des jetons.",
+      "toToken": "Passer au prix des jetons",
+      "pruned": {
+        "cash": "Trésorerie (forfait, au prorata) attend une validation : affichage au prix des jetons.",
+        "unknown": "Le lien indique une base inconnue de cette page : affichage au prix des jetons."
+      }
+    },
+    "noFigure": {
+      "short": {
+        "pending": "en attente",
+        "beforeMeter": "avant le compteur",
+        "afterMeter": "après le dernier relevé",
+        "notSplit": "non réparti",
+        "unpricedExcluded": "pas de prix catalogue",
+        "notAtThisLevel": "pas à ce niveau",
+        "usageBasis": "facturé à l'usage",
+        "accountWide": "tout le compte",
+        "noReported": "non déclaré",
+        "noData": "aucune donnée",
+        "bucketTooFine": "trop fin",
+        "noBilledKeys": "aucune clé API"
+      },
+      "long": {
+        "pending": "En attente : sa part suit le prochain relevé du compteur.",
+        "beforeMeter": "Pas de chiffre : ce travail précède le premier relevé du compteur{{detail}}.",
+        "afterMeter": "Pas encore de chiffre : ce travail suit le dernier relevé du compteur.",
+        "notSplit": "Pas de chiffre : les relevés couvrant ce travail n'ont pas été répartis entre les parties.",
+        "unpricedExcluded": "Pas de chiffre : aucun prix catalogue pour ces jetons{{detail}}.",
+        "notAtThisLevel": "Pas de chiffre à ce niveau : il existe par identifiant, pas par partie.",
+        "usageBasis": "Pas de chiffre : facturé à l'usage, pas par un forfait.",
+        "accountWide": "Tout le compte : non réparti en dessous du compte entier.",
+        "noReported": "Pas de chiffre : Claude Code n'a déclaré aucun prix pour ces appels.",
+        "noData": "Aucune donnée sur cette période.",
+        "bucketTooFine": "Pas de chiffre à 10 minutes : la capacité du forfait et les factures sont au mieux horaires. Choisissez l'heure ou plus large.",
+        "noBilledKeys": "Pas de chiffre : aucune clé API n'est associée à une facture sur cette période."
+      }
+    },
+    "basisDetails": {
+      "wholeKey": "clé entière, pas seulement covey",
+      "chart": {
+        "setByBasis": "défini par la Base",
+        "setByBasisTitle": "Défini par le sélecteur Base de la barre de filtres : changez la base pour le modifier.",
+        "alsoShow": "Afficher aussi",
+        "useHourly": "Passer à l'heure",
+        "noCapacityOnKey": "Une clé API est facturée au jeton : elle n'a pas de capacité de forfait.",
+        "noCapacityHere": "Aucun mouvement du compteur avec prix sur cet abonnement dans la période : pas d'estimation de capacité du forfait.",
+        "noBillOnSeat": "Un abonnement est payé au forfait : aucune facture de clé API ne lui appartient."
+      },
+      "kpi": {
+        "capacityNone": "Aucun abonnement n'a de mouvement du compteur avec prix sur cette période.",
+        "capacitySub": "Les estimations des abonnements additionnées · fourchette {{low}} – {{high}} · tout le compte",
+        "capacityPartial": "{{n}} abonnement(s) sur {{m}} ont une estimation avec prix : les autres ne sont pas dans la somme",
+        "billedPartial": "{{n}} clé(s) API sur {{m}} ont une facture : les autres ne sont pas dans la somme"
+      }
+    },
+    "basisViews": {
+      "home": {
+        "covNone": "depuis {{from}} : aucune donnée du compteur",
+        "covMetered": "{{from}} à {{to}} : couvert par le compteur",
+        "covAfter": "après le dernier relevé",
+        "billedLabel": "Facturé aux clés API associées (payées au jeton, clés entières, pas seulement covey)",
+        "billedUntil": "périodes facturées complètes jusqu'à {{until}} ; hors de la réponse ci-dessus"
+      },
+      "outside": {
+        "perModelNone": "par modèle :"
+      }
     }
   },
   "lang": {
