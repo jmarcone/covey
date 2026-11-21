@@ -783,7 +783,7 @@
       "fromOutsideOver": "udziały źródeł powyżej dają razem więcej niż zewnętrzna część podziału; ten wiersz zdejmuje nadwyżkę, żeby kolumna się zgadzała",
       "rowTotal": "Razem",
       "totalSub": "{{pts}} punktów licznika × {{rate}} za punkt",
-      "totalSubWeeks": "{{weeks}} punktów licznika (jedna liczba na tydzień) × {{rate}} za punkt",
+      "totalSubWeeks": "{{pts}} = {{weeks}} punktów licznika (jedna liczba na tydzień) × {{rate}} za punkt",
       "totalSubShown": "pokazane wiersze, z {{pts}} punktów licznika",
       "rowDifference": "Różnica",
       "fromDifference": "ta sama praca według cen za token, wobec tego, ile naprawdę kosztował plan ryczałtowy",
@@ -807,7 +807,11 @@
       "perUse": "Nie w tabeli: sesje poza covey rozliczane za użycie, na żadnym liczniku subskrypcji ({{list}}).",
       "elsewhere": "Nie w tabeli: własna praca covey na poświadczeniach, których tabela nie obejmuje, klucz API lub miejsce bez odczytu tygodniowego ({{usd}} po cenach za token).",
       "how": "Jak to jest liczone",
-      "tokens": "Tokeny"
+      "tokens": "Tokeny",
+      "recomputedMark": "wyliczone z tokenów według cen katalogowych Anthropic (brak zgłoszonego kosztu)",
+      "rowSmall": "inne projekty ({{count}} małe)",
+      "pending": "oczekuje",
+      "pendingWhy": "po ostatnim odczycie licznika"
     }
   },
   "lang": {

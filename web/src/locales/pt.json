@@ -783,7 +783,7 @@
       "fromOutsideOver": "as partes das fontes acima somam mais do que a parte externa da repartição; esta linha tira o excesso para a coluna fechar",
       "rowTotal": "Total",
       "totalSub": "{{pts}} pontos do contador × {{rate}} por ponto",
-      "totalSubWeeks": "{{weeks}} pontos do contador (um número por semana) × {{rate}} por ponto",
+      "totalSubWeeks": "{{pts}} = {{weeks}} pontos do contador (um número por semana) × {{rate}} por ponto",
       "totalSubShown": "as linhas mostradas, de {{pts}} pontos do contador",
       "rowDifference": "Diferença",
       "fromDifference": "o mesmo trabalho a preços por token, contra o que o plano fixo realmente custou",
@@ -807,7 +807,11 @@
       "perUse": "Fora da tabela: sessões fora do covey cobradas por uso, em nenhum contador de assinatura ({{list}}).",
       "elsewhere": "Fora da tabela: o trabalho próprio do covey em credenciais que a tabela não cobre, uma chave de API ou um lugar sem leitura semanal ({{usd}} a preços por token).",
       "how": "Como isto é calculado",
-      "tokens": "Tokens"
+      "tokens": "Tokens",
+      "recomputedMark": "calculado a partir dos tokens aos preços de tabela da Anthropic (sem custo informado)",
+      "rowSmall": "outros projetos ({{count}} pequenos)",
+      "pending": "pendente",
+      "pendingWhy": "depois da última leitura do medidor"
     }
   },
   "lang": {

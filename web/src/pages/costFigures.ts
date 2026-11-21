@@ -1550,6 +1550,8 @@ export type Headline = {
   /** covey's work on credentials the meters above do not read (an API key, a seat with no weekly reading in the range), at
    *  the lead price: in no figure of this headline (#204). */
   coveyElsewhere: number;
+  /** coveyElsewhere per credential (credId): the page leaves out those another row already shows (the pay-per-token row). */
+  coveyElsewhereBy: Record<string, number>;
   /** null: the sessions on the meters had calls, none with a price of either kind — never $0. */
   outsideList: number | null;
   /** The outside calls priced at the list for want of a reported cost (marked). */
@@ -1601,8 +1603,10 @@ export function headline(cells: CostCells | null | undefined): Headline | null {
   if (!cells || !m || m.credentials.length === 0) return null;
   const seats = new Set(m.credentials.map((c) => credId(c.secret_key, c.secret_slot)));
   let coveyReported = 0, coveyElsewhere = 0;
+  const coveyElsewhereBy: Record<string, number> = {};
   for (const c of cells.cells) {
-    if (!seats.has(credId(c.secret_key, c.secret_slot))) { coveyElsewhere += leadOf(c); continue; }
+    const id = credId(c.secret_key, c.secret_slot);
+    if (!seats.has(id)) { const v = leadOf(c); coveyElsewhere += v; coveyElsewhereBy[id] = (coveyElsewhereBy[id] ?? 0) + v; continue; }
     coveyReported += c.engine_usd ?? 0;
   }
   const realParts = sourceRealParts(ext);
@@ -1655,7 +1659,7 @@ export function headline(cells: CostCells | null | undefined): Headline | null {
   else if (m.points < 3 || m.point_rate_mixed && real / Math.max(m.point_rate, 1e-12) < 3) why = "movement";
   else if (!(metered >= 0.01) || !(real > 0)) why = "list";
   return {
-    list: coveyList + (outsideList ?? 0), coveyList, coveyElsewhere, outsideList, outsideRecomputed, table,
+    list: coveyList + (outsideList ?? 0), coveyList, coveyElsewhere, coveyElsewhereBy, outsideList, outsideRecomputed, table,
     reported: coveyReported + (outsideReported ?? 0), coveyReported, outsideReported, outsideCalls, outsideReportedCalls,
     outsideUnpricedTokens: outsideLeadUnpricedTokens,
     sources: own.map((s) => ({ source: s.source, list: byLead.get(s.source)?.lead ?? null, reported: s.reported_usd, calls: s.calls,

@@ -2235,3 +2235,11 @@ ol.md-list { list-style: decimal; }
 /* Eine Phase, die nicht durchgelaufen ist. Sie steht ruhig wie die anderen,
    aber ohne Balken: was gescheitert ist, hat keinen Fortschritt. */
 .act-feed .act-phase.failed .ph b { color: var(--danger, #b3261e); }
+
+/* The cost answer table (#195/#204): on a phone the "Where it comes from"
+   column gives way to a muted line under the part, so the figures fit. */
+.cost-answer .cost-answer-from-inline { display: none; }
+@media (max-width: 600px) {
+  .cost-answer .cost-answer-from { display: none; }
+  .cost-answer .cost-answer-from-inline { display: block; }
+}

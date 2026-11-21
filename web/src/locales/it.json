@@ -783,7 +783,7 @@
       "fromOutsideOver": "le quote delle fonti qui sopra sommano più della parte esterna della ripartizione; questa riga toglie l'eccesso perché la colonna torni",
       "rowTotal": "Totale",
       "totalSub": "{{pts}} punti del contatore × {{rate}} a punto",
-      "totalSubWeeks": "{{weeks}} punti del contatore (un numero a settimana) × {{rate}} a punto",
+      "totalSubWeeks": "{{pts}} = {{weeks}} punti del contatore (un numero a settimana) × {{rate}} a punto",
       "totalSubShown": "le righe mostrate, su {{pts}} punti del contatore",
       "rowDifference": "Differenza",
       "fromDifference": "lo stesso lavoro ai prezzi per token, contro quanto è costato davvero il piano a tariffa fissa",
@@ -807,7 +807,11 @@
       "perUse": "Non nella tabella: sessioni fuori da covey fatturate a consumo, su nessun contatore di abbonamento ({{list}}).",
       "elsewhere": "Non nella tabella: il lavoro proprio di covey su credenziali che la tabella non copre, una chiave API o un posto senza lettura settimanale ({{usd}} ai prezzi per token).",
       "how": "Come viene calcolato",
-      "tokens": "Token"
+      "tokens": "Token",
+      "recomputedMark": "calcolato dai token ai prezzi di listino di Anthropic (nessun costo riportato)",
+      "rowSmall": "altri progetti ({{count}} piccoli)",
+      "pending": "in attesa",
+      "pendingWhy": "dopo l'ultima lettura del contatore"
     }
   },
   "lang": {

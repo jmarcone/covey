@@ -8,7 +8,7 @@ import { DEFAULT_SOURCES, SOURCES, SOURCE_INFO, isPerModel, modelFigure, sourceH
 import { isSeat, perCredentialTotals, scopeFigure, type SourceTotal } from "./costFigures";
 import { MonthlyMeters, usageList } from "./CostBasis";
 import { Chip } from "./StackedCostChart";
-import { answersSeat, type AnswerCovers } from "./costAnswer";
+import { answersSeat, type AnswerCovers } from "./costAnswerModel";
 import { usableReadings, type CredentialFigures } from "./costFigures";
 import { OrgWide, OutsideMark, SOURCE_COLOR, Swatch, useUsageReadings } from "./StackedCostChart";
 import { externalStamp, kpiLead, listedSources, outsideModelRows, outsideSplit, seatSources, sourceStyles, type OutsideModelRow, type SourceStyles } from "./outsideFigures";

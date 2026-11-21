@@ -2,7 +2,7 @@ import { Fragment, useEffect, useId, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { answersSeat, type AnswerCovers } from "./costAnswer";
+import { answersSeat, type AnswerCovers } from "./costAnswerModel";
 import { api, type BilledReport, type CellAgent, type CostCell, type CostCells, type ExternalSource, type ExternalUsage, type UsageReading } from "../api";
 import { fmtBucket, fmtClockUTC, fmtCount, fmtCountAxis, fmtNumber, fmtUSD, fmtUSDAxis, fmtUSDBelow, fmtUSDFixed } from "../format";
 import { SOURCES, SOURCE_COLOR, SPLIT_COLOR, SPLIT_HATCH, sourceHint, sourceLabel, type Source } from "./costSources";

@@ -157,6 +157,8 @@ const kpi = (label: string) => document.querySelector<HTMLElement>(`[data-kpi="$
 const lines = (label: string) => [...kpi(label).querySelectorAll("[data-parts] [data-part]")].map((e) => e.textContent);
 /** The answer table (#195): the rows' token prices and the total. */
 const answerReady = () => waitFor(() => expect(document.querySelector("[data-answer-total]")).not.toBeNull());
+const openHow = () => { if (!document.querySelector("[data-answer-drawer]")) fireEvent.click(document.querySelector("[data-answer-how]")!); };
+const howNote = (k: string) => { openHow(); return document.querySelector(`[data-answer-note="${k}"]`); };
 const rowList = (key: string) => document.querySelector(`[data-answer-row="${key}"] [data-answer-list]`)!.textContent;
 const rowKeys = () => [...document.querySelectorAll("[data-answer-row]")].map((e) => e.getAttribute("data-answer-row"));
 const answerTotal = () => document.querySelector("[data-answer-total] [data-answer-list]")!.textContent;
@@ -190,11 +192,11 @@ describe("the outside sessions in three parts (#163)", () => {
     await answerReady();
     expect(rowKeys()).toEqual(["covey", "operator", `project:${SY}`]);
     expect(rowList("covey")).toBe(fmtUSD(9));
-    expect(rowList("operator")).toBe(`${fmtUSD(3.5)} (${MARK.slice(1, -1)})`);
-    expect(rowList(`project:${SY}`)).toBe(`${fmtUSD(2)} + ${fmtCount(1000)} tokens with no list price (${MARK.slice(1, -1)})`);
+    expect(rowList("operator")).toBe(`${fmtUSD(3.5)}*`);
+    expect(rowList(`project:${SY}`)).toBe(`${fmtUSD(2)} + ${fmtCount(1000)} tokens with no list price*`);
     // The rows add up to the total's figure.
     expect(answerTotal()).toBe(fmtUSD(9 + 3.5 + 2));
-    expect(document.querySelector("[data-answer-per-use]")!.textContent).toContain(fmtUSD(1));
+    expect(howNote("per-use")!.textContent).toContain(fmtUSD(1));
   });
 
   it("has no row for other projects where only the operator reports", async () => {
@@ -232,8 +234,8 @@ describe("the outside sessions in three parts (#163)", () => {
     // $9 + $3.50 + $2 (sylius, on the meter; work is billed per use, on none) = $14.50.
     expect(row.querySelector("[data-head-sentence]")!.textContent).toContain(
       `${fmtUSD(14.5)} = covey agents (internal) ${fmtUSD(9)} + covey operator ${fmtUSD(3.5)} + other projects ${fmtUSD(2)} + ${fmtCount(1000)} tokens with no list price ${MARK}`);
-    // The per-use source is said on its own line under the table, not in this sentence (#166 review, F1).
-    expect(document.querySelector("[data-answer-per-use]")!.textContent).toContain(fmtUSD(1));
+    // The per-use source is said on its own line in the how drawer, not in this sentence (#166 review, F1).
+    expect(howNote("per-use")!.textContent).toContain(fmtUSD(1));
   });
 
   it("splits the estimate's outside card into the operator and the other projects, and they add up to it", async () => {
@@ -397,7 +399,7 @@ describe("a source billed per use is a part of its own, everywhere the parts are
     expect(rowKeys()).toEqual(["covey", "operator", `project:${SY}`]);
     expect([rowList("covey"), rowList("operator"), rowList(`project:${SY}`)]).toEqual([fmtUSD(9), fmtUSD(10), fmtUSD(30)]);
     expect(answerTotal()).toBe(fmtUSD(9 + 10 + 30));
-    expect(document.querySelector("[data-answer-per-use]")!.textContent).toContain(fmtUSD(20));
+    expect(howNote("per-use")!.textContent).toContain(fmtUSD(20));
     // The sentence's other projects are the table's: $30, and the per-use $20 stands apart, not inside either.
     const row = await openDentRow();
     expect(row.querySelector("[data-head-sentence]")!.textContent).toContain(`covey operator ${fmtUSD(10)} + other projects ${fmtUSD(30)}`);
@@ -440,7 +442,7 @@ describe("the operator is one source however it is written (#166 review, F3)", (
     serve(data);
     await answerReady();
     expect(rowKeys()).toEqual(["covey", "operator", `project:${SY}`]);
-    expect(rowList("operator")).toBe(`${fmtUSD(3.5)} (${MARK.slice(1, -1)})`);
+    expect(rowList("operator")).toBe(`${fmtUSD(3.5)}*`);
     const row = await openDentRow();
     expect(row.querySelector("[data-dent='operator']")!.textContent).toContain(`≈ ${fmtUSD(PP)}`);
     expect(row.querySelector("[data-dent='projects']")!.textContent).toContain(`≈ ${fmtUSD(PP)}`);

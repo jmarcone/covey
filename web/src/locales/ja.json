@@ -783,7 +783,7 @@
       "fromOutsideOver": "上のソースの取り分の合計が分割の外部分を超えています。この行は超過分を戻し、列の合計が合うようにします",
       "rowTotal": "合計",
       "totalSub": "メーター {{pts}} ポイント × 1 ポイント {{rate}}",
-      "totalSubWeeks": "メーター {{weeks}} ポイント（週ごと）× 1 ポイント {{rate}}",
+      "totalSubWeeks": "{{pts}} = メーター {{weeks}} ポイント（週ごと）× 1 ポイント {{rate}}",
       "totalSubShown": "表示中の行、メーター {{pts}} ポイントのうち",
       "rowDifference": "差",
       "fromDifference": "同じ作業をトークン単価で見た額と、定額プランに実際にかかった額の比",
@@ -807,7 +807,11 @@
       "perUse": "表には含まれません: covey 外の従量課金セッション。サブスクリプションのメーターには載りません（{{list}}）。",
       "elsewhere": "表には含まれません：表が扱わない認証情報（API キー、週次の読み取りがない席）での covey 自身の作業（トークン価格で {{usd}}）。",
       "how": "計算方法",
-      "tokens": "トークン"
+      "tokens": "トークン",
+      "recomputedMark": "トークンから Anthropic の定価で算出（報告されたコストなし）",
+      "rowSmall": "その他のプロジェクト（小規模 {{count}} 件）",
+      "pending": "保留中",
+      "pendingWhy": "最後のメーター読み取りの後"
     }
   },
   "lang": {

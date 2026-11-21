@@ -783,7 +783,7 @@
       "fromOutsideOver": "上面各来源的份额之和超过了拆分的外部部分；此行把多出的部分扣回，使整列相加一致",
       "rowTotal": "合计",
       "totalSub": "{{pts}} 个计量点 × 每点 {{rate}}",
-      "totalSubWeeks": "{{weeks}} 个计量点（每周一个数）× 每点 {{rate}}",
+      "totalSubWeeks": "{{pts}} = {{weeks}} 个计量点（每周一个数）× 每点 {{rate}}",
       "totalSubShown": "所示各行，共 {{pts}} 个计量点",
       "rowDifference": "差额",
       "fromDifference": "同样的工作按 token 价格计，对比包月套餐的实际成本",
@@ -807,7 +807,11 @@
       "perUse": "不在表中：covey 之外按用量计费的会话，不在任何订阅计量器上（{{list}}）。",
       "elsewhere": "不在表中：表未涵盖的凭证（API 密钥、没有周读数的席位）上 covey 自己的工作（按令牌价格 {{usd}}）。",
       "how": "这是如何计算的",
-      "tokens": "Token"
+      "tokens": "Token",
+      "recomputedMark": "按 Anthropic 标价由 token 计算（无报告成本）",
+      "rowSmall": "其他项目（{{count}} 个小项目）",
+      "pending": "待定",
+      "pendingWhy": "在最后一次计量读数之后"
     }
   },
   "lang": {

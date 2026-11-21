@@ -8,7 +8,7 @@ import i18n from "../i18n";
 import { fmtCount, fmtNumber, fmtUSD } from "../format";
 import { mockFetch, renderWithProviders, openDentRow } from "../test/render";
 import { credentialFigures, everythingOnMeter, headline, inRange, meterSlack, seatLists, subscriptionDent } from "./costFigures";
-import { answerTable } from "./costAnswer";
+import { answerTable } from "./costAnswerModel";
 import { hostsBehind, listedSources, outsideKpis, outsideModelRows, sourceRealPerPeriod, sourcesWithoutSeat } from "./outsideFigures";
 import { OTHER_SOURCES, SOURCE_SERIES_MAX, externalStamp, outsideKpisBySource, sourceStyles } from "./outsideFigures";
 import { HATCH_ANGLES, sourceSeriesSegs } from "./StackedCostChart";
@@ -159,6 +159,9 @@ const t = (k: string, o: Record<string, unknown> = {}) => i18n.t(k, o) as string
 const answerRow = (key: string) => document.querySelector<HTMLElement>(`[data-answer-row="${key}"]`);
 const rowList = (key: string) => answerRow(key)!.querySelector("[data-answer-list]")!.textContent;
 const rowReal = (key: string) => answerRow(key)!.querySelector("[data-answer-real]")!.textContent;
+/** The explanations live in the drawer (#204): open "How is this computed" once, then read one of its notes by key. */
+const openHow = () => { if (!document.querySelector("[data-answer-drawer]")) fireEvent.click(document.querySelector("[data-answer-how]")!); };
+const howNote = (k: string) => { openHow(); return document.querySelector(`[data-answer-note="${k}"]`); };
 const answerReady = () => waitFor(() => expect(document.querySelector("[data-answer-total]")).not.toBeNull());
 
 describe("the sessions outside covey on the cost page, included by default (#120)", () => {
@@ -171,9 +174,11 @@ describe("the sessions outside covey on the cost page, included by default (#120
     // work is billed per use, on no meter: a line of its own, not a row.
     expect(rowList("covey")).toBe(fmtUSD(9));
     expect(rowList("operator")).toBe(fmtUSD(2.5));
-    expect(rowList(`project:${SY}`)).toBe(`${fmtUSD(2)} (recomputed for sources without a reported cost)`);
+    // A recomputed figure carries a footnote mark; its legend is in the drawer, not repeated in every cell (#204).
+    expect(rowList(`project:${SY}`)).toBe(`${fmtUSD(2)}*`);
+    expect(howNote("recomputed")!.textContent).toBe(`* ${t("costs.answer.recomputedMark")}`);
     expect(answerRow(`project:${WORK}`)).toBeNull();
-    expect(document.querySelector("[data-answer-per-use]")!.textContent).toBe(
+    expect(howNote("per-use")!.textContent).toBe(
       `Not in the table: sessions outside covey billed per use, on no subscription meter (${fmtUSD(1)}).`);
     // The real shares, as the server split the meter: 4, 1.2 and 0.8 points of 6.
     expect(rowReal("covey")).toBe(`≈ ${fmtUSD(4 * PP)}`);
@@ -188,9 +193,10 @@ describe("the sessions outside covey on the cost page, included by default (#120
     expect(kpiValue(t("costs.totalTokens"))).toBe(fmtCount(coveyIn + outIn + 670_000));
     // The tokens are a collapsed section, not above the table.
     expect(document.querySelector<HTMLDetailsElement>("details[data-tokens]")!.open).toBe(false);
-    // The note names the sources with calls — never one of 0 calls.
-    const note = document.querySelector("[data-inclusion-note]")!.textContent!;
-    expect(note).toContain(`${OP}, ${WORK}, ${SY}`);
+    // With the answer table its rows name the sources with calls (no separate inclusion note, #204) — never one of 0 calls.
+    expect(document.querySelector("[data-inclusion-note]")).toBeNull();
+    expect(answerRow("operator")).not.toBeNull();
+    expect(answerRow(`project:${SY}`)).not.toBeNull();
     expect(document.body.textContent).not.toContain(CLAIM);
   });
 
@@ -218,7 +224,8 @@ describe("the sessions outside covey on the cost page, included by default (#120
     serve(cells());
     fireEvent.click(await screen.findByRole("button", { name: /^Coordinator/ }));
     await waitFor(() => expect(kpiParts(t("costs.inputTokens"))).toMatch(/^selected agents/));
-    expect(document.querySelector("[data-inclusion-note]")!.textContent).toMatch(/the outside sessions are not agents/);
+    // With the answer table its rows name the outside sessions: no inclusion note above or beside it (#204).
+    expect(document.querySelector("[data-inclusion-note]")).toBeNull();
     expect(document.querySelector("[data-answer] [data-org-wide]")).toBeTruthy();
     expect(rowList("covey")).toBe(fmtUSD(9));
   });
@@ -782,7 +789,7 @@ describe("the answer table (#195)", () => {
     expect(a.real!).toBeCloseTo(a.points! * a.rate!, 9);
     serve(data);
     await answerReady();
-    expect(document.querySelector("[data-answer-total]")!.textContent).toContain(t("costs.answer.totalSub", { pts: "6.0", rate: "$0.4615" }));
+    expect(document.querySelector("[data-answer-total]")!.textContent).toContain(t("costs.answer.totalSub", { pts: "6", rate: "$0.4615" }));
     cleanup();
     const weeks = cells();
     weeks.meter![0].segments = [
@@ -791,7 +798,7 @@ describe("the answer table (#195)", () => {
     ];
     serve(weeks);
     await answerReady();
-    expect(document.querySelector("[data-answer-total]")!.textContent).toContain(t("costs.answer.totalSubWeeks", { weeks: "4.0 + 2.0", rate: "$0.4615" }));
+    expect(document.querySelector("[data-answer-total]")!.textContent).toContain(t("costs.answer.totalSubWeeks", { weeks: "4 + 2", pts: "6", rate: "$0.4615" }));
   });
 
   it("switching an outside source off removes its row and updates the total", async () => {
@@ -915,7 +922,7 @@ describe("the answer table, review round 1 (#204)", () => {
     expect(headline(data)!.coveyElsewhere).toBeCloseTo(7.77, 9);
     expect(rowList("covey")).toBe(fmtUSD(9));
     expect(answerRow("covey")!.textContent).toContain(t("costs.answer.fromCovey"));
-    expect(document.querySelector("[data-answer-elsewhere]")!.textContent).toBe(t("costs.answer.elsewhere", { usd: fmtUSD(7.77) }));
+    expect(howNote("elsewhere")!.textContent).toBe(t("costs.answer.elsewhere", { usd: fmtUSD(7.77) }));
     // The seat the table does not cover is not answered by it: its tiles stand; the metered seat's are gone.
     await waitFor(() => expect(document.querySelector('[data-credential^="seat_two"]')).not.toBeNull());
     expect(document.querySelectorAll('[data-credential^="seat_two"] [data-tile]').length).toBeGreaterThan(0);
@@ -938,10 +945,12 @@ describe("the answer table, review round 1 (#204)", () => {
     serve(data);
     await answerReady();
     expect(document.querySelector("[data-answer-total] [data-answer-list]")!.textContent).toBe(fmtUSD(h.list));
-    expect(document.querySelector("[data-answer-usage]")!.textContent).toBe(
-      t("costs.dent.head.usageOut", { seats: h.usageSeats.join(", "), n: "3.0", list: fmtUSD(h.usage) }));
-    expect(document.querySelector("[data-answer-usage-charges]")).not.toBeNull();
-    expect(document.querySelector("[data-answer-before]")!.textContent).toBe(t("costs.answer.before", { usd: fmtUSD(h.before) }));
+    // Under the table only the work after the last reading; the rest of the list's parts are explained in the drawer (#204).
+    expect(document.querySelector("[data-answer-note]")).toBeNull();
+    expect(howNote("usage")!.textContent).toBe(
+      t("costs.dent.head.usageOut", { seats: h.usageSeats.join(", "), n: "3", list: fmtUSD(h.usage) }));
+    expect(howNote("usage-charges")).not.toBeNull();
+    expect(howNote("before")!.textContent).toBe(t("costs.answer.before", { usd: fmtUSD(h.before) }));
     expect(document.querySelector("[data-answer-after]")!.textContent).toBe(t("costs.answer.after", { usd: fmtUSD(h.after) }));
   });
 
@@ -955,7 +964,7 @@ describe("the answer table, review round 1 (#204)", () => {
     expect(h.unpriced).toBeGreaterThan(0);
     serve(data);
     await answerReady();
-    expect(document.querySelector("[data-answer-unpriced]")!.textContent).toBe(t("costs.answer.unpriced", { usd: fmtUSD(h.unpriced) }));
+    expect(howNote("unpriced")!.textContent).toBe(t("costs.answer.unpriced", { usd: fmtUSD(h.unpriced) }));
   });
 
   it("5: covey's share of the split is in no caption under the chart", async () => {
@@ -980,13 +989,13 @@ describe("the answer table, review round 1 (#204)", () => {
   it("7: the per-use line follows the chips, and a chip keeps the price of a source the table has no row for", async () => {
     serve();
     await answerReady();
-    expect(document.querySelector("[data-answer-per-use]")).not.toBeNull();
+    expect(howNote("per-use")).not.toBeNull();
     // work is billed per use: no row, so its chip keeps its price; the operator's has a row, so no price.
     const chip = (name: string) => screen.getByRole("button", { name: new RegExp(`^${name}`) });
     expect(chip(WORK).textContent).toContain(fmtUSD(1.5));
     expect(chip(OP).textContent).not.toContain("$");
     fireEvent.click(chip(WORK));
-    await waitFor(() => expect(document.querySelector("[data-answer-per-use]")).toBeNull());
+    await waitFor(() => expect(document.querySelector('[data-answer-note="per-use"]')).toBeNull());
   });
 
   it("10: the drawer button names the drawer only while it is open", async () => {
@@ -1091,7 +1100,9 @@ describe("the answer table, review round 2 (#204)", () => {
     expect(a.metered).toBeLessThan(a.list);
     serve(data);
     await answerReady();
-    const numerator = dollars(document.querySelector("[data-answer-multiple-from]")!.textContent);
+    // The numerator is named once, in the sentence; the Difference row says what the multiple divides in words (#204).
+    const numerator = a.metered;
+    expect(document.querySelector("[data-answer-multiple-from]")!.textContent).toBe(t("costs.answer.fromDifference"));
     const total = dollars(document.querySelector("[data-answer-total] [data-answer-real]")!.textContent);
     const shown = Number(document.querySelector("[data-answer-multiple]")!.textContent!.match(/≈ ([\d.]+)×/)![1]);
     expect(numerator).toBeCloseTo(a.metered, 2);
@@ -1105,13 +1116,14 @@ describe("the answer table, review round 2 (#204)", () => {
   it("13: with incomplete chunks the table says its parts may hold use that is not theirs; without, it does not", async () => {
     serve(cells(patched({ incomplete_chunks: 1 })));
     await answerReady();
-    expect(document.querySelector("[data-answer-incomplete]")!.textContent).toBe(t("costs.dent.incompleteNote", { n: "1" }));
-    // The drawer is closed: the note is the table's own.
+    // The caveat is in the drawer (#204): not under the table while it is closed, there once it is opened.
     expect(document.querySelector("[data-answer-drawer]")).toBeNull();
+    expect(document.querySelector('[data-answer-note="incomplete"]')).toBeNull();
+    expect(howNote("incomplete")!.textContent).toBe(t("costs.dent.incompleteNote", { n: "1" }));
     cleanup();
     serve(cells(patched({ incomplete_chunks: 0 })));
     await answerReady();
-    expect(document.querySelector("[data-answer-incomplete]")).toBeNull();
+    expect(howNote("incomplete")).toBeNull();
   });
 
   it("14: with agents selected the seat shows the selection's lead and share of the real cost, not the table's", async () => {

@@ -13,7 +13,7 @@ import { isOperatorSource, listedSources, outsideKpis, perUseSource, sourceRealP
 
 export type AnswerRow = {
   key: string;
-  kind: "covey" | "operator" | "project" | "unsplit" | "unattributed" | "outsideRest";
+  kind: "covey" | "operator" | "project" | "small" | "unsplit" | "unattributed" | "outsideRest";
   /** The outside source behind a row of an outside part; null for covey and the remainder rows. */
   source: string | null;
   /** The work at the lead price (reported where a call carries it, else recomputed); null: no call of it had a price. */
@@ -30,7 +30,15 @@ export type AnswerRow = {
   notSplit: boolean;
   /** The share has a figure, but a seat behind it has no split step: it holds the split seats' part only. */
   partlySplit: boolean;
+  /** All of its work at token prices came after the meter's last reading (none lies within a reading): its real
+   *  share is not known yet, not 0. Shown as "pending", never as ≈ $0.00 (#164's rule, the human on #204). */
+  pending: boolean;
+  /** kind "small": the sources folded into the row, each under SMALL_USD at token prices. */
+  folded: string[];
 };
+
+/** Other projects below this at token prices are folded into one "small" row: a row of $0.12 is noise next to the answer. */
+export const SMALL_USD = 1;
 
 export type AnswerTable = {
   rows: AnswerRow[];
@@ -106,20 +114,40 @@ export function answerTable(h: Headline, d: SubscriptionDent, ext: ExternalUsage
   const flags = (st: "all" | "some" | "none") => ({ notSplit: priced && st === "none", partlySplit: priced && st === "some" });
   const real = (xs: typeof shown) => (priced && sourceState(xs.map((s) => s.source)) !== "none" ? xs.reduce((a, s) => a + (parts.get(s.source) ?? 0), 0) : null);
   const row = (r: Pick<AnswerRow, "key" | "kind"> & Partial<AnswerRow>): AnswerRow => ({
-    source: null, list: null, recomputed: false, unpricedTokens: 0, before: false, real: null, notSplit: false, partlySplit: false, ...r,
+    source: null, list: null, recomputed: false, unpricedTokens: 0, before: false, real: null, notSplit: false, partlySplit: false,
+    pending: false, folded: [], ...r,
   });
+  // A row whose every call came after the meter's last reading has no share yet: it is pending, not 0 (its real cost
+  // follows at the next reading). Decided from the calls' times, never from a part of 0: a part can be 0 for other
+  // reasons (no split step: "not split yet").
+  const lastReading = m.steps.reduce((a, x) => Math.max(a, Date.parse(x.at)), -Infinity);
+  const firstAt = new Map(ext.sources.map((x) => [x.source, x.first_at]));
+  const pendingOf = (xs: typeof shown, list: number | null) =>
+    priced && Number.isFinite(lastReading) && (list ?? 0) >= 0.005 && xs.length > 0 &&
+    xs.every((s) => { const f = firstAt.get(s.source); return f != null && Date.parse(f) > lastReading; });
+  const withPending = (r: AnswerRow, xs: typeof shown): AnswerRow =>
+    pendingOf(xs, r.list) ? { ...r, real: null, notSplit: false, partlySplit: false, pending: true } : r;
   const rows: AnswerRow[] = [row({ key: "covey", kind: "covey", list: h.coveyList, real: priced && coveyState !== "none" ? d.covey.real : null,
     ...flags(coveyState) })];
   const operator = shown.filter((s) => isOperatorSource(s.source));
   if (operator.length > 0) {
     const st = sourceState(operator.map((s) => s.source));
-    rows.push(row({ key: "operator", kind: "operator", list: lead(operator), recomputed: operator.some((s) => s.recomputed > 0),
+    rows.push(withPending(row({ key: "operator", kind: "operator", list: lead(operator), recomputed: operator.some((s) => s.recomputed > 0),
       unpricedTokens: operator.reduce((a, s) => a + s.unpricedTokens, 0), before: operator.every((s) => s.before), real: real(operator),
-      ...flags(st) }));
+      ...flags(st) }), operator));
   }
-  for (const s of shown.filter((x) => !isOperatorSource(x.source))) {
-    rows.push(row({ key: `project:${s.source}`, kind: "project", source: s.source, list: s.list, recomputed: s.recomputed > 0,
-      unpricedTokens: s.unpricedTokens, before: s.before, real: real([s]), ...flags(sourceState([s.source])) }));
+  // Other projects: each its own row, except the small ones (under SMALL_USD, with a price, not before the range),
+  // which share one row. Folding changes no total: the row's list and real are its sources' sums.
+  const projects = shown.filter((x) => !isOperatorSource(x.source));
+  const isSmall = (s: (typeof shown)[number]) => s.list != null && s.list < SMALL_USD && !s.before && s.unpricedTokens === 0;
+  const small = projects.filter(isSmall);
+  for (const s of projects.filter((x) => small.length < 2 || !isSmall(x))) {
+    rows.push(withPending(row({ key: `project:${s.source}`, kind: "project", source: s.source, list: s.list, recomputed: s.recomputed > 0,
+      unpricedTokens: s.unpricedTokens, before: s.before, real: real([s]), ...flags(sourceState([s.source])) }), [s]));
+  }
+  if (small.length >= 2) {
+    rows.push(withPending(row({ key: "small", kind: "small", folded: small.map((s) => s.source), list: lead(small),
+      recomputed: small.some((s) => s.recomputed > 0), real: real(small), ...flags(sourceState(small.map((s) => s.source))) }), small));
   }
   // What a hidden source took of the meter is not the table's: the total follows the rows shown.
   const hiddenReal = priced ? h.sources.filter((s) => off.has(s.source)).reduce((a, s) => a + (parts.get(s.source) ?? 0), 0) : 0;

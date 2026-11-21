@@ -783,7 +783,7 @@
       "fromOutsideOver": "les parts des sources ci-dessus dépassent la part externe de la répartition ; cette ligne retire l'excédent pour que la colonne tombe juste",
       "rowTotal": "Total",
       "totalSub": "{{pts}} points du compteur × {{rate}} le point",
-      "totalSubWeeks": "{{weeks}} points du compteur (un chiffre par semaine) × {{rate}} le point",
+      "totalSubWeeks": "{{pts}} = {{weeks}} points du compteur (un chiffre par semaine) × {{rate}} le point",
       "totalSubShown": "les lignes affichées, sur {{pts}} points du compteur",
       "rowDifference": "Écart",
       "fromDifference": "le même travail aux prix par token, face à ce que le forfait a réellement coûté",
@@ -807,7 +807,11 @@
       "perUse": "Pas dans le tableau : sessions hors covey facturées à l'usage, sur aucun compteur d'abonnement ({{list}}).",
       "elsewhere": "Pas dans le tableau : le travail propre de covey sur des identifiants que le tableau ne couvre pas, une clé d'API ou une place sans relevé hebdomadaire ({{usd}} aux prix par jeton).",
       "how": "Comment est-ce calculé",
-      "tokens": "Tokens"
+      "tokens": "Tokens",
+      "recomputedMark": "calculé à partir de ses jetons aux prix catalogue d'Anthropic (aucun coût déclaré)",
+      "rowSmall": "autres projets ({{count}} petits)",
+      "pending": "en attente",
+      "pendingWhy": "après le dernier relevé du compteur"
     }
   },
   "lang": {

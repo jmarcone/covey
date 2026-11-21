@@ -783,7 +783,7 @@
       "fromOutsideOver": "die Anteile der Quellen oben ergeben zusammen mehr als der Außenanteil der Aufteilung; diese Zeile nimmt den Überschuss wieder heraus, damit die Spalte aufgeht",
       "rowTotal": "Summe",
       "totalSub": "{{pts}} Zählerpunkte × {{rate}} je Punkt",
-      "totalSubWeeks": "{{weeks}} Zählerpunkte (eine Zahl je Woche) × {{rate}} je Punkt",
+      "totalSubWeeks": "{{pts}} = {{weeks}} Zählerpunkte (eine Zahl je Woche) × {{rate}} je Punkt",
       "totalSubShown": "die gezeigten Zeilen, von {{pts}} Zählerpunkten",
       "rowDifference": "Unterschied",
       "fromDifference": "dieselbe Arbeit zu Token-Preisen gegenüber dem, was der Pauschaltarif wirklich gekostet hat",
@@ -807,7 +807,11 @@
       "perUse": "Nicht in der Tabelle: Sitzungen außerhalb von covey, nach Verbrauch abgerechnet, auf keinem Abo-Zähler ({{list}}).",
       "elsewhere": "Nicht in der Tabelle: covey-eigene Arbeit auf Zugängen, die die Tabelle nicht abdeckt, ein API-Schlüssel oder ein Platz ohne Wochenablesung ({{usd}} zu Token-Preisen).",
       "how": "Wie wird das berechnet",
-      "tokens": "Token"
+      "tokens": "Token",
+      "recomputedMark": "aus den Tokens zu Anthropics Listenpreisen berechnet (kein gemeldeter Preis)",
+      "rowSmall": "weitere Projekte ({{count}} kleine)",
+      "pending": "ausstehend",
+      "pendingWhy": "nach der letzten Zählerablesung"
     }
   },
   "lang": {

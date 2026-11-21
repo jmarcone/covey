@@ -783,7 +783,7 @@
       "fromOutsideOver": "de aandelen van de bronnen hierboven zijn samen meer dan het buitendeel van de verdeling; deze regel haalt het teveel eruit zodat de kolom klopt",
       "rowTotal": "Totaal",
       "totalSub": "{{pts}} meterpunten × {{rate}} per punt",
-      "totalSubWeeks": "{{weeks}} meterpunten (één getal per week) × {{rate}} per punt",
+      "totalSubWeeks": "{{pts}} = {{weeks}} meterpunten (één getal per week) × {{rate}} per punt",
       "totalSubShown": "de getoonde rijen, van {{pts}} meterpunten",
       "rowDifference": "Verschil",
       "fromDifference": "hetzelfde werk tegen tokenprijzen, tegenover wat het vaste abonnement echt kostte",
@@ -807,7 +807,11 @@
       "perUse": "Niet in de tabel: sessies buiten covey die per gebruik worden gefactureerd, op geen enkele abonnementsmeter ({{list}}).",
       "elsewhere": "Niet in de tabel: eigen werk van covey op toegangen die de tabel niet dekt, een API-sleutel of een plek zonder weekstand ({{usd}} tegen tokenprijzen).",
       "how": "Hoe wordt dit berekend",
-      "tokens": "Tokens"
+      "tokens": "Tokens",
+      "recomputedMark": "berekend uit de tokens tegen de lijstprijzen van Anthropic (geen gemelde kosten)",
+      "rowSmall": "overige projecten ({{count}} klein)",
+      "pending": "volgt",
+      "pendingWhy": "na de laatste meterstand"
     }
   },
   "lang": {

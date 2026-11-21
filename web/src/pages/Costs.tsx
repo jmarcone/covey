@@ -7,7 +7,7 @@ import { exact, fmtBucket, fmtCount, fmtUSD } from "../format";
 import { PriceList } from "../components/PriceList";
 import { CostInsights } from "./CostInsights";
 import { CostAnswer } from "./CostAnswer";
-import { answerTable } from "./costAnswer";
+import { answerTable } from "./costAnswerModel";
 import { credentialFigures, headline, payPerTokenHeadline, subscriptionDent } from "./costFigures";
 import { PayPerTokenRow, SubscriptionDentRow } from "./SubscriptionDent";
 import { canSetPlan } from "./PlanPrice";
@@ -376,6 +376,32 @@ export default function Costs({ me }: { me?: Principal }) {
         : t("costs.filter.nSelected", { count: selected.size });
   const fmtPeriod = (p: string) => fmtBucket(p, bucket);
 
+  // The agent filter and the "covey only" chip. With the answer table they stand under it, next to the chart they
+  // drive; its rows name the outside sources, so the inclusion note is only said where there is no table (#204).
+  const hasAnswer = !!(answer && head && dent);
+  const filters = (
+    <>
+      <div className="mb-4">
+        <AgentFilter agents={agentList} selected={selected} onChange={setSelected} />
+      </div>
+      {/* The sessions outside covey: in every figure below by default, each
+          figure naming its parts; "covey only" leaves them out (#120). */}
+      {sourcesListed.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 mb-4" data-inclusion>
+          <Chip on={coveyOnly} onClick={() => setCoveyOnly(!coveyOnly)} title={t("costs.incl.coveyOnlyTitle")}>{t("costs.incl.coveyOnly")}</Chip>
+          {(!hasAnswer || coveyOnly) && (
+            <span className="muted text-xs" data-inclusion-note style={{ maxWidth: 760 }}>
+              {t(coveyOnly ? "costs.incl.coveyOnlyNote" : filtered ? "costs.incl.includedNoteSelected" : "costs.incl.includedNote",
+                { sources: sourcesListed.map((s) => s.source).join(", ") })}
+            </span>
+          )}
+        </div>
+      )}
+    </>
+  );
+  // covey's own work no row of the page covers: the headline's, less the credentials the pay-per-token row shows.
+  const elsewhere = head ? Object.entries(head.coveyElsewhereBy).reduce((acc, [id, v]) =>
+    acc + (ppt?.credentials.some((c) => c.id === id) ? 0 : v), 0) : 0;
   return (
     <div>
       <div className="flex items-baseline gap-3 mb-1">
@@ -391,27 +417,14 @@ export default function Costs({ me }: { me?: Principal }) {
         <Seg value={bucket} onChange={setBucket} options={bucketOptions(t, days)} />
       </div>
 
-      <div className="mb-4">
-        <AgentFilter agents={agentList} selected={selected} onChange={setSelected} />
-      </div>
-
-      {/* The sessions outside covey: in every figure below by default, each
-          figure naming its parts; "covey only" leaves them out (#120). */}
-      {sourcesListed.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 mb-4" data-inclusion>
-          <Chip on={coveyOnly} onClick={() => setCoveyOnly(!coveyOnly)} title={t("costs.incl.coveyOnlyTitle")}>{t("costs.incl.coveyOnly")}</Chip>
-          <span className="muted text-xs" data-inclusion-note style={{ maxWidth: 760 }}>
-            {t(coveyOnly ? "costs.incl.coveyOnlyNote" : filtered ? "costs.incl.includedNoteSelected" : "costs.incl.includedNote",
-              { sources: sourcesListed.map((s) => s.source).join(", ") })}
-          </span>
-        </div>
-      )}
+      {/* Without an answer table the filters lead, as before; with one they follow it (#204: the answer first). */}
+      {!(answer && head && dent) && filters}
 
       {/* The answer, first (#195): one row per consumer of the subscription at
           token prices and its share of the real cost, the total, the multiple
           and one sentence. What explains it is in the drawer. */}
       {answer && head && dent && (
-        <CostAnswer a={answer} h={head} filtered={selected.size > 0}
+        <CostAnswer a={answer} h={head} filtered={selected.size > 0} elsewhere={elsewhere}
           drawer={<SubscriptionDentRow d={dent} filtered={selected.size > 0} h={head}
             sourceParts={(cells.data?.external?.meter.source_parts ?? []).flatMap((p) => {
               const s = sourcesListed.find((x) => x.source === p.source);
@@ -424,6 +437,8 @@ export default function Costs({ me }: { me?: Principal }) {
           the money is per token this is the answer, so it stays directly
           under the answer table (#195). */}
       {ppt && <PayPerTokenRow h={ppt} filtered={selected.size > 0} />}
+
+      {answer && head && dent && filters}
 
       {/* Without a subscription meter there is no answer table: the lead
           figure stands as a tile, as before. One list-price figure leads

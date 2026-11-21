@@ -163,6 +163,8 @@ function serve(data: CostCells = cells(), route = "/costs") {
 const kpi = (label: string) => document.querySelector<HTMLElement>(`[data-kpi="${label}"]`);
 /** The answer table (#195). */
 const answerRow = (key: string) => document.querySelector<HTMLElement>(`[data-answer-row="${key}"]`);
+const openHow = () => { if (!document.querySelector("[data-answer-drawer]")) fireEvent.click(document.querySelector("[data-answer-how]")!); };
+const howNote = (k: string) => { openHow(); return document.querySelector(`[data-answer-note="${k}"]`); };
 const rowList = (key: string) => answerRow(key)!.querySelector("[data-answer-list]")!.textContent;
 const answerReady = () => waitFor(() => expect(document.querySelector("[data-answer-total]")).not.toBeNull());
 const answerTotal = () => document.querySelector("[data-answer-total] [data-answer-list]")!.textContent;
@@ -213,10 +215,10 @@ describe("the lead figure per source (#120)", () => {
     expect(answerTotal()).toBe(fmtUSD(9 + 3.5 + 2));
     // One row per part (#163): covey's agents, the operator, the other projects on the meter (sylius), the mark on what is recomputed.
     expect(rowList("covey")).toBe(fmtUSD(9));
-    expect(rowList("operator")).toBe(`${fmtUSD(3.5)} (${MARK.slice(1, -1)})`);
-    expect(rowList(`project:${SY}`)).toBe(`${fmtUSD(2)} + ${fmtCount(1000)} tokens with no list price (${MARK.slice(1, -1)})`);
+    expect(rowList("operator")).toBe(`${fmtUSD(3.5)}*`);
+    expect(rowList(`project:${SY}`)).toBe(`${fmtUSD(2)} + ${fmtCount(1000)} tokens with no list price*`);
     expect(answerRow(`project:${WORK}`)).toBeNull();
-    expect(document.querySelector("[data-answer-per-use]")!.textContent).toContain(`(${fmtUSD(1)})`);
+    expect(howNote("per-use")!.textContent).toContain(`(${fmtUSD(1)})`);
     // covey's price table: $15 against $14.50 — $0.50 apart, silent.
     expect(document.querySelector("[data-answer] [data-price-check]")).toBeNull();
     // Not two figures: no tile above the table.
@@ -379,11 +381,11 @@ describe("the headline's X is the lead figure (#120)", () => {
       `covey's own price table gives ${fmtUSD(15)}, ${fmtNumber(11, 0)} % more than Claude Code reported`);
   });
 
-  it("names the work outside every reading's span by where it lies, one line each under the table", async () => {
+  it("names the work outside every reading's span by where it lies: before in the how drawer, after under the table", async () => {
     serve();
     await answerReady();
     // Before the first reading ($0.05 covey + $0.15 outside) and after the last ($0.15 + $0.25): in the total, not in the multiple.
-    expect(document.querySelector("[data-answer-before]")!.textContent).toBe(t("costs.answer.before", { usd: fmtUSD(0.2) }));
+    expect(howNote("before")!.textContent).toBe(t("costs.answer.before", { usd: fmtUSD(0.2) }));
     expect(document.querySelector("[data-answer-after]")!.textContent).toBe(t("costs.answer.after", { usd: fmtUSD(0.4) }));
     // The seat's block no longer says it a second time.
     expect(block()!.querySelector("[data-unmetered-note]")).toBeNull();
