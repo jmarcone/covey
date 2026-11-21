@@ -1010,7 +1010,8 @@ function CredentialTiles({ f, filtered, narrowed, out, split, seatSplit, full, a
   narrowed: boolean;
   /** Claude Code's figure and covey's price table as two tiles (the toggle); else the one lead tile. */
   full: boolean;
-  /** The page's answer table already shows a subscription seat's price, real cost and multiple (#195): no tile repeats them. */
+  /** The page's answer table already shows a subscription seat's price, real cost and multiple (#195): no tile repeats them.
+   *  Narrowed to agents, the table still holds the org-wide figures; only the selection's own tiles stay. */
   answered?: boolean;
 }) {
   const { t } = useTranslation();
@@ -1023,8 +1024,10 @@ function CredentialTiles({ f, filtered, narrowed, out, split, seatSplit, full, a
   // check under it. The toggle shows the two as tiles of their own.
   const lead = f.reported + (out ? kpiLead(out).lead ?? 0 : 0);
   // The full view is asked for: Reported and Recomputed apart stay as tiles.
+  // Under an agent filter the lead tile and the share of real are the selection's own, which the table (org-wide) does not
+  // hold: they stay; the everything and multiple tiles are the table's and go.
   const answeredSeat = answered && !full && isSeat(f);
-  const tiles: React.ReactNode[] = answeredSeat ? [] : full ? [
+  const tiles: React.ReactNode[] = answeredSeat && !narrowed ? [] : full ? [
     <Tile key="rep" label={t("costs.fig.reported")} value={fmtUSD(f.reported + (out?.reported ?? 0))} sub={t("costs.fig.reportedSub")} color={SOURCE_COLOR.reported}
       parts={split ? <SplitParts lines={splitLines(t, { filtered, covey: fmtUSD(f.reported), split, range, money: (k) => outsideMoney(t, k, "reported") })} /> : undefined} />,
     <Tile key="rec" label={t("costs.fig.recomputed")} value={fmtUSD(f.recomputed + (out?.list ?? 0))}
@@ -1039,7 +1042,7 @@ function CredentialTiles({ f, filtered, narrowed, out, split, seatSplit, full, a
   // its money, the usage charges are (below). One that changed basis keeps
   // the real figure of the seat's part, as the server priced it.
   const usageOnly = f.real == null && f.usage != null && f.usage.regimes.length === 1 && f.usage.regimes[0] === "usage";
-  if (isSeat(f) && !usageOnly && !answeredSeat) {
+  if (isSeat(f) && !usageOnly && (!answeredSeat || narrowed)) {
     const r = f.real;
     // Points read under the usage basis: not the seat's, said beside it.
     const seatPart = r && r.usagePoints > 0 ? ` · ${t("costs.basis.realSeatPart", { n: fmtNumber(r.usagePoints, 0) })}` : "";
@@ -1076,7 +1079,9 @@ function CredentialTiles({ f, filtered, narrowed, out, split, seatSplit, full, a
     } else {
       tiles.push(<Tile key="real" label={t("costs.fig.realEstimate")} value="–" sub={t("costs.fig.noMeter")} color={SOURCE_COLOR.real} hatched />);
     }
-    if (f.everything) {
+    if (answeredSeat) {
+      // The table holds the multiple (#195).
+    } else if (f.everything) {
       // Everything on this meter: covey's agents, the outside sessions and
       // the unattributed movement, a lower bound (#120).
       const e = f.everything;
@@ -1226,8 +1231,10 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
   const filtered = selected.size > 0;
   // The answer table holds the seat's price, real cost, multiple and the work outside the meter's readings (#195),
   // unless the full view of covey's price table is asked for.
-  // The table is org-wide: under an agent filter the tiles are the selection's figures, which the table does not hold.
-  const tableAnswers = answersSeat(answered, f.id) && !full && isSeat(f) && !filtered;
+  // The table is org-wide, filter or not: what it holds (the everything tile, the multiple's reason, the notes before and after
+  // the readings, covey's share of the split and the sources' rows) stays out of the block under a filter too. The selection's
+  // own figures (the lead tile and the share of real) are not in the table; CredentialTiles keeps them.
+  const tableAnswers = answersSeat(answered, f.id) && !full && isSeat(f);
   const inScope = (id: string) => !filtered || selected.has(id);
   const agents = useMemo(() => rankAgents(data.agents), [data.agents]);
   const own = useMemo(() => data.cells.filter((c) => credId(c.secret_key, c.secret_slot) === f.id), [data.cells, f.id]);

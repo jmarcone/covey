@@ -808,9 +808,9 @@ describe("the answer table (#195)", () => {
     await waitFor(() => expect(answerRow(`project:${SY}`)).not.toBeNull());
   });
 
-  it("no figure of the table stands on the page a second time", async () => {
-    serve();
-    await answerReady();
+  /** The figures the table holds, read off it; none of them may stand on the page outside the table. exempt: the selection's own
+   *  tiles, which are the selection's figures and not the table's. */
+  const figuresOnceOnly = (exempt: string[] = [], within?: string) => {
     const table = document.querySelector("[data-answer]")!;
     const figures = new Set<string>();
     for (const sel of ["[data-answer-total] [data-answer-list]", "[data-answer-total] [data-answer-real]", "[data-answer-multiple] span",
@@ -818,12 +818,34 @@ describe("the answer table (#195)", () => {
       '[data-answer-row="operator"] [data-answer-real]', `[data-answer-row="project:${SY}"] [data-answer-real]`]) {
       figures.add(table.querySelector(sel)!.textContent!.replace(/^≈ /, "").replace(/ \(.*$/, "").replace(/ \+ .*$/, ""));
     }
-    const clone = document.body.cloneNode(true) as HTMLElement;
-    clone.querySelector("[data-answer]")!.remove();
+    const clone = (within ? document.querySelector(within)! : document.body).cloneNode(true) as HTMLElement;
+    clone.querySelector("[data-answer]")?.remove();
     // The chart's screen-reader summary is not a figure on the screen.
     clone.querySelectorAll("[data-desc]").forEach((e) => e.remove());
+    clone.querySelectorAll("[data-tile]").forEach((e) => { if (exempt.some((l) => e.textContent!.includes(l))) e.remove(); });
     const rest = clone.textContent!;
     for (const f of figures) expect(rest, f).not.toContain(f);
+  };
+
+  it("no figure of the table stands on the page a second time", async () => {
+    serve();
+    await answerReady();
+    figuresOnceOnly();
+  });
+
+  it("15: nor with one of two agents selected, but the selection's own lead and share of real", async () => {
+    const data = cells();
+    data.agents.push({ id: "a2", label: "Reviewer", reported_usd: 3, measured_usd: 3 });
+    data.cells.push({ ...data.cells[0], agent_id: "a2", reported_usd: 3, measured: { output: 3 }, engine_usd: 3 });
+    serve(data);
+    await answerReady();
+    fireEvent.click(await screen.findByRole("button", { name: /^Reviewer/ }));
+    await waitFor(() => expect(document.querySelectorAll(`[data-credential^="${SEAT}"] [data-tile]`).length).toBeGreaterThan(0));
+    const seat = document.querySelector(`[data-credential^="${SEAT}"]`)!;
+    // Only the selection's own tiles stand; the everything tile, the split caption and the sources' rows are the table's.
+    expect([...seat.querySelectorAll("[data-tile]")].map((x) => x.textContent!.includes(t("costs.incl.everything")))).not.toContain(true);
+    // The seat's block: the page's per-model table below lists the selected agents with the outside sessions by design.
+    figuresOnceOnly([t("costs.lead.label"), t("costs.fig.shareOfReal")], `[data-credential^="${SEAT}"]`);
   });
 });
 
@@ -1040,6 +1062,28 @@ describe("the answer table, review round 2 (#204)", () => {
     expect(answerRow(`project:${SY}`)!.querySelector("[data-answer-partly]")).toBeNull();
   });
 
+  it("16: a source no seat names is never partly split: no row claims a seat behind it", async () => {
+    // One seat split, one not, and a source whose meter is a seat but which neither seat names (its calls lie before the range)
+    // and that still has a real part.
+    const data = twoSeats();
+    const e = data.external!;
+    const GHOST = "projects-ghost";
+    e.sources = [...e.sources, { ...e.sources.find((x) => x.source === SY)!, source: GHOST, meter_credential: { secret_key: SEAT, secret_slot: 0 } }];
+    e.meter.source_parts = [...e.meter.source_parts!, { source: GHOST, list_usd: 1, real_usd: 0.5 * PP }];
+    const a = tableOf(data);
+    const ghost = a.rows.find((r) => r.source === GHOST)!;
+    expect(ghost).toBeTruthy();
+    expect(ghost.partlySplit).toBe(false);
+    expect(ghost.notSplit).toBe(false);
+    expect(ghost.real).toBeCloseTo(0.5 * PP, 9);
+    // A source a seat does name keeps its own rule: seat_b has no split step.
+    expect(a.rows.find((r) => r.source === SY)!.notSplit).toBe(true);
+    serve(data);
+    await answerReady();
+    expect(answerRow(`project:${GHOST}`)!.querySelector("[data-answer-partly]")).toBeNull();
+    expect(rowReal(`project:${GHOST}`)).toBe(`≈ ${fmtUSD(0.5 * PP)}`);
+  });
+
   it("12: the multiple is the figure above the Difference row over the Total's real cost, and the sentence names it", async () => {
     const data = cells();
     const a = tableOf(data);
@@ -1084,8 +1128,14 @@ describe("the answer table, review round 2 (#204)", () => {
     // The selection's lead: the two agents' list on the seat; and its share of the real cost.
     expect(tiles.some((x) => x.includes(fmtUSD(16.5)) && x.includes(`selected agents (internal) ${fmtUSD(12)}`))).toBe(true);
     expect(tiles.some((x) => x.includes("share of real"))).toBe(true);
-    // The table stays organisation-wide.
+    // The table stays organisation-wide, and holds what the seat's block no longer says under a filter either: the everything
+    // tile, covey's share of the split, the sources' rows of the agent table and the notes before and after the readings.
     expect(document.querySelector("[data-answer] [data-org-wide]")).toBeTruthy();
+    const seat = document.querySelector(`[data-credential^="${SEAT}"]`)!;
+    expect(tiles.some((x) => x.includes(t("costs.incl.everything")))).toBe(false);
+    for (const sel of ["[data-split-share]", "[data-outside-row]", "[data-incl-total]", "[data-unmetered-note]", "[data-no-multiple]"]) {
+      expect(seat.querySelector(sel), sel).toBeNull();
+    }
   });
 
   it("14: with two seats each keeps its own real cost and multiple on its card and tiles; the table adds them up", async () => {

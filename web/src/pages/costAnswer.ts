@@ -93,11 +93,14 @@ export function answerTable(h: Headline, d: SubscriptionDent, ext: ExternalUsage
   const coveyAt = new Set(m.steps.filter((x) => x.covey_list_usd > 0).map((x) => credId(x.secret_key, x.secret_slot)));
   const coveySeats = m.credentials.filter((c) => c.split_covey_list_usd > 0 || coveyAt.has(credId(c.secret_key, c.secret_slot)));
   const coveyState = state(coveySeats.length > 0 ? coveySeats : m.credentials);
-  // A source no seat names (its calls lie before the range) keeps the meter-wide rule: any seat that names a source.
+  // A source no seat names (its calls lie before the range) keeps the meter-wide rule: any seat that names a source has a
+  // split step. No seat is behind such a source, so it is never "some": that row says "partly not split yet: a seat behind
+  // it", a claim about a seat that does not exist. It has its figure where any seat is split, none where no seat is.
   const namedSeats = m.credentials.filter((c) => c.sources.length > 0);
   const sourceState = (xs: readonly string[]) => {
     const cs = m.credentials.filter((c) => c.sources.some((x) => xs.includes(x)));
-    return state(cs.length > 0 ? cs : namedSeats);
+    if (cs.length > 0) return state(cs);
+    return namedSeats.some((c) => c.split_steps > 0) ? "all" : "none";
   };
   const outsideSplit = namedSeats.some((c) => c.split_steps > 0);
   const flags = (st: "all" | "some" | "none") => ({ notSplit: priced && st === "none", partlySplit: priced && st === "some" });
