@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link, useSearchParams } from "react-router";
-import { api, type ExternalModelUsage } from "../api";
+import { api, type CostHealthCheck, type ExternalModelUsage } from "../api";
 import { exact, fmtBucket, fmtCount, fmtNumber, fmtUSD, fmtUSDAxis } from "../format";
 import { Seg } from "./Costs";
 import { rateLine } from "./SubscriptionDent";
@@ -30,6 +30,7 @@ import {
 } from "./outsideFigures";
 import { useCostQuery, useCostWindow } from "./costView";
 import { meterPriced } from "./costFigures";
+import { IncompleteMark, credentialIncomplete, incompleteParts, unreadSeats, useCostHealth } from "./CostHealth";
 
 /* The detailed view of the Claude Code sessions outside covey (#120, the
  * human's second comment): like an agent's cost view — list price over time
@@ -183,6 +184,17 @@ export default function OutsideCosts() {
     unsplitOf(data?.meter.steps ?? [], new Set([`${c.secret_key}#${c.secret_slot}`]));
   const unpricedModels = (data?.models ?? []).filter((m) => !m.priced).map((m) => m.model);
   const fmtPeriod = (p: string) => fmtBucket(p, bucket);
+  // The data checks (#178) that make these figures incomplete: a stopped
+  // uploader, and of the token-price checks those that concern outside calls
+  // (a model without a list price, an outside call booked twice).
+  const health = useCostHealth();
+  const incomplete = incompleteParts(health.data, { agents: false, outside: true });
+  // The meter share and the seats' lines divide by the meter: a seat with
+  // no reading where it spent (c2) or a reset nobody recorded (c3) leaves
+  // them short, where it concerns a seat shown here (both name theirs).
+  const seatName = (c: { secret_key: string; secret_slot: number }) => `${c.secret_key} #${c.secret_slot}`;
+  const named = (c: CostHealthCheck) => (c.id === "c2" ? unreadSeats(c) : c.facts.credentials ?? []);
+  const meterIncomplete = incomplete.multiple.filter((c) => seats.some((s) => named(c).includes(seatName(s))));
 
   return (
     <div>
@@ -190,6 +202,10 @@ export default function OutsideCosts() {
       <div className="flex items-baseline gap-3 mb-1">
         <h1 className="text-[22px]" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><Swatch color={OUTSIDE_COLOR} /> {t("costs.outside.series")}</h1>
         <span className="muted">{source ?? t("costs.outside.sourceAll")}</span>
+        {incomplete.outside.length + incomplete.tokenPrice.length > 0 && <span data-outside-incomplete style={{ display: "inline-flex", gap: 6 }}>
+          <IncompleteMark checks={incomplete.outside} part="outside" />
+          <IncompleteMark checks={incomplete.tokenPrice} part="tokenPrice" />
+        </span>}
       </div>
       <p className="muted text-sm mb-4" style={{ maxWidth: 680 }}>{t("costs.outside.pageHint")}</p>
 
@@ -225,6 +241,7 @@ export default function OutsideCosts() {
               lines={[models.total.reportedCalls > 0 && t("costs.outside.reportedCalls", counted(models.total.reportedCalls))]} />
           )}
           <FigureTile test="real" label={t("costs.outside.meterShare")} color={OUTSIDE_COLOR} hatched
+            mark={seats.length > 0 && <IncompleteMark checks={meterIncomplete} part="multiple" />}
             value={seats.length > 0 && share.share != null ? `≈ ${fmtUSD(share.real)}` : "–"}
             lines={[
               seats.length === 0 ? t(sourceRow && !sourceRow.meter_credential ? "costs.outside.noMeterSource" : "costs.outside.noMeterLinked")
@@ -276,14 +293,18 @@ export default function OutsideCosts() {
         </>}
 
         <div className="card mb-4" data-outside-meter>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.outside.meterTitle")}</div>
+          <div style={{ fontWeight: 600, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }} data-outside-meter-title>
+            {t("costs.outside.meterTitle")}
+            {seats.length > 0 && <IncompleteMark checks={meterIncomplete} part="multiple" />}
+          </div>
           <p className="muted text-xs mb-2" style={{ maxWidth: 760 }}>{t("costs.outside.meterHint")}</p>
           {seats.length === 0 ? (
             <p className="muted text-sm mb-0">{sourceRow && !sourceRow.meter_credential ? t("costs.outside.perUse") : t("costs.outside.noMeterLinked")}</p>
           ) : <>
             {seats.map((c) => (
               <p key={`${c.secret_key}#${c.secret_slot}`} className="text-sm mb-1" data-seat={`${c.secret_key}#${c.secret_slot}`}>
-                <b>{c.secret_key} #{c.secret_slot}</b>{" · "}
+                <b>{c.secret_key} #{c.secret_slot}</b>{" "}
+                <IncompleteMark checks={credentialIncomplete(health.data, seatName(c), null).multiple} part="multiple" />{" · "}
                 {(() => {
                   // Every reading at no plan price: no real cost, not $0. F3c:
                   // the outside and covey parts ≈, the unattributed part in

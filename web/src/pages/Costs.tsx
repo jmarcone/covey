@@ -13,13 +13,15 @@ import { coveyElsewhere, credentialFigures, headline, payPerTokenHeadline, subsc
 import { PayPerTokenRow, SubscriptionDentRow } from "./SubscriptionDent";
 import { canSetPlan } from "./PlanPrice";
 import { OutsideOverview } from "./OutsideSessions";
+import { CostHealthBadge, IncompleteMark, credentialIncomplete, incompleteParts, useCostHealth } from "./CostHealth";
 import { COVEY_ONLY_PARAM, COVEY_ONLY_VALUE, PRICES_PARAM, PRICES_RECOMPUTED, beforeRange, bucketOptions, kpiLead, listedSources,
-  outsideKpis, outsideSplit, rangeOptions, sourceRealParts, type OutsideKpis } from "./outsideFigures";
+  outsideKpis, outsideSplit, rangeOptions, seatSources, sourceRealParts, type OutsideKpis } from "./outsideFigures";
 import {
   AgentFilter,
   BUCKET_MS,
   Chip,
   CostExplorer,
+  type CredentialMarks,
   OrgWide,
   SOURCE_COLOR,
   Swatch,
@@ -374,6 +376,24 @@ export default function Costs({ me }: { me?: Principal }) {
         ? agentList.find((a) => a.id === scope)?.label ?? ""
         : t("costs.filter.nSelected", { count: selected.size });
   const fmtPeriod = (p: string) => fmtBucket(p, bucket);
+  // A failed data check marks the part it affects "incomplete" (#178); the
+  // figure stays as it is.
+  // The token-price checks count where the page holds the calls they
+  // concern: covey's lines always, the outside sessions where included.
+  const health = useCostHealth();
+  const incomplete = incompleteParts(health.data, { agents: true, outside: included != null });
+  const outsideMark = coveyOnly ? [] : incomplete.outside;
+  // The answer card is the whole dent under "covey only" too (#195): its operator and project rows stand, so their
+  // marks do as well, whatever the chips and tiles leave out (#179 merge review).
+  const cardMarks = incompleteParts(health.data, { agents: true, outside: true });
+  // Per credential: a reset nobody recorded on its meter, and a stopped
+  // uploader of a source on its seat while the outside part is included,
+  // leave its own real cost and multiples short — its block and its meter
+  // in the insights say so where those figures stand.
+  const credentialMarks = (key: string, slot: number): CredentialMarks => {
+    const m = credentialIncomplete(health.data, `${key} #${slot}`, included ? seatSources(included, key, slot).map((x) => x.source) : null);
+    return { multiple: <IncompleteMark checks={m.multiple} part="multiple" />, outside: <IncompleteMark checks={m.outside} part="outside" /> };
+  };
 
   // The agent filter and the "covey only" chip. With the answer table they stand under it, next to the chart they
   // drive; its rows name the outside sources, so the inclusion note is only said where there is no table (#204).
@@ -388,6 +408,7 @@ export default function Costs({ me }: { me?: Principal }) {
       {sourcesListed.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 mb-4" data-inclusion>
           <Chip on={coveyOnly} onClick={() => setCoveyOnly(!coveyOnly)} title={t("costs.incl.coveyOnlyTitle")}>{t("costs.incl.coveyOnly")}</Chip>
+          <IncompleteMark checks={outsideMark} part="outside" />
           {(!hasAnswer || coveyOnly || filtered) && (
             <span className="muted text-xs" data-inclusion-note style={{ maxWidth: 760 }}>
               {t(coveyOnly ? "costs.incl.coveyOnlyNote" : filtered ? "costs.incl.includedNoteSelected" : "costs.incl.includedNote",
@@ -405,6 +426,7 @@ export default function Costs({ me }: { me?: Principal }) {
       <div className="flex items-baseline gap-3 mb-1">
         <h1 className="text-[22px]">{t("costs.title")}</h1>
         <span className="muted">{scopeName}</span>
+        <CostHealthBadge />
       </div>
       <p className="muted text-sm mb-4" style={{ maxWidth: 620 }}>{t("costs.subtitle")}</p>
 
@@ -423,6 +445,11 @@ export default function Costs({ me }: { me?: Principal }) {
           and one sentence. What explains it is in the drawer. */}
       {answer && head && dent && (
         <CostAnswer a={answer} h={head} filtered={selected.size > 0} elsewhere={elsewhere}
+          marks={cardMarks.multiple.length + cardMarks.outside.length + cardMarks.tokenPrice.length > 0 && <>
+            <IncompleteMark checks={cardMarks.multiple} part="multiple" />
+            <IncompleteMark checks={cardMarks.outside} part="outside" />
+            <IncompleteMark checks={cardMarks.tokenPrice} part="tokenPrice" />
+          </>}
           drawer={<SubscriptionDentRow d={dent} filtered={selected.size > 0} h={head}
             sourceParts={(cells.data?.external?.meter.source_parts ?? []).flatMap((p) => {
               const s = sourcesListed.find((x) => x.source === p.source);
@@ -436,6 +463,7 @@ export default function Costs({ me }: { me?: Principal }) {
           under the answer table (#195). */}
       {ppt && <PayPerTokenRow h={ppt} filtered={selected.size > 0} />}
 
+      {incomplete.tokenPrice.length > 0 && !answer && <div className="mb-2" data-kpi-incomplete><IncompleteMark checks={incomplete.tokenPrice} part="tokenPrice" /></div>}
       {answer && head && dent && filters}
 
       {/* Without a subscription meter there is no answer table: the lead
@@ -459,7 +487,11 @@ export default function Costs({ me }: { me?: Principal }) {
       {/* Chart */}
       <div className="card mb-4">
         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-          <div style={{ fontWeight: 600 }}>{metric === "cost" ? t("costs.chartCost") : t("costs.chartTokens")}</div>
+          <div style={{ fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 6 }} data-chart-title>
+            {metric === "cost" ? t("costs.chartCost") : t("costs.chartTokens")}
+            {/* A missing list price leaves the token counts whole; a call booked twice does not. */}
+            <IncompleteMark checks={metric === "cost" ? incomplete.tokenPrice : incomplete.tokenPrice.filter((c) => c.id === "c4")} part="tokenPrice" />
+          </div>
           <Seg
             value={metric}
             onChange={setMetric}
@@ -468,18 +500,24 @@ export default function Costs({ me }: { me?: Principal }) {
         </div>
         {metric === "cost" ? (
           <CostExplorer data={cells.data} billed={billed.data} readings={readings.data ?? []} canSetPlan={canSetPlan(me?.Role ?? "")} selected={selected} bucket={bucket} fmtPeriod={fmtPeriod}
-            outside={included} full={fullPrices} onFull={setFullPrices} off={offSources} onToggleSource={toggleSource} answered={answer?.covers} />
+            outside={included} full={fullPrices} onFull={setFullPrices} off={offSources} onToggleSource={toggleSource} answered={answer?.covers}
+            marks={credentialMarks} />
         ) : (
           <TokenExplorer data={cells.data} selected={selected} fmtPeriod={fmtPeriod} outside={included} />
         )}
       </div>
 
       {/* The sessions outside covey (#120): apart or combined, never folded in unannounced. */}
-      <OutsideOverview data={cells.data} selected={selected} days={days} bucket={bucket} fmtPeriod={fmtPeriod} />
+      <OutsideOverview data={cells.data} selected={selected} days={days} bucket={bucket} fmtPeriod={fmtPeriod}
+        incomplete={<IncompleteMark checks={incomplete.outside} part="outside" />} />
 
       {/* The token counts: collapsed, they answer another question (#195). */}
       <details className="card mb-4" data-tokens>
-        <summary style={{ fontWeight: 600, cursor: "pointer" }}>{t("costs.answer.tokens")}</summary>
+        <summary style={{ fontWeight: 600, cursor: "pointer" }}>
+          {t("costs.answer.tokens")}
+          {/* A call booked twice (c4) inflates the token counts: marked where they stand (#179 merge review). */}
+          <span data-tokens-incomplete style={{ marginLeft: 8, fontWeight: 400 }}><IncompleteMark checks={incomplete.tokenPrice.filter((c) => c.id === "c4")} part="tokenPrice" /></span>
+        </summary>
         <div className="flex flex-wrap gap-3 mt-3 mb-4">
           <Kpi
             label={t("costs.inputTokens")}
@@ -516,7 +554,8 @@ export default function Costs({ me }: { me?: Principal }) {
       {/* Cost insights: per model as Claude Code reported it, and the
           subscription meter per credential. The model lines follow the agent
           filter; what is per credential stays org-wide and says so. */}
-      <CostInsights days={days} figures={orgFigures} agents={selected} outside={included} answered={answer?.covers} />
+      <CostInsights days={days} figures={orgFigures} agents={selected} outside={included} answered={answer?.covers}
+        incomplete={<IncompleteMark checks={incomplete.tokenPrice} part="tokenPrice" />} marks={credentialMarks} />
     </div>
   );
 }

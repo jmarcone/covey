@@ -67,8 +67,10 @@ function realCell(t: TFunction, r: AnswerRow): ReactNode {
 const cell = { padding: "8px 12px 8px 0", verticalAlign: "top" } as const;
 const num = { ...cell, textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" } as const;
 
-export function CostAnswer({ a, h, filtered, drawer, elsewhere: elsewhereUsd }: {
+export function CostAnswer({ a, h, filtered, drawer, elsewhere: elsewhereUsd, marks }: {
   a: AnswerTable; h: Headline; filtered: boolean;
+  /** The data checks' marks on what the answer rests on (#178): beside the title, never hiding a figure. */
+  marks?: ReactNode;
   /** The explanations, rendered only while the drawer is open. */
   drawer?: ReactNode;
   /** covey's own work on credentials no row of the page covers, at token prices (the page leaves out those the
@@ -135,6 +137,7 @@ export function CostAnswer({ a, h, filtered, drawer, elsewhere: elsewhereUsd }: 
       <div style={{ fontWeight: 600, marginBottom: 8 }}>
         {t("costs.answer.title")}
         {filtered && <OrgWide />}
+        {marks && <span style={{ marginLeft: 8, fontWeight: 400 }} data-answer-incomplete>{marks}</span>}
       </div>
       <div className="cost-answer-body">
       {/* The answer at a glance: beside the table on a wide screen, above it otherwise. The multiple says what it divides. */}

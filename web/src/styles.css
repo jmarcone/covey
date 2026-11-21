@@ -505,6 +505,7 @@ pre.voice { font-family: inherit; }
 .pill.ok { background: var(--bg-success); color: var(--text-success); }
 .pill.mut { color: var(--text-muted); }
 .pill.err { background: var(--bg-danger, var(--bg-warning)); color: var(--text-danger); }
+.pill.warn { background: var(--bg-warning); color: var(--text-warning); }
 .act-feed .gate.ok .act-ic { color: var(--text-success); }
 .act-feed .parked,
 .act-feed .act-result {
