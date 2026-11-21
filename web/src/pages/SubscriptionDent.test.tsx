@@ -444,7 +444,8 @@ describe("Costs — the dent's parts without a split reading (#164)", () => {
 
   async function dentRow(ext: ExternalUsage) {
     serve(cells(ext));
-    const row = await screen.findByRole("region", { name: "The whole dent in the subscription" });
+    // The dent row is in the answer table's "How is this computed" drawer (#204).
+    const row = await openDentRow();
     return { row, group: (name: string) => within(row).getByRole("group", { name }) };
   }
   /** A part with no figure: "–", no $0.00 or 0 %, and exactly this reason at the end of its sub. */
