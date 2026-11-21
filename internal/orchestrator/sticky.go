@@ -76,6 +76,8 @@ type stickyPlan struct {
 	dropResume bool
 	wokenBy    string
 	wake       string
+	// clearWake: the routed wake is dealt with by continuing the session.
+	clearWake bool
 }
 
 // effectiveStickyPolicy resolves ab to the arm the topic falls in: odd pull
@@ -147,6 +149,10 @@ func (o *Orchestrator) planSticky(ctx context.Context, agent agents.Agent, task 
 		// the topic's directory; a busy round and a fresh-policy agent start
 		// theirs in the task's own (orchestrator: ScratchOf).
 		if state.Prompt == nil {
+			// A session outside the topic's directory (a busy round, a
+			// fresh-policy agent): continued as before; a routed wake's
+			// flag has nothing to say here.
+			plan.clearWake = state.RoutedWake
 			return plan
 		}
 		plan.workDirKey = topicWorkDir(agent.ID, topic)
@@ -155,9 +161,6 @@ func (o *Orchestrator) planSticky(ctx context.Context, agent agents.Agent, task 
 			// answer it parked for: the session continues only if a new
 			// round could resume it — inside the window, under the cap, on
 			// the same credential, under the same instructions.
-			if err := o.Backlog.ClearRoutedWake(ctx, task.ID); err != nil {
-				o.Log.Warn("sticky: routed wake not cleared", "task", task.ID, "err", err)
-			}
 			self := backlog.Predecessor{TaskID: task.ID, SessionID: *task.RuntimeSessionID, FinishedAt: now,
 				ContextTokens: state.Context, Credential: state.Credential, Prompt: state.Prompt,
 				Memory: state.Memory, Basis: state.Basis}
@@ -168,6 +171,7 @@ func (o *Orchestrator) planSticky(ctx context.Context, agent agents.Agent, task 
 			if reason := stickyVerdict(policy, true, self, now, agent.StickyWindowMinutes, agent.StickyContextCap,
 				credentialKey(s), basis); reason != "" {
 				plan.wake = "fresh:" + reason
+				plan.decision = backlog.StickyDecision{Decision: backlog.DecisionFresh, Reason: reason, Policy: policy}
 				plan.dropResume = true
 				plan.wokenBy = *task.ResumeInput
 				plan.record = &sessionPrompt{compiled, memCtx, basis}
@@ -180,6 +184,7 @@ func (o *Orchestrator) planSticky(ctx context.Context, agent agents.Agent, task 
 				return plan
 			}
 			plan.wake = "resumed"
+			plan.clearWake = true
 		}
 		plan.pinned = &sessionPrompt{*state.Prompt, state.Memory, ""}
 		return plan
@@ -350,6 +355,17 @@ func (o *Orchestrator) applyStickyPlan(ctx context.Context, agent agents.Agent, 
 	if plan.wake != "" {
 		fields := map[string]string{"status": "sticky_wake", "wake": "routed", "outcome": plan.wake}
 		_ = o.Obs.Record(ctx, agent.OrgID, agent.ID, &taskID, observability.KindLifecycle, fields)
+	}
+	if plan.dropResume {
+		// One write, before the run: a dispatch after a lost run must
+		// start fresh again, not resume the session the checks refused.
+		if err := o.Backlog.DropSessionForFreshStart(ctx, taskID, wokenByBody(plan.wokenBy)); err != nil {
+			o.Log.Warn("sticky: refused session not dropped", "task", taskID, "err", err)
+		}
+	} else if plan.clearWake {
+		if err := o.Backlog.ClearRoutedWake(ctx, taskID); err != nil {
+			o.Log.Warn("sticky: routed wake not cleared", "task", taskID, "err", err)
+		}
 	}
 	if plan.record != nil {
 		if err := o.Backlog.SetSessionPrompt(ctx, taskID, plan.record.prompt, plan.record.memory, plan.record.basis); err != nil {
@@ -558,4 +574,10 @@ func (o *Orchestrator) postedReview(ctx context.Context, orgID uuid.UUID, repo, 
 		body = body[i:]
 	}
 	return strings.TrimSpace(body)
+}
+
+// wokenByBody is what a routed wake's fresh start adds to the task's body:
+// the note that woke it.
+func wokenByBody(note string) string {
+	return "\n\n## What woke this task\n\n" + note
 }

@@ -201,9 +201,11 @@ func (s *Store) SettleSticky(ctx context.Context, id uuid.UUID, decision, reason
 // topic: the session, the time, the context size of its last turn (0 = not
 // known) and the credential it ran on.
 func (s *Store) RecordSessionEnd(ctx context.Context, id uuid.UUID, sessionID string, contextTokens int64, credential string) error {
+	// A run that saw no turn (or no credential) keeps what is known.
 	_, err := s.pool.Exec(ctx, `UPDATE backlog_tasks SET
 		runtime_session_id=COALESCE(NULLIF($2,''), runtime_session_id), session_finished_at=now(),
-		session_context_tokens=NULLIF($3::bigint,0), session_credential=NULLIF($4,'') WHERE id=$1`,
+		session_context_tokens=COALESCE(NULLIF($3::bigint,0), session_context_tokens),
+		session_credential=COALESCE(NULLIF($4,''), session_credential) WHERE id=$1`,
 		id, sessionID, contextTokens, credential)
 	return err
 }
@@ -272,9 +274,13 @@ type StickyState struct {
 // StickyState reads it.
 func (s *Store) StickyState(ctx context.Context, id uuid.UUID) (StickyState, error) {
 	var st StickyState
+	// The pause falls back to when the task last parked: a task parked
+	// before its pause was recorded is not taken for one that just parked.
 	err := s.pool.QueryRow(ctx, `SELECT COALESCE(sticky_policy,''), session_prompt, COALESCE(session_memory,''),
-			COALESCE(session_basis,''), routed_wake, session_finished_at, COALESCE(session_context_tokens,0),
-			COALESCE(session_credential,'')
+			COALESCE(session_basis,''), routed_wake,
+			COALESCE(session_finished_at, (SELECT max(created_at) FROM task_transitions
+				WHERE task_id=backlog_tasks.id AND to_state='blocked')),
+			COALESCE(session_context_tokens,0), COALESCE(session_credential,'')
 		FROM backlog_tasks WHERE id=$1`, id).Scan(&st.Policy, &st.Prompt, &st.Memory, &st.Basis, &st.RoutedWake,
 		&st.PausedAt, &st.Context, &st.Credential)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -304,4 +310,14 @@ func (s *Store) ChainRoot(ctx context.Context, id uuid.UUID) (uuid.UUID, error) 
 		return uuid.Nil, ErrNotFound
 	}
 	return root, err
+}
+
+// DropSessionForFreshStart makes a routed wake's fresh start durable (#130):
+// the session the checks refused is let go, and the note that woke the task
+// becomes part of its body, so a dispatch after a lost run starts fresh again
+// instead of resuming the refused session. note is the text to append.
+func (s *Store) DropSessionForFreshStart(ctx context.Context, id uuid.UUID, note string) error {
+	_, err := s.pool.Exec(ctx, `UPDATE backlog_tasks SET runtime_session_id=NULL, resume_input=NULL,
+		routed_wake=false, body=body || $2 WHERE id=$1`, id, note)
+	return err
 }

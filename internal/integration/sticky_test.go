@@ -575,10 +575,23 @@ func TestStickyDefaults(t *testing.T) {
 		}
 		return v
 	}
-	for version() >= 154 {
-		if err := db.MigrateDown(ctx, s.pool, migrations.FS); err != nil {
-			t.Fatal(err)
+	// The stack's dispatch keeps reading agents and tasks while the schema
+	// moves; a deadlock between the two is retried, not a failure.
+	retry := func(what string, step func() error) {
+		t.Helper()
+		var err error
+		for range 5 {
+			if err = step(); err == nil || !strings.Contains(err.Error(), "40P01") {
+				break
+			}
+			time.Sleep(200 * time.Millisecond)
 		}
+		if err != nil {
+			t.Fatalf("%s: %v", what, err)
+		}
+	}
+	for version() >= 154 {
+		retry("migrate down", func() error { return db.MigrateDown(ctx, s.pool, migrations.FS) })
 	}
 	want := map[string]string{"covey-dev": "conditional", "covey-frontend": "conditional",
 		"covey-reviewer": "fresh", "covey-lead": "fresh"}
@@ -591,9 +604,7 @@ func TestStickyDefaults(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := db.MigrateUp(ctx, s.pool, migrations.FS); err != nil {
-		t.Fatal(err)
-	}
+	retry("migrate up", func() error { _, err := db.MigrateUp(ctx, s.pool, migrations.FS); return err })
 	for slug, w := range want {
 		var p string
 		var win int
@@ -964,6 +975,17 @@ func TestStickyRoutedWakeIsChecked(t *testing.T) {
 	}
 	if o := wakeOutcome(outside.ID); o != "fresh:window" {
 		t.Fatalf("wake outcome %q", o)
+	}
+	// The fresh start is durable: the refused session is let go and the note
+	// is in the body, so a dispatch after a lost run starts fresh again
+	// rather than resuming the refused session; and it is the task's
+	// recorded decision, so the round is measured as the fresh one it was.
+	after, _ := s.backlog.Get(ctx, outside.ID)
+	if after.ResumeInput != nil || !strings.Contains(after.Body, "## What woke this task\n\nNote from agent wake-sender") {
+		t.Fatalf("the fresh start must be durable: resume_input %v, body %q", after.ResumeInput, after.Body)
+	}
+	if d, r := s.decision(outside.ID); d != backlog.DecisionFresh || r != backlog.ReasonWindow {
+		t.Fatalf("decision %s/%s", d, r)
 	}
 	// A later block and an ordinary answer resume as before: the flag is spent.
 	var wake bool

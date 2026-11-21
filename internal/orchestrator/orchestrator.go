@@ -2819,7 +2819,7 @@ func (o *Orchestrator) processTask(ctx context.Context, agent agents.Agent, link
 	if plan.wokenBy != "" {
 		// A routed wake that may not continue its session (#130): the task
 		// starts afresh, with the note that woke it.
-		assign.Body += "\n\n## What woke this task\n\n" + plan.wokenBy
+		assign.Body += wokenByBody(plan.wokenBy)
 	}
 	if task.RuntimeSessionID != nil && task.ResumeInput != nil && !plan.dropResume {
 		// blocked→working: resumption through the native runtime session (spec/12).
