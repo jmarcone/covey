@@ -406,8 +406,17 @@ export function AgentFilter({ agents, selected, onChange }: {
   );
 }
 
-function Tile({ label, value, sub, span, note, check, color, hatched, parts, orgWide }: {
+/** The marks of failed data checks on one credential's own figures (#178):
+ *  its real cost and multiples (a reset nobody recorded on its meter), and
+ *  the outside part of them (a stopped uploader of a source on its seat).
+ *  The page builds them (CostHealth credentialIncomplete); a mark renders
+ *  nothing where no check failed. */
+export type CredentialMarks = { multiple?: React.ReactNode; outside?: React.ReactNode };
+
+function Tile({ label, value, sub, span, note, check, color, hatched, parts, orgWide, mark }: {
   label: string; value: string; sub?: string; span?: string; note?: string; color?: string; hatched?: boolean;
+  /** A failed data check's mark beside the label (#178): the figure is short. */
+  mark?: React.ReactNode;
   /** covey's price table where it differs from the figure (priceTableLine). */
   check?: string;
   /** With the outside sessions included: the figure's parts, named. */
@@ -422,6 +431,7 @@ function Tile({ label, value, sub, span, note, check, color, hatched, parts, org
         {color && <Swatch color={color} hatched={hatched} />}
         {label}
         {orgWide && <OrgWide />}
+        {mark}
       </div>
       <div style={{ fontSize: 20, fontWeight: 600, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>{value}</div>
       {parts && <div className="muted text-xs" data-parts style={{ marginTop: 2 }}>{parts}</div>}
@@ -999,8 +1009,10 @@ function realSpan(t: TFunction, f: CredentialFigures, key = "costs.fig.realSince
 }
 
 /** The tiles of one credential. */
-function CredentialTiles({ f, filtered, narrowed, out, split, seatSplit, full }: {
+function CredentialTiles({ f, filtered, narrowed, out, split, seatSplit, full, marks = {} }: {
   f: CredentialFigures; filtered: boolean; out: OutsideKpis | null;
+  /** The marks of failed data checks on this credential's figures (#178). */
+  marks?: CredentialMarks;
   /** The same sources in two parts: the covey operator and the other projects (#163). */
   split: OutsideSplit | null;
   /** Every source on the seat in the same two parts, the chips ignored: the everything tile is the whole seat's. */
@@ -1019,14 +1031,16 @@ function CredentialTiles({ f, filtered, narrowed, out, split, seatSplit, full }:
   // covey's list price where it reported none; covey's price table is a
   // check under it. The toggle shows the two as tiles of their own.
   const lead = f.reported + (out ? kpiLead(out).lead ?? 0 : 0);
+  // A figure that adds the seat's outside part is short with it (#178).
+  const outsideMark = out ? marks.outside : undefined;
   const tiles: React.ReactNode[] = full ? [
-    <Tile key="rep" label={t("costs.fig.reported")} value={fmtUSD(f.reported + (out?.reported ?? 0))} sub={t("costs.fig.reportedSub")} color={SOURCE_COLOR.reported}
+    <Tile key="rep" label={t("costs.fig.reported")} value={fmtUSD(f.reported + (out?.reported ?? 0))} sub={t("costs.fig.reportedSub")} color={SOURCE_COLOR.reported} mark={outsideMark}
       parts={split ? <SplitParts lines={splitLines(t, { filtered, covey: fmtUSD(f.reported), split, range, money: (k) => outsideMoney(t, k, "reported") })} /> : undefined} />,
-    <Tile key="rec" label={t("costs.fig.recomputed")} value={fmtUSD(f.recomputed + (out?.list ?? 0))}
+    <Tile key="rec" label={t("costs.fig.recomputed")} value={fmtUSD(f.recomputed + (out?.list ?? 0))} mark={outsideMark}
       sub={f.check != null ? t("costs.fig.priceTableCheck", { pct: pct(f.check) }) : undefined} color={SOURCE_COLOR.recomputed}
       parts={split ? <SplitParts lines={splitLines(t, { filtered, covey: fmtUSD(f.recomputed), split, range, money: (k) => outsideMoney(t, k, "list") })} /> : undefined} />,
   ] : [
-    <Tile key="lead" label={t("costs.lead.label")} value={fmtUSD(lead)} sub={t("costs.lead.sub")} color={SOURCE_COLOR.reported}
+    <Tile key="lead" label={t("costs.lead.label")} value={fmtUSD(lead)} sub={t("costs.lead.sub")} color={SOURCE_COLOR.reported} mark={outsideMark}
       parts={split ? <SplitParts stacked lines={leadLines(t, filtered, fmtUSD(f.reported), split, range)} /> : undefined}
       check={priceTableLine(t, lead, f.recomputed + (out?.list ?? 0))} />,
   ];
@@ -1059,13 +1073,13 @@ function CredentialTiles({ f, filtered, narrowed, out, split, seatSplit, full }:
       const sub = known.length === 0 ? t("costs.split.agentsUnsplit")
         : f.split ? t("costs.split.shareOfCoveySub", { usd: fmtUSD(f.split.covey_real_usd), whole: fmtUSD(r.value) })
         : t("costs.fig.shareOfRealSub", { usd: fmtUSD(r.value) });
-      tiles.push(<Tile key="real" label={t("costs.fig.shareOfReal")} value={value}
+      tiles.push(<Tile key="real" label={t("costs.fig.shareOfReal")} value={value} mark={marks.multiple}
         sub={sub} span={span} note={t("costs.fig.accountWideCaveat")} color={SOURCE_COLOR.real} hatched />);
     } else if (r && r.below) {
-      tiles.push(<Tile key="real" label={t("costs.fig.realEstimate")} value={fmtUSDBelow(r.high)}
+      tiles.push(<Tile key="real" label={t("costs.fig.realEstimate")} value={fmtUSDBelow(r.high)} mark={marks.multiple}
         sub={t("costs.fig.realBelow") + seatPart} span={span} note={t("costs.fig.accountWideCaveat")} color={SOURCE_COLOR.real} hatched />);
     } else if (r) {
-      tiles.push(<Tile key="real" label={t("costs.fig.realEstimate")} value={`≈ ${fmtUSD(r.value)}`}
+      tiles.push(<Tile key="real" label={t("costs.fig.realEstimate")} value={`≈ ${fmtUSD(r.value)}`} mark={marks.multiple}
         sub={t("costs.fig.realRange", { low: fmtUSD(r.low), high: fmtUSD(r.high), pts: r.points, pp: pp != null ? fmtUSDFixed(pp, 4) : "–" }) + seatPart}
         span={span} note={t("costs.fig.accountWideCaveat")} color={SOURCE_COLOR.real} hatched />);
     } else {
@@ -1091,16 +1105,17 @@ function CredentialTiles({ f, filtered, narrowed, out, split, seatSplit, full }:
         const parts = [t(filtered ? "costs.incl.lineCoveySelected" : "costs.incl.lineCovey", { usd: fmtUSD(e.coveyList) }), ...outsideLines].join(" · ")
           + (recomputed ? ` (${t("costs.lead.recomputedMark")})` : "");
         tiles.push(<Tile key="mult" label={t("costs.incl.everything")} value={`≈ ${times(e.estimate)}`} orgWide={narrowed}
+          mark={<>{marks.multiple}{marks.outside}</>}
           parts={t("costs.incl.everythingFloor", { floor: times(e.multiple.low) })}
           sub={t("costs.incl.everythingSub", { list: fmtUSD(e.coveyList + e.outsideList), parts, real: fmtUSD(e.real) })}
           span={span} note={t("costs.incl.everythingNote", { slack: fmtUSD(e.slack) }) + (within?.shared && within.known ? ` ${t("costs.incl.everythingShared")}` : "")} />);
       }
     } else if (f.multiple?.kind === "estimate") {
-      tiles.push(<Tile key="mult" label={t("costs.fig.multiple")} value={`≈ ${times(f.multiple.value)}`}
+      tiles.push(<Tile key="mult" label={t("costs.fig.multiple")} value={`≈ ${times(f.multiple.value)}`} mark={marks.multiple}
         sub={t("costs.fig.multipleRange", { low: times(f.multiple.low), high: times(f.multiple.high) })}
         span={span} note={t("costs.fig.multipleHint")} />);
     } else if (f.multiple?.kind === "floor") {
-      tiles.push(<Tile key="mult" label={t("costs.fig.multiple")} value={`≥ ${times(f.multiple.low)}`}
+      tiles.push(<Tile key="mult" label={t("costs.fig.multiple")} value={`≥ ${times(f.multiple.low)}`} mark={marks.multiple}
         sub={t("costs.split.multipleFloor")} span={span} note={t("costs.fig.multipleHint")} />);
     }
   }
@@ -1205,13 +1220,15 @@ function NoMultiple({ f }: { f: CredentialFigures }) {
 }
 
 /** One credential: its tiles, its chart, its agents. */
-function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPeriod, selected, src, split, types, layout, view, sharedScale, asTable, outside, full }: {
+function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPeriod, selected, src, split, types, layout, view, sharedScale, asTable, outside, full, marks }: {
   f: CredentialFigures; data: CostCells; billed: BilledReport | undefined; readings: readonly UsageReading[]; canSetPlan: boolean; bucket: string; fmtPeriod: (p: string) => string;
   selected: Set<string>; src: Record<Source, boolean>; split: Split; types: Set<string>; layout: Layout; view: View; sharedScale: boolean; asTable: boolean;
   /** The full view of covey's price table (the toggle): Reported and Recomputed apart. */
   full: boolean;
   /** The outside sessions, included (null: covey only). */
   outside: OutsideOnChart | null;
+  /** The marks of failed data checks on this credential's figures (#178). */
+  marks?: CredentialMarks;
 }) {
   const { t } = useTranslation();
   const planLabel = usePlanLabel();
@@ -1465,7 +1482,7 @@ function CredentialBlock({ f, data, billed, readings, canSetPlan, bucket, fmtPer
       {subscription && <PlanPrice f={f} name={name} readings={readings} editable={canSetPlan} />}
       {f.secretKey != null && <CostBasisPanel f={f} name={name} editable={canSetPlan} />}
       <MonthlyMeters f={f} readings={readings} />
-      <CredentialTiles f={f} filtered={filtered || layout === "agents"} narrowed={filtered} out={mineKpis} split={mineSplit} seatSplit={seatSplit} full={full} />
+      <CredentialTiles f={f} filtered={filtered || layout === "agents"} narrowed={filtered} out={mineKpis} split={mineSplit} seatSplit={seatSplit} full={full} marks={marks} />
       <NoMultiple f={f} />
       {/* Outside every reading's span: before the meter's first reading
           (no meter data, never a real share) and after its last (pending). */}
@@ -1741,7 +1758,7 @@ function ColourKey({ split, sources = [], other = [], full = true, list = full }
   );
 }
 
-export function CostExplorer({ data, billed, readings = [], canSetPlan = false, selected, bucket, fmtPeriod, outside = null, full: fullProp, onFull }: {
+export function CostExplorer({ data, billed, readings = [], canSetPlan = false, selected, bucket, fmtPeriod, outside = null, full: fullProp, onFull, marks }: {
   data: CostCells | undefined; billed?: BilledReport; readings?: readonly UsageReading[]; canSetPlan?: boolean;
   selected: Set<string>; bucket: string; fmtPeriod: (p: string) => string;
   /** The sessions outside covey, included (#120, the default); null: covey only. */
@@ -1750,6 +1767,8 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
    *  held by the page (in its URL); without it the explorer holds it. */
   full?: boolean;
   onFull?: (v: boolean) => void;
+  /** The marks of failed data checks on a credential's own figures (#178), per secret and slot. */
+  marks?: (key: string, slot: number) => CredentialMarks;
 }) {
   const { t } = useTranslation();
   // One list-price figure leads (#120): the lead series. covey's price
@@ -1872,7 +1891,8 @@ export function CostExplorer({ data, billed, readings = [], canSetPlan = false, 
         <div className="muted text-sm" style={{ padding: "40px 0", textAlign: "center" }}>{t("costs.empty")}</div>
       ) : figures.map((f) => (
         <CredentialBlock key={f.id} f={f} data={data!} billed={billed} readings={readings} canSetPlan={canSetPlan} bucket={bucket} fmtPeriod={fmtPeriod} selected={selected}
-          src={shown} split={split} types={types} layout={layout} view={view} sharedScale={sharedScale} asTable={asTable} outside={onChart} full={full} />
+          src={shown} split={split} types={types} layout={layout} view={view} sharedScale={sharedScale} asTable={asTable} outside={onChart} full={full}
+          marks={f.secretKey != null ? marks?.(f.secretKey, f.slot!) : undefined} />
       ))}
       {onChart && loose.length > 0 && (
         <OutsideBlock o={onChart} sources={loose} src={shown} fmtPeriod={fmtPeriod} asTable={asTable} filtered={selected.size > 0} full={full} />

@@ -2828,3 +2828,54 @@ export type ExternalModelUsage = {
   /** F3, exactly the external.meter of /cost/cells (always the whole meter). */
   meter: ExternalUsage["meter"];
 };
+
+/** GET /cost/health (#178): whether the cost figures can be trusted right now. */
+export type CostHealthStatus = "pass" | "warn" | "fail" | "info";
+
+/** One check (c1–c8): a status, a reason code the page words, and the figures behind it. */
+export type CostHealthCheck = {
+  id: string;
+  status: CostHealthStatus;
+  reason: string;
+  facts: {
+    last_push_at?: string;
+    last_push_minutes?: number;
+    stale_hosts?: { source: string; host: string; pushed_at: string; minutes: number }[];
+    /** c1: hosts without a watermark, silent for a while (idle or stopped: covey cannot tell). */
+    quiet_hosts?: { source: string; host: string; pushed_at: string; minutes: number }[];
+    /** c2: the seat that decides (secret #slot), and when it last spent. */
+    credential?: string;
+    spent_at?: string;
+    reading_at?: string;
+    reading_minutes?: number;
+    week_percent?: number;
+    fleet_killed?: boolean;
+    drops?: number;
+    early_resets?: number;
+    last_drop_at?: string;
+    external_duplicates?: number;
+    agent_duplicates?: number;
+    models?: number;
+    unpriced?: string[];
+    /** c5: the unpriced models covey's agents used, and those outside calls used (a model can be in both). */
+    unpriced_agents?: string[];
+    unpriced_outside?: string[];
+    /** c6: the seats without a real cost; c3: the seats with a drop or an early reset; c2 (none): every seat that spent with no reading. */
+    credentials?: string[];
+    unattributed?: number;
+    sync_status?: string;
+    last_attempt_at?: string;
+    last_attempt_minutes?: number;
+    last_success_at?: string;
+    last_error?: string;
+    calls?: number;
+  };
+  checked_at: string;
+};
+
+export type CostHealthReport = {
+  /** The worst status of the checks (info never counts): the badge's colour. */
+  status: "pass" | "warn" | "fail";
+  checked_at: string;
+  checks: CostHealthCheck[];
+};

@@ -10,13 +10,15 @@ import { credentialFigures, headline, payPerTokenHeadline, subscriptionDent } fr
 import { PayPerTokenRow, SubscriptionDentRow } from "./SubscriptionDent";
 import { canSetPlan } from "./PlanPrice";
 import { OutsideOverview } from "./OutsideSessions";
+import { CostHealthBadge, IncompleteMark, credentialIncomplete, incompleteParts, useCostHealth } from "./CostHealth";
 import { COVEY_ONLY_PARAM, COVEY_ONLY_VALUE, PRICES_PARAM, PRICES_RECOMPUTED, RANGES, beforeRange, bucketOptions, kpiLead, listedSources,
-  outsideKpis, outsideSplit, rangeOptions, sourceRealParts, type OutsideKpis } from "./outsideFigures";
+  outsideKpis, outsideSplit, rangeOptions, seatSources, sourceRealParts, type OutsideKpis } from "./outsideFigures";
 import {
   AgentFilter,
   BUCKET_MS,
   Chip,
   CostExplorer,
+  type CredentialMarks,
   OrgWide,
   SOURCE_COLOR,
   Swatch,
@@ -363,12 +365,28 @@ export default function Costs({ me }: { me?: Principal }) {
         ? agentList.find((a) => a.id === scope)?.label ?? ""
         : t("costs.filter.nSelected", { count: selected.size });
   const fmtPeriod = (p: string) => fmtBucket(p, bucket);
+  // A failed data check marks the part it affects "incomplete" (#178); the
+  // figure stays as it is.
+  // The token-price checks count where the page holds the calls they
+  // concern: covey's lines always, the outside sessions where included.
+  const health = useCostHealth();
+  const incomplete = incompleteParts(health.data, { agents: true, outside: included != null });
+  const outsideMark = coveyOnly ? [] : incomplete.outside;
+  // Per credential: a reset nobody recorded on its meter, and a stopped
+  // uploader of a source on its seat while the outside part is included,
+  // leave its own real cost and multiples short — its block and its meter
+  // in the insights say so where those figures stand.
+  const credentialMarks = (key: string, slot: number): CredentialMarks => {
+    const m = credentialIncomplete(health.data, `${key} #${slot}`, included ? seatSources(included, key, slot).map((x) => x.source) : null);
+    return { multiple: <IncompleteMark checks={m.multiple} part="multiple" />, outside: <IncompleteMark checks={m.outside} part="outside" /> };
+  };
 
   return (
     <div>
       <div className="flex items-baseline gap-3 mb-1">
         <h1 className="text-[22px]">{t("costs.title")}</h1>
         <span className="muted">{scopeName}</span>
+        <CostHealthBadge />
       </div>
       <p className="muted text-sm mb-4" style={{ maxWidth: 620 }}>{t("costs.subtitle")}</p>
 
@@ -388,6 +406,7 @@ export default function Costs({ me }: { me?: Principal }) {
       {sourcesListed.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 mb-4" data-inclusion>
           <Chip on={coveyOnly} onClick={() => setCoveyOnly(!coveyOnly)} title={t("costs.incl.coveyOnlyTitle")}>{t("costs.incl.coveyOnly")}</Chip>
+          <IncompleteMark checks={outsideMark} part="outside" />
           <span className="muted text-xs" data-inclusion-note style={{ maxWidth: 760 }}>
             {t(coveyOnly ? "costs.incl.coveyOnlyNote" : filtered ? "costs.incl.includedNoteSelected" : "costs.incl.includedNote",
               { sources: sourcesListed.map((s) => s.source).join(", ") })}
@@ -397,6 +416,11 @@ export default function Costs({ me }: { me?: Principal }) {
 
       {/* The headline: what the subscription really paid, and for whom. */}
       {dent && <SubscriptionDentRow d={dent} filtered={selected.size > 0} h={head}
+        incomplete={incomplete.multiple.length + outsideMark.length + incomplete.tokenPrice.length > 0 && <>
+          <IncompleteMark checks={incomplete.multiple} part="multiple" />
+          <IncompleteMark checks={outsideMark} part="outside" />
+          <IncompleteMark checks={incomplete.tokenPrice} part="tokenPrice" />
+        </>}
         sourceParts={(cells.data?.external?.meter.source_parts ?? []).flatMap((p) => {
           const s = sourcesListed.find((x) => x.source === p.source);
           return s ? [{ ...p, before: beforeRange(s, realParts) }] : [];
@@ -409,7 +433,9 @@ export default function Costs({ me }: { me?: Principal }) {
           One list-price figure leads (#120): Claude Code's price of each
           call, covey's list price where it reported none (marked), and
           covey's price table under it only where it differs; the toggle
-          shows the two apart. */}
+          shows the two apart. A failed check of the token prices (#178:
+          a call booked twice, a model without a list price) marks them. */}
+      {incomplete.tokenPrice.length > 0 && <div className="mb-2" data-kpi-incomplete><IncompleteMark checks={incomplete.tokenPrice} part="tokenPrice" /></div>}
       <div className="flex flex-wrap gap-3 mb-4">
         {fullPrices ? <>
           <Kpi label={t("costs.fig.reported")} value={fmtUSD(totals.reported + (outside?.reported ?? 0))} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.reported}
@@ -434,7 +460,11 @@ export default function Costs({ me }: { me?: Principal }) {
       {/* Chart */}
       <div className="card mb-4">
         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-          <div style={{ fontWeight: 600 }}>{metric === "cost" ? t("costs.chartCost") : t("costs.chartTokens")}</div>
+          <div style={{ fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 6 }} data-chart-title>
+            {metric === "cost" ? t("costs.chartCost") : t("costs.chartTokens")}
+            {/* A missing list price leaves the token counts whole; a call booked twice does not. */}
+            <IncompleteMark checks={metric === "cost" ? incomplete.tokenPrice : incomplete.tokenPrice.filter((c) => c.id === "c4")} part="tokenPrice" />
+          </div>
           <Seg
             value={metric}
             onChange={setMetric}
@@ -443,14 +473,15 @@ export default function Costs({ me }: { me?: Principal }) {
         </div>
         {metric === "cost" ? (
           <CostExplorer data={cells.data} billed={billed.data} readings={readings.data ?? []} canSetPlan={canSetPlan(me?.Role ?? "")} selected={selected} bucket={bucket} fmtPeriod={fmtPeriod}
-            outside={included} full={fullPrices} onFull={setFullPrices} />
+            outside={included} full={fullPrices} onFull={setFullPrices} marks={credentialMarks} />
         ) : (
           <TokenExplorer data={cells.data} selected={selected} fmtPeriod={fmtPeriod} outside={included} />
         )}
       </div>
 
       {/* The sessions outside covey (#120): apart or combined, never folded in unannounced. */}
-      <OutsideOverview data={cells.data} selected={selected} days={days} bucket={bucket} fmtPeriod={fmtPeriod} />
+      <OutsideOverview data={cells.data} selected={selected} days={days} bucket={bucket} fmtPeriod={fmtPeriod}
+        incomplete={<IncompleteMark checks={incomplete.outside} part="outside" />} />
 
       {/* Price list + token types + priciest runs: they hold for every scope */}
       <div className="grid gap-4 mb-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(320px, 100%), 1fr))" }}>
@@ -478,7 +509,8 @@ export default function Costs({ me }: { me?: Principal }) {
       {/* Cost insights: per model as Claude Code reported it, and the
           subscription meter per credential. The model lines follow the agent
           filter; what is per credential stays org-wide and says so. */}
-      <CostInsights days={days} figures={orgFigures} agents={selected} outside={included} />
+      <CostInsights days={days} figures={orgFigures} agents={selected} outside={included}
+        incomplete={<IncompleteMark checks={incomplete.tokenPrice} part="tokenPrice" />} marks={credentialMarks} />
     </div>
   );
 }

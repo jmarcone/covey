@@ -9,7 +9,7 @@ import { isSeat, perCredentialTotals, scopeFigure, type SourceTotal } from "./co
 import { MonthlyMeters, usageList } from "./CostBasis";
 import { Chip } from "./StackedCostChart";
 import { usableReadings, type CredentialFigures } from "./costFigures";
-import { OrgWide, OutsideMark, SOURCE_COLOR, Swatch, useUsageReadings } from "./StackedCostChart";
+import { OrgWide, OutsideMark, SOURCE_COLOR, Swatch, useUsageReadings, type CredentialMarks } from "./StackedCostChart";
 import { externalStamp, kpiLead, listedSources, outsideModelRows, outsideSplit, seatSources, sourceStyles, type OutsideModelRow, type SourceStyles } from "./outsideFigures";
 import { withUnpriced, withinMoney, withinSplit } from "./StackedCostChart";
 
@@ -324,8 +324,10 @@ function ModelTable({ rep, figures, agents, outside = null }: {
  *  none), the list price of the credential's lines over the same span, and
  *  the multiple. No chart: two independent scales stretched to the same
  *  height agreed by construction, not by the data. */
-function MeterFigures({ f, readings, outside = null }: {
+function MeterFigures({ f, readings, outside = null, marks = {} }: {
   f: CredentialFigures; readings: UsageReading[];
+  /** The marks of failed data checks on this credential's figures (#178). */
+  marks?: CredentialMarks;
   /** The sessions outside covey, to say the seat's outside part as the covey operator and the other projects (#163). */
   outside?: ExternalUsage | null;
 }) {
@@ -386,12 +388,12 @@ function MeterFigures({ f, readings, outside = null }: {
     mult = t("costs.basis.noMultipleBoth");
   } else mult = "–";
 
-  const row = (label: string, value: string, color?: string, hatched?: boolean) => (
+  const row = (label: string, value: string, color?: string, hatched?: boolean, mark?: ReactNode) => (
     <div style={{ display: "flex", gap: 8, alignItems: "baseline", padding: "2px 0" }}>
       <span className="muted text-xs" style={{ display: "inline-flex", alignItems: "center", gap: 6, width: 190, flexShrink: 0 }}>
         {color && <Swatch color={color} hatched={hatched} />}{label}
       </span>
-      <span className="text-sm" style={{ fontVariantNumeric: "tabular-nums" }}>{value}</span>
+      <span className="text-sm" style={{ fontVariantNumeric: "tabular-nums", display: "inline-flex", alignItems: "baseline", gap: 6 }}>{value}{mark}</span>
     </div>
   );
   // The seat's outside part within the meter's readings, as the covey
@@ -405,9 +407,9 @@ function MeterFigures({ f, readings, outside = null }: {
   ).flatMap(([key, k, usd]) => !k || k.calls === 0 ? [] : [
     <Fragment key={key}>{row(t(key === "operator" ? "costs.incl.meterListOperator" : "costs.incl.meterListProjects"),
       withinMoney(t, usd, { priced: e.outsidePriced && kpiLead(k).lead != null, calls: k.calls, unpricedTokens: kpiLead(k).unpricedTokens, recomputed: kpiLead(k).recomputed }, true, within.shared),
-      SOURCE_COLOR.recomputed)}</Fragment>])
+      SOURCE_COLOR.recomputed, false, marks.outside)}</Fragment>])
     // One part has no price: the seat's outside part stands whole, its split not known.
-    : [<Fragment key="unsplit">{row(t("costs.incl.meterListUnsplit"), t("costs.incl.splitUnknown", { usd: fmtUSD(e.outsideList) }), SOURCE_COLOR.recomputed)}</Fragment>]) : null;
+    : [<Fragment key="unsplit">{row(t("costs.incl.meterListUnsplit"), t("costs.incl.splitUnknown", { usd: fmtUSD(e.outsideList) }), SOURCE_COLOR.recomputed, false, marks.outside)}</Fragment>]) : null;
   return (
     <div className="mb-4" data-meter={f.id}>
       <div className="text-xs" style={{ fontWeight: 600, marginBottom: 4 }}>{`${m.secret_key} #${m.secret_slot} · ${source}`}</div>
@@ -415,11 +417,11 @@ function MeterFigures({ f, readings, outside = null }: {
         from: m.baseline_percent, fromAt: fmtBucket(m.baseline_at, "hour"), to: m.last_percent, toAt: fmtBucket(m.last_at, "hour"),
         pts: m.points, n: m.readings,
       }))}
-      {row(t("costs.fig.realEstimate"), real, SOURCE_COLOR.real, true)}
+      {row(t("costs.fig.realEstimate"), real, SOURCE_COLOR.real, true, r?.priced ? marks.multiple : undefined)}
       {row(t("costs.insights.meterList"), f.aligned != null ? fmtUSD(f.aligned) : "–", SOURCE_COLOR.recomputed)}
       {e && outsideRows}
       {e && within?.shared && within.known && <div className="muted text-xs" data-meter-shared>{t("costs.incl.everythingShared")}</div>}
-      {row(e ? t("costs.incl.everything") : t("costs.fig.multiple"), mult)}
+      {row(e ? t("costs.incl.everything") : t("costs.fig.multiple"), mult, undefined, false, <>{marks.multiple}{e && marks.outside}</>)}
       <p className="muted text-xs mt-1 mb-0">
         {five
           ? t("costs.insights.fiveHour", { pct: five.window_percent, at: fmtBucket(five.fetched_at, "hour") })
@@ -437,10 +439,14 @@ const times = (v: number) => (Number.isFinite(v) ? `${fmtNumber(v, 1)}×` : "∞
  *  whole organisation — the same the tiles show without an agent filter —
  *  while the model table follows `agents`, the page's agent filter (empty:
  *  all agents). */
-export function CostInsights({ days, figures, agents = NO_AGENTS, outside = null }: {
+export function CostInsights({ days, figures, agents = NO_AGENTS, outside = null, incomplete, marks }: {
   days: number; figures: CredentialFigures[]; agents?: ReadonlySet<string>;
   /** The sessions outside covey, included (#120); null: covey only. */
   outside?: ExternalUsage | null;
+  /** A failed data check's mark on the model table's token prices (#178). */
+  incomplete?: ReactNode;
+  /** The marks of failed data checks on a credential's own figures (#178), per secret and slot. */
+  marks?: (key: string, slot: number) => CredentialMarks;
 }) {
   const { t } = useTranslation();
   const models = useQuery({
@@ -475,7 +481,9 @@ export function CostInsights({ days, figures, agents = NO_AGENTS, outside = null
   return (
     <div className="grid gap-4 mt-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(420px, 100%), 1fr))" }}>
       <div className="card" style={{ gridColumn: "1 / -1" }}>
-        <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.insights.modelsTitle")}</div>
+        <div style={{ fontWeight: 600, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }} data-models-title>
+          {t("costs.insights.modelsTitle")}{incomplete}
+        </div>
         <p className="muted text-xs mb-3">{t("costs.insights.modelsHint")}</p>
         {models.data ? <ModelTable rep={models.data} figures={figures} agents={agents} outside={outsideRows} /> : <div className="muted text-sm">…</div>}
       </div>
@@ -483,7 +491,7 @@ export function CostInsights({ days, figures, agents = NO_AGENTS, outside = null
         <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.insights.meterTitle")}{filtered && <OrgWide />}</div>
         <p className="muted text-xs mb-3">{t("costs.insights.meterHint")}</p>
         {metered.length === 0 && monthly.length === 0 && <div className="muted text-sm">{t("costs.insights.noReadings")}</div>}
-        {metered.map((f) => <MeterFigures key={f.id} f={f} readings={rs} outside={outside} />)}
+        {metered.map((f) => <MeterFigures key={f.id} f={f} readings={rs} outside={outside} marks={marks?.(f.meter!.secret_key, f.meter!.secret_slot)} />)}
         {/* A monthly usage limit's meter (0152): its own lines, never in the weekly seat meter's figures. */}
         {monthly.map((f) => (
           <div key={`monthly/${f.id}`} className="mb-4" data-monthly={f.id}>
