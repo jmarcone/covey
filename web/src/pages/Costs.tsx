@@ -301,6 +301,10 @@ export default function Costs({ me }: { me?: Principal }) {
   const cells = useCostCells(win, bucket, !badRange);
   const billed = useBilled(win, bucket, !badRange);
   const readings = useUsageReadings(win, !badRange);
+  // Asking again without data, the query reads as pending: the count of its errors keeps the failure said meanwhile.
+  const readingsFailed = readings.data === undefined
+    ? (readings.errorUpdateCount > 0 ? "load" as const : undefined)
+    : (readings.isError ? "refresh" as const : undefined);
   // The server refused the range (a 400 with its code): said in the panel, in
   // the reader's language.
   const apiCode: RangeCode | "unknown" | null = cells.error instanceof ApiError && cells.error.status === 400
@@ -564,7 +568,7 @@ export default function Costs({ me }: { me?: Principal }) {
           />
         </div>
         {metric === "cost" ? (
-          <CostExplorer data={cells.data} billed={billed.data} readings={readings.data ?? []} canSetPlan={canSetPlan(me?.Role ?? "")} selected={selected} bucket={bucket} fmtPeriod={fmtPeriod}
+          <CostExplorer data={cells.data} billed={billed.data} readings={readings.data ?? []} readingsFailed={readingsFailed} canSetPlan={canSetPlan(me?.Role ?? "")} selected={selected} bucket={bucket} scrollKey={`${wq}:${bucket}`} fmtPeriod={fmtPeriod}
             outside={included} full={fullPrices} onFull={setFullPrices} off={offSources} onToggleSource={toggleSource} answered={answer?.covers}
             marks={credentialMarks} onBucket={r.setBucket} />
         ) : (

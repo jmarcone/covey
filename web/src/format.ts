@@ -300,6 +300,14 @@ export function fmtBucket(iso: string, bucket: string, tz: DisplayTz = displayTz
   }
 }
 
+// fmtClock is an instant as HH:MM on the page's clock (the display time
+// zone), with the zone named.
+export function fmtClock(iso: string, tz: DisplayTz = displayTz): string {
+  return tz === "local"
+    ? new Date(iso).toLocaleTimeString(uiLocale(), { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZoneName: "short" })
+    : fmtClockUTC(iso);
+}
+
 // fmtClockUTC is an instant as HH:MM UTC — how far Anthropic's bill is
 // complete. A 24-hour clock in every language: `20:00 UTC`, not `08:00 PM UTC`.
 export function fmtClockUTC(iso: string | Date): string {

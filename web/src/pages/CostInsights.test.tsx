@@ -432,3 +432,23 @@ describe("Nutzung je Modell: Beträge unter einem Cent und Punktpreis", () => {
     expect(card.textContent).toMatch(/≈ 1,85 \$ · Spanne 1,38 \$ – 2,31 \$ · 4 Punkte × 0,4615 \$/);
   });
 });
+
+describe("Zählerkarte: verworfene Ablesungen (#117)", () => {
+  beforeEach(() => useGerman());
+  it("zählt über alle Quellen eines zusammengeführten Zählers, je Fensterart", async () => {
+    const r = (at: string, source: string, resets: string, over: Record<string, unknown> = {}) => ({
+      secret_key: "seat", secret_slot: 0, source, window_kind: "seven_day", supported: true, stale: false, week_percent: 5,
+      window_percent: null, resets_at: resets, fetched_at: `2026-11-18T${at}:00Z`, ...over,
+    });
+    const old = "2026-11-25T09:00:00Z", next = "2026-12-02T09:00:00Z";
+    mockFetch({
+      "/api/v1/cost/models": MODELS,
+      "/api/v1/cost/usage-readings": [r("09:00", "inband", old), r("09:10", "usage_cmd", next), r("09:20", "manual", old),
+        // the older daemons' window: judged on its own, not late
+        r("09:30", "manual", old, { window_kind: "" }), r("09:40", "inband", next, { stale: true }), r("09:50", "inband", next)],
+    });
+    const meter = { ...span, secret_key: "seat", secret_slot: 0, source: "merged", window_kind: "seven_day" };
+    renderWithProviders(<CostInsights days={7} figures={[seatOf("seat#0", { meter })]} />);
+    expect(await screen.findByText(/2 Ablesung\(en\) verworfen/)).toBeTruthy();
+  });
+});

@@ -12,7 +12,6 @@ import {
   coveyElsewhere,
   credentialFigures,
   isSeat,
-  meterCrossings,
   meterRange,
   meterWeeks,
   multiple,
@@ -105,10 +104,6 @@ describe("the meter and the multiple", () => {
     expect(real.value).toBeCloseTo(7 * PP, 10);
     expect(real.low).toBeCloseTo(5 * PP, 10);
     expect(real.high).toBeCloseTo(9 * PP, 10);
-    // and the crossings restart at the reset
-    const x = meterCrossings(coverage({ baseline_percent: 95 }), steps);
-    expect(x.get("2026-11-17T12:00:00Z")).toEqual({ from: 95, to: 98, reset: false });
-    expect(x.get("2026-11-17T17:00:00Z")).toEqual({ from: 0, to: 4, reset: true });
   });
 
   it("prices each part of a window at the plan valid then", () => {
