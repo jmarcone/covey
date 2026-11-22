@@ -4,8 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"covey/internal/gitauthor"
+	"covey/internal/reqlog"
+	"github.com/benjaminLedel/covey-plugin-sdk/target"
 )
 
 // newTestProxy builds an actionProxy whose fetchSecret is a stub over a fixed
@@ -120,5 +128,57 @@ func TestMaskSecretsInResult(t *testing.T) {
 	}
 	if got := maskSecretText(`exec: s3"cret rejected`, values); strings.Contains(got, "s3") {
 		t.Fatalf("error text not masked: %s", got)
+	}
+}
+
+// gitSystem is a target system whose action does what the github plugin's
+// commit action does: POST /repos/o/r/git/commits through the client the SDK
+// hands plugins, with no author of its own.
+type gitSystem struct{ url string }
+
+func (gitSystem) Name() string                                     { return "fakegit" }
+func (gitSystem) ActionSubject(a string, _ json.RawMessage) string { return "fakegit:" + a }
+func (gitSystem) PromptDoc() string                                { return "" }
+func (g gitSystem) Execute(ctx context.Context, _ string, _ json.RawMessage, _ target.Credential) (any, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.url+"/repos/o/r/git/commits",
+		strings.NewReader(`{"message":"m","tree":"t"}`))
+	if err != nil {
+		return nil, err
+	}
+	resp, err := reqlog.Client("github", 5*time.Second).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	return nil, resp.Body.Close()
+}
+
+// The identity the control plane injected reaches the commit request: execute
+// puts it on the action's context (#106). Without one, nothing is added.
+func TestExecuteGivesTheCommitRequestTheRunsIdentity(t *testing.T) {
+	id := gitauthor.Identity{Name: "covey-dev (covey agent)", Email: "1+covey-bot@users.noreply.github.com"}
+	for name, want := range map[string]gitauthor.Identity{"set": id, "unset": {}} {
+		var got map[string]any
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&got)
+		}))
+		c := NewClient("", "", "agent-1", t.TempDir(), slog.New(slog.DiscardHandler))
+		c.targets["fakegit"] = gitSystem{url: srv.URL}
+		c.creds["fakegit"] = InjectCredentials{Granted: true, TTLSecs: 60}
+		c.credsFetched["fakegit"] = time.Now()
+		// The live config says something else: the run's snapshot decides.
+		c.cfg.GitAuthor = gitauthor.Identity{Name: "other (covey agent)", Email: "other@example.com"}
+		p := &actionProxy{client: c, taskID: "task-1", gitAuthor: want}
+
+		if _, _, err := p.execute(context.Background(), "fakegit", "commit", json.RawMessage(`{}`)); err != nil {
+			t.Fatalf("%s: execute: %v", name, err)
+		}
+		srv.Close()
+		who, has := got["author"].(map[string]any)
+		if has != want.Valid() || (has && (who["name"] != want.Name || who["email"] != want.Email)) {
+			t.Errorf("%s: author = %v, want %+v", name, got["author"], want)
+		}
+		if _, ok := got["committer"]; ok != want.Valid() {
+			t.Errorf("%s: committer present = %v, want %v", name, ok, want.Valid())
+		}
 	}
 }

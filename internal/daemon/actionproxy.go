@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"covey/internal/gitauthor"
 	"covey/internal/reqlog"
 	"github.com/benjaminLedel/covey-plugin-sdk/target"
 	"github.com/google/uuid"
@@ -31,18 +32,21 @@ type actionProxy struct {
 	// tools are the target systems granted to the agent — the tool list of the
 	// MCP route (actionmcp.go). Empty means: only the shell route exists.
 	tools []ActionTool
+	// gitAuthor is who this run's commits are attributed to, from the run's
+	// snapshot of the config (as tools is), put on every action's context.
+	gitAuthor gitauthor.Identity
 	// fetchSecret resolves a {{secret:<key>}} placeholder. Defaults to
 	// client.secret (a real, uncached control-plane round-trip); tests set
 	// this directly to a stub instead of standing up a fake connection.
 	fetchSecret func(ctx context.Context, key, taskID string) (InjectSecret, error)
 }
 
-func (c *Client) startActionProxy(ctx context.Context, taskID string, tools []ActionTool) (*actionProxy, error) {
+func (c *Client) startActionProxy(ctx context.Context, taskID string, tools []ActionTool, author gitauthor.Identity) (*actionProxy, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, err
 	}
-	p := &actionProxy{client: c, taskID: taskID, ln: ln, tools: tools, fetchSecret: c.secret}
+	p := &actionProxy{client: c, taskID: taskID, ln: ln, tools: tools, gitAuthor: author, fetchSecret: c.secret}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /actions/{system}/{action}", p.handle)
 	// The same actions once more as MCP tools — one door onto the same room
@@ -830,6 +834,9 @@ func (p *actionProxy) execute(ctx context.Context, system, action string, params
 	// Workdir for actions that materialize files into the sandbox (e.g. gitlab
 	// checkout) — the credential itself stays in the daemon.
 	ctx = target.WithWorkdir(ctx, p.client.homeDir)
+	// The commit action writes over the API and sends no author; the identity
+	// on the context is what the HTTP client adds to the request (gitauthor).
+	ctx = gitauthor.WithIdentity(ctx, p.gitAuthor)
 	// Sub-agent runner: lets a plugin (dev:agent) start a nested runtime run in
 	// the project checkout without knowing the daemon.
 	ctx = target.WithSubAgent(ctx, p.client.subAgentRunner(p.taskID))

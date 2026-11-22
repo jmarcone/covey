@@ -11,6 +11,7 @@ import (
 
 	"covey/internal/agents"
 	"covey/internal/daemon"
+	"covey/internal/gitauthor"
 	"covey/internal/guardrails"
 	"covey/internal/observability"
 	"covey/internal/reqlog"
@@ -123,6 +124,7 @@ func (o *Orchestrator) ActAs(ctx context.Context, agent agents.Agent, system, ac
 	if o.ReqLog != nil {
 		cctx = reqlog.WithSink(cctx, o.ReqLog.Sink(&agent.OrgID, &agent.ID, nil))
 	}
+	cctx = gitauthor.WithIdentity(cctx, o.gitIdentity(agent))
 	_, err = sys.Execute(cctx, action, params, target.Credential{BaseURL: cred.BaseURL, Token: cred.Token, CA: cred.CA})
 	record := map[string]any{"action": subject, "via": "workflow", "ok": err == nil}
 	if err != nil {

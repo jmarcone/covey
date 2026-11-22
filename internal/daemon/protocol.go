@@ -6,6 +6,8 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
+
+	"covey/internal/gitauthor"
 )
 
 // Message is the envelope for both directions (JSON over WebSocket).
@@ -113,6 +115,11 @@ type InjectConfig struct {
 	// hand in the shell. An older daemon does not know the field and keeps to
 	// the curl route — both paths stay open.
 	ActionTools []ActionTool `json:"action_tools,omitempty"`
+	// GitAuthor is who this agent's commits are attributed to (package
+	// gitauthor). The daemon puts it on every action's context and into the
+	// run's GIT_* variables; empty = nothing is set and GitHub attributes a
+	// commit to the token's account, as before.
+	GitAuthor gitauthor.Identity `json:"git_author,omitzero"`
 }
 
 // ActionTool is one target system as a callable tool: the name the action proxy
