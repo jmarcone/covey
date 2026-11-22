@@ -35,6 +35,7 @@ export type NoFigureReason =
   | "pending" | "beforeMeter" | "afterMeter" | "notSplit" | "unpricedExcluded" | "notAtThisLevel" | "usageBasis"
   | "accountWide" | "noReported" | "noData" | "bucketTooFine" | "noBilledKeys"
   | "loadError" // the bill could not be fetched
+  | "queryFailed" // the figure's own request failed (not the bill's)
   | "notLanded" // keys are mapped, but no bill has landed yet (or the sync failed or is not configured)
   | "noPlanPrice"; // the seat's meter readings have no plan price
 

@@ -2376,6 +2376,58 @@ ol.md-list { list-style: decimal; }
 .cost-nofigure { white-space: nowrap; cursor: help; }
 .cost-nofigure:focus-visible { outline: 2px solid var(--text-accent); outline-offset: 2px; }
 
+/* Waiting on the cost pages (CostLoading): the words, and the outline of what is to come at about its height. A
+   section says it at once; a page's bundle only after 400 ms, so a fast one does not flicker: React holds a fallback
+   once shown for up to 300 ms, however soon the bundle arrives. */
+.cost-loading { display: block; min-width: 0; }
+.cost-loading-text { display: block; color: var(--text-muted); font-size: 14px; font-weight: 400; line-height: 1.4; }
+.cost-loading-bones { display: grid; gap: 14px; margin-top: 14px; }
+.cost-loading-bones i { display: block; height: 12px; max-width: 100%; border-radius: 4px; background: var(--tint); }
+.cost-loading-bones i:last-child { width: 62%; }
+.cost-loading.line, .cost-loading.line .cost-loading-text { display: inline; }
+.cost-loading.line .cost-loading-text { font-size: 13px; line-height: 1; }
+/* A door's value is one line of its own size, whatever stands in it. */
+.cost-home-door-value .cost-loading.line { display: flex; align-items: center; height: 1lh; }
+.cost-home-door-value .cost-loading-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The equation's height: one row on a wide screen, its three figures stacked on a phone. */
+.cost-loading.hero { min-height: 118px; }
+.cost-loading.hero .cost-loading-bones { gap: 9px; margin-top: 9px; }
+.cost-loading.hero i:nth-child(2) { height: 48px; width: 80%; }
+.cost-loading.hero i:first-child { width: 30%; }
+@media (max-width: 400px) { .cost-loading.hero { min-height: 312px; } }
+.cost-loading.table i { height: 24px; }
+/* Tiles say it inside the first one, so the row starts where the tiles will. */
+.cost-loading.tiles, .cost-loading.figures { position: relative; }
+.cost-loading.tiles .cost-loading-text, .cost-loading.figures .cost-loading-text { position: absolute; top: 14px; left: 16px; z-index: 1; max-width: 200px; }
+.cost-loading.tiles .cost-loading-bones { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-top: 0; }
+.cost-loading.tiles i { height: 124px; width: auto; border-radius: 8px; }
+.cost-loading.figures .cost-loading-bones { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 0; }
+.cost-loading.figures i { flex: 1 1 170px; min-width: 170px; height: 110px; width: auto; border-radius: 8px; }
+@media (min-width: 1600px) {
+  .cost-loading.tiles i { height: 148px; }
+  .cost-loading.figures i { height: 122px; }
+}
+.cost-loading.chart i:first-child { width: 30%; }
+.cost-loading.chart i:last-child { height: 340px; width: 100%; border-radius: 8px; }
+.cost-loading.page i:first-child { width: 240px; height: 26px; }
+.cost-loading.page i:nth-child(2) { height: 104px; border-radius: 8px; }
+.cost-loading.page i:last-child { height: 340px; width: 100%; border-radius: 8px; }
+.cost-loading.page { animation: cost-loading-late 1ms linear 400ms both; }
+.cost-loading-app { padding: 24px; }
+/* The wait in a filter row: in the room the row leaves free, without a height of its own (alone on a line it stands in
+   the two gaps around it). Where there is no room it is only read out. */
+.cost-bar-wait { position: relative; min-width: 0; container-type: inline-size; }
+.cost-bar-wait-text { position: absolute; inset: -8px 0 auto; overflow: hidden; color: var(--text-muted); font-size: 12px; line-height: 16px;
+  text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
+@container (max-width: 72px) { .cost-bar-wait-text { opacity: 0; } }
+/* Home without a meter: the doors keep their column. */
+.cost-home-noanswer { display: none; }
+@media (min-width: 1600px) { .cost-home-noanswer { display: block; } }
+@keyframes cost-loading-late { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: no-preference) {
+  .cost-loading-bones { animation: pulse-dot 1.8s ease-in-out infinite; }
+}
+
 /* The custom range's panel (the calendar picker): presets | calendar | times and summary side by side when the panel
    is wide (a 27" screen), presets beside the calendar from 900px, stacked below. Container queries, so the panel
    lays out by its own width, not the window's. The calendar is react-day-picker's; its stylesheet is imported for

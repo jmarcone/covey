@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router";
 import { setDisplayTz } from "../format";
@@ -8,6 +8,7 @@ import { bucketOptions, rangeOptions } from "./outsideFigures";
 import { Seg } from "./Seg";
 import { BasisControl } from "./BasisControl";
 import { useUsageReadings } from "./StackedCostChart";
+import { CostBarWait, CostBundle, CostLoading, loadState } from "./CostLoading";
 
 // The custom range's panel carries the calendar (react-day-picker and date-fns): a chunk of its own, loaded when the
 // panel opens, so a cost page on a quick range does not pay for it.
@@ -99,7 +100,7 @@ export type CostRange = ReturnType<typeof useCostRange>;
 
 /** The range and bucket switches, and the custom range's panel when it is open or in force. rangeError: the page's
  *  refusal (the address's own, or the server's code), said in the panel. */
-export function CostRangeControls({ r, rangeError, bucketSwitch = true, basisSwitch = false, leading, trailing, part = "both" }: {
+export function CostRangeControls({ r, rangeError, bucketSwitch = true, basisSwitch = false, leading, trailing, waiting = false, part = "both" }: {
   r: CostRange; rangeError: RangeCode | "unknown" | null;
   /** The bucket matters only where a chart draws periods: the home leaves it out. */
   bucketSwitch?: boolean;
@@ -108,6 +109,8 @@ export function CostRangeControls({ r, rangeError, bucketSwitch = true, basisSwi
   /** Controls at the start of the row (the filter bar's Who), and at its end (Share). */
   leading?: ReactNode;
   trailing?: ReactNode;
+  /** Whether the view waits for figures: said in the row's free room, where it stays in sight. */
+  waiting?: boolean;
   /** The switches' row, the custom range's panel, or both: the filter bar keeps only the row sticky. */
   part?: "row" | "panel" | "both";
 }) {
@@ -119,7 +122,7 @@ export function CostRangeControls({ r, rangeError, bucketSwitch = true, basisSwi
       {part !== "panel" && <div className="flex flex-wrap items-center gap-3 mb-4">
         {leading}
         {basisSwitch && <BasisControl />}
-        <div style={{ flex: 1 }} />
+        <CostBarWait waiting={waiting} />
         <Seg<number | "custom"> value={r.custom || r.panelOpen || r.badRange ? "custom" : r.days} onChange={r.setRange}
           options={[...rangeOptions(t), { v: "custom", label: t("costs.range.custom") }]} />
         {bucketSwitch && <Seg value={r.bucket} onChange={r.setBucket} options={bucketOptions(t, r.win.days)} />}
@@ -127,11 +130,12 @@ export function CostRangeControls({ r, rangeError, bucketSwitch = true, basisSwi
       </div>}
       {part !== "row" && (r.custom || r.panelOpen || r.badRange) && (
         // Re-made when the range changes from outside (Back, a pasted link), so the fields hold what the address says.
-        <Suspense fallback={<div className="card mb-4 cost-range-loading" aria-busy="true" />}>
+        <CostBundle fallback={<div className="card mb-4 cost-range-loading"><CostLoading /></div>}>
           <RangePanel key={`${r.range.from}-${r.range.to}-${r.tz}`} from={r.shownFrom} to={r.shownTo}
             tz={r.tz} onTz={r.setTz} onApply={(f, t) => r.applyCustom(f, t)} onFreeze={r.freezeCustom} error={rangeError} readings={helperReadings.data ?? []}
+            readingsLoad={loadState(helperReadings)}
             quickDays={r.custom || r.badRange ? null : r.days} />
-        </Suspense>
+        </CostBundle>
       )}
     </>
   );

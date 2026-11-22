@@ -33,6 +33,7 @@ import { useDrawer, useNarrow } from "./components/ConsoleDrawer";
 import Suche, { useSucheKuerzel } from "./components/Suche";
 import AgentsFrame from "./pages/agents/AgentsFrame";
 import Landing from "./pages/agents/Landing";
+import { CostBundle, held } from "./pages/CostLoading";
 
 /* The look of the interface comes with it, not before it — see app.css. */
 import "./app.css";
@@ -61,12 +62,12 @@ const Infrastructure = lazy(() => import("./pages/Infrastructure"));
 const Audit = lazy(() => import("./pages/Audit"));
 const Templates = lazy(() => import("./pages/Templates"));
 const Setup = lazy(() => import("./pages/Setup"));
-const Costs = lazy(() => import("./pages/Costs"));
-const CostHome = lazy(() => import("./pages/CostHome"));
-const CostModels = lazy(() => import("./pages/CostModels"));
-const CostWork = lazy(() => import("./pages/CostWork"));
-const OutsideCosts = lazy(() => import("./pages/OutsideCosts"));
-const CostHealth = lazy(() => import("./pages/CostHealth"));
+const Costs = lazy(() => held(import("./pages/Costs")));
+const CostHome = lazy(() => held(import("./pages/CostHome")));
+const CostModels = lazy(() => held(import("./pages/CostModels")));
+const CostWork = lazy(() => held(import("./pages/CostWork")));
+const OutsideCosts = lazy(() => held(import("./pages/OutsideCosts")));
+const CostHealth = lazy(() => held(import("./pages/CostHealth")));
 
 
 function NavItem({
@@ -396,7 +397,9 @@ export default function AppShell({ me, onLogout }: { me: Principal; onLogout: ()
           {/* Every page is its own bundle and arrives only when it is
               called for. No placeholder: the frame already stands, and a
               spinner for two hundred milliseconds is a flicker, not a
-              signal. */}
+              signal. The cost pages carry their own (CostBundle): what
+              follows their bundle takes seconds, so they say from the start
+              that they load, though not before a fast bundle is through. */}
           <Suspense fallback={null}>
           <Routes>
             {/* The root opens the view the person chose, the list until they
@@ -413,12 +416,12 @@ export default function AppShell({ me, onLogout }: { me: Principal; onLogout: ()
             <Route path="/voices/:id" element={<VoicePage me={me} />} />
             <Route path="/org" element={<Org me={me} />} />
             {/* The cost home (cost home PR 5); the full page with the chart, agents, models and runs is "Details". */}
-            <Route path="/costs" element={<CostHome />} />
-            <Route path="/costs/details" element={<Costs me={me} />} />
-            <Route path="/costs/models" element={<CostModels />} />
-            <Route path="/costs/work" element={<CostWork />} />
-            <Route path="/costs/outside" element={<OutsideCosts />} />
-            <Route path="/costs/health" element={<CostHealth />} />
+            <Route path="/costs" element={<CostBundle><CostHome /></CostBundle>} />
+            <Route path="/costs/details" element={<CostBundle><Costs me={me} /></CostBundle>} />
+            <Route path="/costs/models" element={<CostBundle><CostModels /></CostBundle>} />
+            <Route path="/costs/work" element={<CostBundle><CostWork /></CostBundle>} />
+            <Route path="/costs/outside" element={<CostBundle><OutsideCosts /></CostBundle>} />
+            <Route path="/costs/health" element={<CostBundle><CostHealth /></CostBundle>} />
             <Route path="/people/:id" element={<PersonPage me={me} />} />
             <Route path="/profile" element={<Navigate to={`/people/${me.ID}`} replace />} />
             <Route path="/inbox" element={me.TeamSurface ? <Navigate to="/team" replace /> : <Inbox me={me} />} />

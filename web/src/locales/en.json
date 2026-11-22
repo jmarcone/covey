@@ -1025,6 +1025,9 @@
       "noRuns": "no run in this window",
       "doorHealthSub": "checks passing",
       "loading": "Loading the cost figures…",
+      "staleError": "Could not update. The last result is still shown and may be out of date.",
+      "readingsError": "The meter readings could not be loaded.",
+      "bundleError": "Could not load this page. Reload it in your browser to try again.",
       "noMeter": "No subscription meter in this window: there is no capacity figure to answer with. The details page has the token prices.",
       "loadError": "Could not load this view. Try again in a moment."
     },
@@ -1152,6 +1155,7 @@
         "bucketTooFine": "too fine",
         "noBilledKeys": "no API keys",
         "loadError": "not loaded",
+        "queryFailed": "not loaded",
         "notLanded": "not landed yet",
         "noPlanPrice": "no plan price"
       },
@@ -1169,6 +1173,7 @@
         "bucketTooFine": "No figure at 10 minutes: plan capacity and bills come per hour at the finest. Pick hourly or coarser.",
         "noBilledKeys": "No figure: no API key is mapped to a bill in this window.",
         "loadError": "No figure: the bill could not be fetched. Try again later.",
+        "queryFailed": "No figure: it could not be loaded. Try again later.",
         "notLanded": "No figure yet: API keys are mapped, but no bill has landed for this window (or the bill sync failed or is not set up).",
         "noPlanPrice": "No figure: the seat's meter readings have no plan price. Set the plan's price to see the plan capacity used."
       }

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link, useSearchParams } from "react-router";
@@ -35,6 +35,7 @@ import { IncompleteMark, credentialIncomplete, incompleteParts, unreadSeats, use
 import { basisSupport, useBasis, type Basis, type NoFigureReason } from "./costBasisSwitch";
 import { BasisControl, BasisLockChip, BasisTag } from "./BasisControl";
 import { NoFigure } from "./NoFigure";
+import { CostBarWait, CostLoadError, CostLoading, loadState } from "./CostLoading";
 
 /* The detailed view of the Claude Code sessions outside covey (#120, the
  * human's second comment): like an agent's cost view — list price over time
@@ -227,6 +228,18 @@ export default function OutsideCosts() {
   const otherSources = source == null ? [] : [...new Set(seats.flatMap((c) => c.sources))].filter((s) => s !== source && listed.has(s)).sort();
   const seatSteps = (c: { secret_key: string; secret_slot: number }) =>
     unsplitOf(data?.meter.steps ?? [], new Set([`${c.secret_key}#${c.secret_slot}`]));
+  // The chips outlive a wait: the last answer's, their figures out of sight (another window's), so each keeps its
+  // width and none moves under the pointer.
+  const [last, setLast] = useState<ExternalModelUsage>();
+  useEffect(() => {
+    if (data) setLast(data);
+  }, [data]);
+  const chipData = data ?? last;
+  const chipReal = useMemo(() => sourceRealParts(chipData), [chipData]);
+  const sourceChips: { name: string; row?: ExternalModelUsage["sources"][number] }[] = (chipData?.sources ?? [])
+    .filter((s) => listedSource(s, chipReal) || s.source === source).map((s) => ({ name: s.source, row: s }));
+  if (!data && source && !sourceChips.some((c) => c.name === source)) sourceChips.push({ name: source });
+  const load = loadState(q);
   const unpricedModels = (data?.models ?? []).filter((m) => !m.priced).map((m) => m.model);
   const fmtPeriod = (p: string) => fmtBucket(p, bucket);
   // The data checks (#178) that make these figures incomplete: a stopped
@@ -257,7 +270,7 @@ export default function OutsideCosts() {
 
       <div className="flex flex-wrap items-center gap-3 mb-3">
         <BasisControl />
-        <div style={{ flex: 1 }} />
+        <CostBarWait waiting={load === "loading"} />
         <Seg value={days} onChange={(v) => set({ days: v })} options={rangeOptions(t)} />
         <Seg value={bucket} onChange={(v) => set({ bucket: v })} options={bucketOptions(t, days)} />
       </div>
@@ -266,18 +279,30 @@ export default function OutsideCosts() {
         <span className="muted text-xs" style={{ width: 84 }}>{t("costs.outside.source")}</span>
         {basis !== "token" && <BasisTag basis={basis} />}
         <Chip on={source == null} onClick={() => set({ source: null })}>{t("costs.outside.sourceAll")}</Chip>
-        {(data?.sources ?? []).filter((s) => listedSource(s, real) || s.source === source).map((s) => {
-          const f = sourceFigure(basis, s, real, data?.meter);
+        {/* One list for the answer and the wait, so a chip keeps the focus while what it chose loads. */}
+        {sourceChips.map(({ name, row }) => {
+          const f = row && sourceFigure(basis, row, chipReal, chipData?.meter);
           return (
-            <Chip key={s.source} on={source === s.source} onClick={() => set({ source: s.source })}>
-              {s.source} <span style={{ opacity: 0.7 }} data-source-figure={s.source}>{f == null ? "–" : "none" in f ? <NoFigure reason={f.none} />
-                : `${f.estimate ? "≈ " : ""}${fmtUSD(f.usd)}`}</span>
+            <Chip key={name} on={source === name} onClick={() => set({ source: name })}>
+              {name}{row && <> <span style={{ opacity: 0.7, visibility: data ? undefined : "hidden" }} data-source-figure={name}>{f == null ? "–" : "none" in f ? <NoFigure reason={f.none} />
+                : `${f.estimate ? "≈ " : ""}${fmtUSD(f.usd)}`}</span></>}
             </Chip>
           );
         })}
       </div>
 
-      {q.isError ? <p className="muted">{t("costs.outside.loadError")}</p> : !data ? null : cells.length === 0 && seats.length === 0 ? (
+      {data && q.isError && <CostLoadError text={t("costs.home.staleError")} />}
+      {!data ? (load === "error" ? <CostLoadError text={t("costs.outside.loadError")} /> : <>
+        <div className="mb-4"><CostLoading shape="figures" /></div>
+        <div className="card mb-4">
+          <div style={{ fontWeight: 600, marginBottom: 12 }}>{t("costs.outside.chartTitle")}</div>
+          <CostLoading shape="chart" />
+        </div>
+        <div className="card mb-4">
+          <div style={{ fontWeight: 600, marginBottom: 12 }}>{t("costs.outside.meterTitle")}</div>
+          <CostLoading shape="table" />
+        </div>
+      </>) : cells.length === 0 && seats.length === 0 ? (
         <div className="card muted text-sm" style={{ padding: "40px 0", textAlign: "center" }}>{t("costs.outside.empty")}</div>
       ) : <>
         {/* No outside call in the range, but a seat they share has a dent:

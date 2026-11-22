@@ -8,6 +8,7 @@ import { fmtBucket, fmtNumber, fmtUSD } from "../format";
 import { chargeDeletable, chargeKey, isExportCharge, isMeterCharge, isSeat, usageCurrencies, windowResetsAt, type CredentialFigures,
   type ExportCheck, type MonthlyMeter, type UsageCurrency } from "./costFigures";
 import { planPlace, toLocalInput } from "./PlanPrice";
+import { CostWait, loadState } from "./CostLoading";
 
 /* How a credential's real money is formed (0151, #120), on the cost page.
  *
@@ -397,6 +398,7 @@ export function CostBasisPanel({ f, name, editable }: { f: CredentialFigures; na
           <button type="button" className="btn sm ghost" aria-expanded={allOpen} onClick={() => setAllOpen((o) => !o)}>
             {allOpen ? "▾" : "▸"} {t("costs.basis.allCharges")}
           </button>
+          {allOpen && <CostWait state={loadState(all)} shape="line" />}
           {allOpen && all.data && all.data.length === 0 && <p className="muted mt-1 mb-0">{t("costs.basis.allChargesEmpty")}</p>}
           {allOpen && all.data && all.data.length > 0 && (
             <ul className="mt-1 mb-0" style={{ paddingLeft: 16 }} aria-label={t("costs.basis.allChargesList", { name })}>
@@ -437,6 +439,7 @@ export function CostBasisPanel({ f, name, editable }: { f: CredentialFigures; na
           saveLimit.mutate(body);
         }}>
           {/* The history first: what held before is what a new limit closes. */}
+          {base && <CostWait state={loadState(limits)} shape="line" />}
           {limits.data && limits.data.length === 0 && <p className="muted text-xs mt-0 mb-1" data-limit-history>{t("costs.basis.limitHistoryEmpty")}</p>}
           {limits.data && limits.data.length > 0 && (
             <ul className="text-xs mt-0 mb-1" style={{ paddingLeft: 16 }} aria-label={t("costs.basis.limitHistory", { name })} data-limit-history>

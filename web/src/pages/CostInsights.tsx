@@ -16,6 +16,7 @@ import { externalStamp, kpiLead, listedSources, outsideModelRows, outsideSplit, 
 import { withUnpriced, withinMoney, withinSplit } from "./StackedCostChart";
 import { BASIS_SOURCE, basisSupport, useBasis } from "./costBasisSwitch";
 import { BasisLockChip, BasisTag } from "./BasisControl";
+import { CostLoadError, CostWait, loadAll, loadState, settled, type Load } from "./CostLoading";
 
 /* Cost insights.
  *
@@ -341,8 +342,10 @@ function ModelTable({ rep, figures, agents, outside = null, forced = null }: {
  *  none), the list price of the credential's lines over the same span, and
  *  the multiple. No chart: two independent scales stretched to the same
  *  height agreed by construction, not by the data. */
-function MeterFigures({ f, readings, outside = null, marks = {}, answered = false }: {
+function MeterFigures({ f, readings, readingsKnown = true, outside = null, marks = {}, answered = false }: {
   f: CredentialFigures; readings: UsageReading[];
+  /** False where the readings could not be fetched: then nothing is said of what they hold. */
+  readingsKnown?: boolean;
   /** The marks of failed data checks on this credential's figures (#178). */
   marks?: CredentialMarks;
   /** The page's answer table holds the real cost, the list price, its parts and the multiple (#195): the card keeps the meter's span. */
@@ -443,12 +446,12 @@ function MeterFigures({ f, readings, outside = null, marks = {}, answered = fals
         {e && within?.shared && within.known && <div className="muted text-xs" data-meter-shared>{t("costs.incl.everythingShared")}</div>}
         {row(e ? t("costs.incl.everything") : t("costs.fig.multiple"), mult, undefined, false, <>{marks.multiple}{e && marks.outside}</>)}
       </>}
-      <p className="muted text-xs mt-1 mb-0">
+      {readingsKnown && <p className="muted text-xs mt-1 mb-0">
         {five
           ? t("costs.insights.fiveHour", { pct: five.window_percent, at: fmtBucket(five.fetched_at, "hour") })
           : t("costs.insights.fiveHourNotReported")}
         {dropped > 0 && <> · {t("costs.insights.dropped", { count: dropped })}</>}
-      </p>
+      </p>}
     </div>
   );
 }
@@ -460,7 +463,8 @@ const times = (v: number) => (Number.isFinite(v) ? `${fmtNumber(v, 1)}×` : "∞
  *  whole organisation — the same the tiles show without an agent filter —
  *  while the model table follows `agents`, the page's agent filter (empty:
  *  all agents). */
-export function CostInsights({ days, win: customWin, figures, agents = NO_AGENTS, outside = null, meterOutside, answered, incomplete, marks }: {
+export function CostInsights({ days, win: customWin, figures, agents = NO_AGENTS, outside = null, meterOutside, answered, incomplete, marks,
+  cellsLoad = "ready", billedLoad = "ready" }: {
   days: number; /** The window when it is a custom range (days is then its span). */ win?: CostWindow;
   figures: CredentialFigures[]; agents?: ReadonlySet<string>;
   /** What the page's answer table covers (#195): the seats of its meter have their real cost and multiple there. */
@@ -473,6 +477,9 @@ export function CostInsights({ days, win: customWin, figures, agents = NO_AGENTS
   incomplete?: ReactNode;
   /** The marks of failed data checks on a credential's own figures (#178), per secret and slot. */
   marks?: (key: string, slot: number) => CredentialMarks;
+  /** The page's own queries behind `figures` and `outside`: until they answer, an empty one is no finding. */
+  cellsLoad?: Load;
+  billedLoad?: Load;
 }) {
   const { t } = useTranslation();
   // The page's basis (cost home PR 9), through the contract: the model columns stay at token price (capacity is not
@@ -497,7 +504,8 @@ export function CostInsights({ days, win: customWin, figures, agents = NO_AGENTS
     queryKey: ["cost", "external-usage", wq, "day", null, stamp],
     queryFn: () => api<ExternalModelUsage>(`/cost/external-usage?${wq}&bucket=day`),
     staleTime: Infinity,
-    placeholderData: (prev) => prev,
+    // Kept while a new upload is read, never carried into another window.
+    placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[2] === wq ? prev : undefined),
     enabled: outside != null,
   });
   const styles = useMemo(() => sourceStyles(outside), [outside]);
@@ -509,6 +517,11 @@ export function CostInsights({ days, win: customWin, figures, agents = NO_AGENTS
   const readings = useUsageReadings(win);
   const rs = useMemo(() => readings.data ?? [], [readings.data]);
   const filtered = agents.size > 0;
+  // The table's totals hold the outside sessions and the keys' bills; the meter card reads the readings.
+  const outsideLoad = outside ? loadState(outsideModels) : "ready";
+  const modelsLoad = loadAll(cellsLoad, loadState(models), settled(billedLoad), settled(outsideLoad));
+  const readingsLoad = loadState(readings);
+  const meterLoad = loadAll(cellsLoad, settled(readingsLoad));
   const metered = figures.filter((f) => f.meter != null && isSeat(f));
   const monthly = figures.filter((f) => (f.monthly ?? []).length > 0);
 
@@ -520,8 +533,10 @@ export function CostInsights({ days, win: customWin, figures, agents = NO_AGENTS
         </div>
         <BasisLockChip support={modelsSupport} basis={basis} />
         <p className="muted text-xs mb-3">{t("costs.insights.modelsHint")}</p>
-        {models.data ? <ModelTable rep={models.data} figures={figures} agents={agents} outside={outsideRows}
-          forced={basis !== "token" ? BASIS_SOURCE[basis] : null} /> : <div className="muted text-sm">…</div>}
+        <CostWait state={modelsLoad} shape="table" />
+        {modelsLoad === "ready" && outsideLoad === "error" && <CostLoadError text={t("costs.outside.loadError")} />}
+        {modelsLoad === "ready" && models.data && <ModelTable rep={models.data} figures={figures} agents={agents} outside={outsideRows}
+          forced={basis !== "token" ? BASIS_SOURCE[basis] : null} />}
       </div>
       <div className="card">
         <div style={{ fontWeight: 600, marginBottom: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }} data-meter-title>
@@ -530,8 +545,11 @@ export function CostInsights({ days, win: customWin, figures, agents = NO_AGENTS
         </div>
         <BasisLockChip support={meterSupport} basis={basis} />
         <p className="muted text-xs mb-3">{t("costs.insights.meterHint")}</p>
+        <CostWait state={meterLoad} shape="table" />
+        {meterLoad === "ready" && <>
+        {readingsLoad === "error" && <CostLoadError text={t("costs.home.readingsError")} />}
         {metered.length === 0 && monthly.length === 0 && <div className="muted text-sm">{t("costs.insights.noReadings")}</div>}
-        {metered.map((f) => <MeterFigures key={f.id} f={f} readings={rs} outside={meterOutside === undefined ? outside : meterOutside} answered={answersSeat(answered, f.id) && isSeat(f)}
+        {metered.map((f) => <MeterFigures key={f.id} f={f} readings={rs} readingsKnown={readingsLoad === "ready"} outside={meterOutside === undefined ? outside : meterOutside} answered={answersSeat(answered, f.id) && isSeat(f)}
           marks={marks?.(f.meter!.secret_key, f.meter!.secret_slot)} />)}
         {/* A monthly usage limit's meter (0152): its own lines, never in the weekly seat meter's figures. */}
         {monthly.map((f) => (
@@ -540,6 +558,7 @@ export function CostInsights({ days, win: customWin, figures, agents = NO_AGENTS
             <MonthlyMeters f={f} readings={rs} />
           </div>
         ))}
+        </>}
         <p className="muted text-xs mt-2 mb-0">{t("costs.fig.accountWideCaveat")}</p>
       </div>
     </div>

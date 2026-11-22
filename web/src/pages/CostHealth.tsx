@@ -8,6 +8,7 @@ import { uiLocale } from "../i18n";
 import { counted } from "./OutsideSessions";
 import { CostTabs } from "./CostTabs";
 import { useCostQuery } from "./costView";
+import { CostLoading, CostStatus, loadState } from "./CostLoading";
 
 /* Cost health (#178): whether the figures on the cost page can be trusted
  * right now. The server runs the checks (GET /cost/health, kept five minutes)
@@ -167,7 +168,7 @@ export function StatusPill({ status }: { status: CostHealthStatus }) {
 export function CostHealthBadge() {
   const { t } = useTranslation();
   const q = useCostHealth();
-  if (q.isError) {
+  if (q.isError || loadState(q) === "error") {
     const last = q.data && t("costs.health.lastResult", { when: when(q.data.checked_at), status: t(`costs.health.status.${q.data.status}`) });
     return (
       <Link to={HEALTH_PATH} className="text-xs" data-health-badge="error"
@@ -210,6 +211,7 @@ export default function CostHealthPage() {
   const { t } = useTranslation();
   const back = useCostQuery(["source"]);
   const q = useCostHealth();
+  const load = loadState(q);
   return (
     <div>
       <div className="mb-1"><Link to={`/costs${back}`} className="text-sm">← {t("costs.outside.back")}</Link></div>
@@ -219,7 +221,13 @@ export default function CostHealthPage() {
         {q.data && !q.isError && <StatusPill status={q.data.status} />}
       </div>
       <p className="muted text-sm mb-4" style={{ maxWidth: 680 }}>{t("costs.health.hint")}</p>
-      {q.isError && <p className="text-sm mb-3" role="alert" data-health-error>
+      <CostStatus waiting={load === "loading"} />
+      {load === "loading" && <>
+        {/* The room of the line that says when the checks ran. */}
+        <p className="muted text-xs mb-3" aria-hidden="true">{"\u00a0"}</p>
+        <div className="card"><CostLoading shape="table" /></div>
+      </>}
+      {(q.isError || load === "error") && <p className="text-sm mb-3" role="alert" data-health-error>
         {q.data ? t("costs.health.loadErrorStale", { when: when(q.data.checked_at) }) : t("costs.health.loadError")}</p>}
       {q.data && <>
         <p className="muted text-xs mb-3" data-health-checked>{t("costs.health.checkedAt", { when: when(q.data.checked_at) })}</p>

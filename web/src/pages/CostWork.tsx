@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
-import { api, ApiError, type IndicatorReport, type RunCost } from "../api";
+import { api, type IndicatorReport, type RunCost } from "../api";
 import { fmtBucket, fmtCount, fmtUSD } from "../format";
 import { PriceList } from "../components/PriceList";
 import { isRangeCode, type RangeCode } from "./costRange";
@@ -11,6 +11,7 @@ import { CostTabs } from "./CostTabs";
 import { asSet, runUSD, useParamState } from "./costView";
 import { basisSupport, useBasis } from "./costBasisSwitch";
 import { BasisLockChip } from "./BasisControl";
+import { CostLoadError, CostLoading, CostWait, loadAll, loadState, useRefusal } from "./CostLoading";
 
 /* Work (cost home views): which runs burned the money, and what came of it. The runs are ranked by their token price
  * (Claude Code's own price where it reported one, else covey's list price); a run that ended without a result (failed,
@@ -33,15 +34,19 @@ export default function CostWork() {
     queryFn: () => api<RunCost[] | null>(s === "org" ? `/cost/runs?${r.wq}&limit=${LIMIT}` : `/agents/${s}/cost/runs?${r.wq}&limit=${LIMIT}`),
     enabled: !r.badRange,
   })) });
-  const runs = { error: fetches.find((f) => f.error)?.error ?? null, isLoading: fetches.some((f) => f.isLoading),
+  const runs = { error: fetches.find((f) => f.error)?.error ?? null, load: loadAll(...fetches.map(loadState)),
     data: fetches.every((f) => f.data !== undefined) ? fetches.flatMap((f) => f.data ?? []) : undefined };
   // The price list is over whole quick ranges (its trend compares the span with the one before it).
   const indicators = useQuery({ queryKey: ["cost", "indicators", "org", r.days], queryFn: () => api<IndicatorReport>(`/cost/indicators?days=${r.days}`),
     enabled: !r.custom && !r.badRange, retry: false });
-  const apiCode: RangeCode | "unknown" | null = runs.error instanceof ApiError && runs.error.status === 400
-    ? (isRangeCode(runs.error.code) ? runs.error.code : "unknown") : null;
+  const refusal = useRefusal(`${scopes}|${r.wq}`, 400, runs);
+  const apiCode: RangeCode | "unknown" | null = refusal ? (isRangeCode(refusal.code) ? refusal.code : "unknown") : null;
+  const indicatorsForbidden = useRefusal(`org|${r.days}`, 403, indicators) != null;
   const refused = r.badRange || apiCode != null;
-  const failed = !refused && runs.error != null;
+  const failed = !refused && runs.load === "error";
+  // A refetch that failed keeps the runs it had, and says so.
+  const refetchFailed = !refused && runs.load === "ready" && runs.error != null;
+  const waiting = !refused && (runs.load === "loading" || (!r.custom && !indicatorsForbidden && loadState(indicators) === "loading"));
   const all = runs.data ?? [];
   const shown = useMemo(() => all.slice().sort((a, b) => (runUSD(b) ?? -1) - (runUSD(a) ?? -1)), [all]);
   const total = shown.reduce((a, x) => a + (runUSD(x) ?? 0), 0);
@@ -60,13 +65,12 @@ export default function CostWork() {
         <h1 className="text-[22px]">{t("costs.work.title")}</h1>
         <CostTabs />
       </div>
-      <CostFilterBar r={r} rangeError={r.range.error ?? apiCode} bucketSwitch={false} trailing={<ShareButton />}
+      <CostFilterBar r={r} rangeError={r.range.error ?? apiCode} waiting={waiting} bucketSwitch={false} trailing={<ShareButton />}
         leading={<WhoSummary names={names} count={agents.size} onClear={() => setAgents(new Set())} />} />
       {refused && <p className="muted text-sm" data-range-refused>{t("costs.range.refused")}</p>}
-      {failed && <p className="muted text-sm" data-work-error role="alert">{t("costs.home.loadError")}</p>}
-      {!refused && runs.isLoading && <p className="muted text-sm">{t("costs.home.loading")}</p>}
-      {!refused && !failed && runs.data && shown.length === 0 && <p className="muted text-sm" data-work-empty>{t("costs.work.empty")}</p>}
-      {!refused && !failed && shown.length > 0 && (
+      {refetchFailed && <CostLoadError text={t("costs.home.staleError")} />}
+      {!refused && runs.load === "loading" && <div className="mb-4"><CostLoading shape="tiles" /></div>}
+      {!refused && runs.load === "ready" && shown.length > 0 && (
         <>
           {support.state === "locked" && <div className="mb-2" data-work-lock><BasisLockChip support={support} basis={basis} /></div>}
           <div className="cost-view-tiles" data-work-tiles>
@@ -83,8 +87,16 @@ export default function CostWork() {
               <span className="cost-view-tile-value">{fmtUSD(total)}</span>
               <span className="cost-home-sub">{t(capped ? "costs.work.totalCapped" : "costs.work.totalSub", { count: shown.length })}</span></div>
           </div>
-          <div className="cost-view-split">
-            <div className="card cost-view-table">
+        </>
+      )}
+      {/* The price list has a query of its own, quicker than the runs': it stands while they load. */}
+      {!refused && (
+        <div className="cost-view-split">
+          <div className="card cost-view-table">
+            {failed && <p className="muted text-sm" data-work-error role="alert">{t("costs.home.loadError")}</p>}
+            {runs.load === "loading" && <CostLoading shape="table" />}
+            {runs.load === "ready" && shown.length === 0 && <p className="muted text-sm" data-work-empty>{t("costs.work.empty")}</p>}
+            {runs.load === "ready" && shown.length > 0 && <>
               <table data-work-table>
                 <thead>
                   <tr>
@@ -113,16 +125,17 @@ export default function CostWork() {
                 </tbody>
               </table>
               {shown.length > 100 && <p className="muted text-xs mt-2">{t("costs.work.more", { count: shown.length - 100 })}</p>}
-            </div>
-            <div className="card">
-              <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.indicators.title")}</div>
-              <p className="muted text-xs mb-3">{t("costs.indicators.hint")}</p>
-              {r.custom ? <p className="muted text-xs">{t("costs.range.indicatorsCustom")}</p>
-                : indicators.error instanceof ApiError && indicators.error.status === 403 ? <p className="muted text-xs">{t("costs.indicators.restricted")}</p>
-                : <PriceList rep={indicators.data} />}
-            </div>
+            </>}
           </div>
-        </>
+          <div className="card">
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.indicators.title")}</div>
+            <p className="muted text-xs mb-3">{t("costs.indicators.hint")}</p>
+            {r.custom ? <p className="muted text-xs">{t("costs.range.indicatorsCustom")}</p>
+              : indicatorsForbidden ? <p className="muted text-xs">{t("costs.indicators.restricted")}</p>
+              : indicators.data === undefined ? <CostWait state={loadState(indicators)} />
+              : <PriceList rep={indicators.data} />}
+          </div>
+        </div>
       )}
     </div>
   );

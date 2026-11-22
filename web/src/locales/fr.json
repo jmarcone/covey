@@ -1025,6 +1025,9 @@
       "noRuns": "aucune exécution sur cette période",
       "doorHealthSub": "contrôles réussis",
       "loading": "Chargement des chiffres de coût…",
+      "staleError": "Actualisation impossible. Le dernier résultat reste affiché et peut être périmé.",
+      "readingsError": "Impossible de charger les relevés du compteur.",
+      "bundleError": "Impossible de charger cette page. Rechargez-la dans votre navigateur pour réessayer.",
       "noMeter": "Pas de compteur d'abonnement sur cette période : aucun chiffre de capacité pour répondre. La page de détails donne les prix par token.",
       "loadError": "Impossible de charger cette vue. Réessayez dans un instant."
     },
@@ -1152,6 +1155,7 @@
         "bucketTooFine": "trop fin",
         "noBilledKeys": "aucune clé API",
         "loadError": "non chargé",
+        "queryFailed": "non chargé",
         "notLanded": "pas encore arrivée",
         "noPlanPrice": "aucun prix de forfait"
       },
@@ -1169,6 +1173,7 @@
         "bucketTooFine": "Pas de chiffre à 10 minutes : la capacité du forfait et les factures sont au mieux horaires. Choisissez l'heure ou plus large.",
         "noBilledKeys": "Pas de chiffre : aucune clé API n'est associée à une facture sur cette période.",
         "loadError": "Pas de chiffre : la facture n'a pas pu être récupérée. Réessayez plus tard.",
+        "queryFailed": "Pas de chiffre : il n'a pas pu être chargé. Réessayez plus tard.",
         "notLanded": "Pas encore de chiffre : des clés API sont associées, mais aucune facture n'est encore arrivée pour cette période (ou la synchronisation des factures a échoué ou n'est pas configurée).",
         "noPlanPrice": "Pas de chiffre : les relevés du compteur du siège n'ont pas de prix de forfait. Renseignez le prix du forfait pour voir la capacité du forfait utilisée."
       }

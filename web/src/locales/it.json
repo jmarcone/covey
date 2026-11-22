@@ -1025,6 +1025,9 @@
       "noRuns": "nessuna esecuzione in questo periodo",
       "doorHealthSub": "controlli superati",
       "loading": "Caricamento delle cifre dei costi…",
+      "staleError": "Impossibile aggiornare. Resta visibile l'ultimo risultato, che potrebbe non essere aggiornato.",
+      "readingsError": "Impossibile caricare le letture del contatore.",
+      "bundleError": "Impossibile caricare questa pagina. Ricaricala nel browser per riprovare.",
       "noMeter": "Nessun contatore dell'abbonamento in questo periodo: non c'è una cifra di capacità per rispondere. La pagina dei dettagli ha i prezzi per token.",
       "loadError": "Impossibile caricare questa vista. Riprova tra un momento."
     },
@@ -1152,6 +1155,7 @@
         "bucketTooFine": "troppo fine",
         "noBilledKeys": "nessuna chiave API",
         "loadError": "non caricato",
+        "queryFailed": "non caricato",
         "notLanded": "non ancora arrivata",
         "noPlanPrice": "nessun prezzo del piano"
       },
@@ -1169,6 +1173,7 @@
         "bucketTooFine": "Nessuna cifra a 10 minuti: capacità del piano e fatture arrivano al massimo per ora. Scegli orario o più ampio.",
         "noBilledKeys": "Nessuna cifra: nessuna chiave API è associata a una fattura in questo periodo.",
         "loadError": "Nessuna cifra: non è stato possibile recuperare la fattura. Riprova più tardi.",
+        "queryFailed": "Nessuna cifra: non è stato possibile caricarla. Riprova più tardi.",
         "notLanded": "Nessuna cifra per ora: ci sono chiavi API associate, ma per questo periodo non è ancora arrivata alcuna fattura (oppure la sincronizzazione delle fatture non è riuscita o non è configurata).",
         "noPlanPrice": "Nessuna cifra: le letture del contatore della postazione non hanno un prezzo del piano. Imposta il prezzo del piano per vedere la capacità del piano usata."
       }
