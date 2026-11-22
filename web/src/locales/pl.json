@@ -4279,7 +4279,7 @@
     },
     "buero": {
       "titel": "Agenci",
-      "text": "Tu są Państwa współpracownicy. Biuro pokazuje zespół jako budynek, lista pokazuje każdego agenta i to, co robi, a kliknięcie nazwy otwiera jego stronę. Liczba pokazuje, ile decyzji czeka na Państwa."
+      "text": "Tu są Państwa współpracownicy. Biuro pokazuje zespół jako budynek, lista pokazuje każdego agenta i to, co robi, schemat organizacyjny pokazuje, kto komu podlega, a kliknięcie nazwy otwiera jego stronę. Liczba pokazuje, ile decyzji czeka na Państwa."
     },
     "team": {
       "titel": "Zespół",

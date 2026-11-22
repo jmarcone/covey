@@ -4279,7 +4279,7 @@
     },
     "buero": {
       "titel": "Agenten",
-      "text": "Hier sind Ihre Kolleginnen und Kollegen. Das Büro zeigt die Belegschaft als Gebäude, die Liste jeden Agenten mit dem, was er gerade tut, und ein Klick auf einen Namen öffnet seine Seite. Die Zahl zeigt, wie viele Entscheidungen auf Sie warten."
+      "text": "Hier sind Ihre Kolleginnen und Kollegen. Das Büro zeigt die Belegschaft als Gebäude, die Liste jeden Agenten mit dem, was er gerade tut, das Organigramm, wer an wen berichtet, und ein Klick auf einen Namen öffnet seine Seite. Die Zahl zeigt, wie viele Entscheidungen auf Sie warten."
     },
     "team": {
       "titel": "Das Team",

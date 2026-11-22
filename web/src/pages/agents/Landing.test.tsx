@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router";
+import { MemoryRouter, Route, Routes, useLocation, useNavigate, useSearchParams } from "react-router";
 import AgentsFrame from "./AgentsFrame";
 import Landing from "./Landing";
 import { chosenView, forgetUnsavedViews, fromView, rememberView } from "./views";
@@ -19,17 +19,28 @@ function List() {
   );
 }
 
+// The browser's Back and Forward, and an address the page rewrites itself.
+let browser: { back(): void; forward(): void; dropQuery(): void };
+function Browser() {
+  const go = useNavigate();
+  const [, setSearch] = useSearchParams();
+  browser = { back: () => go(-1), forward: () => go(1), dropQuery: () => setSearch({}, { replace: true }) };
+  return null;
+}
+
 /* The root and the list as the shell routes them, with the bar above. A tab
    is a fresh mount: what survives it is what the browser stored. */
-function app(principal: Principal, route: string | { pathname: string; state?: unknown } = "/") {
+function app(principal: Principal, route: string | { pathname: string; search?: string; state?: unknown } = "/") {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 0 } } });
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={[route]}>
+        <Browser />
         <AgentsFrame teamSurface={!!principal.TeamSurface} principal={principal.ID} />
         <Routes>
           <Route path="/" element={<Landing me={principal} office={<p>das Büro</p>} />} />
           <Route path="/agents" element={<List />} />
+          <Route path="/org" element={<p>das Organigramm</p>} />
           <Route path="/agents/:id" element={<p>die Seite</p>} />
         </Routes>
       </MemoryRouter>
@@ -149,6 +160,27 @@ describe("the view the root opens", () => {
     expect(screen.getAllByText("das Büro").length).toBeGreaterThan(0);
   });
 
+  for (const TeamSurface of [true, false]) {
+    it(`is the org chart after it was chosen (team surface ${TeamSurface ? "on" : "off"})`, () => {
+      const first = app(me({ TeamSurface }), "/agents");
+      fireEvent.click(screen.getByRole("link", { name: "Organigramm" }));
+      expect(screen.getByText("das Organigramm")).toBeInTheDocument();
+      expect(chosenView(me().ID, TeamSurface)).toBe("org");
+      first.unmount();
+
+      sessionStorage.clear();
+      app(me({ TeamSurface }));
+      expect(screen.getByText("das Organigramm")).toBeInTheDocument();
+    });
+  }
+
+  it("opens the list for a department on the root, whatever was chosen", () => {
+    rememberView(me().ID, "org");
+    app(me(), "/?dept=d1");
+    expect(screen.getByText("die Liste")).toBeInTheDocument();
+    expect(screen.getByLabelText("Suche")).toHaveTextContent("?dept=d1");
+  });
+
   it("passes the query of the root on to the list", () => {
     app(me(), "/?dept=d1");
     expect(screen.getByText("die Liste")).toBeInTheDocument();
@@ -161,6 +193,34 @@ describe("the view the root opens", () => {
     app(me({ TeamSurface: false }));
     expect(screen.getByText("die Liste")).toBeInTheDocument();
     expect(screen.queryByText("das Büro")).not.toBeInTheDocument();
+  });
+
+  for (const [pick, shown] of [["Organigramm", "das Organigramm"], ["Liste", "die Liste"]]) {
+    it(`keeps the office on the entry that showed it: ${pick}, Back, Forward`, async () => {
+      rememberView(me().ID, "office");
+      app(me());
+      fireEvent.click(screen.getByRole("link", { name: pick }));
+      expect(screen.getByText(shown)).toBeInTheDocument();
+      await act(async () => browser.back());
+      expect(screen.getByText("das Büro")).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Büro" })).toHaveAttribute("aria-current", "page");
+      await act(async () => browser.forward());
+      expect(screen.getByText(shown)).toBeInTheDocument();
+    });
+  }
+
+  // The office takes ?dept= out of the address, and the entry's state goes with it.
+  it("stays the office reached with Back when the page rewrites its own address", async () => {
+    rememberView(me().ID, "org");
+    app(me(), { pathname: "/", search: "?dept=d1", state: { view: "office" } });
+    expect(screen.getByText("das Büro")).toBeInTheDocument();
+    await act(async () => browser.dropQuery());
+    expect(screen.getByText("das Büro")).toBeInTheDocument();
+  });
+
+  it("does not bring the office back where the installation has none", () => {
+    app(me({ TeamSurface: false }), { pathname: "/", state: { view: "office" } });
+    expect(screen.getByText("die Liste")).toBeInTheDocument();
   });
 
   it("ignores a stored value that is no view", () => {

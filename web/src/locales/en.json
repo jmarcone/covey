@@ -4279,7 +4279,7 @@
     },
     "buero": {
       "titel": "Agents",
-      "text": "Your colleagues live here. The office shows the workforce as a building, the list shows every agent and what it is doing, and a click on a name opens its page. The number shows how many decisions are waiting for you."
+      "text": "Your colleagues live here. The office shows the workforce as a building, the list shows every agent and what it is doing, the org chart shows who reports to whom, and a click on a name opens its page. The number shows how many decisions are waiting for you."
     },
     "team": {
       "titel": "The team",

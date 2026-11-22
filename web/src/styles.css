@@ -2323,12 +2323,11 @@ ol.md-list { list-style: decimal; }
   .cost-home-door-value { font-size: 28px; }
 }
 
-/* The cost pages' filter bar (cost home PR 6): sticky while the page scrolls, on the page's own background. */
+/* The cost pages' filter bar (cost home PR 6): sticky while the page scrolls, on the page's own background. At the
+   window's top at every width: costs are a place of their own (#17), so no bar of the shell stands above it. */
 .cost-filterbar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; background: var(--surface-0);
   margin: 0 -8px 8px; padding: 8px 8px 0; border-bottom: 1px solid var(--border); }
 .cost-filterbar > .flex { margin-bottom: 8px; }
-/* Below 900px the shell's own title bar sticks at the top (52px, z-index 30): the filter bar sticks under it, not behind it. */
-@media (max-width: 900px) { .cost-filterbar { top: calc(52px + env(safe-area-inset-top, 0px)); } }
 .cost-who { display: inline-flex; align-items: center; gap: 4px; font-size: 14px; padding: 4px 10px; border-radius: 6px;
   background: var(--surface-2); border: 1px solid var(--border); }
 .cost-who.locked { color: var(--text-secondary); border-style: dashed; background: transparent; }

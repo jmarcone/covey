@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -43,6 +44,7 @@ describe("AgentsFrame", () => {
     expect(switchLinks().map((a) => [a.textContent, a.getAttribute("aria-current")])).toEqual([
       ["Büro", "page"],
       ["Liste", null],
+      ["Organigramm", null],
     ]);
     office.unmount();
 
@@ -50,12 +52,51 @@ describe("AgentsFrame", () => {
     expect(switchLinks().map((a) => [a.textContent, a.getAttribute("aria-current")])).toEqual([
       ["Büro", null],
       ["Liste", "page"],
+      ["Organigramm", null],
     ]);
   });
 
-  it("offers no office without the team surface", () => {
+  it("marks the org chart at /org, as the third view", () => {
+    bar("/org");
+    expect(switchLinks().map((a) => [a.textContent, a.getAttribute("href"), a.getAttribute("aria-current")])).toEqual([
+      ["Büro", "/", null],
+      ["Liste", "/agents", null],
+      ["Organigramm", "/org", "page"],
+    ]);
+  });
+
+  it("offers no office without the team surface, and the org chart as the second view", () => {
     bar("/agents", false);
-    expect(switchLinks().map((a) => a.textContent)).toEqual(["Liste"]);
+    expect(switchLinks().map((a) => a.textContent)).toEqual(["Liste", "Organigramm"]);
+  });
+
+  /* Weight changes a word's width, so each segment reserves the room of its
+     own label at the current view's weight (app.css draws data-label). */
+  it("reserves each segment's room at the current view's weight", () => {
+    bar("/org");
+    for (const a of switchLinks()) expect(a).toHaveAttribute("data-label", a.textContent!);
+  });
+
+  // A segment cut short on a phone still says its whole word, as a crumb step does.
+  it("titles every segment that is not the way back with its label", () => {
+    bar({ pathname: `/agents/${ID}`, state: fromView("list") });
+    expect(switchLinks().map((a) => a.getAttribute("title"))).toEqual(["Büro", "Zurück: Liste", "Organigramm"]);
+  });
+
+  it("tells the stylesheet when the bar has to leave room for the crumb", () => {
+    const view = bar("/org");
+    expect(view.container.querySelector(".av-bar")).not.toHaveClass("av-bar-agent");
+    view.unmount();
+    expect(bar(`/agents/${ID}`).container.querySelector(".av-bar")).toHaveClass("av-bar-agent");
+  });
+
+  it("marks the org chart on the page of an agent opened from it, and leads back to it as it was", () => {
+    bar("/org?x=1").unmount();
+    bar({ pathname: `/agents/${ID}`, state: fromView("org") });
+    const org = switchLinks()[2];
+    expect(org).toHaveClass("on", "back");
+    expect(org).toHaveAttribute("title", "Zurück: Organigramm");
+    expect(org).toHaveAttribute("href", "/org?x=1");
   });
 
   it("marks the view an agent's page was reached from, and names the agent after it", async () => {
@@ -75,7 +116,7 @@ describe("AgentsFrame", () => {
     bookmark.unmount();
 
     bar({ pathname: `/agents/${ID}`, state: fromView("office") }, false);
-    expect(switchLinks()).toHaveLength(1);
+    expect(switchLinks()).toHaveLength(2);
     expect(switchLinks()[0]).toHaveClass("on", "back");
   });
 
@@ -134,13 +175,19 @@ describe("AgentsFrame", () => {
       bar({ pathname: `/agents/${ID}`, state: fromView("list") });
       await within(await crumb()).findByRole("link", { name: "Entwicklung" });
       expect(screen.queryByRole("link", { name: "Agenten" })).not.toBeInTheDocument();
-      expect(screen.getAllByRole("link").map((a) => a.textContent)).toEqual(["Büro", "Liste", "Entwicklung", "Chefin"]);
+      expect(screen.getAllByRole("link").map((a) => a.textContent)).toEqual(["Büro", "Liste", "Organigramm", "Entwicklung", "Chefin"]);
     });
 
     it("leads the department step to the office the page came from", async () => {
       withChart();
       bar({ pathname: `/agents/${ID}`, state: fromView("office") });
       expect(await screen.findByRole("link", { name: "Entwicklung" })).toHaveAttribute("href", "/?dept=dev");
+    });
+
+    it("leads the department step to the list from the org chart, which has no such filter", async () => {
+      withChart();
+      bar({ pathname: `/agents/${ID}`, state: fromView("org") });
+      expect(await screen.findByRole("link", { name: "Entwicklung" })).toHaveAttribute("href", "/agents?dept=dev");
     });
 
     it("never leads the department step to the office without the team surface", async () => {
@@ -156,12 +203,41 @@ describe("AgentsFrame", () => {
   });
 });
 
+/* jsdom lays nothing out, so the rules that keep the switch still and inside
+   a phone's bar are read from the stylesheet. */
+describe("the switch's stylesheet", () => {
+  const css = readFileSync(`${process.cwd()}/src/app.css`, "utf8");
+  const media = (query: string) =>
+    css.split(`@media (${query}) {`).slice(1).map((s) => s.split("\n}")[0]).join("\n");
+
+  it("reserves each label at the current view's weight", () => {
+    const current = css.match(/\.av-switch a\[aria-current="page"\] \{ font-weight: (\d+); \}/)![1];
+    const room = css.match(/^\.av-switch a::after \{([^}]*)\}/m)![1];
+    expect(room).toContain("content: attr(data-label)");
+    expect(room).toContain(`font-weight: ${current}`);
+  });
+
+  it("caps the switch on a phone, and its last segment gives way first", () => {
+    const phone = media("max-width: 480px");
+    expect(phone).toContain(".av-switch { max-width: 100%; }");
+    expect(phone).toContain(".av-switch a:not(:last-child) { flex-shrink: 0; }");
+    expect(phone).toContain(".av-bar-agent .av-switch { max-width: calc(100% - 56px); }");
+    expect(phone).toMatch(/\.av-switch a > span \{[^}]*text-overflow: ellipsis/);
+  });
+
+  it("gives up the crumb's separator before a first label on the narrowest phones", () => {
+    const narrowest = media("max-width: 359px");
+    expect(narrowest).toContain(".av-bar-agent .acrumb li::before { display: none; }");
+    expect(narrowest).toContain(".av-bar-agent .av-switch { max-width: calc(100% - 37px); }");
+  });
+});
+
 describe("views", () => {
   beforeEach(() => sessionStorage.clear());
 
   it("offers the office only with the team surface", () => {
-    expect(viewsFor(true)).toEqual(["office", "list"]);
-    expect(viewsFor(false)).toEqual(["list"]);
+    expect(viewsFor(true)).toEqual(["office", "list", "org"]);
+    expect(viewsFor(false)).toEqual(["list", "org"]);
   });
 
   it("ignores a remembered address that no longer belongs to the view", () => {
@@ -188,6 +264,7 @@ describe("views", () => {
   it("reads the origin from the router state", () => {
     expect(originOf(undefined, fromView("office"), true)).toBe("office");
     expect(originOf(undefined, fromView("office"), false)).toBe("list");
+    expect(originOf(undefined, fromView("org"), false)).toBe("org");
     expect(originOf(undefined, null, true)).toBe("list");
     expect(originOf(undefined, { from: "members" }, true)).toBe("list");
   });
@@ -201,6 +278,8 @@ describe("views", () => {
     // A new way in replaces the old one.
     expect(originOf(ID, fromView("list"), true)).toBe("list");
     expect(originOf(ID, null, true)).toBe("list");
+    expect(originOf(ID, fromView("org"), false)).toBe("org");
+    expect(originOf(ID, null, false)).toBe("org");
     // A stored office the installation does not offer still falls back.
     originOf(ID, fromView("office"), true);
     expect(originOf(ID, null, false)).toBe("list");

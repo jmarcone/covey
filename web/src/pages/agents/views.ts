@@ -1,14 +1,14 @@
 /* The views of the agents area and what is remembered between them.
 
- * Office and list are pages of their own, each with an address; the agent's
- * page is the way into one of them and knows which. Nothing here is state of
- * the server, only of this browser tab. */
+ * Office, list and org chart are pages of their own, each with an address;
+ * the agent's page is the way into one of them and knows which. Nothing here
+ * is state of the server, only of this browser tab. */
 
-export type AgentsView = "office" | "list";
+export type AgentsView = "office" | "list" | "org";
 
 /* The address a view lives at. An agent id is a UUID, so none of the views
  * can clash with /agents/<id>. */
-const BASE: Record<AgentsView, string> = { office: "/", list: "/agents" };
+const BASE: Record<AgentsView, string> = { office: "/", list: "/agents", org: "/org" };
 
 /* The view's own address, without anything remembered: what a link that
  * starts a filter of its own builds on (the crumb's department step). */
@@ -17,18 +17,20 @@ export const viewPath = (v: AgentsView): string => BASE[v];
 /* The views this installation offers, in the order of the switch. The office
  * needs the team surface: its card and rows open conversations. */
 export function viewsFor(teamSurface: boolean): AgentsView[] {
-  return teamSurface ? ["office", "list"] : ["list"];
+  return teamSurface ? ["office", "list", "org"] : ["list", "org"];
 }
 
+const isView = (v: unknown): v is AgentsView => v === "office" || v === "list" || v === "org";
+
 export function viewOf(path: string): AgentsView | null {
-  return path === "/" ? "office" : path === "/agents" ? "list" : null;
+  return path === "/" ? "office" : path === "/agents" ? "list" : path === "/org" ? "org" : null;
 }
 
 const key = (v: AgentsView) => `covey.agents.url.${v}`;
 
 /* The address with its filters, kept per view for the length of the tab: the
  * way back from an agent's page lands where the person left, not on the
- * unfiltered list. `?dept=` is the exception in both views: an id belongs to
+ * unfiltered list. `?dept=` is the exception in every view: an id belongs to
  * one organisation, and the tab outlives a switch of organisation, so a
  * remembered one would reopen the view on another organisation's department.
  * The office's is no filter but a pointer, and the list's comes with the
@@ -117,7 +119,7 @@ export function originOf(agentId: string | undefined, state: unknown, teamSurfac
   let from = (state as { from?: unknown } | null)?.from;
   if (agentId) {
     try {
-      if (from === "office" || from === "list") sessionStorage.setItem(fromKey(agentId), from);
+      if (isView(from)) sessionStorage.setItem(fromKey(agentId), from);
       else from = sessionStorage.getItem(fromKey(agentId));
     } catch {
       // Without storage only the entry that opened the page knows the origin.

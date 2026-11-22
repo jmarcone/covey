@@ -4164,6 +4164,9 @@ a.tm-file:hover { background: var(--tint); }
 .tm-drei .tm-notizen-seite { padding: 24px 32px 60px; overflow: auto; flex: 1; }
 /* The console's navigation as the middle column beside the rail (#389). */
 .tm-drei .konsole-spalte { width: 240px; padding-top: 14px; overflow-y: auto; }
+/* The column opens with a group's heading: under the title it needs no more
+   room above it than the title's own margin gives. */
+.konsole-spalte .tm-spalte-kopf + .nav-sec { margin-top: 4px; }
 .konsole-inhalt { padding: 22px 26px 60px; }
 .konsole-bar { display: none; }
 
@@ -4180,7 +4183,7 @@ a.tm-file:hover { background: var(--tint); }
   border: 0.5px solid var(--border); border-radius: 8px; background: var(--surface-1);
 }
 .av-switch a {
-  display: inline-flex; align-items: center; height: 31px; padding: 0 14px;
+  display: inline-flex; flex-direction: column; align-items: center; justify-content: center; height: 31px; padding: 0 14px;
   border-radius: 7.5px; font-size: 13px; color: var(--text-secondary); text-decoration: none; white-space: nowrap;
 }
 .av-switch a:hover { color: var(--text-primary); }
@@ -4188,6 +4191,9 @@ a.tm-file:hover { background: var(--tint); }
    it came from). Weight belongs to the current one. */
 .av-switch a.on { background: var(--surface-2); color: var(--text-primary); box-shadow: 0 0 0 0.5px var(--border); }
 .av-switch a[aria-current="page"] { font-weight: 550; }
+/* Weight changes a word's width: each segment keeps the room of its label at
+   that weight, so none moves when another view becomes the current one. */
+.av-switch a::after { content: attr(data-label); height: 0; overflow: hidden; visibility: hidden; font-weight: 550; }
 .av-switch a:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: -2px; }
 /* The settings column of an agent's page (Settings, Tooling) sticks below
    the bar, not under it. Elsewhere — a runner's page — there is no bar, and
@@ -4231,6 +4237,27 @@ a.tm-file:hover { background: var(--tint); }
      that answers. */
   .konsole-scrim { position: fixed; inset: 0; z-index: 70; background: var(--scrim-weak); animation: fade 0.15s ease; }
 }
+/* Three views on a phone: less air in the segments and, where a language's
+   words still do not fit, the last one alone ends in an ellipsis rather than
+   pushing the page sideways — a share of the shrink, however small, would
+   cost the others a letter or two. On an agent's page the `⋯` of the crumb
+   (46 px and the bar's gap) keeps its room. */
+@media (max-width: 480px) {
+  .av-switch { max-width: 100%; }
+  .av-bar-agent .av-switch { max-width: calc(100% - 56px); }
+  .av-switch a { padding: 0 8px; }
+  .av-switch a:not(:last-child) { flex-shrink: 0; }
+  .av-switch a:last-child { min-width: 48px; }
+  .av-switch a > span, .av-switch a::after { max-width: 100%; }
+  .av-switch a > span { overflow: hidden; text-overflow: ellipsis; }
+}
+/* Narrower still, the two first words and the crumb's › do not fit on an
+   agent's page together: the › goes first. */
+@media (max-width: 359px) {
+  .av-bar-agent .av-switch { max-width: calc(100% - 37px); }
+  .av-bar-agent .av-switch a:last-child { min-width: 36px; }
+  .av-bar-agent .acrumb li::before { display: none; }
+}
 @media (max-width: 900px) and (prefers-reduced-motion: reduce) {
   .tm-drei .konsole-spalte, .tm-drei .konsole-spalte.offen { transition: none; }
   .konsole-scrim { animation: none; }
@@ -4239,6 +4266,19 @@ a.tm-file:hover { background: var(--tint); }
 
 /* Setup in the rail while unfinished (#391): the accent, and a dot. */
 .tm-rail-setup { color: var(--text-accent); background: var(--bg-accent); margin-bottom: 6px; }
+/* A short window (a phone on its side, high zoom): the rail cannot scroll,
+   the person's menu opens out of it. So the air goes before the items get
+   too small to hit, and in the shortest the bird goes before search. */
+@media (max-height: 500px) {
+  .tm-rail { gap: 1px; padding: 6px 0; }
+  .tm-rail-mark { margin-bottom: 2px; }
+  .tm-rail-setup { margin-bottom: 0; }
+  .tm-rail-item.on::before { top: min(10px, 24%); bottom: min(10px, 24%); }
+  .tm-rail .side-foot.compact { margin: 0; padding: 0; }
+}
+@media (max-height: 300px) {
+  .tm-rail-mark { display: none; }
+}
 .tm-rail-punkt { position: absolute; top: 6px; right: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--text-accent); box-shadow: 0 0 0 2px var(--bg-accent); }
 
 /* Decisions in the conversation (#391). */
@@ -5161,6 +5201,7 @@ a.acrumb-step:hover, .acrumb-link:hover { text-decoration: underline; text-under
 .acrumb-menu .ic { width: 13px; height: 13px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 .acrumb-gap { width: 13px; flex: none; }
 .acrumb-clip { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acrumb-menu a.acrumb-menu-note { color: var(--text-secondary); }
 /* On a phone the menu hangs from the bar, not from the button, so it cannot
    run off the right edge. */
 @media (max-width: 768px) {

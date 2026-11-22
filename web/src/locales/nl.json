@@ -4279,7 +4279,7 @@
     },
     "buero": {
       "titel": "Agenten",
-      "text": "Hier wonen uw collega's. Het kantoor toont het personeel als gebouw, de lijst toont elke agent en wat die doet, en een klik op een naam opent de pagina ervan. Het getal toont hoeveel beslissingen op u wachten."
+      "text": "Hier wonen uw collega's. Het kantoor toont het personeel als gebouw, de lijst toont elke agent en wat die doet, het organigram toont wie aan wie rapporteert, en een klik op een naam opent de pagina ervan. Het getal toont hoeveel beslissingen op u wachten."
     },
     "team": {
       "titel": "Het team",

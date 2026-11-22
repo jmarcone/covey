@@ -4279,7 +4279,7 @@
     },
     "buero": {
       "titel": "Agentes",
-      "text": "Aqui vivem os seus colegas. O escritório mostra a equipa como um edifício, a lista mostra cada agente e o que está a fazer, e um clique num nome abre a sua página. O número indica quantas decisões estão à sua espera."
+      "text": "Aqui vivem os seus colegas. O escritório mostra a equipa como um edifício, a lista mostra cada agente e o que está a fazer, o organograma mostra quem responde a quem, e um clique num nome abre a sua página. O número indica quantas decisões estão à sua espera."
     },
     "team": {
       "titel": "A equipa",

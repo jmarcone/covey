@@ -33,6 +33,14 @@ describe("getHelpTopics", () => {
   });
 });
 
+describe("topicForPath", () => {
+  it("answers each view of the agents area with its topic", () => {
+    expect(topicForPath("/")).toBe("agenten");
+    expect(topicForPath("/agents")).toBe("agenten");
+    expect(topicForPath("/org")).toBe("organisation");
+  });
+});
+
 describe("HelpDrawer", () => {
   it("shows English topics in French, says so, and marks them lang=en", async () => {
     await ladeSprache("fr");

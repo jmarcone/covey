@@ -4279,7 +4279,7 @@
     },
     "buero": {
       "titel": "Agents",
-      "text": "Vos collègues sont ici. Le bureau montre l'équipe sous forme de bâtiment, la liste montre chaque agent et ce qu'il fait, et un clic sur un nom ouvre sa page. Le nombre indique combien de décisions vous attendent."
+      "text": "Vos collègues sont ici. Le bureau montre l'équipe sous forme de bâtiment, la liste montre chaque agent et ce qu'il fait, l'organigramme montre qui rend compte à qui, et un clic sur un nom ouvre sa page. Le nombre indique combien de décisions vous attendent."
     },
     "team": {
       "titel": "L'équipe",
