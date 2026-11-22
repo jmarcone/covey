@@ -5,7 +5,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -114,18 +113,19 @@ func sweepScratch(home string, now time.Time, keep string) (int, error) {
 	return removed, failed
 }
 
-// withScratch appends the paragraph that names the run's directory. Like the
-// workplace it is added by the daemon and not compiled into the configuration:
-// only the daemon that starts the run in that directory can truthfully say so.
-func withScratch(prompt, dir string) string {
+// scratchParagraph is the paragraph that names the run's directory, "" without
+// one. Like the workplace it is written by the daemon and not compiled into the
+// configuration: only the daemon that starts the run in that directory can
+// truthfully say so.
+//
+// It goes into the run's first user message (taskInput), not into the system
+// prompt. The directory carries the task id, and one task id in the system
+// prompt makes the whole prompt new to the prompt cache on every task (#23).
+func scratchParagraph(dir string) string {
 	if dir == "" {
-		return prompt
+		return ""
 	}
-	doc := scratchDoc(filepath.Base(dir))
-	if strings.TrimSpace(prompt) == "" {
-		return doc
-	}
-	return prompt + "\n\n" + doc
+	return scratchDoc(filepath.Base(dir))
 }
 
 func scratchDoc(taskID string) string {

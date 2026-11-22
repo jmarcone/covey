@@ -59,7 +59,7 @@ This separation resolves the "files vs. control plane" tension: file ergonomics 
 
 **Ingest** — in the **`done`** step (what did I learn / decide?) and proactively mid-run through `covey/remember` at the action proxy (see [`01-architecture.md`](01-architecture.md)), for generally applicable insights that should not wait until completion. The agent assigns the insight to the right page (new vs. edit), sets wikilinks and updates `index.md` + `log.md`. Distinction from task-related interim states (`covey/add_note`, see [`03-lifecycle-scheduling.md`](03-lifecycle-scheduling.md)): if it only helps this task → note; if it also helps future ones → wiki.
 
-**Query** — in the **`triage`** step (what do I know about this task / this customer?): vector search delivers the relevant pages, optionally extended by one wikilink hop, as a context block in the prompt. In addition the agent gets the **compact index** of its entire wiki (title + slug) — so it knows its whole body of knowledge, navigates deliberately and creates duplicates less often, instead of only seeing the top hits.
+**Query** — in the **`triage`** step (what do I know about this task / this customer?): vector search delivers the relevant pages, optionally extended by one wikilink hop, as a context block in the run's **first user message**, beside the task. In addition the agent gets the **compact index** of its entire wiki (title + slug) — so it knows its whole body of knowledge, navigates deliberately and creates duplicates less often, instead of only seeing the top hits. Both go with the task and not into the system prompt: they differ from task to task, and the system prompt stays the same so the prompt cache can serve it from one task to the next ([`12`](12-claude-code-adapter.md#basic-mechanics), #23). A resume does not send them again; the session holds them.
 
 **Lint / consolidation** — **periodically as a scheduled maintenance job** (not in the hot path of the `done` step): merge duplicate pages, resolve contradictions between pages, mark outdated statements, find orphaned pages and missing cross-references. **This is the curation mechanic the flat snippet store lacked** — it keeps the wiki low on contradictions and lets knowledge *condense* with every task instead of merely *growing*. It can also be triggered manually for an agent through the UI.
 
@@ -68,7 +68,7 @@ Consolidation runs on **two levels**: (1) **central & deterministic** — the co
 ## Integration into the lifecycle
 
 ```
-triage:  wiki.query(context)      → relevant pages (+ 1 wikilink hop) into the prompt
+triage:  wiki.query(context)      → relevant pages (+ 1 wikilink hop) into the first user message
 working: (work the task; pages directly readable/writable in the home)
 done:    wiki.ingest(insight)     → create/edit page, links, index.md, log.md; sync into the control plane
 ─────────

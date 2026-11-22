@@ -73,14 +73,25 @@ func BuiltinTools(scope []string, withSkills bool) []string {
 
 // RunSpec is everything a runtime adapter needs for one run.
 type RunSpec struct {
-	TaskID        string
-	Title         string
-	Body          string
-	SystemPrompt  string
+	TaskID string
+	Title  string
+	Body   string
+	// SystemPrompt is the agent's configuration and nothing that depends on
+	// the task: it stays byte for byte the same from task to task, so a run
+	// reads it from the prompt cache that the agent's previous run wrote (#23).
+	// What belongs to the task (title, body, MemoryContext, ScratchDoc) goes
+	// into the first user message, see taskInput.
+	SystemPrompt string
+	// MemoryContext is the wiki's share of this task: the relevant pages and
+	// the index. Only a fresh run sends it; a resumed session already holds it.
 	MemoryContext string
-	Model         string // desired LLM; empty = the runtime's default
-	Effort        string // reasoning effort (low/medium/high/xhigh/max); empty = the runtime's default
-	AllowedTools  []string
+	// ScratchDoc is the paragraph that names the run's directory
+	// (scratchParagraph). Like MemoryContext it is the task's, not the
+	// agent's, and goes into the first user message.
+	ScratchDoc   string
+	Model        string // desired LLM; empty = the runtime's default
+	Effort       string // reasoning effort (low/medium/high/xhigh/max); empty = the runtime's default
+	AllowedTools []string
 	// Skills says whether skills were materialized into the home for this run
 	// (skillslocal.go). Only then does the Skill tool belong in the loading
 	// scope — otherwise it costs prompt tokens for skills the agent does not
@@ -102,6 +113,31 @@ type RunSpec struct {
 	// action proxy, so target actions arrive as typed tools instead of as a curl
 	// in the shell (actionmcp.go). Empty = without, the shell route as before.
 	MCPConfig string
+}
+
+// taskInput is a fresh run's first user message: the wiki context and the
+// paragraph on the run's directory, then the task itself. Each runtime that
+// takes a system prompt sends this beside it, and sevencode, which takes none,
+// sends it after the configuration; either way the text is the same.
+//
+// None of it goes into the system prompt. Title, body, wiki hits and the task
+// id in the directory differ from task to task, and a system prompt that
+// differs is written into the prompt cache anew on the first turn of every run
+// — 14-25k tokens each time, where a stable one is read at a tenth of the price
+// (#23). The task comes last, as it did when the context stood in the system
+// prompt: the agent reads what it knows before what it is asked.
+func taskInput(spec RunSpec) string {
+	task := spec.Title + "\n\n" + spec.Body
+	var head []string
+	for _, part := range []string{spec.MemoryContext, spec.ScratchDoc} {
+		if part = strings.TrimSpace(part); part != "" {
+			head = append(head, part)
+		}
+	}
+	if len(head) == 0 {
+		return task
+	}
+	return strings.Join(head, "\n\n") + "\n\n---\n\n" + task
 }
 
 // RunResult is the normalized result of a runtime run.
