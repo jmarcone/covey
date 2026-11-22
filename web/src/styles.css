@@ -2375,3 +2375,106 @@ ol.md-list { list-style: decimal; }
 .cost-basis-swatch.hatched { background-image: repeating-linear-gradient(45deg, transparent 0 3px, rgba(255,255,255,.55) 3px 4px) !important; }
 .cost-nofigure { white-space: nowrap; cursor: help; }
 .cost-nofigure:focus-visible { outline: 2px solid var(--text-accent); outline-offset: 2px; }
+
+/* The custom range's panel (the calendar picker): presets | calendar | times and summary side by side when the panel
+   is wide (a 27" screen), presets beside the calendar from 900px, stacked below. Container queries, so the panel
+   lays out by its own width, not the window's. The calendar is react-day-picker's; its stylesheet is imported for
+   the layout, and every colour here is covey's. */
+.cost-range { container: costrange / inline-size; }
+.cost-range-loading { min-height: 420px; }
+.cost-range-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-bottom: 12px; }
+.cost-range-tz { display: inline-flex; align-items: center; gap: 8px; color: var(--text-secondary); }
+.cost-range-label { font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .04em; margin: 0 0 8px; padding: 0; }
+.cost-range-why { margin: 6px 0 0; }
+/* The two live regions (the calendar's hint, the summary) stay in the page when empty, so a screen reader hears what
+   comes into them: empty, they take no room rather than no box. */
+.cost-range-live:empty { margin: 0; }
+.cost-range-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
+.cost-range-preset-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.cost-range-preset { font: inherit; font-size: 13px; text-align: left; padding: 6px 10px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary); }
+.cost-range-preset:hover:not(:disabled) { border-color: var(--text-accent); color: var(--text-accent); }
+.cost-range-preset:disabled { cursor: not-allowed; color: var(--text-muted); border-style: dashed; background: transparent; }
+.cost-range-preset:focus-visible { outline: 2px solid var(--text-accent); outline-offset: 2px; }
+.cost-range-freeze { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.cost-range-freeze .cost-range-preset { border-color: var(--text-accent); color: var(--text-accent); font-weight: 600; }
+.cost-range-freeze .cost-range-preset:disabled { border-color: var(--border); color: var(--text-muted); font-weight: 400; }
+/* The padding keeps the days' focus ring (2px, 2px out) inside the box that scrolls, which would clip it. */
+.cost-range-cal { min-width: 0; overflow-x: auto; padding: 4px; }
+.cost-range-cal-wait { min-height: 320px; }
+.cost-range-side { min-width: 0; max-width: 640px; }
+.cost-range-times { display: flex; flex-wrap: wrap; gap: 12px; }
+.cost-range-times label { margin: 0; flex: 1 1 120px; }
+.cost-range-times input { width: 100%; }
+.cost-range-summary { margin: 12px 0; min-height: 1.4em; font-size: 14px; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.cost-range-exact { border: 0; padding: 0; margin: 16px 0 0; min-width: 0; padding-top: 12px; border-top: 1px solid var(--border); }
+.cost-range-exact-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.cost-range-exact-fields label { margin: 0; }
+.cost-range-exact-fields input { width: 100%; }
+.cost-range-more { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
+@container costrange (min-width: 900px) {
+  .cost-range-grid { grid-template-columns: 200px minmax(0, 1fr); column-gap: 24px; }
+  .cost-range-presets { grid-row: span 2; border-right: 1px solid var(--border); padding-right: 16px; }
+  .cost-range-preset-list { flex-direction: column; }
+  .cost-range-side { grid-column: 2; }
+}
+/* At its widest (a 27" screen, 2560px) the panel would leave some 700px empty to the right of the side column: it stops
+   at 1560px, where presets (210) + two months (2 x 7 x 44 + 32 = 648) + the side column + gaps (64) fill the card, the
+   side column taking the rest up to its 640px. */
+.cost-range { max-width: 1560px; }
+@container costrange (min-width: 1280px) {
+  .cost-range-grid { grid-template-columns: 210px max-content minmax(300px, 1fr); justify-content: start; column-gap: 32px; }
+  .cost-range-presets { grid-row: auto; }
+  .cost-range-side { grid-column: 3; border-left: 1px solid var(--border); padding-left: 24px; }
+  .cost-range-summary { font-size: 15px; }
+}
+
+/* react-day-picker, in covey's colours: the range a clay tint, its ends filled clay, today marked in clay. */
+.cost-range .rdp-root {
+  --rdp-accent-color: var(--text-accent);
+  --rdp-accent-background-color: var(--accent-tint);
+  --rdp-day-height: 40px;
+  --rdp-day-width: 40px;
+  --rdp-day_button-height: 38px;
+  --rdp-day_button-width: 38px;
+  --rdp-day_button-border-radius: 8px;
+  --rdp-selected-border: 2px solid var(--text-accent);
+  --rdp-disabled-opacity: 0.45;
+  --rdp-today-color: var(--text-accent);
+  --rdp-months-gap: 32px;
+  --rdp-nav-height: 40px;
+  --rdp-range_middle-background-color: var(--accent-tint);
+  --rdp-range_middle-color: var(--text-primary);
+  --rdp-range_start-color: var(--surface-2);
+  --rdp-range_end-color: var(--surface-2);
+  --rdp-range_start-date-background-color: var(--text-accent);
+  --rdp-range_end-date-background-color: var(--text-accent);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.cost-range .rdp-month_caption { font-size: 15px; font-weight: 600; color: var(--text-primary); }
+.cost-range .rdp-weekday { opacity: 1; color: var(--text-secondary); font-size: 12px; font-weight: 600; }
+.cost-range .rdp-selected { font-size: inherit; font-weight: 600; }
+.cost-range .rdp-day_button:hover:not(:disabled) { background: var(--tint); }
+.cost-range .rdp-range_start .rdp-day_button:hover, .cost-range .rdp-range_end .rdp-day_button:hover { background: var(--text-accent); }
+.cost-range .rdp-day_button:focus-visible { outline: 2px solid var(--text-accent); outline-offset: 2px; }
+.cost-range .rdp-today:not(.rdp-outside) .rdp-day_button { font-weight: 700; position: relative; }
+.cost-range .rdp-today:not(.rdp-outside) .rdp-day_button::after { content: ""; position: absolute; bottom: 4px; left: 50%; width: 4px; height: 4px;
+  margin-left: -2px; border-radius: 50%; background: currentColor; }
+.cost-range .rdp-disabled:not(.rdp-selected) { color: var(--text-muted); }
+.cost-range .rdp-disabled:not(.rdp-selected) .rdp-day_button { cursor: not-allowed; }
+.cost-range .rdp-button_previous, .cost-range .rdp-button_next { border-radius: 8px; color: var(--text-accent); }
+.cost-range .rdp-button_previous:hover:not([aria-disabled="true"]), .cost-range .rdp-button_next:hover:not([aria-disabled="true"]) { background: var(--tint); }
+.cost-range .rdp-button_previous:focus-visible, .cost-range .rdp-button_next:focus-visible { outline: 2px solid var(--text-accent); outline-offset: 2px; }
+.cost-range .rdp-chevron { fill: var(--text-accent); }
+/* A wide panel (a 27" screen): larger days, read from a distance. */
+@container costrange (min-width: 1280px) {
+  .cost-range .rdp-root { --rdp-day-width: 44px; --rdp-day-height: 44px; --rdp-day_button-width: 42px; --rdp-day_button-height: 42px; font-size: 15px; }
+  .cost-range .rdp-month_caption { font-size: 16px; }
+}
+/* A very narrow panel (a 320px phone): smaller days, so seven and the calendar box's padding fit without a sideways
+   scroll; at 375px the 40px days fit (7 x 40 + 8). */
+@container costrange (max-width: 300px) {
+  .cost-range .rdp-root { --rdp-day-width: 34px; --rdp-day-height: 34px; --rdp-day_button-width: 32px; --rdp-day_button-height: 32px; }
+}

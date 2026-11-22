@@ -15,6 +15,10 @@ const DAY = 24 * 60 * MIN;
 /** The longest custom range, as the API takes it. */
 export const MAX_RANGE_DAYS = 31;
 
+/** The slack on the longest range: a whole local month across the autumn clock change is 31 days and one hour (October
+ *  in Europe, "Last month" all November), and it is still one month. The API allows the same hour (maxCustomRange). */
+export const RANGE_SLACK_MS = 60 * MIN;
+
 /** What the page shows when no ?tz= says: the reader's clock. */
 export const DEFAULT_TZ: DisplayTz = "local";
 
@@ -73,7 +77,7 @@ export function fromInputValue(v: string, tz: DisplayTz): number {
 export function validRange(fromMs: number, toMs: number, nowMs: number): RangeCode | null {
   if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) return "range_time";
   if (toMs <= fromMs) return "range_order";
-  if (toMs - fromMs > MAX_RANGE_DAYS * DAY) return "range_span";
+  if (toMs - fromMs > MAX_RANGE_DAYS * DAY + RANGE_SLACK_MS) return "range_span";
   if (fromMs >= nowMs) return "range_future";
   return null;
 }
@@ -210,3 +214,105 @@ export function betweenReadings(a: number, b: number): [number, number] {
   const [first, second] = a <= b ? [a, b] : [b, a];
   return [Math.floor(first / MIN) * MIN + MIN, Math.floor(second / MIN) * MIN + MIN];
 }
+
+// --- The calendar ----------------------------------------------------------------
+// The picker's calendar names days in the chosen zone: a day is YYYY-MM-DD, its
+// start is 00:00 in that zone (UTC gives UTC's midnight whatever the browser's
+// zone is). A range of days is [start of the first, start of the day after the
+// last), the same half-open rule as every range here.
+
+/** A calendar day, YYYY-MM-DD, in the zone it was read in. */
+export type DayKey = string;
+
+const DAY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** 00:00 of a day in the zone; the month and day may overflow (day 0, month 12). Where a clock change skips local
+ *  midnight, the first minute that exists. */
+export function zoneDayStart(y: number, month0: number, d: number, tz: DisplayTz): number {
+  return tz === "utc" ? Date.UTC(y, month0, d) : new Date(y, month0, d).getTime();
+}
+
+/** The day an instant falls on in the zone. */
+export const dayKeyOf = (ms: number, tz: DisplayTz): DayKey => toInputValue(ms, tz).slice(0, 10);
+
+/** The start of a day in the zone; NaN for a day that does not exist. */
+export function dayStart(key: DayKey, tz: DisplayTz): number {
+  const m = DAY_RE.exec(key);
+  if (!m) return NaN;
+  const [y, mo, d] = m.slice(1).map(Number);
+  const ms = zoneDayStart(y, mo - 1, d, tz);
+  return dayKeyOf(ms, tz) === key ? ms : NaN;
+}
+
+/** The day n days after (or before) a day: calendar arithmetic, the same in every zone. */
+export function addDays(key: DayKey, n: number): DayKey {
+  const m = DAY_RE.exec(key);
+  if (!m) return "";
+  const [y, mo, d] = m.slice(1).map(Number);
+  return toInputValue(Date.UTC(y, mo - 1, d + n), "utc").slice(0, 10);
+}
+
+/** The start field's day and time ("" for what does not parse). */
+export function splitStart(fromText: string): { day: DayKey; time: string } {
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})$/.exec(fromText.trim());
+  return m ? { day: m[1], time: m[2] } : { day: "", time: "" };
+}
+
+/** A day's start as the value of a datetime-local field: 00:00, or the first minute that exists where a clock change
+ *  skips midnight. "" for a day that does not exist. */
+export const dayStartValue = (key: DayKey, tz: DisplayTz): string => toInputValue(dayStart(key, tz), tz);
+
+/** The end field as the calendar shows it: an end at the start of a day (its first minute that exists, 00:00 but
+ *  where a clock change skips midnight) after the start day is the whole day before (its time is "", "until the end
+ *  of the day"); any other end is its own day and minute. An end typed in the end-time field is not read through
+ *  here: the panel keeps what was typed. */
+export function splitEnd(toText: string, startDay: DayKey, tz: DisplayTz): { day: DayKey; time: string } {
+  const { day, time } = splitStart(toText);
+  if (day && time && (!startDay || day > startDay) && dayStartValue(day, tz) === `${day}T${time}`) {
+    return { day: addDays(day, -1), time: "" };
+  }
+  return { day, time };
+}
+
+/** The end field for a last day and an end time: no time is the start of the next day (its first minute that exists). */
+export const joinEnd = (day: DayKey, time: string, tz: DisplayTz): string =>
+  (time ? `${day}T${time}` : dayStartValue(addDays(day, 1), tz) || `${addDays(day, 1)}T00:00`);
+
+/** The presets of the picker. Weeks start on Monday, as the cost pages' week buckets do. */
+export type RangePreset = "today" | "yesterday" | "last7" | "thisWeek" | "lastWeek" | "thisMonth" | "lastMonth";
+export const RANGE_PRESETS: readonly RangePreset[] = ["today", "yesterday", "last7", "thisWeek", "lastWeek", "thisMonth", "lastMonth"];
+
+/** A preset's range in the zone: whole days from their start; a range that holds today ends at the end of this
+ *  minute, as todayRange does. */
+export function presetRange(p: RangePreset, nowMs: number, tz: DisplayTz): [number, number] {
+  const d = new Date(nowMs);
+  const [y, mo, day, dow] = tz === "utc"
+    ? [d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), d.getUTCDay()]
+    : [d.getFullYear(), d.getMonth(), d.getDate(), d.getDay()];
+  const end = ceilMinute(nowMs);
+  const monday = day - ((dow + 6) % 7);
+  switch (p) {
+    case "today": return [zoneDayStart(y, mo, day, tz), end];
+    case "yesterday": return [zoneDayStart(y, mo, day - 1, tz), zoneDayStart(y, mo, day, tz)];
+    case "last7": return [zoneDayStart(y, mo, day - 6, tz), end];
+    case "thisWeek": return [zoneDayStart(y, mo, monday, tz), end];
+    case "lastWeek": return [zoneDayStart(y, mo, monday - 7, tz), zoneDayStart(y, mo, monday, tz)];
+    case "thisMonth": return [zoneDayStart(y, mo, 1, tz), end];
+    case "lastMonth": return [zoneDayStart(y, mo - 1, 1, tz), zoneDayStart(y, mo, 1, tz)];
+  }
+}
+
+/** A quick range (the last n days, moving with the clock) as a fixed range that ends now: a link to it shows the
+ *  same period tomorrow. */
+export function freezeRange(days: number, nowMs: number): [number, number] {
+  const to = ceilMinute(nowMs);
+  return [to - days * DAY, to];
+}
+
+/** Whether a quick range can be frozen: a fixed range spans at most MAX_RANGE_DAYS. */
+export const canFreeze = (days: number): boolean => days >= 1 && days <= MAX_RANGE_DAYS;
+
+/** An end in the future is cut to the end of this minute: the range then names what it shows, and the link stops
+ *  moving. A start in the future is left alone (validRange refuses it). */
+export const cutToNow = (fromMs: number, toMs: number, nowMs: number): number =>
+  Number.isFinite(fromMs) && fromMs < nowMs && toMs > ceilMinute(nowMs) ? ceilMinute(nowMs) : toMs;
