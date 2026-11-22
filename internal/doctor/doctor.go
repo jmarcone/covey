@@ -12,6 +12,7 @@ package doctor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -106,8 +107,14 @@ func (d *doctor) check(ctx context.Context, pool *pgxpool.Pool) {
 	// below read do not exist yet. Saying "not answerable until the migrations
 	// have run" is the honest answer — leaking a Postgres error about a missing
 	// column would send the reader after the wrong thing entirely.
-	migrated := d.checkMigrations(ctx, pool)
-	if !migrated {
+	switch d.checkMigrations(ctx, pool) {
+	case migrationsRefused:
+		// `covey serve` would not start either, so "start it once" is no advice.
+		d.add(Finding{What: "the rest",
+			Detail: "answerable once rows and files agree (see the migrations finding) and the migrations have run"})
+		d.checkEgress(ctx)
+		return
+	case migrationsPending:
 		d.add(Finding{What: "the rest",
 			Detail: "answerable once the migrations have run — start `covey serve` once, then ask again"})
 		d.checkEgress(ctx)
@@ -123,17 +130,73 @@ func (d *doctor) check(ctx context.Context, pool *pgxpool.Pool) {
 	d.checkSiteAddress(ctx, pool)
 }
 
+// migrationState is what checkMigrations found, and so what the checks that
+// read the newest columns may assume.
+type migrationState int
+
+const (
+	migrationsReady   migrationState = iota // nothing pending
+	migrationsPending                       // a restart will apply them
+	migrationsRefused                       // a restart will refuse: numbering disagrees with the database
+)
+
+// mismatchRemedy words the way out by who can act, and prints the statement
+// where the numbers settle it. The reader is an operator: for a binary that is
+// an unmerged branch the numbering is fixed in the source, and for a database
+// that ran a branch build it is one row, recorded by hand — never rewritten by
+// the doctor, which reads and changes nothing. "By hand:" is only written
+// where a statement follows; a mismatch with none is a line of prose, and a
+// colon must not point at it.
+func mismatchRemedy(ms []db.NameMismatch) string {
+	var steps []string
+	var statements bool
+	for _, m := range ms {
+		switch st := m.Statement(); {
+		case st != "" && m.RecordedAs != "":
+			statements = true
+			steps = append(steps, fmt.Sprintf("version %d is already recorded as %s, so the stale row goes: %s;", m.AppliedVersion, m.RecordedAs, st))
+		case st != "":
+			statements = true
+			steps = append(steps, st+";")
+		case m.Ambiguous():
+			steps = append(steps, fmt.Sprintf("version %d (%s): ambiguous: check which one the database ran, %s — no statement is printed for a row that fits more than one file",
+				m.AppliedVersion, m.Applied, strings.Join(m.Candidates, " or ")))
+		default:
+			steps = append(steps, fmt.Sprintf("version %d: the database has %s, this binary %s — if the database ran a branch build, that row belongs under the number main gave the migration; if this binary is the branch, its migration is renumbered in the source; a migration main never got is a developer's decision",
+				m.Version, m.Applied, m.File))
+		}
+	}
+	lead := "`covey serve` refuses to start until rows and files agree. If this binary is an unmerged branch, renumber its migration in the source (CLAUDE.md). If the database ran a branch build whose numbering main changed: take a backup, check that the SQL of the two files is the same (git diff of the branch's file against main's)"
+	if statements {
+		lead += ", then settle the row by hand: "
+	} else {
+		lead += ". "
+	}
+	return lead + strings.Join(steps, " ")
+}
+
 // checkMigrations says what a restart is about to do to the database — the one
 // moment somebody would want a backup.
-func (d *doctor) checkMigrations(ctx context.Context, pool *pgxpool.Pool) bool {
+func (d *doctor) checkMigrations(ctx context.Context, pool *pgxpool.Pool) migrationState {
 	pending, err := db.Pending(ctx, pool, migrations.FS)
+	// A number applied under another name is not "pending": `covey serve` refuses
+	// to start on it, so it blocks, and the remedy is not a backup.
+	var mismatch *db.NameMismatchError
+	if errors.As(err, &mismatch) {
+		lines := make([]string, len(mismatch.Mismatches))
+		for i, m := range mismatch.Mismatches {
+			lines[i] = m.String()
+		}
+		d.problem("migrations", strings.Join(lines, "; "), mismatchRemedy(mismatch.Mismatches), true)
+		return migrationsRefused
+	}
 	if err != nil {
 		d.problem("migrations", "not readable: "+err.Error(), "", false)
-		return false
+		return migrationsPending
 	}
 	if len(pending) == 0 {
 		d.ok("migrations", "up to date")
-		return true
+		return migrationsReady
 	}
 	// Named individually while they still fit on a screen — that is the upgrade
 	// case, and there the names are what somebody looks up. A fresh database
@@ -145,7 +208,7 @@ func (d *doctor) checkMigrations(ctx context.Context, pool *pgxpool.Pool) bool {
 		remedy = "a database this far behind is usually an empty one — `covey bootstrap` sets it up"
 	}
 	d.problem("migrations", detail, remedy, false)
-	return false
+	return migrationsPending
 }
 
 // checkWorkplaceNames finds the one collision an upgrade can produce silently.
