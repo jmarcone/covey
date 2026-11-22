@@ -1275,32 +1275,182 @@ export function credentialFigures(input: FigureInput): CredentialFigures[] {
 
 // --- The meter card ------------------------------------------------------------
 
-/** The readings of one credential and source on the weekly window that can be
- *  used: supported, fresh, with a figure; oldest first. */
 /** Whether a raw reading belongs to a meter read from `source`: the server merges every source of the plan's weekly
  *  and five-hour windows into one meter, labelled "merged" (#153), so that meter takes the readings of any source. */
 export const readingOf = (source: string, r: Pick<UsageReading, "source">): boolean => source === "merged" || r.source === source;
 
-export function usableReadings(rs: readonly UsageReading[], key: string, slot: number, source: string): UsageReading[] {
-  return rs
+/** The readings of one credential and meter source (readingOf) on the weekly
+ *  window that can be used: supported, fresh, with a figure; oldest first,
+ *  readings of one instant in the API's order (the server's: fetched_at, id).
+ *  `windowKind` is the window the readings belong to: the meter card (no
+ *  `windowKind`) takes "seven_day" and "" (older daemons) together; a chart
+ *  that draws the server's weeks passes its coverage's own kind, since the
+ *  segments belong to that one only.
+ *
+ *  A reading that lags behind into an old week is dropped, by the server's
+ *  rule (stacked.go, meterQueryTemplate): its `resets_at` lies more than an
+ *  hour before the latest one an earlier reading gave (a second daemon still
+ *  reporting the old week), all readers of a merged meter together and each
+ *  window kind on its own. The mark is the latest reset time of all earlier
+ *  readings, so a run of late ones goes as a whole. */
+export function usableReadings(rs: readonly UsageReading[], key: string, slot: number, source: string, windowKind?: string): UsageReading[] {
+  const sorted = rs
     .filter((r) => r.secret_key === key && r.secret_slot === slot && readingOf(source, r) && r.supported && !r.stale
-      && r.week_percent != null && (r.window_kind === "seven_day" || r.window_kind === ""))
+      && r.week_percent != null && (windowKind != null ? r.window_kind === windowKind : r.window_kind === "seven_day" || r.window_kind === ""))
     .sort((a, b) => Date.parse(a.fetched_at) - Date.parse(b.fetched_at));
+  const marks = new Map<string, number>();
+  return sorted.filter((r) => {
+    if (!r.resets_at) return true;
+    const resets = Date.parse(r.resets_at), seen = marks.get(r.window_kind) ?? -Infinity;
+    if (resets > seen) marks.set(r.window_kind, resets);
+    return resets >= seen - 3600_000;
+  });
 }
 
-/** The meter's whole-percent crossings in each period: "10 % → 11 %". */
-export function meterCrossings(cov: MeterCoverage, steps: readonly MeterStep[]): Map<string, { from: number; to: number; reset: boolean }> {
-  const own = steps
-    .filter((s) => s.secret_key === cov.secret_key && s.secret_slot === cov.secret_slot && s.source === cov.source && s.window_kind === cov.window_kind)
-    .sort((a, b) => Date.parse(a.period) - Date.parse(b.period));
-  const out = new Map<string, { from: number; to: number; reset: boolean }>();
-  let level = cov.baseline_percent;
-  for (const s of own) {
-    const reset = s.resets > 0;
-    const from = reset ? 0 : level;
-    const to = from + s.points;
-    level = to;
-    if (s.points > 0 || reset) out.set(s.period, { from, to, reset });
+/** How many readings of one credential and meter source on the weekly window
+ *  the meter card leaves out: stale, unsupported, without a figure, or late. */
+export function droppedReadings(rs: readonly UsageReading[], key: string, slot: number, source: string): number {
+  const weekly = rs.filter((r) => r.secret_key === key && r.secret_slot === slot && readingOf(source, r)
+    && (r.window_kind === "seven_day" || r.window_kind === ""));
+  return weekly.length - usableReadings(rs, key, slot, source).length;
+}
+
+/** One drawn reading of the weekly meter's line. */
+export type MeterPoint = {
+  /** The reading's fetched_at, as the server sent it. */
+  at: string;
+  /** The weekly meter in percent. */
+  pct: number;
+  /** The index of the reading's bucket among the chart's periods. */
+  slot: number;
+  /** How far into its bucket the reading lies, 0 to 1. */
+  frac: number;
+  /** The line part it belongs to: a new part begins after every gap, a whole bucket without a reading. */
+  part: number;
+  /** The first reading of a new week, read right after the last of the old one
+   *  (no gap between them): the line falls from the previous point to it. */
+  reset: boolean;
+  /** The first reading of a new week, with or without a gap before it: the
+   *  details say "new week" for it. After a gap there is no fall to draw
+   *  (`reset` is false), but the week did change. */
+  newWeek: boolean;
+};
+
+/** The start of the bucket after the one that starts at `start`. */
+export function nextBucket(start: number, bucket: string): number {
+  if (bucket === "month") {
+    const d = new Date(start);
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
+  }
+  const width = { "10min": 600_000, hour: 3600_000, "10hour": 36_000_000, week: 7 * 86400_000 }[bucket] ?? 86400_000;
+  return start + width;
+}
+
+/** Whether the server begins a week at `r`, read right after `prev` (stacked.go, meterQueryTemplate's reset). */
+function beginsWeek(prev: UsageReading, r: UsageReading): boolean {
+  if (!prev.resets_at) return r.week_percent! < prev.week_percent! - 1;
+  const before = Date.parse(prev.resets_at);
+  return r.resets_at ? Date.parse(r.resets_at) > before + 3600_000 : before <= Date.parse(r.fetched_at);
+}
+
+/** The y of the weekly meter on the chart's right-hand axis: 0 % on the
+ *  baseline, 100 % at the top of the plot. A reading entered by hand may lie
+ *  outside 0 to 100 % (up to 1000 %, httpapi/costinsights.go): it is drawn at
+ *  the edge, never outside the plot; the tooltip, the table and the label
+ *  keep its true value. */
+export function meterY(pct: number, padT: number, plotH: number): number {
+  return padT + plotH - (Math.min(100, Math.max(0, pct)) / 100) * plotH;
+}
+
+/** The points of the weekly meter's line: the readings the server counted
+ *  (below) whose bucket is one of the chart's periods, each with its week (the
+ *  server's segment that holds its time, not a second rule) and its place in
+ *  its bucket. A reading in no segment is not drawn. The line breaks where a
+ *  whole bucket has no reading: consecutive readings share a part only when
+ *  their buckets are the same or adjacent in calendar time. A point is the
+ *  reading, not the week's running top: where two readers of a merged meter
+ *  are a point apart the line steps down by it, and only `reset` is a week's
+ *  fall.
+ *
+ *  Which readings the server counted: usableReadings applies the server's
+ *  late rule to the readings of the range, but the server's mark also knows
+ *  the days before the range, so a late reading at the range's start passes
+ *  there. The server's own numbers settle it (stacked.go,
+ *  meterQueryTemplate and meterPartition). A segment's to_percent is the
+ *  week's running top, so no counted reading lies above it. And the coverage
+ *  says how many readings it counted: of any beyond that, those that can be
+ *  late go, the earliest reset times first, and from a period no more than it
+ *  has beyond the count of its step (`steps`, the meter's own). Late is an old
+ *  week's: a reading that resets within an hour of one surely counted (one
+ *  alone at a week's first or last instant) or after it is the same week's,
+ *  however the reset time jitters, and stays.
+ *  A baseline from before the range is not in the count.
+ *  Readings and coverage are two queries: where the readings are behind this
+ *  can drop too few. Where they are ahead by a backdated one, a counted
+ *  reading can go until both agree, if its period has one more and its reset
+ *  is over an hour before every surely counted one's or none of those has one.
+ *
+ *  Where a week ends in the millisecond the next begins, the readings of that
+ *  instant are split where the server's rule begins a week (beginsWeek), else
+ *  after the first, and only up to the new week's top. */
+export function meterPoints(rs: readonly UsageReading[], cov: MeterCoverage, periods: readonly string[], bucket: string, steps: readonly MeterStep[] = []): MeterPoint[] {
+  const segs = (cov.segments ?? []).map((g) => ({ ...g, start: Date.parse(g.start_at), end: Date.parse(g.end_at) }));
+  if (segs.length === 0) return [];
+  const inWeeks = usableReadings(rs, cov.secret_key, cov.secret_slot, cov.source, cov.window_kind)
+    .map((r) => {
+      const at = Date.parse(r.fetched_at);
+      const seg = segs.findIndex((g) => at >= g.start && at <= g.end && r.week_percent! <= g.to_percent);
+      return { r, at, seg };
+    })
+    .filter((x) => x.seg >= 0);
+  segs.forEach((g, i) => {
+    const next = segs.at(i + 1);
+    if (!next?.reset || next.start !== g.end) return;
+    const tied = inWeeks.filter((x) => x.at === g.end && x.seg >= i);
+    const turn = tied.findIndex((x, k) => k > 0 && x.r.week_percent! <= next.to_percent && beginsWeek(tied[k - 1].r, x.r));
+    for (const x of tied.slice(turn > 0 ? turn : 1)) if (x.seg === i && x.r.week_percent! <= next.to_percent) x.seg++;
+  });
+  const after = cov.baseline_before_window ? Date.parse(cov.baseline_at) : -Infinity;
+  const counted = inWeeks.filter((x) => x.at > after);
+  // a segment's ends are counted readings; the first one's start may be the baseline
+  const ends = segs.flatMap((g) => (g.reset || !cov.baseline_before_window ? [g.start, g.end] : [g.end]));
+  const sure = ends.map((t) => counted.filter((x) => x.at === t)).filter((xs) => xs.length === 1 && xs[0].r.resets_at);
+  const notLate = Math.min(...sure.map((xs) => Date.parse(xs[0].r.resets_at!)));
+  // each period's readings beyond the count of its step: all of them where no step counts it
+  const spare = new Map(steps.map((s) => [Date.parse(s.period), -s.readings]));
+  for (const { at } of counted) {
+    const period = bucketStart(at, bucket);
+    spare.set(period, (spare.get(period) ?? 0) + 1);
+  }
+  const late = new Set<(typeof counted)[number]>();
+  const canBeLate = counted.filter((x) => x.r.resets_at && Date.parse(x.r.resets_at) < notLate - 3600_000)
+    .sort((a, b) => Date.parse(a.r.resets_at!) - Date.parse(b.r.resets_at!));
+  for (const x of canBeLate) {
+    if (late.size >= counted.length - cov.readings) break;
+    const period = bucketStart(x.at, bucket), left = spare.get(period)!;
+    if (left <= 0) continue;
+    spare.set(period, left - 1);
+    late.add(x);
+  }
+
+  const slots = new Map(periods.map((p, i) => [Date.parse(p), i]));
+  const out: MeterPoint[] = [];
+  let part = -1, lastStart = NaN, lastSeg = -1;
+  for (const x of inWeeks) {
+    const { r, at, seg } = x;
+    const start = bucketStart(at, bucket);
+    const slot = slots.get(start);
+    if (slot == null || late.has(x)) continue;
+    const next = nextBucket(start, bucket);
+    const gap = start !== lastStart && start !== nextBucket(lastStart, bucket);
+    if (gap) part++;
+    // Once per week the server says began with a reset: at its first drawn
+    // reading, or, where that is the first drawn at all, only if it is the
+    // segment's own first (a range that starts just after the reset).
+    const newWeek = segs[seg].reset && seg !== lastSeg && (lastSeg >= 0 || at === segs[seg].start);
+    out.push({ at: r.fetched_at, pct: r.week_percent!, slot, frac: (at - start) / (next - start), part, reset: !gap && newWeek, newWeek });
+    lastStart = start;
+    lastSeg = seg;
   }
   return out;
 }

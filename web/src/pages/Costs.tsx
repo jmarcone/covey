@@ -302,6 +302,8 @@ export default function Costs({ me }: { me?: Principal }) {
   const cells = useCostCells(win, bucket, !badRange);
   const billed = useBilled(win, bucket, !badRange);
   const readings = useUsageReadings(win, !badRange);
+  // A failed refresh only: a failed first load is said once, by the chart's card (readingsLoad).
+  const readingsBehind = readings.data !== undefined && readings.isError;
   // The server refused the range (a 400 with its code): said in the panel, in
   // the reader's language.
   const refusal = useRefusal(`${wq}|${bucket}`, 400, cells);
@@ -598,7 +600,7 @@ export default function Costs({ me }: { me?: Principal }) {
             than display none, so a chart that mounts meanwhile measures its real width. */}
         <div data-chart-body style={chartLoad === "ready" ? undefined : { visibility: "hidden", height: 0, overflow: "hidden" }}>
         {metric === "cost" ? (
-          <CostExplorer data={cells.data} billed={billed.data} readings={readings.data ?? []} canSetPlan={canSetPlan(me?.Role ?? "")} selected={selected} bucket={bucket} fmtPeriod={fmtPeriod}
+          <CostExplorer data={cells.data} billed={billed.data} readings={readings.data ?? []} readingsBehind={readingsBehind} canSetPlan={canSetPlan(me?.Role ?? "")} selected={selected} bucket={bucket} scrollKey={`${wq}:${bucket}`} fmtPeriod={fmtPeriod}
             outside={included} full={fullPrices} onFull={setFullPrices} off={offSources} onToggleSource={toggleSource} answered={answer?.covers}
             marks={credentialMarks} onBucket={r.setBucket} />
         ) : (

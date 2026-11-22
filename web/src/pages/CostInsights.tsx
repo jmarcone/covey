@@ -5,11 +5,11 @@ import { Link } from "react-router";
 import { api, type ExternalModelUsage, type ExternalUsage, type ModelUsageReport, type ModelUsageRow, type UsageReading } from "../api";
 import { fmtBucket, fmtCount, fmtNumber, fmtUSD, fmtUSDBelow, fmtUSDFixed } from "../format";
 import { DEFAULT_SOURCES, SOURCES, SOURCE_INFO, isPerModel, modelFigure, sourceHint, sourceLabel, type Source } from "./costSources";
-import { isSeat, perCredentialTotals, scopeFigure, type SourceTotal, readingOf } from "./costFigures";
+import { isSeat, perCredentialTotals, scopeFigure, type SourceTotal } from "./costFigures";
 import { MonthlyMeters, usageList } from "./CostBasis";
 import { Chip } from "./StackedCostChart";
 import { answersSeat, type AnswerCovers } from "./costAnswerModel";
-import { usableReadings, type CredentialFigures } from "./costFigures";
+import { droppedReadings, type CredentialFigures } from "./costFigures";
 import { OrgWide, OutsideMark, SOURCE_COLOR, Swatch, useUsageReadings, type CredentialMarks } from "./StackedCostChart";
 import { windowQuery, type CostWindow } from "./costRange";
 import { externalStamp, kpiLead, listedSources, outsideModelRows, outsideSplit, seatSources, sourceStyles, type OutsideModelRow, type SourceStyles } from "./outsideFigures";
@@ -358,8 +358,10 @@ function MeterFigures({ f, readings, readingsKnown = true, outside = null, marks
   const r = f.real;
   const source = t(`costs.insights.source_${m.source}`, { defaultValue: m.source });
   const own = readings.filter((x) => x.secret_key === m.secret_key && x.secret_slot === m.secret_slot);
-  const sameWindow = own.filter((x) => readingOf(m.source, x) && (x.window_kind === "seven_day" || x.window_kind === ""));
-  const dropped = sameWindow.length - usableReadings(own, m.secret_key, m.secret_slot, m.source).length;
+  // Only a count: it holds the readings of the range, so a late one at the
+  // range's start, whose week the server judged with an earlier mark, is not
+  // counted here.
+  const dropped = droppedReadings(own, m.secret_key, m.secret_slot, m.source);
   const five = own.filter((x) => x.supported && !x.stale && x.window_percent != null).at(-1);
 
   let real: string;
