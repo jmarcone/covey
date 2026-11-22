@@ -28,11 +28,12 @@ import {
 import i18n, { initialLang, ladeSprache, uiLocale } from "./i18n";
 import HelpDrawer from "./components/HelpDrawer";
 import { NavIcon } from "./components/navicons";
-import Rail from "./components/Rail";
+import Rail, { railPlace } from "./components/Rail";
 import { useDrawer, useNarrow } from "./components/ConsoleDrawer";
 import Suche, { useSucheKuerzel } from "./components/Suche";
 import AgentsFrame from "./pages/agents/AgentsFrame";
 import Landing from "./pages/agents/Landing";
+import { CostBundle, held } from "./pages/CostLoading";
 
 /* The look of the interface comes with it, not before it — see app.css. */
 import "./app.css";
@@ -61,12 +62,12 @@ const Infrastructure = lazy(() => import("./pages/Infrastructure"));
 const Audit = lazy(() => import("./pages/Audit"));
 const Templates = lazy(() => import("./pages/Templates"));
 const Setup = lazy(() => import("./pages/Setup"));
-const Costs = lazy(() => import("./pages/Costs"));
-const CostHome = lazy(() => import("./pages/CostHome"));
-const CostModels = lazy(() => import("./pages/CostModels"));
-const CostWork = lazy(() => import("./pages/CostWork"));
-const OutsideCosts = lazy(() => import("./pages/OutsideCosts"));
-const CostHealth = lazy(() => import("./pages/CostHealth"));
+const Costs = lazy(() => held(import("./pages/Costs")));
+const CostHome = lazy(() => held(import("./pages/CostHome")));
+const CostModels = lazy(() => held(import("./pages/CostModels")));
+const CostWork = lazy(() => held(import("./pages/CostWork")));
+const OutsideCosts = lazy(() => held(import("./pages/OutsideCosts")));
+const CostHealth = lazy(() => held(import("./pages/CostHealth")));
 
 
 function NavItem({
@@ -148,8 +149,6 @@ const PAGE_TITLES: [string, string][] = [
   ["/agents", "nav.agents"],
   ["/workflows", "nav.workflows"],
   ["/inbox", "nav.inbox"],
-  ["/costs", "nav.costs"],
-  ["/org", "nav.org"],
   ["/secrets", "nav.secrets"],
   ["/targets", "nav.targets"],
   ["/skills", "nav.skills"],
@@ -273,15 +272,16 @@ export default function AppShell({ me, onLogout }: { me: Principal; onLogout: ()
 
   /* Workflows are a place of their own in the rail (#560); their pages
      need the width, and the console's navigation has nothing to say there.
-     The same holds for the agents area — the office, the list and every
-     agent's page — and, without the team surface, for the inbox: daily work,
-     each with its own rail entry. Before, the office stood in the team shell
-     and the list in this one with the column beside it, so the page jumped
-     by the column's width between two views of the same thing. */
+     The same holds for the agents area — the office, the list, the org
+     chart and every agent's page —, for costs (#17) and, without the team
+     surface, for the inbox: each with its own rail entry, and the rail's
+     function says which place an address is. Before, the office stood in the
+     team shell and the list in this one with the column beside it, so the
+     page jumped by the column's width between two views of the same thing. */
   const pfad = location.pathname;
-  const inWorkflows = pfad === "/workflows" || pfad.startsWith("/workflows/");
-  const inAgents = pfad === "/" || pfad === "/agents" || pfad.startsWith("/agents/");
-  const ownPlace = inWorkflows || inAgents || pfad === "/inbox";
+  const place = railPlace(pfad, !!me.TeamSurface);
+  const inAgents = place === "agents";
+  const ownPlace = inAgents || place === "workflows" || place === "costs" || pfad === "/inbox";
 
   return (
     <div className="flex min-h-screen tm-drei">
@@ -307,16 +307,11 @@ export default function AppShell({ me, onLogout }: { me: Principal; onLogout: ()
           <div className="tm-spalte-kopf">
             <h1 className="tm-spalte-titel">{t("team.verwaltung")}</h1>
           </div>
-          {/* Four groups, in the order they are needed (#743): the org chart
-              on top; the workforce's tools; what keeps it safe; the
-              organisation itself. The daily work — agents, the inbox and
-              the setup shortcut — has its place in the rail, not here. */}
-          <div className="nav-group">
-            <NavItem to="/org" icon="sitemap" label={t("nav.org")} />
-            {/* Until costs have their own rail entry, /costs is a page of
-                this column; the entry leaves with it. */}
-            <NavItem to="/costs" icon="chart" label={t("nav.costs")} />
-          </div>
+          {/* Three groups, in the order they are needed (#743): the
+              workforce's tools; what keeps it safe; the organisation itself.
+              The daily work — agents with their org chart, the inbox and the
+              setup shortcut — and the costs have their place in the rail,
+              not here. The rail's Admin entry opens the first item. */}
           <div className="nav-sec">{t("nav.setup")}</div>
           <div className="nav-group">
             <NavItem to="/targets" icon="plug" label={t("nav.targets")} />
@@ -396,7 +391,9 @@ export default function AppShell({ me, onLogout }: { me: Principal; onLogout: ()
           {/* Every page is its own bundle and arrives only when it is
               called for. No placeholder: the frame already stands, and a
               spinner for two hundred milliseconds is a flicker, not a
-              signal. */}
+              signal. The cost pages carry their own (CostBundle): what
+              follows their bundle takes seconds, so they say from the start
+              that they load, though not before a fast bundle is through. */}
           <Suspense fallback={null}>
           <Routes>
             {/* The root opens the view the person chose, the list until they
@@ -411,14 +408,15 @@ export default function AppShell({ me, onLogout }: { me: Principal; onLogout: ()
             <Route path="/skills" element={<Skills me={me} />} />
             <Route path="/voices" element={<Voices me={me} />} />
             <Route path="/voices/:id" element={<VoicePage me={me} />} />
+            {/* The last view of the agents area, at the address it always had. */}
             <Route path="/org" element={<Org me={me} />} />
             {/* The cost home (cost home PR 5); the full page with the chart, agents, models and runs is "Details". */}
-            <Route path="/costs" element={<CostHome />} />
-            <Route path="/costs/details" element={<Costs me={me} />} />
-            <Route path="/costs/models" element={<CostModels />} />
-            <Route path="/costs/work" element={<CostWork />} />
-            <Route path="/costs/outside" element={<OutsideCosts />} />
-            <Route path="/costs/health" element={<CostHealth />} />
+            <Route path="/costs" element={<CostBundle><CostHome /></CostBundle>} />
+            <Route path="/costs/details" element={<CostBundle><Costs me={me} /></CostBundle>} />
+            <Route path="/costs/models" element={<CostBundle><CostModels /></CostBundle>} />
+            <Route path="/costs/work" element={<CostBundle><CostWork /></CostBundle>} />
+            <Route path="/costs/outside" element={<CostBundle><OutsideCosts /></CostBundle>} />
+            <Route path="/costs/health" element={<CostBundle><CostHealth /></CostBundle>} />
             <Route path="/people/:id" element={<PersonPage me={me} />} />
             <Route path="/profile" element={<Navigate to={`/people/${me.ID}`} replace />} />
             <Route path="/inbox" element={me.TeamSurface ? <Navigate to="/team" replace /> : <Inbox me={me} />} />

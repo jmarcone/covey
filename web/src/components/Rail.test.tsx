@@ -1,6 +1,8 @@
+import { readFileSync } from "node:fs";
 import { useNavigate } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { NavIcon } from "./navicons";
 import Rail, { agentsEntryTarget, railPlace } from "./Rail";
 import { forgetUnsavedViews, rememberView } from "../pages/agents/views";
 import { mockFetch, renderWithProviders, testPrincipal, useGerman } from "../test/render";
@@ -28,7 +30,11 @@ describe("railPlace", () => {
     ["/inbox", false, "inbox"],
     ["/workflows/x", true, "workflows"],
     ["/costs", true, "costs"],
-    ["/org", true, "admin"],
+    ["/costs/details", false, "costs"],
+    ["/org", true, "agents"],
+    ["/org", false, "agents"],
+    // The old address of the platform, not the chart.
+    ["/orgs", true, "admin"],
     ["/targets", true, "admin"],
     // Not a prefix match on the letters: /agentsfoo is not the area.
     ["/agentsfoo", true, "admin"],
@@ -57,6 +63,9 @@ describe("the Agents entry's target", () => {
     expect(agentsEntryTarget(ADA, false)).toBe("/agents");
     rememberView(ADA, "list");
     expect(agentsEntryTarget(ADA, true)).toBe("/agents");
+    rememberView(ADA, "org");
+    expect(agentsEntryTarget(ADA, true)).toBe("/org");
+    expect(agentsEntryTarget(ADA, false)).toBe("/org");
   });
 
   it("is the choice of the principal on screen, not of the one who used the browser before", () => {
@@ -64,6 +73,21 @@ describe("the Agents entry's target", () => {
     rememberView(BOB, "office");
     expect(agentsEntryTarget(BOB, true)).toBe("/");
     expect(agentsEntryTarget(ADA, true)).toBe("/agents");
+  });
+});
+
+// A phone on its side, or high zoom: jsdom lays nothing out, so the stylesheet is read.
+describe("the rail in a short window", () => {
+  const css = readFileSync(`${process.cwd()}/src/app.css`, "utf8");
+  const media = (px: number) => css.split(`@media (max-height: ${px}px) {`)[1]?.split("\n}")[0] ?? "";
+
+  it("gives up air and keeps the mark of the current place", () => {
+    expect(media(500)).toContain(".tm-rail { gap: 1px;");
+    expect(media(500)).toContain(".tm-rail-item.on::before { top: min(10px, 24%); bottom: min(10px, 24%); }");
+  });
+
+  it("gives up the bird before search leaves the window", () => {
+    expect(media(300)).toContain(".tm-rail-mark { display: none; }");
   });
 });
 
@@ -88,9 +112,9 @@ const orte = () =>
     .map((a) => a.getAttribute("data-tour"));
 
 describe("Rail", () => {
-  it("reads Agents, Team, Workflows, Notes, Admin with the team surface, and no office", async () => {
+  it("reads Agents, Team, Workflows, Notes, Costs, Admin with the team surface, and no office", async () => {
     renderRail(true, "/");
-    expect(orte()).toEqual(["agents", "team", "workflows", "notes", "admin"]);
+    expect(orte()).toEqual(["agents", "team", "workflows", "notes", "costs", "admin"]);
     const agenten = screen.getByRole("link", { name: /^Agenten/ });
     expect(agenten).toHaveAttribute("aria-current", "page");
     expect(agenten.getAttribute("href")).toBe("/agents");
@@ -98,12 +122,12 @@ describe("Rail", () => {
     await waitFor(() => expect(agenten.querySelector(".tm-rail-zahl")).toHaveTextContent("3"));
     expect(agenten).toHaveAccessibleName("Agenten · 3 Punkte warten auf eine Entscheidung.");
     expect(screen.queryByRole("link", { name: /^Büro/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Verwaltung" }).getAttribute("href")).toBe("/org");
+    expect(screen.getByRole("link", { name: "Verwaltung" }).getAttribute("href")).toBe("/targets");
   });
 
   it("puts the inbox in the team's slot without the team surface, with the count there", async () => {
     renderRail(false, "/inbox");
-    expect(orte()).toEqual(["agents", "inbox", "workflows", "notes", "admin"]);
+    expect(orte()).toEqual(["agents", "inbox", "workflows", "notes", "costs", "admin"]);
     const eingang = screen.getByRole("link", { name: /^Posteingang/ });
     expect(eingang).toHaveAttribute("aria-current", "page");
     await waitFor(() => expect(eingang.querySelector(".tm-rail-zahl")).toHaveTextContent("3"));
@@ -118,9 +142,32 @@ describe("Rail", () => {
     expect(screen.getByRole("link", { name: "Verwaltung" })).not.toHaveAttribute("aria-current");
   });
 
-  it("keeps Admin marked on /costs while costs are a page of its column", () => {
-    renderRail(true, "/costs");
-    expect(screen.getByRole("link", { name: "Verwaltung" })).toHaveAttribute("aria-current", "page");
+  for (const route of ["/costs", "/costs/health"]) {
+    it(`marks Costs and not Admin on ${route}`, async () => {
+      renderRail(true, route);
+      const kosten = screen.getByRole("link", { name: "Kosten" });
+      expect(kosten).toHaveAttribute("aria-current", "page");
+      expect(kosten).toHaveAttribute("href", "/costs");
+      const chart = render(<NavIcon name="chart" />).container.querySelector(".ic")!;
+      expect(kosten.querySelector(".ic")!.innerHTML).toBe(chart.innerHTML);
+      expect(screen.getByRole("link", { name: "Verwaltung" })).not.toHaveAttribute("aria-current");
+      // No badge, whatever waits elsewhere.
+      await waitFor(() => expect(screen.getByRole("link", { name: /^Agenten ·/ })).toBeInTheDocument());
+      expect(kosten.querySelector(".tm-rail-zahl")).toBeNull();
+    });
+  }
+
+  it("marks Agents and not Admin on the org chart", () => {
+    renderRail(false, "/org");
+    expect(screen.getByRole("link", { name: "Agenten" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "Verwaltung" })).not.toHaveAttribute("aria-current");
+  });
+
+  // Without an office the mark is the Agents entry: both open the chosen view.
+  it("leads the mark to the chosen view without the team surface", () => {
+    rememberView(testPrincipal().ID, "org");
+    renderRail(false, "/workflows");
+    expect(screen.getByRole("link", { name: "covey" })).toHaveAttribute("href", "/org");
   });
 
   /* The entry follows the choice, whatever the address: the same view the

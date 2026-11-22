@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Link, Navigate } from "react-router";
 import type { TFunction } from "i18next";
 import { CostTabs } from "./CostTabs";
-import { api, ApiError, type CostHealthReport, type ModelUsageReport, type RunCost } from "../api";
+import { api, type CostHealthReport, type ModelUsageReport, type RunCost } from "../api";
 import { fmtBucket, fmtNumber, fmtUSD, fmtUSDFixed } from "../format";
 import { CostAnswer } from "./CostAnswer";
 import { answerTable, billedAbsentReason, billedKeys, noCapacityReason, type AnswerTable } from "./costAnswerModel";
@@ -18,6 +18,7 @@ import { runUSD, useCostQuery } from "./costView";
 import { CostHealthBadge, IncompleteMark, incompleteParts, useCostHealth } from "./CostHealth";
 import { useBilled, useCostCells } from "./StackedCostChart";
 import { SubscriptionDentRow } from "./SubscriptionDent";
+import { CostLoadError, CostLoading, CostWait, loadState, useRefusal, type Load } from "./CostLoading";
 
 /* The cost home (/costs, cost home PR 5): the one answer a C-level reader needs, read across the room on a 27"
  * screen, then doors to the views that answer the next questions. The hero is the equation itself: the multiple
@@ -77,16 +78,21 @@ function Hero({ a }: { a: AnswerTable }) {
 }
 
 /** Whether the data can be trusted right now, and how far the meter's week has gone. */
-function Trust({ rep, seats }: { rep: CostHealthReport | undefined; seats: number }) {
+function Trust({ rep, load, seats }: {
+  rep: CostHealthReport | undefined; load: Load;
+  /** How many seats the meter covers; null until the cells say so: the week is named by its seat where there are several. */
+  seats: number | null;
+}) {
   const { t } = useTranslation();
   const c1 = rep?.checks.find((c) => c.id === "c1"), c2 = rep?.checks.find((c) => c.id === "c2");
   const week = c2?.facts.week_percent;
   return (
     <aside className="cost-home-trust" aria-label={t("costs.home.trustLabel")} data-home-trust>
       <CostHealthBadge />
+      {load === "loading" && <CostLoading />}
       {c1?.facts.last_push_minutes != null && <div className="cost-home-row"><span>{t("costs.home.uploader")}</span><span>{ago(t, c1.facts.last_push_minutes)}</span></div>}
       {c2?.facts.reading_minutes != null && <div className="cost-home-row"><span>{t("costs.home.meterRead")}</span><span>{ago(t, c2.facts.reading_minutes)}</span></div>}
-      {week != null && (
+      {week != null && seats != null && (
         <div className="cost-home-gauge" data-home-week>
           {/* c2 speaks for the seat that decides the check: with several seats, it names that seat. */}
           <div className="cost-home-label">{seats > 1 && c2?.facts.credential
@@ -142,6 +148,14 @@ function Coverage({ h, since, until, first, last, seats, basis = "token", real =
   );
 }
 
+/** A door's value until its query has answered: never a dash, which would read as "none". */
+function doorWait(load: Load): ReactNode {
+  return load === "loading" ? <CostLoading shape="line" /> : <NoFigure reason="queryFailed" />;
+}
+
+/** A waiting door keeps the height of its second line. */
+const NO_SUB = "\u00a0";
+
 function Door({ to, label, value, sub, testid, lock }: {
   to: string; label: string; value: ReactNode; sub?: string; testid: string;
   /** The door's figure keeps the token price under the page's basis: the chip stands under the door, outside the link. */
@@ -168,7 +182,7 @@ function BilledLine({ figure, loading, absent }: { figure: { usd: number; until:
     <p className="text-sm mt-2 mb-0" data-home-billed={loading ? "loading" : figure ? figure.usd.toFixed(2) : "none"}>
       <BasisTag basis="billed" />{" "}
       <span>{t("costs.basisViews.home.billedLabel")}: </span>
-      {loading ? <span className="muted">…</span> : figure ? <b data-home-billed-usd>{fmtUSD(figure.usd)}</b> : <NoFigure reason={absent} />}
+      {loading ? <CostLoading shape="line" /> : figure ? <b data-home-billed-usd>{fmtUSD(figure.usd)}</b> : <NoFigure reason={absent} />}
       {!loading && figure && <span className="muted text-xs"> · {t("costs.basisViews.home.billedUntil", { until: fmtBucket(figure.until, "hour") })}</span>}
     </p>
   );
@@ -180,8 +194,8 @@ export default function CostHome() {
   const { win, wq, bucket, badRange } = r;
   const toDetails = DETAIL_KEYS.some((k) => r.params.has(k));
   const cells = useCostCells(win, bucket, !badRange);
-  const apiCode: RangeCode | "unknown" | null = cells.error instanceof ApiError && cells.error.status === 400
-    ? (isRangeCode(cells.error.code) ? cells.error.code : "unknown") : null;
+  const refusal = useRefusal(`${wq}|${bucket}`, 400, cells);
+  const apiCode: RangeCode | "unknown" | null = refusal ? (isRangeCode(refusal.code) ? refusal.code : "unknown") : null;
   const rangeError = r.range.error ?? apiCode;
   const refused = badRange || apiCode != null;
   const health = useCostHealth();
@@ -216,6 +230,10 @@ export default function CostHome() {
   const topRunUSD = topRun ? runUSD(topRun) : null;
   const outsideShare = a && a.list > 0 ? a.rows.filter((x) => x.kind !== "covey").reduce((s, x) => s + (x.list ?? 0), 0) / a.list : null;
   const checks = health.data?.checks.filter((c) => c.status !== "info") ?? [];
+  // Each block waits for its own query: the doors and the checks answer long before the cells do.
+  const cellsLoad = loadState(cells), modelsLoad = loadState(models), runsLoad = loadState(runs), healthLoad = loadState(health);
+  const billedLoad = loadState(billed);
+  const waiting = !refused && [cellsLoad, modelsLoad, runsLoad, healthLoad, basis === "billed" ? billedLoad : "ready"].includes("loading");
 
   // The meter's span in the window: the seats' weekly coverage (one merged meter per seat since #214).
   const cov = (cells.data?.meter ?? []).filter((m) => m.window_kind === "seven_day");
@@ -231,43 +249,49 @@ export default function CostHome() {
         <CostTabs />
       </div>
       {/* The answer is account-wide: the bar says Who is not applied here instead of offering a filter that does nothing. */}
-      <CostFilterBar r={r} rangeError={rangeError} bucketSwitch={false} leading={<WhoSummary names={[]} locked />} trailing={<ShareButton />} />
+      <CostFilterBar r={r} rangeError={rangeError} waiting={waiting} bucketSwitch={false} leading={<WhoSummary names={[]} locked />} trailing={<ShareButton />} />
       {refused && <p className="muted text-sm" data-range-refused>{t("costs.range.refused")}</p>}
-      {!refused && cells.isLoading && <p className="muted text-sm">{t("costs.home.loading")}</p>}
-      {!refused && cells.data && !a && <p className="muted text-sm" data-home-empty>{t("costs.home.noMeter")}</p>}
-      {!refused && a && head && dent && (
+      {!refused && cells.isError && cells.data && <CostLoadError text={t("costs.home.staleError")} />}
+      {/* Without a meter there is no answer, and that is said in its place: what does not read the meter stays. */}
+      {!refused && (
         <>
           <section className="card cost-home-hero" aria-label={t("costs.answer.title")}>
             {heroSupport.state === "locked" && <div className="mb-2" data-home-hero-lock><BasisLockChip support={heroSupport} basis={basis} /></div>}
-            <Hero a={a} />
-            <Trust rep={health.data} seats={cov.length} />
-            {since != null && <Coverage h={head} since={since} until={windowEnd} first={first} last={last} seats={cov.length} basis={basis} real={a.real} noReal={noCapacityReason(a)} />}
+            {a ? <Hero a={a} /> : cellsLoad === "ready" ? <p className="muted text-sm mb-0" data-home-empty>{t("costs.home.noMeter")}</p>
+              : <CostWait state={cellsLoad} shape="hero" />}
+            <Trust rep={health.data} load={healthLoad} seats={cells.data ? cov.length : null} />
+            {a && head && since != null && <Coverage h={head} since={since} until={windowEnd} first={first} last={last} seats={cov.length} basis={basis} real={a.real} noReal={noCapacityReason(a)} />}
           </section>
-          {basis === "billed" && <BilledLine figure={billed.isError ? null : billedFigure} loading={billed.isLoading}
-            absent={billedAbsentReason(billed.isError, billed.data?.window)} />}
+          {basis === "billed" && <BilledLine figure={billed.isError ? null : billedFigure} loading={billedLoad === "loading"}
+            absent={billedAbsentReason(billed.isError || billedLoad === "error", billed.data?.window)} />}
           <div className="cost-home-split">
-            <CostAnswer a={a} h={head} filtered={false} hero={false} basis={basis}
+            {a && head && dent ? <CostAnswer a={a} h={head} filtered={false} hero={false} basis={basis}
               marks={marks.multiple.length + marks.outside.length + marks.tokenPrice.length > 0 && <>
                 <IncompleteMark checks={marks.multiple} part="multiple" />
                 <IncompleteMark checks={marks.outside} part="outside" />
                 <IncompleteMark checks={marks.tokenPrice} part="tokenPrice" />
               </>}
               drawer={<SubscriptionDentRow d={dent} filtered={false} h={head} />} />
+              : cellsLoad === "ready" ? <div className="cost-home-noanswer" />
+              : <div className="card"><CostWait state={cellsLoad} shape="table" /></div>}
             <nav className="cost-home-doors" aria-label={t("costs.home.doorsLabel")}>
               <Door testid="details" to={`/costs/details${q}`} label={t("costs.home.doorDetails")} sub={t("costs.home.doorDetailsSub")}
                 lock={{ support: detailsSupport, basis }}
                 value={detailsSupport.state === "none" ? <NoFigure reason={detailsSupport.reason} />
+                  : !a ? (cellsLoad === "ready" ? "–" : doorWait(cellsLoad))
                   : basis === "capacity" && detailsSupport.state === "honoured"
                     ? (a.real != null ? `≈ ${fmtUSD(a.real)}` : <NoFigure reason={noCapacityReason(a)} />)
                   : fmtUSD(a.list)} />
               <Door testid="outside" to={`/costs/outside${q}`} label={t("costs.home.tabOutside")}
-                value={outsideShare != null ? `${fmtNumber(outsideShare * 100, 0)} %` : "–"} sub={t("costs.home.doorOutsideSub")} />
+                value={!a && cellsLoad !== "ready" ? doorWait(cellsLoad) : outsideShare != null ? `${fmtNumber(outsideShare * 100, 0)} %` : "–"} sub={t("costs.home.doorOutsideSub")} />
               <Door testid="model" to={`/costs/models${q}`} label={t("costs.home.doorModel")}
-                value={topModel?.model ?? "–"} sub={topModel ? t("costs.home.doorModelSub", { pct: fmtNumber(topModel.share * 100, 0) }) : undefined} />
+                value={modelsLoad !== "ready" ? doorWait(modelsLoad) : topModel?.model ?? "–"}
+                sub={modelsLoad !== "ready" ? NO_SUB : topModel ? t("costs.home.doorModelSub", { pct: fmtNumber(topModel.share * 100, 0) }) : undefined} />
               <Door testid="run" to={`/costs/work${q}`} label={t("costs.home.doorRun")} lock={{ support: runSupport, basis }}
-                value={topRunUSD != null ? fmtUSD(topRunUSD) : "–"} sub={topRun?.title ?? t("costs.home.noRuns")} />
+                value={runsLoad !== "ready" ? doorWait(runsLoad) : topRunUSD != null ? fmtUSD(topRunUSD) : "–"}
+                sub={runsLoad !== "ready" ? NO_SUB : topRun?.title ?? t("costs.home.noRuns")} />
               <Door testid="health" to={`/costs/health${q}`} label={t("costs.home.tabHealth")}
-                value={checks.length && windowIsNow ? `${checks.filter((c) => c.status === "pass").length} / ${checks.length}` : "–"}
+                value={windowIsNow && healthLoad !== "ready" ? doorWait(healthLoad) : checks.length && windowIsNow ? `${checks.filter((c) => c.status === "pass").length} / ${checks.length}` : "–"}
                 sub={windowIsNow ? t("costs.home.doorHealthSub") : t("costs.home.healthNow")} />
             </nav>
           </div>

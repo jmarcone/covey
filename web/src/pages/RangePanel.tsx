@@ -31,6 +31,7 @@ import {
   type RangeCode,
 } from "./costRange";
 import { Seg } from "./Seg";
+import { CostWait, type Load } from "./CostLoading";
 
 /* The custom range of the Costs page: a start and an end to the minute, the
  * zone they are read in, and the ways to fill them in — presets that apply at
@@ -127,7 +128,7 @@ function shiftMonth(ym: string, by: number): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
-export function RangePanel({ from, to, tz, onTz, onApply, onFreeze, error: outer, readings, quickDays = null, now = Date.now }: {
+export function RangePanel({ from, to, tz, onTz, onApply, onFreeze, error: outer, readings, readingsLoad = "ready", quickDays = null, now = Date.now }: {
   /** The range the fields start from, as instants: the one in force, or the one a refused address names; null when there is none. */
   from: number | null;
   to: number | null;
@@ -141,6 +142,8 @@ export function RangePanel({ from, to, tz, onTz, onApply, onFreeze, error: outer
   error?: RangeCode | "unknown" | null;
   /** The weekly meter's readings of the last days, for the helpers. */
   readings: readonly UsageReading[];
+  /** Whether those readings have answered: until then none is no finding. */
+  readingsLoad?: Load;
   /** The quick range the page reads while no custom range is in force (the last n days, moving with the clock):
    *  what "freeze at now" turns into a fixed range. Null when a custom range is in force. */
   quickDays?: number | null;
@@ -277,7 +280,9 @@ export function RangePanel({ from, to, tz, onTz, onApply, onFreeze, error: outer
               aria-describedby={reset == null ? `${uid}-noreset` : undefined}
               onClick={() => { if (reset != null) take(reset, Math.ceil(now() / 60_000) * 60_000); }}>{t("costs.range.sinceReset")}</button>
           </div>
-          {reset == null && <p className="muted text-xs cost-range-why" id={`${uid}-noreset`}>{t("costs.range.sinceResetNone")}</p>}
+          {reset == null && (readingsLoad !== "ready"
+            ? <div className="cost-range-why" id={`${uid}-noreset`}><CostWait state={readingsLoad} shape="line" error={t("costs.home.readingsError")} /></div>
+            : <p className="muted text-xs cost-range-why" id={`${uid}-noreset`}>{t("costs.range.sinceResetNone")}</p>)}
           {quickDays != null && (
             <div className="cost-range-freeze">
               <button type="button" className="cost-range-preset" data-range-freeze disabled={!canFreeze(quickDays)}
@@ -373,7 +378,8 @@ export function RangePanel({ from, to, tz, onTz, onApply, onFreeze, error: outer
         </div>
         <fieldset className="mt-2" style={{ border: 0, padding: 0, margin: "8px 0 0", minWidth: 0 }}>
           <legend className="text-xs muted" style={{ padding: 0 }}>{t("costs.range.between")}</legend>
-          {choices.length < 2 ? <p className="muted text-xs mt-1 mb-0">{t("costs.range.noReadings")}</p> : (
+          {readingsLoad !== "ready" ? <div className="mt-1"><CostWait state={readingsLoad} shape="line" error={t("costs.home.readingsError")} /></div>
+            : choices.length < 2 ? <p className="muted text-xs mt-1 mb-0">{t("costs.range.noReadings")}</p> : (
             <div className="flex flex-wrap items-end gap-2 mt-1">
               {/* The two selects share their row (or each take one) at equal width; the button wraps on its own. */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 8, flex: "1 1 400px", minWidth: 0 }}>

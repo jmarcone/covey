@@ -11,6 +11,10 @@ describe("deptTarget", () => {
     expect(deptTarget("office", "d1")).toEqual({ to: "/?dept=d1", state: { from: "office" } });
   });
 
+  it("sends the org chart to the list, which can be narrowed to a department", () => {
+    expect(deptTarget("org", "d1")).toEqual({ to: "/agents?dept=d1", state: { from: "list" } });
+  });
+
   it("names the agents without a department none", () => {
     expect(deptTarget("office", null).to).toBe("/?dept=none");
   });

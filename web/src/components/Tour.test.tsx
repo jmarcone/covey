@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import i18n from "../i18n";
+import i18n, { ladeSprache } from "../i18n";
+import type { Lang } from "../langs";
 import Tour, { TEAM_TOUR, tourGesehen } from "./Tour";
 
 /* The tour (#402) points at the real thing, can be left at any step, and
@@ -66,6 +67,15 @@ describe("Tour", () => {
     fireEvent.keyDown(window, { key: "Escape" });
     expect(ende).toHaveBeenCalledTimes(2);
     expect(tourGesehen()).toBe(true);
+  });
+
+  it("names the org chart among the agents' views in every language", async () => {
+    // A stem, since some languages inflect the word.
+    const names = { de: "Organigramm", en: "org chart", es: "organigrama", fr: "organigramme", it: "organigramma", nl: "organigram", pl: "schemat organizacyjny", pt: "organograma", ja: "組織図", zh: "组织架构" };
+    for (const [lang, name] of Object.entries(names)) {
+      await ladeSprache(lang as Lang);
+      expect(i18n.t("tour.buero.text"), lang).toContain(name);
+    }
   });
 
   it("has a title and a text for every step of the team tour in every language", async () => {

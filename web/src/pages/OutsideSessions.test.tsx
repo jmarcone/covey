@@ -341,6 +341,7 @@ describe("the operator sessions on the cost page (#120)", () => {
       expect(chips(name).some((b) => (b as HTMLButtonElement).disabled)).toBe(false);
     }
     fireEvent.click(screen.getByRole("button", { name: t("costs.outside.b10min") }));
+    await screen.findAllByRole("button", { name: t("costs.fig.realEstimate") }); // the chart waits for the new bucket
     for (const name of [t("costs.fig.realEstimate"), t("costs.fig.billed")]) {
       const off = chips(name).filter((b) => b.getAttribute("title") === t("costs.outside.tenMinNoMeter"));
       expect(off.length).toBeGreaterThan(0);

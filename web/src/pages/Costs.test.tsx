@@ -564,6 +564,7 @@ describe("Kosten — Zahlen je Zugangsdaten", () => {
       const { container } = serve(data);
       await screen.findByRole("group", { name: "Echte Kosten (Schätzung)" });
       await act(async () => { await userEvent.click(screen.getByRole("button", { name: "7 Tage" })); });
+      await screen.findByRole("button", { name: "Echt gegen Liste" }); // the chart waits for the new range
       await click("Echt gegen Liste");
       // the day's whole list (6 + 2 $) over its 4 points, by the tile's rule
       const m = multipleOf(8, realCost(4, PP))!;

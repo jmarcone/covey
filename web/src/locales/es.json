@@ -1027,6 +1027,9 @@
       "noRuns": "ninguna ejecución en este periodo",
       "doorHealthSub": "comprobaciones superadas",
       "loading": "Cargando las cifras de coste…",
+      "staleError": "No se pudo actualizar. Se sigue mostrando el último resultado, que quizá esté desfasado.",
+      "readingsError": "No se pudieron cargar las lecturas del contador.",
+      "bundleError": "No se pudo cargar esta página. Recárgala en el navegador para intentarlo de nuevo.",
       "noMeter": "No hay contador de suscripción en este periodo: no hay cifra de capacidad para responder. La página de detalles tiene los precios por token.",
       "loadError": "No se pudo cargar esta vista. Inténtalo de nuevo en un momento."
     },
@@ -1154,6 +1157,7 @@
         "bucketTooFine": "demasiado fino",
         "noBilledKeys": "sin claves de API",
         "loadError": "no cargado",
+        "queryFailed": "no cargado",
         "notLanded": "aún no llegó",
         "noPlanPrice": "sin precio del plan"
       },
@@ -1171,6 +1175,7 @@
         "bucketTooFine": "Sin cifra a 10 minutos: la capacidad del plan y las facturas llegan como mucho por hora. Elige por hora o más amplio.",
         "noBilledKeys": "Sin cifra: ninguna clave de API está asociada a una factura en este periodo.",
         "loadError": "Sin cifra: no se pudo obtener la factura. Inténtalo de nuevo más tarde.",
+        "queryFailed": "Sin cifra: no se pudo cargar. Inténtalo de nuevo más tarde.",
         "notLanded": "Aún sin cifra: hay claves de API asociadas, pero todavía no ha llegado ninguna factura para este periodo (o la sincronización de facturas falló o no está configurada).",
         "noPlanPrice": "Sin cifra: las lecturas del contador del asiento no tienen precio del plan. Indica el precio del plan para ver la capacidad del plan usada."
       }
@@ -4281,7 +4286,7 @@
     },
     "buero": {
       "titel": "Agentes",
-      "text": "Aquí viven sus colegas. La oficina muestra la plantilla como un edificio, la lista muestra cada agente y lo que está haciendo, y un clic en un nombre abre su página. El número indica cuántas decisiones le esperan."
+      "text": "Aquí viven sus colegas. La oficina muestra la plantilla como un edificio, la lista muestra cada agente y lo que está haciendo, el organigrama muestra quién depende de quién, y un clic en un nombre abre su página. El número indica cuántas decisiones le esperan."
     },
     "team": {
       "titel": "El equipo",

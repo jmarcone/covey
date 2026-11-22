@@ -1027,6 +1027,9 @@
       "noRuns": "brak uruchomień w tym okresie",
       "doorHealthSub": "kontroli zaliczonych",
       "loading": "Wczytywanie danych o kosztach…",
+      "staleError": "Nie udało się odświeżyć danych. Nadal widoczny jest ostatni wynik, być może nieaktualny.",
+      "readingsError": "Nie udało się wczytać odczytów licznika.",
+      "bundleError": "Nie udało się wczytać tej strony. Odśwież ją w przeglądarce, aby spróbować ponownie.",
       "noMeter": "Brak licznika subskrypcji w tym okresie: nie ma liczby pojemności, by odpowiedzieć. Ceny za token są na stronie szczegółów.",
       "loadError": "Nie udało się wczytać tego widoku. Spróbuj ponownie za chwilę."
     },
@@ -1154,6 +1157,7 @@
         "bucketTooFine": "zbyt drobne",
         "noBilledKeys": "brak kluczy API",
         "loadError": "nie wczytano",
+        "queryFailed": "nie wczytano",
         "notLanded": "jeszcze nie dotarł",
         "noPlanPrice": "brak ceny planu"
       },
@@ -1171,6 +1175,7 @@
         "bucketTooFine": "Brak kwoty przy 10 minutach: pojemność planu i rachunki są najwyżej godzinowe. Wybierz widok godzinowy lub szerszy.",
         "noBilledKeys": "Brak kwoty: żaden klucz API nie jest przypisany do rachunku w tym okresie.",
         "loadError": "Brak kwoty: nie udało się pobrać rachunku. Spróbuj ponownie później.",
+        "queryFailed": "Brak danych liczbowych: nie udało się ich wczytać. Spróbuj ponownie później.",
         "notLanded": "Jeszcze brak kwoty: klucze API są przypisane, ale za ten okres nie dotarł jeszcze żaden rachunek (albo synchronizacja rachunków nie powiodła się lub nie jest skonfigurowana).",
         "noPlanPrice": "Brak kwoty: odczyty licznika stanowiska nie mają ceny planu. Ustaw cenę planu, aby zobaczyć wykorzystaną pojemność planu."
       }
@@ -4281,7 +4286,7 @@
     },
     "buero": {
       "titel": "Agenci",
-      "text": "Tu są Państwa współpracownicy. Biuro pokazuje zespół jako budynek, lista pokazuje każdego agenta i to, co robi, a kliknięcie nazwy otwiera jego stronę. Liczba pokazuje, ile decyzji czeka na Państwa."
+      "text": "Tu są Państwa współpracownicy. Biuro pokazuje zespół jako budynek, lista pokazuje każdego agenta i to, co robi, schemat organizacyjny pokazuje, kto komu podlega, a kliknięcie nazwy otwiera jego stronę. Liczba pokazuje, ile decyzji czeka na Państwa."
     },
     "team": {
       "titel": "Zespół",

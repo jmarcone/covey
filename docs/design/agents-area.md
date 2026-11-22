@@ -2,6 +2,8 @@
 
 Status: proposal, waiting for product-owner's acceptance. It covers design tasks 353c5a39 (Agents as a main view), 02a7904f (agent detail overflow, agent list, all-agents board) and ab3251b3 (rail order with Agents and Costs), and the wish of 2026-11-18. Revision 2 (2026-11-18): Costs gets its own rail place (§1, §4), which backlog item 666b6666 “costs as main section” needs. Code references are to `main` @ 66f38956. Mockups are static HTML with covey's tokens and sample data. The screenshots are in `docs/design/agents-area/`.
 
+**Changed on 2026-11-22 (a newer decision than revision 2):** Org Chart is the third view of Agents, after Office and List (the second without the team surface), at its old address `/org`. This replaces “Org Chart stays in Admin” in §1, §4 and §7: `/org` marks Agents and has the agents frame, the Admin column is TOOLS · SECURITY · ORGANIZATION, and the Admin entry opens `/targets`, its first item. Costs has the rail place §1 describes. With three views in the switch, the agent page's “reports to” note (agent-header §1) is a row of the `⋯` menu below 641 px.
+
 > Wish (2026-11-18): “The two agent views are not consistent: the site moves around, and on the left a new bar appears. Agents should not be part of settings but a main view, with their own link.”
 
 **The question this area answers:** *How is my workforce doing, and what is each agent doing?* It has three ways to look at that (Office, List, Board) and one way to look closer (Detail). All four sit in one frame, so nothing on screen moves except the content.
@@ -167,9 +169,9 @@ The column becomes: *Org Chart* · TOOLS (5) · SECURITY (4) · ORGANIZATION (4)
 ## 8. Implementation cut (for covey-lead)
 | PR | Content | Depends on |
 |---|---|---|
-| 1 | Rail entry + routes: `RailPlace` `agents`/`inbox`/`costs`; Agents, Inbox and Costs entries in the §1 order; `inCosts` hides the Admin column on `/costs`; Admin → `/org`; `imTeam` without `/`; AppShell renders `/` (Office) with the column hidden for Agents and Inbox; tour target. Vitest for the path → rail place mapping. **Built without Costs (PR #9); the Costs rail entry is still pending.** | — |
+| 1 | Rail entry + routes: `RailPlace` `agents`/`inbox`/`costs`; Agents, Inbox and Costs entries in the §1 order; `inCosts` hides the Admin column on `/costs`; Admin → `/org`; `imTeam` without `/`; AppShell renders `/` (Office) with the column hidden for Agents and Inbox; tour target. Vitest for the path → rail place mapping. **Built without Costs (PR #9); the Costs rail entry followed on 2026-11-22, with Admin → `/targets` (see the change at the top).** | — |
 | 2 | Shared frame: `AgentsFrame`, `ViewSwitch`, `scrollbar-gutter`, Office padding and h1, origin state, crumb, office card links, “Open conversation” on the detail, strings. | 1 |
-| 3 | Admin column cleanup (§4): Agents, Inbox, Setup and Costs leave it. **Built without Costs (PR #62): Costs stays in the column until its rail entry lands.** | 1 |
+| 3 | Admin column cleanup (§4): Agents, Inbox, Setup and Costs leave it. **Built without Costs (PR #62); Costs and Org Chart left the column on 2026-11-22.** | 1 |
 | 4 | Board view at `/agents/board`, plus the API from board proposal §8 (4a backend, 4b view). | 2 (view), — (API) |
 | 5 | Detail overflow D1–D3 (CSS + `Agent.tsx` tabs). | — (check again after 2) |
 | 6 | Costs page overflow (D4). Its own place gives 240 px, but the chip row needs 3108 px, so the overflow fix is still needed. **Do not build it separately:** the cost-page top design (`docs/design/cost-page-top.md`, PR #8) replaces the chip row with one filter bar. | — |

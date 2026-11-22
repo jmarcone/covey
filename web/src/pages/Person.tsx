@@ -9,12 +9,14 @@ import ProfileForm from "../components/ProfileForm";
 import ChoiceList from "../components/ChoiceList";
 import Section from "../components/Section";
 import { NavIcon } from "../components/navicons";
+import { viewUrl } from "./agents/views";
 
 export default function PersonPage({ me }: { me: Principal }) {
   const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
   /* Opened from the member list, the way back leads there — not to the
-     org chart one never came from (#743). */
+     org chart one never came from (#743). The org chart is a view of the
+     agents area: the way back reopens it as it was left, like the switch. */
   const fromMembers = (useLocation().state as { from?: string } | null)?.from === "members";
   const person = useQuery({
     queryKey: ["human", id],
@@ -43,7 +45,7 @@ export default function PersonPage({ me }: { me: Principal }) {
 
   return (
     <div className="person-page">
-      <Link to={fromMembers ? "/administration/members" : "/org"} className="ps-back">
+      <Link to={fromMembers ? "/administration/members" : viewUrl("org")} className="ps-back">
         <span aria-hidden="true">‹</span> {fromMembers ? t("nav.members") : t("person.breadcrumb")}
       </Link>
 
@@ -76,7 +78,7 @@ export default function PersonPage({ me }: { me: Principal }) {
       <Section
         title={t("person.orgChart")}
         action={
-          <Link to="/org" className="ps-link">
+          <Link to={viewUrl("org")} className="ps-link">
             {t("person.openOrgChart")}
           </Link>
         }

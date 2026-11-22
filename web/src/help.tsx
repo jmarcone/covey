@@ -61,7 +61,7 @@ const deTopics: HelpTopic[] = [
   {
     id: "agenten",
     title: "Agenten (Übersicht)",
-    match: (p) => p === "/",
+    match: (p) => p === "/" || p === "/agents",
     body: (
       <>
         <p>
@@ -446,7 +446,7 @@ const enTopics: HelpTopic[] = [
   {
     id: "agenten",
     title: "Agents (Overview)",
-    match: (p) => p === "/",
+    match: (p) => p === "/" || p === "/agents",
     body: (
       <>
         <p>

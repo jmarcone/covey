@@ -17,7 +17,7 @@ faq:
     a: 'On the cost page, on the credential''s block: Set plan price, and Set cost basis for what is the money on that credential (the seat, its usage, or both). An organisation admin or a security role can do both. A plan price prices the meter''s points read from its *Valid from* on, never before.'
 ---
 
-The cost page (*Costs* in the *Admin* column of the sidebar; the page is headed *Cost & Tokens*) shows what the agents' work
+The cost page (*Costs* in the left rail, above *Admin*; the page is headed *Cost & Tokens*) shows what the agents' work
 consumed, and what Claude Code sessions outside covey consumed beside them.
 Every role can read it; setting a plan price or a cost basis is for
 organisation admins and the security role. All periods are cut in UTC: UTC days,

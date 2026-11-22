@@ -2,12 +2,13 @@ import type { ReactElement } from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { screen, render, waitFor, within, act, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider, onlineManager } from "@tanstack/react-query";
+import { readFileSync } from "node:fs";
 import { MemoryRouter } from "react-router";
 import App from "./App";
-import { api } from "./api";
+import { api, ROLES, type Principal } from "./api";
 import { merkeSprache } from "./i18n";
 import { useGerman, testPrincipal } from "./test/render";
-import { rememberView } from "./pages/agents/views";
+import { forgetUnsavedViews, rememberView } from "./pages/agents/views";
 
 /* What happens when the session ends.
 
@@ -58,6 +59,16 @@ function serverMitSitzung(angemeldet: () => boolean, teamSurface = false) {
         headers: { "Content-Type": "application/json" },
       });
     }),
+  );
+}
+
+/* A server for the tests of the shell alone: it says who one is, and leaves
+   every page loading, so no page's data is needed to see where it stands. */
+function serverNurSchale(me: Partial<Principal> = {}) {
+  vi.stubGlobal("fetch", (input: RequestInfo | URL) =>
+    String(input).includes("/auth/me")
+      ? Promise.resolve(new Response(JSON.stringify({ ...testPrincipal(), ...me }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      : new Promise<Response>(() => {}),
   );
 }
 
@@ -460,8 +471,8 @@ describe("App und die Team-Oberfläche", () => {
       within(screen.getByRole("navigation", { name: "Ansichten der Agenten" })).getByRole("link", { name: "Büro" }),
     ).toHaveAttribute("aria-current", "page");
     expect(container.querySelector("#konsole-nav")).toBeNull();
-    // Admin lands on the org chart, the first item of its column.
-    expect(screen.getByRole("link", { name: "Verwaltung" }).getAttribute("href")).toBe("/org");
+    // Admin lands on the first item of its column.
+    expect(screen.getByRole("link", { name: "Verwaltung" }).getAttribute("href")).toBe("/targets");
   });
 
   it("lässt die Unterhaltung im Team und zeigt die Agentenseite ohne Spalte der Verwaltung", async () => {
@@ -523,7 +534,7 @@ describe("App bei Telefonbreite", () => {
         ? Promise.resolve(new Response(JSON.stringify({ items: [], pending: 0 }), { status: 200, headers: { "Content-Type": "application/json" } }))
         : server(input, init),
     );
-    const { container } = renderApp(<App />, "/org");
+    const { container } = renderApp(<App />, "/targets");
 
     const knopf = await screen.findByRole("button", { name: "Menü" });
     const leiste = container.querySelector("#konsole-nav")!;
@@ -531,7 +542,7 @@ describe("App bei Telefonbreite", () => {
     expect(knopf).toHaveAttribute("aria-controls", "konsole-nav");
     expect(leiste).toHaveAttribute("inert");
     // The bar names the page the hidden navigation would otherwise mark.
-    expect(container.querySelector(".konsole-bar-titel")).toHaveTextContent("Organigramm");
+    expect(container.querySelector(".konsole-bar-titel")).toHaveTextContent("Angebundene Systeme");
 
     // Open: a dialog, focus inside it, on the page one is on.
     knopf.click();
@@ -540,7 +551,7 @@ describe("App bei Telefonbreite", () => {
     expect(leiste).toHaveAttribute("role", "dialog");
     expect(leiste).toHaveAttribute("aria-modal", "true");
     expect(leiste.contains(document.activeElement)).toBe(true);
-    expect(document.activeElement).toHaveTextContent("Organigramm");
+    expect(document.activeElement).toHaveTextContent("Angebundene Systeme");
 
     // Escape closes it and gives focus back to the button.
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
@@ -556,9 +567,98 @@ describe("App bei Telefonbreite", () => {
     // A link navigates and closes it.
     knopf.click();
     await waitFor(() => expect(knopf).toHaveAttribute("aria-expanded", "true"));
-    const kosten = [...leiste.querySelectorAll("a")].find((a) => a.textContent === "Kosten")!;
-    kosten.click();
+    const vorlagen = [...leiste.querySelectorAll("a")].find((a) => a.textContent === "Vorlagen")!;
+    vorlagen.click();
     await waitFor(() => expect(knopf).toHaveAttribute("aria-expanded", "false"));
-    await waitFor(() => expect(container.querySelector(".konsole-bar-titel")).toHaveTextContent("Kosten"));
+    await waitFor(() => expect(container.querySelector(".konsole-bar-titel")).toHaveTextContent("Vorlagen"));
   });
+
+  for (const route of ["/costs", "/costs/details", "/org"]) {
+    it(`has no menu bar on ${route}: there is no column to open`, async () => {
+      serverNurSchale();
+      const { container } = renderApp(<App />, route);
+      await screen.findByRole("navigation", { name: "Bereiche" });
+      expect(container.querySelector(".konsole-bar")).toBeNull();
+      expect(container.querySelector("#konsole-nav")).toBeNull();
+    });
+  }
+
+  /* The bar took 52 px at the top of the cost pages; jsdom computes no
+     sticky offsets, so the stylesheet is read. */
+  it("sticks the cost pages' filter bar to the window's top", () => {
+    const css = readFileSync(`${process.cwd()}/src/styles.css`, "utf8");
+    const offsets = [...css.matchAll(/\.cost-filterbar\s*\{([^}]*)\}/g)].flatMap((m) => m[1].match(/(?<![-\w])top:[^;]+/g) ?? []);
+    expect(offsets).toEqual(["top: env(safe-area-inset-top, 0px)"]);
+  });
+});
+
+/* Costs are a place in the rail (#17) and the org chart is a view of Agents:
+   neither is a page of the Admin column, for any role, in either mode. */
+describe("App: der Platz von Kosten und Organigramm", () => {
+  const personen: [string, Partial<Principal>][] = [
+    ...ROLES.map((Role): [string, Partial<Principal>] => [Role, { Role }]),
+    ["system_admin", { Role: "agent_owner", PlatformRole: "system_admin" }],
+  ];
+  const spalte = (me: Partial<Principal>) => [
+    "/targets", "/secrets", "/skills", "/voices", "/templates",
+    "/guardrails", "/egress",
+    ...(["org_admin", "security", "auditor"].includes(me.Role!) ? ["/audit"] : []),
+    ...(["org_admin", "security"].includes(me.Role!) ? ["/requests"] : []),
+    ...(me.Role === "org_admin" ? ["/administration/members", "/administration"] : []),
+    "/infrastructure",
+    ...(me.PlatformRole === "system_admin" ? ["/platform"] : []),
+  ];
+
+  beforeEach(() => {
+    localStorage.setItem("covey.tour.team", "1");
+    sessionStorage.clear();
+    forgetUnsavedViews();
+  });
+
+  for (const team of [true, false]) {
+    for (const [name, me] of personen) {
+      it(`${name}, team surface ${team ? "on" : "off"}`, async () => {
+        serverNurSchale({ ...me, TeamSurface: team });
+        const { container } = renderApp(<App />, "/costs/details");
+
+        const rail = within(await screen.findByRole("navigation", { name: "Bereiche" }));
+        const orte = rail.getAllByRole("link").filter((a) => a.classList.contains("tm-rail-item")).map((a) => a.getAttribute("data-tour"));
+        expect(orte).toEqual(["agents", team ? "team" : "inbox", "workflows", "notes", "costs", "admin"]);
+        const marked = () => container.querySelector(".tm-rail-item[aria-current]")?.getAttribute("data-tour");
+        expect(marked()).toBe("costs");
+        expect(container.querySelector("#konsole-nav")).toBeNull();
+
+        // Admin opens the first item of a column that has neither of the two.
+        fireEvent.click(rail.getByRole("link", { name: "Verwaltung" }));
+        const nav = await waitFor(() => {
+          const el = container.querySelector("#konsole-nav");
+          expect(el).not.toBeNull();
+          return el!;
+        });
+        const items = [...nav.querySelectorAll("a")];
+        expect(items.map((a) => a.getAttribute("href"))).toEqual(spalte(me));
+        expect(items[0]).toHaveClass("active");
+        expect(marked()).toBe("admin");
+        expect(nav.querySelectorAll(".nav-sec")).toHaveLength(3);
+
+        // The org chart is the last view of Agents, in the frame.
+        fireEvent.click(rail.getByRole("link", { name: /^Agenten/ }));
+        const views = within(await screen.findByRole("navigation", { name: "Ansichten der Agenten" }));
+        expect(views.getAllByRole("link").map((a) => a.textContent)).toEqual([...(team ? ["Büro"] : []), "Liste", "Organigramm"]);
+        fireEvent.click(views.getByRole("link", { name: "Organigramm" }));
+        await waitFor(() => expect(views.getByRole("link", { name: "Organigramm" })).toHaveAttribute("aria-current", "page"));
+        expect(marked()).toBe("agents");
+        expect(container.querySelector("#konsole-nav")).toBeNull();
+        expect(rail.getByRole("link", { name: /^Agenten/ })).toHaveAttribute("href", "/org");
+      });
+    }
+
+    it(`opens /org in the agents' frame from its address, team surface ${team ? "on" : "off"}`, async () => {
+      serverNurSchale({ TeamSurface: team });
+      const { container } = renderApp(<App />, "/org");
+      const views = within(await screen.findByRole("navigation", { name: "Ansichten der Agenten" }));
+      expect(views.getByRole("link", { name: "Organigramm" })).toHaveAttribute("aria-current", "page");
+      expect(container.querySelector("#konsole-nav")).toBeNull();
+    });
+  }
 });

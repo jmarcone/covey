@@ -1027,6 +1027,9 @@
       "noRuns": "kein Lauf in diesem Zeitraum",
       "doorHealthSub": "Prüfungen bestanden",
       "loading": "Kostenzahlen werden geladen…",
+      "staleError": "Aktualisieren nicht möglich. Das letzte Ergebnis wird weiter angezeigt und ist womöglich veraltet.",
+      "readingsError": "Die Zählerstände konnten nicht geladen werden.",
+      "bundleError": "Diese Seite konnte nicht geladen werden. Bitte im Browser neu laden.",
       "noMeter": "Kein Abo-Zähler in diesem Zeitraum: Es gibt keine Kapazitätszahl für die Antwort. Die Detailseite zeigt die Token-Preise.",
       "loadError": "Diese Ansicht konnte nicht geladen werden. Bitte gleich noch einmal versuchen."
     },
@@ -1154,6 +1157,7 @@
         "bucketTooFine": "zu fein",
         "noBilledKeys": "keine API-Schlüssel",
         "loadError": "nicht geladen",
+        "queryFailed": "nicht geladen",
         "notLanded": "noch nicht eingetroffen",
         "noPlanPrice": "kein Tarifpreis"
       },
@@ -1171,6 +1175,7 @@
         "bucketTooFine": "Keine Zahl bei 10 Minuten: Plankapazität und Rechnungen gibt es höchstens je Stunde. Wähle stündlich oder gröber.",
         "noBilledKeys": "Keine Zahl: In diesem Zeitraum ist kein API-Schlüssel einer Rechnung zugeordnet.",
         "loadError": "Keine Zahl: Die Rechnung konnte nicht abgerufen werden. Später erneut versuchen.",
+        "queryFailed": "Keine Zahl: Sie konnte nicht geladen werden. Später erneut versuchen.",
         "notLanded": "Noch keine Zahl: API-Schlüssel sind zugeordnet, aber für diesen Zeitraum ist noch keine Rechnung eingetroffen (oder der Rechnungsabgleich ist fehlgeschlagen oder nicht eingerichtet).",
         "noPlanPrice": "Keine Zahl: Die Zählerstände des Sitzes haben keinen Tarifpreis. Den Preis des Tarifs setzen, um die genutzte Plankapazität zu sehen."
       }
@@ -4281,7 +4286,7 @@
     },
     "buero": {
       "titel": "Agenten",
-      "text": "Hier sind Ihre Kolleginnen und Kollegen. Das Büro zeigt die Belegschaft als Gebäude, die Liste jeden Agenten mit dem, was er gerade tut, und ein Klick auf einen Namen öffnet seine Seite. Die Zahl zeigt, wie viele Entscheidungen auf Sie warten."
+      "text": "Hier sind Ihre Kolleginnen und Kollegen. Das Büro zeigt die Belegschaft als Gebäude, die Liste jeden Agenten mit dem, was er gerade tut, das Organigramm, wer an wen berichtet, und ein Klick auf einen Namen öffnet seine Seite. Die Zahl zeigt, wie viele Entscheidungen auf Sie warten."
     },
     "team": {
       "titel": "Das Team",

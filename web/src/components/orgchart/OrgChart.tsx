@@ -32,6 +32,7 @@ import {
   buildModel, descendantsOf, memberBoss, memberDept, memberName, memberNodeId,
   ORG, UNASSIGNED, DEPT_TONES, type ChartNode, type Member, type Sizes,
 } from "./model";
+import { fromView } from "../../pages/agents/views";
 
 /* ── Sizes ────────────────────────────────────────────────────────────── */
 
@@ -727,7 +728,7 @@ function MemberCard({ node, editing, depts, members, dragging, canDrop, onDragSt
     >
       <div className="orgc-row">
         {editing && <span className="orgc-grip" title={t("org.chart.grip")}><Ico d={IC.grip} size={16} /></span>}
-        <Link to={isAgent ? `/agents/${m.id}` : `/people/${m.id}`} className="orgc-who" draggable={false} title={t("org.openProfile")} aria-label={`${name}: ${t("org.openProfile")}`}>
+        <Link to={isAgent ? `/agents/${m.id}` : `/people/${m.id}`} state={isAgent ? fromView("org") : undefined} className="orgc-who" draggable={false} title={t("org.openProfile")} aria-label={`${name}: ${t("org.openProfile")}`}>
           <Avatar
             name={name}
             size={30}

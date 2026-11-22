@@ -881,6 +881,8 @@ describe("the answer table (#195)", () => {
     }
     const clone = (within ? document.querySelector(within)! : document.body).cloneNode(true) as HTMLElement;
     clone.querySelector("[data-answer]")?.remove();
+    // The per-model table lists the outside sessions by design (as case 15 says); it waits for them before it stands.
+    clone.querySelector("[data-models-title]")?.parentElement?.querySelectorAll("tr[data-outside-row]").forEach((e) => e.remove());
     // The chart's screen-reader summary is not a figure on the screen.
     clone.querySelectorAll("[data-desc]").forEach((e) => e.remove());
     clone.querySelectorAll("[data-tile]").forEach((e) => { if (exempt.some((l) => e.textContent!.includes(l))) e.remove(); });
@@ -891,6 +893,7 @@ describe("the answer table (#195)", () => {
   it("no figure of the table stands on the page a second time", async () => {
     serve();
     await answerReady();
+    await waitFor(() => expect(document.querySelector("[data-models-title]")!.parentElement!.querySelector("table")).not.toBeNull());
     figuresOnceOnly();
   });
 

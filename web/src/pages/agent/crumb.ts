@@ -6,10 +6,12 @@ import { fromView, viewPath, type AgentsView } from "../agents/views";
 /** A department step: the view the page was opened from (`originOf`, which
  *  already leaves out the office on an installation without the team
  *  surface), narrowed to one department, `null` being the agents without
- *  one. The view's other filters are dropped, and `from` travels on so the
- *  next step still knows where it started. */
+ *  one. The org chart cannot be narrowed: from there it is the list. The
+ *  view's other filters are dropped, and `from` travels on so the next step
+ *  still knows where it started. */
 export function deptTarget(origin: AgentsView, deptId: string | null): { to: string; state: { from: AgentsView } } {
-  return { to: `${viewPath(origin)}?dept=${encodeURIComponent(deptId ?? "none")}`, state: fromView(origin) };
+  const view = origin === "org" ? "list" : origin;
+  return { to: `${viewPath(view)}?dept=${encodeURIComponent(deptId ?? "none")}`, state: fromView(view) };
 }
 
 /** How much of the path the viewport has room for (spec: agent-header §1). */
@@ -20,6 +22,10 @@ export const CRUMB_QUERIES: { mode: CrumbMode; query: string }[] = [
   { mode: "mid", query: "(min-width: 1024px)" },
   { mode: "narrow", query: "(min-width: 769px)" },
 ];
+
+/** From this width the bar has room for whom the agent reports to in another
+ *  department, after the switch's three views; below it the note is in the menu. */
+export const NOTE_QUERY = "(min-width: 641px)";
 
 export type Folded<T> = {
   /** Supervisors written out as steps, top first. */
