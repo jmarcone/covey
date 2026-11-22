@@ -1,7 +1,17 @@
 import { describe, it, expect } from "vitest";
 import type { UsageReading } from "../api";
 import {
+  addDays,
   betweenReadings,
+  canFreeze,
+  cutToNow,
+  dayKeyOf,
+  dayStart,
+  freezeRange,
+  joinEnd,
+  presetRange,
+  splitEnd,
+  splitStart,
   bucketForSpan,
   customWindow,
   fromInputValue,
@@ -80,7 +90,11 @@ describe("validRange", () => {
     expect(validRange(NOW - H, NOW, NOW)).toBeNull();
     expect(validRange(NOW, NOW, NOW)).toBe("range_order");
     expect(validRange(NOW - 31 * D, NOW, NOW)).toBeNull();
-    expect(validRange(NOW - 31 * D - 60_000, NOW, NOW)).toBe("range_span");
+    // One hour of slack: a whole local month across the autumn clock change is 31 days and one hour.
+    expect(validRange(NOW - 31 * D - H, NOW, NOW)).toBeNull();
+    expect(validRange(NOW - 31 * D - H - 60_000, NOW, NOW)).toBe("range_span");
+    // October 2026 in Berlin, the instants written out: 1 Oct 00:00 CEST to 1 Nov 00:00 CET.
+    expect(validRange(Date.UTC(2026, 8, 30, 22), Date.UTC(2026, 9, 31, 23), NOW)).toBeNull();
     expect(validRange(NOW, NOW + H, NOW)).toBe("range_future");
     expect(validRange(NaN, NOW, NOW)).toBe("range_time");
     // a to after now is allowed: the API cuts it
@@ -172,5 +186,64 @@ describe("the helpers", () => {
     expect(from).toBe(Date.UTC(2026, 10, 20, 10, 1)); // just after the first: it lies before from
     expect(to).toBe(Date.UTC(2026, 10, 20, 11, 1)); // just after the second: it lies before to
     expect(from > a && to > b).toBe(true);
+  });
+});
+
+// The calendar picker (cost range calendar): days, presets and the freeze, in both zones. NOW is Friday 20 Nov 17:30
+// UTC, which is already Saturday 21 Nov 02:30 on the test's clock (Tokyo): a UTC day that followed the machine's
+// zone would start at 15:00 UTC and land on the wrong date.
+describe("the calendar's days", () => {
+  const H = 3_600_000;
+  it("starts a day at the zone's midnight, UTC's whatever the machine's zone", () => {
+    expect(dayStart("2026-11-20", "utc")).toBe(Date.UTC(2026, 10, 20));
+    expect(dayStart("2026-11-20", "local")).toBe(Date.UTC(2026, 10, 19, 15)); // 00:00 in Tokyo
+    expect(dayStart("2026-02-30", "utc")).toBeNaN();
+    expect(dayKeyOf(NOW, "utc")).toBe("2026-11-20");
+    expect(dayKeyOf(NOW, "local")).toBe("2026-11-21");
+    expect(addDays("2026-11-30", 1)).toBe("2026-12-01");
+    expect(addDays("2026-03-01", -1)).toBe("2026-02-28");
+  });
+
+  it("reads an end at midnight as the whole day before, and writes a day without a time as the next midnight", () => {
+    expect(splitStart("2026-11-17T08:15")).toEqual({ day: "2026-11-17", time: "08:15" });
+    expect(splitStart("nonsense")).toEqual({ day: "", time: "" });
+    expect(splitEnd("2026-11-20T00:00", "2026-11-17", "local")).toEqual({ day: "2026-11-19", time: "" });
+    expect(splitEnd("2026-11-19T12:30", "2026-11-17", "local")).toEqual({ day: "2026-11-19", time: "12:30" });
+    // An end at the start day's own midnight is not a day (and validRange refuses it).
+    expect(splitEnd("2026-11-17T00:00", "2026-11-17", "utc")).toEqual({ day: "2026-11-17", time: "00:00" });
+    expect(joinEnd("2026-11-19", "", "utc")).toBe("2026-11-20T00:00");
+    expect(joinEnd("2026-11-19", "12:30", "local")).toBe("2026-11-19T12:30");
+  });
+
+  it("cuts the presets at the zone's days, weeks from Monday, ending now where they hold today", () => {
+    const end = NOW; // NOW is on a whole minute
+    const utc = (d: number, m = 10) => Date.UTC(2026, m, d);
+    expect(presetRange("today", NOW, "utc")).toEqual([utc(20), end]);
+    expect(presetRange("yesterday", NOW, "utc")).toEqual([utc(19), utc(20)]);
+    expect(presetRange("last7", NOW, "utc")).toEqual([utc(14), end]);
+    expect(presetRange("thisWeek", NOW, "utc")).toEqual([utc(16), end]); // Monday 16 Nov
+    expect(presetRange("lastWeek", NOW, "utc")).toEqual([utc(9), utc(16)]);
+    expect(presetRange("thisMonth", NOW, "utc")).toEqual([utc(1), end]);
+    expect(presetRange("lastMonth", NOW, "utc")).toEqual([utc(1, 9), utc(1)]);
+    // In Tokyo it is Saturday the 21st: the same presets, nine hours earlier and a day later.
+    const jst = (d: number, m = 10) => Date.UTC(2026, m, d) - 9 * H;
+    expect(presetRange("today", NOW, "local")).toEqual([jst(21), end]);
+    expect(presetRange("yesterday", NOW, "local")).toEqual([jst(20), jst(21)]);
+    expect(presetRange("last7", NOW, "local")).toEqual([jst(15), end]);
+    expect(presetRange("thisWeek", NOW, "local")).toEqual([jst(16), end]);
+    expect(presetRange("lastWeek", NOW, "local")).toEqual([jst(9), jst(16)]);
+    expect(presetRange("lastMonth", NOW, "local")).toEqual([jst(1, 9), jst(1)]);
+  });
+
+  it("freezes a quick range at now, up to the longest range", () => {
+    expect(freezeRange(30, NOW + 20_000)).toEqual([NOW + 60_000 - 30 * 24 * H, NOW + 60_000]);
+    expect(canFreeze(30)).toBe(true);
+    expect(canFreeze(90)).toBe(false);
+  });
+
+  it("cuts an end in the future to the end of this minute, and leaves a start in the future to validRange", () => {
+    expect(cutToNow(NOW - H, NOW + 5 * H, NOW + 1000)).toBe(NOW + 60_000);
+    expect(cutToNow(NOW - H, NOW - 1000, NOW)).toBe(NOW - 1000);
+    expect(cutToNow(NOW + H, NOW + 2 * H, NOW)).toBe(NOW + 2 * H);
   });
 });

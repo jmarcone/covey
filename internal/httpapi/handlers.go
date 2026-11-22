@@ -1392,8 +1392,12 @@ func costWindowAt(r *http.Request, now time.Time) (string, time.Time) {
 // maxTenMinuteDays is how far back costWindow reaches at ?bucket=10min.
 const maxTenMinuteDays = 2
 
-// maxCustomRange is the longest span ?from= and ?to= may ask for.
-const maxCustomRange = 31 * 24 * time.Hour
+// maxCustomRange is the longest span ?from= and ?to= may ask for: 31 days and
+// one hour of slack, since a whole local month across the autumn clock change
+// is 31 days and one hour (October in Europe, the picker's "Last month" all
+// November) and is still one month. web/src/pages/costRange.ts allows the same
+// (MAX_RANGE_DAYS, RANGE_SLACK_MS).
+const maxCustomRange = 31*24*time.Hour + time.Hour
 
 // rangeError is a refused ?from=/?to=: Code is what the client maps to its own
 // words (the UI shows no server text), Msg says it for a person with curl.
@@ -1410,8 +1414,8 @@ func (e rangeError) Error() string { return e.Msg }
 //
 // The same rules stand in web/src/pages/costRange.ts (validRange): from and to
 // come together, parse as RFC 3339, from is before to and before now, the span
-// is at most 31 days, and 10-minute buckets hold at most two days. Keep both in
-// step.
+// is at most 31 days and one hour (maxCustomRange), and 10-minute buckets hold
+// at most two days. Keep both in step.
 //
 // The endpoints that take from and to are the ones that call costRange:
 // /cost/cells, /cost/org, /cost/models, /cost/usage-readings, /cost/billed,

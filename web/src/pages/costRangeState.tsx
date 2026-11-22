@@ -1,14 +1,17 @@
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { Suspense, lazy, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router";
 import { setDisplayTz } from "../format";
 import { bucketFits, useCostWindow } from "./costView";
 import { bucketForSpan, customWindow, isCustom, readRange, windowQuery, writeRange, type CostWindow, type RangeCode } from "./costRange";
 import { bucketOptions, rangeOptions } from "./outsideFigures";
-import { RangePanel } from "./RangePanel";
 import { Seg } from "./Seg";
 import { BasisControl } from "./BasisControl";
 import { useUsageReadings } from "./StackedCostChart";
+
+// The custom range's panel carries the calendar (react-day-picker and date-fns): a chunk of its own, loaded when the
+// panel opens, so a cost page on a quick range does not pay for it.
+const RangePanel = lazy(() => import("./RangePanel").then((m) => ({ default: m.RangePanel })));
 
 /* The cost pages' window, shared by the home (/costs) and the details page
  * (/costs/details) so both read one range the same way (cost home PR 5).
@@ -70,21 +73,26 @@ export function useCostRange() {
       return p;
     });
   };
-  const applyCustom = (from: number, to: number) => {
+  // A custom range starts at its span's own bucket; "freeze at now" (keepBucket) keeps the one the reader reads where
+  // it still fits the frozen span — the same period, now fixed, drawn the same way.
+  const applyCustom = (from: number, to: number, keepBucket = false) => {
     setPanelOpen(false); // the custom range keeps the panel shown while it is in force
     setParams((prev) => {
-      const p = writeRange(prev, customWindow(from, to), tz);
-      p.delete("bucket");
+      const w = customWindow(from, to);
+      const p = writeRange(prev, w, tz);
+      if (keepBucket && bucketFits(w.days, bucket)) p.set("bucket", bucket);
+      else p.delete("bucket");
       return p;
     });
   };
+  const freezeCustom = (from: number, to: number) => applyCustom(from, to, true);
   const setTz = (next: typeof tz) => setParams((prev) => {
     const n = new URLSearchParams(prev);
     n.set("tz", next);
     return n;
   }, { replace: true });
   return { params, setParams, days, range, tz, badRange, shownFrom, shownTo, win, custom, panelOpen, wq, bucket,
-    setBucket, setRange, applyCustom, setTz };
+    setBucket, setRange, applyCustom, freezeCustom, setTz };
 }
 
 export type CostRange = ReturnType<typeof useCostRange>;
@@ -119,8 +127,11 @@ export function CostRangeControls({ r, rangeError, bucketSwitch = true, basisSwi
       </div>}
       {part !== "row" && (r.custom || r.panelOpen || r.badRange) && (
         // Re-made when the range changes from outside (Back, a pasted link), so the fields hold what the address says.
-        <RangePanel key={`${r.range.from}-${r.range.to}-${r.tz}`} from={r.shownFrom} to={r.shownTo}
-          tz={r.tz} onTz={r.setTz} onApply={r.applyCustom} error={rangeError} readings={helperReadings.data ?? []} />
+        <Suspense fallback={<div className="card mb-4 cost-range-loading" aria-busy="true" />}>
+          <RangePanel key={`${r.range.from}-${r.range.to}-${r.tz}`} from={r.shownFrom} to={r.shownTo}
+            tz={r.tz} onTz={r.setTz} onApply={(f, t) => r.applyCustom(f, t)} onFreeze={r.freezeCustom} error={rangeError} readings={helperReadings.data ?? []}
+            quickDays={r.custom || r.badRange ? null : r.days} />
+        </Suspense>
       )}
     </>
   );
