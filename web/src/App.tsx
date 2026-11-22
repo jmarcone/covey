@@ -25,9 +25,9 @@ const PairLink = lazy(() => import("./pages/PairLink"));
  *
  * The root used to belong to the team, because everyone lands there. Since
  * agents are a main view of their own, the office at the root is one of
- * its views, beside the list under /agents and every agent's page, and the
- * console renders all three in one frame. The team keeps the
- * conversations. */
+ * its views, beside the list under /agents, the org chart under /org and
+ * every agent's page, and the console renders them all in one frame. The
+ * team keeps the conversations. */
 const imTeam = (pfad: string) => pfad === "/team" || pfad.startsWith("/team/");
 
 // useLiveEvents keeps the UI current over SSE: every server event invalidates

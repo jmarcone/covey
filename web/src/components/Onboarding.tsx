@@ -22,10 +22,12 @@ const STEPS: Array<{ key: string; to: string }> = [
   // checked there, the workspace around it comes with it, and the next two
   // questions stand right beside it (spec/20).
   { key: "credential", to: "/setup" },
-  { key: "agent", to: "/" },
-  { key: "config", to: "/" },
-  { key: "task", to: "/" },
-  { key: "run", to: "/" },
+  // The other four are done from the list. The root would not do: it opens
+  // the view chosen last, and that may be the office or the org chart.
+  { key: "agent", to: "/agents" },
+  { key: "config", to: "/agents" },
+  { key: "task", to: "/agents" },
+  { key: "run", to: "/agents" },
 ];
 
 const DISMISS_KEY = "covey.onboarding.dismissed";

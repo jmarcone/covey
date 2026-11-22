@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { useLocation } from "react-router";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import Org, { PlatformRepo, TriageSettings } from "./Org";
 import { mockFetch, renderWithProviders, useGerman } from "../test/render";
@@ -69,6 +70,30 @@ describe("Organigramm", () => {
     renderWithProviders(<Org />);
 
     expect(await screen.findByText("Org-Chart konnte nicht geladen werden.")).toBeInTheDocument();
+  });
+});
+
+describe("Organigramm als Ansicht der Agenten", () => {
+  it("says where an agent's page was opened from", async () => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    mockFetch(routen(false, false));
+    const From = () => <output aria-label="from">{(useLocation().state as { from?: string } | null)?.from}</output>;
+    renderWithProviders(
+      <>
+        <Org />
+        <From />
+      </>,
+    );
+
+    fireEvent.click(await screen.findByRole("link", { name: /^Alice Beispiel/ }));
+    expect(screen.getByLabelText("from")).toHaveTextContent("org");
   });
 });
 

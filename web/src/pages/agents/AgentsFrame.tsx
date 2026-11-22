@@ -9,8 +9,8 @@ import { originOf, rememberView, rememberViewUrl, viewOf, viewsFor } from "./vie
 /* The bar of the agents area, above the view: the view switch, and on an
  * agent's page the organisation path after it (AgentCrumb). It stands outside
  * the page that fades in on every navigation (AppShell), so it neither
- * remounts nor flickers when one moves from the office to the list — the only
- * thing that changes is the content.
+ * remounts nor flickers when one moves between the office, the list and the
+ * org chart — the only thing that changes is the content.
  *
  * It renders before any data arrives; loading, empty and error states stay
  * with each view. */
@@ -30,7 +30,9 @@ export default function AgentsFrame({ teamSurface, principal }: { teamSurface: b
   const origin = detail ? originOf(detail, state, teamSurface) : undefined;
 
   return (
-    <div className="av-bar">
+    // On an agent's page a phone leaves room for the crumb's `⋯` (app.css),
+    // from the first paint on: the crumb arrives with the data.
+    <div className={`av-bar${detail ? " av-bar-agent" : ""}`}>
       <ViewSwitch views={views} current={current} onPick={(v) => rememberView(principal, v)} origin={origin} />
       {origin && agent.data && <AgentCrumb agent={agent.data} origin={origin} />}
     </div>

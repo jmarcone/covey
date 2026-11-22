@@ -7,7 +7,33 @@ import { mockFetch, testPrincipal, useGerman } from "../test/render";
 
 const HUMAN_ID = "99999999-8888-7777-6666-555555555555";
 
-beforeEach(() => useGerman());
+beforeEach(() => {
+  useGerman();
+  sessionStorage.clear();
+});
+
+describe("Der Weg zurück von einer Person", () => {
+  it("leads back to the org chart as it was left", async () => {
+    sessionStorage.setItem("covey.agents.url.org", "/org?x=1");
+    mockFetch({
+      "/api/v1/org/chart": { humans: [], agents: [], departments: [] },
+      [`/api/v1/org/humans/${HUMAN_ID}`]: { id: HUMAN_ID, display_name: "Alice Beispiel", email: "", role: "auditor", custom: {}, identities: {} },
+    });
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}>
+        <MemoryRouter initialEntries={[`/people/${HUMAN_ID}`]}>
+          <Routes>
+            <Route path="/people/:id" element={<PersonPage me={testPrincipal()} />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByRole("heading", { name: /Alice Beispiel/ });
+    const ways = screen.getAllByRole("link").filter((a) => a.getAttribute("href")?.startsWith("/org"));
+    expect(ways.map((a) => a.getAttribute("href"))).toEqual(["/org?x=1", "/org?x=1"]);
+  });
+});
 
 describe("Person in einer anderen Organisation", () => {
   // The same case as the agent page (#263): signing in again returns to

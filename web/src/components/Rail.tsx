@@ -3,15 +3,15 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link, useLocation } from "react-router";
 import { api, inbox, myThreads, setupIsOpen, type Principal, type SetupState } from "../api";
-import { chosenView } from "../pages/agents/views";
+import { chosenView, viewPath } from "../pages/agents/views";
 import { BirdMark } from "./BirdMark";
 import { NavIcon } from "./navicons";
 import ShellFoot from "./ShellFoot";
 import Tour, { TEAM_TOUR, tourGesehen } from "./Tour";
 
 /* The rail (#388, #389): the thin column of icons at the left of every
- * signed-in page — agents, team, notes, administration; search and the
- * person below. Both shells carry it, the same in both, so it never
+ * signed-in page — agents, team, workflows, notes, costs, administration;
+ * search and the person below. Both shells carry it, the same in both, so it never
  * disappears when one moves from a conversation to the settings: what
  * changes is the column beside it.
  *
@@ -23,13 +23,13 @@ export type RailPlace = "agents" | "team" | "inbox" | "workflows" | "costs" | "n
 /* Which place an address belongs to. One function for both shells, so the
  * mark cannot depend on which of them happens to render the page.
  *
- * The agents area is the office, the list and every agent's page: daily
- * work, not a setting. An agent id is a UUID, so /agents/board and
+ * The agents area is the office, the list, the org chart and every agent's
+ * page: daily work, not a setting. An agent id is a UUID, so /agents/board and
  * /agents/<id> both stay in it without a clash. The inbox is a place of
  * its own only without the team surface; with it /inbox leads to /team. */
 export function railPlace(path: string, teamSurface: boolean): RailPlace {
   const under = (p: string) => path === p || path.startsWith(p + "/");
-  if (path === "/" || under("/agents")) return "agents";
+  if (path === "/" || under("/agents") || under("/org")) return "agents";
   if (under("/team/notes") || under("/notes")) return "notes";
   if (under("/team")) return "team";
   if (path === "/inbox") return teamSurface ? "team" : "inbox";
@@ -42,7 +42,7 @@ export function railPlace(path: string, teamSurface: boolean): RailPlace {
  * agents area, the one the root opens too. A view the installation does not
  * offer — the office without the team surface — is the list. */
 export function agentsEntryTarget(principal: string, teamSurface: boolean): string {
-  return chosenView(principal, teamSurface) === "office" ? "/" : "/agents";
+  return viewPath(chosenView(principal, teamSurface));
 }
 
 export default function Rail({
@@ -94,12 +94,12 @@ export default function Rail({
   const [tour, setTour] = useState(() => team && !tourGesehen());
 
   // A badge counts unread messages, or on agents and the inbox open decisions.
-  const item = (place: RailPlace, to: string, icon: string, label: string, badge = 0, also = false) => (
+  const item = (place: RailPlace, to: string, icon: string, label: string, badge = 0) => (
     <Link
       to={to}
-      className={`tm-rail-item${active === place || also ? " on" : ""}`}
+      className={`tm-rail-item${active === place ? " on" : ""}`}
       data-tour={place}
-      aria-current={active === place || also ? "page" : undefined}
+      aria-current={active === place ? "page" : undefined}
       title={label}
       aria-label={
         badge > 0
@@ -115,7 +115,7 @@ export default function Rail({
 
   return (
     <nav className="tm-rail" aria-label={t("team.bereiche")}>
-      <Link to={team ? "/" : "/agents"} className="tm-rail-mark" aria-label="covey">
+      <Link to={team ? "/" : agentsTo} className="tm-rail-mark" aria-label="covey">
         <BirdMark size={30} />
       </Link>
       {setupOpen && (
@@ -125,8 +125,8 @@ export default function Rail({
           <span className="tm-rail-wort">{t("nav.setupPage")}</span>
         </Link>
       )}
-      {/* Agents are a main view, not a setting: the office,
-          the list and every agent's page sit behind this one entry. */}
+      {/* Agents are a main view, not a setting: the office, the list, the
+          org chart and every agent's page sit behind this one entry. */}
       {item("agents", agentsTo, "robot", t("nav.agents"), team ? pending : 0)}
       {team ? item("team", "/team", "chat", t("team.workspace"), unread) : item("inbox", "/inbox", "bell", t("nav.inbox"), pending)}
       {/* Workflows (#560) are their own place, not a setting: the live view
@@ -134,10 +134,13 @@ export default function Rail({
           belonging to one. */}
       {item("workflows", "/workflows", "flow", t("nav.workflows"))}
       {item("notes", team ? "/team/notes" : "/notes", "note", t("mobile.notizen"))}
-      {/* Admin lands on the org chart, the first item of its column. Until
-          costs have a place of their own, /costs is a page of that column,
-          and the entry stays marked there. */}
-      {item("admin", "/org", "sliders", t("team.verwaltung"), 0, active === "costs")}
+      {/* Costs are read every week, not set up once (#17): a place of their
+          own beside Admin, open to every role as their pages are. No badge:
+          nothing would keep a count of paused agents fresh. */}
+      {item("costs", "/costs", "chart", t("nav.costs"))}
+      {/* Admin lands on the first item of its column, a page every role can
+          open. */}
+      {item("admin", "/targets", "sliders", t("team.verwaltung"))}
       <span className="tm-rail-luft" />
       <button className="tm-rail-item" data-tour="search" onClick={onSearch} title={`${t("team.suche")} (⌘K)`} aria-label={t("team.suche")}>
         <NavIcon name="search" />

@@ -216,6 +216,27 @@ describe("AgentCrumb", () => {
     expect(screen.getByText(/berichtet an/)).toHaveTextContent("berichtet an ghost (Ohne Abteilung)");
   });
 
+  it("keeps whom it reports to in the bar from 641 px, where the switch leaves it room", async () => {
+    viewport(641);
+    show("analyst");
+    expect(await screen.findByRole("link", { name: "lead" })).toHaveClass("acrumb-link");
+    await userEvent.click(screen.getByRole("button", { name: "1 weitere Ebene zeigen" }));
+    expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual(["Forschung"]);
+  });
+
+  it("puts whom it reports to into the ⋯ menu on a phone, where the switch leaves a note no room", async () => {
+    const nutzer = userEvent.setup();
+    viewport(375);
+    show("analyst", "org");
+    await nutzer.click(await screen.findByRole("button", { name: "2 weitere Ebenen zeigen" }));
+    const [dept, boss] = screen.getAllByRole("menuitem");
+    expect(dept).toHaveAttribute("href", "/agents?dept=res");
+    expect(boss).toHaveTextContent("berichtet an lead (Entwicklung)");
+    expect(document.querySelector(".acrumb-note")).toBeNull();
+    await nutzer.click(boss);
+    expect((await screen.findByTestId("where")).textContent).toBe('/agents/lead {"from":"org"}');
+  });
+
   it("is the agent alone while the chart is on its way", () => {
     show("lead");
     expect(screen.getAllByRole("listitem")).toHaveLength(1);

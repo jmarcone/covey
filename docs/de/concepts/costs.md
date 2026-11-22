@@ -17,7 +17,7 @@ faq:
     a: 'Auf der Kostenseite im Block der Zugangsdaten: „Tarifpreis setzen“, und „Kostengrundlage festlegen“ für das, was auf diesen Zugangsdaten das Geld ist (der Platz, seine Nutzung oder beides). Beides dürfen Organisationsadmins und die Sicherheitsrolle. Ein Tarifpreis bewertet die Zählerpunkte, die ab „Gültig ab“ abgelesen wurden, nie davor.'
 ---
 
-Die Kostenseite (*Kosten* in der Spalte *Verwaltung* der Seitenleiste; die Seite heißt *Kosten & Token*) zeigt, was die Arbeit der Agenten
+Die Kostenseite (*Kosten* in der linken Leiste, über *Verwaltung*; die Seite heißt *Kosten & Token*) zeigt, was die Arbeit der Agenten
 verbraucht hat, und was Claude-Code-Sitzungen außerhalb von covey daneben
 verbraucht haben. Jede Rolle darf sie lesen; einen Tarifpreis oder eine
 Kostengrundlage setzen dürfen Organisationsadmins und die Sicherheitsrolle. Alle

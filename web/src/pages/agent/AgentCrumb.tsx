@@ -6,24 +6,25 @@ import { api, type Agent, type OrgChart } from "../../api";
 import { NavIcon } from "../../components/navicons";
 import { memberDept, memberName, orgPath, type Member } from "../../components/orgchart/model";
 import { fromView, type AgentsView } from "../agents/views";
-import { CRUMB_QUERIES, deptTarget, foldChain, type CrumbMode } from "./crumb";
+import { CRUMB_QUERIES, NOTE_QUERY, deptTarget, foldChain, type CrumbMode } from "./crumb";
 
 /* The agent's place in the organisation, as steps one can click, in the
  * agents area's bar right after the view switch:
  *
- *   [Office | List] › Department › ⋯ › direct supervisor › this agent
+ *   [Office | List | Org Chart] › Department › ⋯ › direct supervisor › this agent
  *
  * The switch is the root: its marked segment already leads back to the view
  * the page was opened from, so there is no "Agents" step of its own. The path
  * is the org chart's (orgPath): the supervisors above the agent inside its
  * department. Whoever sits higher than the third level is folded behind one
- * `⋯`, and on a phone everything after the switch is. */
+ * `⋯`, and on a phone everything after the switch is; below 641 px that
+ * includes whom the agent reports to in another department. */
 
 // The widest viewport wins; without matchMedia (tests) there is room. Both
 // functions stay the same between renders, or useSyncExternalStore would
 // take the listeners off and put them back on every time.
 function subscribeMode(cb: () => void) {
-  const lists = CRUMB_QUERIES.map((q) => window.matchMedia?.(q.query));
+  const lists = [...CRUMB_QUERIES.map((q) => q.query), NOTE_QUERY].map((q) => window.matchMedia?.(q));
   lists.forEach((l) => l?.addEventListener("change", cb));
   return () => lists.forEach((l) => l?.removeEventListener("change", cb));
 }
@@ -32,6 +33,8 @@ function currentMode(): CrumbMode {
   return CRUMB_QUERIES.find((q) => window.matchMedia(q.query).matches)?.mode ?? "phone";
 }
 const serverMode = (): CrumbMode => "wide";
+const currentNoteRoom = () => window.matchMedia?.(NOTE_QUERY).matches ?? true;
+const serverNoteRoom = () => true;
 
 function useCrumbMode(): CrumbMode {
   return useSyncExternalStore(subscribeMode, currentMode, serverMode);
@@ -40,6 +43,7 @@ function useCrumbMode(): CrumbMode {
 export function AgentCrumb({ agent, origin }: { agent: Pick<Agent, "id" | "display_name">; origin: AgentsView }) {
   const { t } = useTranslation();
   const mode = useCrumbMode();
+  const noteRoom = useSyncExternalStore(subscribeMode, currentNoteRoom, serverNoteRoom);
   // The same key as the org page: one request, however many steps.
   const chart = useQuery({ queryKey: ["orgchart"], queryFn: () => api<OrgChart>("/org/chart") });
   const path = chart.data ? orgPath(chart.data, agent.id) : null;
@@ -76,6 +80,8 @@ export function AgentCrumb({ agent, origin }: { agent: Pick<Agent, "id" | "displ
   const outsideDept = outside
     ? (chart.data!.departments.find((d) => d.id === memberDept(outside))?.name ?? t("dashboard.withoutDepartment"))
     : "";
+  // Where the bar has no room for it, the note is a row of the menu.
+  const noteInMenu = !!outside && !noteRoom;
   const lastShown = fold.shown[0] ?? null;
   const menuLabel = fold.dept
     ? t("agent.crumb.between", { from: deptName, to: lastShown ? memberName(lastShown) : agent.display_name })
@@ -103,6 +109,7 @@ export function AgentCrumb({ agent, origin }: { agent: Pick<Agent, "id" | "displ
               members={fold.folded}
               // The department is a step of its own, unless there is no room.
               deptRow={fold.dept ? null : { name: deptName, to: dept.to, state: dept.state, title: deptTitle }}
+              reportsTo={noteInMenu ? { boss: outside!, department: outsideDept } : null}
               state={state}
             />
           </li>
@@ -114,7 +121,7 @@ export function AgentCrumb({ agent, origin }: { agent: Pick<Agent, "id" | "displ
         ))}
         {fold.agent && here}
       </ol>
-      {outside && (
+      {outside && !noteInMenu && (
         <span className="acrumb-note">
           <Trans
             i18nKey="agent.crumb.reportsTo"
@@ -162,16 +169,19 @@ function FoldMenu({
   label,
   members,
   deptRow,
+  reportsTo,
   state,
 }: {
   label: string;
   members: Member[];
   deptRow: { name: string; to: string; state: unknown; title: string } | null;
+  /** The supervisor in another department, where the bar has no room to say so. */
+  reportsTo: { boss: Member; department: string } | null;
   state: unknown;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const count = members.length + (deptRow ? 1 : 0);
+  const count = members.length + (deptRow ? 1 : 0) + (reportsTo ? 1 : 0);
   const wrap = useRef<HTMLSpanElement>(null);
   const button = useRef<HTMLButtonElement>(null);
   const items = () => Array.from(wrap.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
@@ -246,6 +256,24 @@ function FoldMenu({
               </Link>
             );
           })}
+          {reportsTo && (
+            <Link
+              role="menuitem"
+              tabIndex={-1}
+              className="acrumb-menu-note"
+              to={reportsTo.boss.kind === "human" ? `/people/${reportsTo.boss.id}` : `/agents/${reportsTo.boss.id}`}
+              state={reportsTo.boss.kind === "human" ? undefined : state}
+              onClick={() => setOpen(false)}
+            >
+              <span>
+                <Trans
+                  i18nKey="agent.crumb.reportsTo"
+                  values={{ name: memberName(reportsTo.boss), department: reportsTo.department }}
+                  components={{ link: <span /> }}
+                />
+              </span>
+            </Link>
+          )}
         </div>
       )}
     </span>
