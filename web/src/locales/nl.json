@@ -1025,6 +1025,9 @@
       "noRuns": "geen run in deze periode",
       "doorHealthSub": "controles geslaagd",
       "loading": "Kostencijfers laden…",
+      "staleError": "Bijwerken is niet gelukt. Het laatste resultaat blijft zichtbaar en is mogelijk verouderd.",
+      "readingsError": "De meterstanden konden niet worden geladen.",
+      "bundleError": "Deze pagina kon niet worden geladen. Laad haar opnieuw in je browser.",
       "noMeter": "Geen abonnementsmeter in deze periode: er is geen capaciteitscijfer om mee te antwoorden. De detailpagina heeft de tokenprijzen.",
       "loadError": "Deze weergave kon niet worden geladen. Probeer het zo opnieuw."
     },
@@ -1152,6 +1155,7 @@
         "bucketTooFine": "te fijn",
         "noBilledKeys": "geen API-sleutels",
         "loadError": "niet geladen",
+        "queryFailed": "niet geladen",
         "notLanded": "nog niet binnen",
         "noPlanPrice": "geen abonnementsprijs"
       },
@@ -1169,6 +1173,7 @@
         "bucketTooFine": "Geen cijfer per 10 minuten: abonnementscapaciteit en facturen zijn op zijn fijnst per uur. Kies per uur of grover.",
         "noBilledKeys": "Geen cijfer: in deze periode is geen API-sleutel aan een factuur gekoppeld.",
         "loadError": "Geen cijfer: de factuur kon niet worden opgehaald. Probeer het later opnieuw.",
+        "queryFailed": "Geen cijfer: het kon niet worden geladen. Probeer het later opnieuw.",
         "notLanded": "Nog geen cijfer: er zijn API-sleutels gekoppeld, maar voor deze periode is nog geen factuur binnen (of de factuursynchronisatie is mislukt of niet ingesteld).",
         "noPlanPrice": "Geen cijfer: de meterstanden van de seat hebben geen abonnementsprijs. Stel de prijs van het abonnement in om de gebruikte abonnementscapaciteit te zien."
       }

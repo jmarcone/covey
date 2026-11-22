@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, type ExternalModelUsage, type ModelUsageReport } from "../api";
+import { api, type ExternalModelUsage, type ModelUsageReport } from "../api";
 import { fmtCount, fmtNumber, fmtUSD } from "../format";
 import { isRangeCode, type RangeCode } from "./costRange";
 import { CostFilterBar, ShareButton, WhoSummary, useCostRange } from "./costRangeState";
@@ -10,6 +10,7 @@ import { asSet, useParamState } from "./costView";
 import { basisSupport, useBasis } from "./costBasisSwitch";
 import { BasisLockChip } from "./BasisControl";
 import { NoFigure } from "./NoFigure";
+import { CostLoadError, CostLoading, loadAll, loadState, useRefusal } from "./CostLoading";
 
 /* Models (cost home views): which model the money went to, and what one run of it costs. One row per model, the
  * agents' work and the sessions outside covey apart (they are no agents), each at its lead token price: Claude Code's
@@ -86,10 +87,14 @@ export default function CostModels() {
   const models = useQuery({ queryKey: ["cost", "models", r.wq], queryFn: () => api<ModelUsageReport>(`/cost/models?${r.wq}`), enabled: !r.badRange });
   const outside = useQuery({ queryKey: ["cost", "external-usage", r.wq, "day"], queryFn: () => api<ExternalModelUsage>(`/cost/external-usage?${r.wq}&bucket=day`),
     enabled: !r.badRange });
-  const apiCode: RangeCode | "unknown" | null = models.error instanceof ApiError && models.error.status === 400
-    ? (isRangeCode(models.error.code) ? models.error.code : "unknown") : null;
+  const refusal = useRefusal(r.wq, 400, models);
+  const apiCode: RangeCode | "unknown" | null = refusal ? (isRangeCode(refusal.code) ? refusal.code : "unknown") : null;
   const refused = r.badRange || apiCode != null;
-  const failed = !refused && apiCode == null && (models.isError || outside.isError);
+  // Everyone's rows hold the outside sessions: without them the total would be short. A selection of agents has none.
+  const withOutside = agents.size === 0;
+  const load = loadAll(loadState(models), withOutside ? loadState(outside) : "ready");
+  const failed = !refused && load === "error";
+  const refetchFailed = !refused && load === "ready" && (models.isError || (withOutside && outside.isError));
   const rows = useMemo(() => modelRows(models.data, outside.data, agents), [models.data, outside.data, agents]);
   const total = rows.reduce((a, x) => a + x.usd, 0);
   const agentRows = rows.filter((x) => x.who === "agents");
@@ -108,13 +113,17 @@ export default function CostModels() {
         <h1 className="text-[22px]">{t("costs.models.title")}</h1>
         <CostTabs />
       </div>
-      <CostFilterBar r={r} rangeError={r.range.error ?? apiCode} bucketSwitch={false} trailing={<ShareButton />}
+      <CostFilterBar r={r} rangeError={r.range.error ?? apiCode} waiting={!refused && load === "loading"} bucketSwitch={false} trailing={<ShareButton />}
         leading={<WhoSummary names={[...new Set(names)]} count={agents.size} onClear={() => setAgents(new Set())} />} />
       {refused && <p className="muted text-sm" data-range-refused>{t("costs.range.refused")}</p>}
       {failed && <p className="muted text-sm" data-models-error role="alert">{t("costs.home.loadError")}</p>}
-      {!refused && models.isLoading && <p className="muted text-sm">{t("costs.home.loading")}</p>}
-      {!refused && !failed && models.data && rows.length === 0 && <p className="muted text-sm" data-models-empty>{t("costs.models.empty")}</p>}
-      {!refused && !failed && rows.length > 0 && (
+      {refetchFailed && <CostLoadError text={t("costs.home.staleError")} />}
+      {!refused && load === "loading" && <>
+        <div className="mb-4"><CostLoading shape="tiles" /></div>
+        <div className="card"><CostLoading shape="table" /></div>
+      </>}
+      {!refused && load === "ready" && rows.length === 0 && <p className="muted text-sm" data-models-empty>{t("costs.models.empty")}</p>}
+      {!refused && load === "ready" && rows.length > 0 && (
         <>
           {support.state === "locked" && <div className="mb-2" data-models-lock><BasisLockChip support={support} basis={basis} /></div>}
           <div className="cost-view-tiles" data-models-tiles>

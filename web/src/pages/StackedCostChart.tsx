@@ -36,6 +36,7 @@ import { PlanPrice } from "./PlanPrice";
 import { BASIS_SOURCE, basisSupport, useBasis, type Basis } from "./costBasisSwitch";
 import { BasisLockChip } from "./BasisControl";
 import { NoFigure } from "./NoFigure";
+import { ApiError } from "../api";
 import { CostBasisPanel, MonthlyMeters, fmtMoney, usageSub } from "./CostBasis";
 import {
   OTHER_SOURCES,
@@ -113,7 +114,8 @@ export function useCostCells(win: CostWindow, bucket: string, enabled = true) {
   return useQuery({
     queryKey: ["cost", "cells", q, bucket],
     queryFn: () => api<CostCells>(`/cost/cells?${q}&bucket=${bucket}`),
-    refetchInterval: 30000,
+    // A refused range (400) is not asked again: the answer to it does not change.
+    refetchInterval: (query) => (query.state.error instanceof ApiError && query.state.error.status === 400 ? false : 30000),
     enabled,
   });
 }
@@ -313,8 +315,10 @@ export function groupCellAgentsByDepartment(agents: readonly CellAgent[]): Depar
 /** The agent filter: chips, any combination; "All" = nobody narrowed out.
  *  With departments the chips sit under their heading, and the heading
  *  selects the whole department: pressed, not pressed, or mixed. */
-export function AgentFilter({ agents, selected, onChange }: {
+export function AgentFilter({ agents, selected, onChange, waiting = false }: {
   agents: CellAgent[]; selected: Set<string>; onChange: (s: Set<string>) => void;
+  /** The agents are the last answer's while the next loads: their figures keep their room, out of sight. */
+  waiting?: boolean;
 }) {
   const { t } = useTranslation();
   const ranked = rankAgents(agents);
@@ -330,7 +334,7 @@ export function AgentFilter({ agents, selected, onChange }: {
   const chip = (a: CellAgent) => (
     <Chip key={a.id} on={selected.has(a.id)} color={agentColor(ranked, a.id)}
       onClick={() => toggle(a.id)} onDoubleClick={() => onChange(new Set([a.id]))}>
-      {a.label} <span style={{ opacity: 0.7 }}>{fmtUSD(a.measured_usd ?? 0)}</span>
+      {a.label} <span style={{ opacity: 0.7, visibility: waiting ? "hidden" : undefined }}>{fmtUSD(a.measured_usd ?? 0)}</span>
     </Chip>
   );
   const hint = ranked.length > 1 && <span className="muted text-xs">{t("costs.filter.toggleHint")}</span>;
@@ -414,7 +418,7 @@ export function AgentFilter({ agents, selected, onChange }: {
                 }}
               >
                 <span aria-hidden style={{ opacity: 0.7 }}>{picked === 0 ? "○" : picked === g.agents.length ? "●" : "◐"}</span>
-                {name} <span style={{ opacity: 0.7, fontWeight: 400, whiteSpace: "nowrap" }}>{fmtUSD(g.usd)}</span>
+                {name} <span style={{ opacity: 0.7, fontWeight: 400, whiteSpace: "nowrap", visibility: waiting ? "hidden" : undefined }}>{fmtUSD(g.usd)}</span>
               </button>
               <div id={rowId} className="flex flex-wrap items-center gap-2">
                 {shown.map(chip)}

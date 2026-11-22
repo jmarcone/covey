@@ -7,7 +7,7 @@ import { Seg } from "./Seg";
 import { CostFilterBar, ShareButton, WhoSummary, useCostRange } from "./costRangeState";
 import { CostTabs } from "./CostTabs";
 import { isRangeCode, type RangeCode } from "./costRange";
-import { api, ApiError, type IndicatorReport, type Principal, type RunCost } from "../api";
+import { api, ApiError, type CellAgent, type IndicatorReport, type Principal, type RunCost } from "../api";
 import { exact, fmtBucket, fmtCount, fmtUSD, fmtUSDBelow } from "../format";
 import { PriceList } from "../components/PriceList";
 import { CostInsights } from "./CostInsights";
@@ -21,6 +21,7 @@ import { PayPerTokenRow, SubscriptionDentRow } from "./SubscriptionDent";
 import { canSetPlan } from "./PlanPrice";
 import { OutsideOverview } from "./OutsideSessions";
 import { CostHealthBadge, IncompleteMark, credentialIncomplete, incompleteParts, useCostHealth } from "./CostHealth";
+import { CostLoadError, CostLoading, CostWait, loadAll, loadState, settled, useRefusal, type Load } from "./CostLoading";
 import { COVEY_ONLY_PARAM, COVEY_ONLY_VALUE, PRICES_PARAM, PRICES_RECOMPUTED, beforeRange, kpiLead, listedSources,
   outsideKpis, outsideSplit, seatSources, sourceRealParts, type OutsideKpis } from "./outsideFigures";
 import {
@@ -115,7 +116,7 @@ export function BasisKpi({ basis, figures, billedQuery = { loading: false, error
   }
   const keys = figures.filter((f) => f.kind === "api_key" && f.billed != null);
   const measured = keys.filter((f) => f.billed!.state === "measured");
-  if (billedQuery.loading) return <Kpi label={label} lead={basis} color={SOURCE_COLOR.billed} value="…" />;
+  if (billedQuery.loading) return <Kpi label={label} lead={basis} color={SOURCE_COLOR.billed} value={<CostLoading shape="line" />} />;
   const tag = <span className="muted" data-whole-key>· {t("costs.basisDetails.wholeKey")}</span>;
   if (measured.length === 0) {
     // Keys but none measured: the bill has not landed (or the sync failed or is not set up); a key that could not be
@@ -303,8 +304,8 @@ export default function Costs({ me }: { me?: Principal }) {
   const readings = useUsageReadings(win, !badRange);
   // The server refused the range (a 400 with its code): said in the panel, in
   // the reader's language.
-  const apiCode: RangeCode | "unknown" | null = cells.error instanceof ApiError && cells.error.status === 400
-    ? (isRangeCode(cells.error.code) ? cells.error.code : "unknown") : null;
+  const refusal = useRefusal(`${wq}|${bucket}`, 400, cells);
+  const apiCode: RangeCode | "unknown" | null = refusal ? (isRangeCode(refusal.code) ? refusal.code : "unknown") : null;
   const rangeError: RangeCode | "unknown" | null = range.error ?? apiCode;
   const refused = badRange || apiCode != null;
 
@@ -328,7 +329,7 @@ export default function Costs({ me }: { me?: Principal }) {
   })) });
   // A merged list only once every agent's own is in: a missing one would read as "this agent had no expensive run".
   // A failed fetch with no list yet says so; a failed refetch keeps the list it had (the next one tries again).
-  const runsFailed = runFetches.some((f) => f.isError && f.data === undefined);
+  const runsFailed = runFetches.some((f) => loadState(f) === "error");
   const runList = runFetches.every((f) => f.data !== undefined) ? runFetches.flatMap((f) => f.data ?? []) : null;
 
   // The price list hangs on the same scope and period as everything else on
@@ -340,7 +341,8 @@ export default function Costs({ me }: { me?: Principal }) {
       api<IndicatorReport>(
         scope === "org" ? `/cost/indicators?days=${days}` : `/agents/${scope}/cost/indicators?days=${days}`,
       ),
-    refetchInterval: 30000,
+    // Not asked again after a 403: the answer to it does not change.
+    refetchInterval: (q) => (q.state.error instanceof ApiError && q.state.error.status === 403 ? false : 30000),
     // The metrics of ONE agent follow the work record (spec/21): controlling
     // gets a 403 on it. Without retry:false that would be three retries
     // every 30 seconds for an answer that does not change.
@@ -353,8 +355,16 @@ export default function Costs({ me }: { me?: Principal }) {
   // A role that may not see something should not get it as an empty box:
   // empty means "there are no metrics", and that is a different statement
   // than "you do not see them".
-  const indicatorsForbidden = indicators.error instanceof ApiError && indicators.error.status === 403;
+  const indicatorsForbidden = useRefusal(`${scope}|${days}`, 403, indicators) != null;
 
+
+  // Where each block stands. The cells carry most of the page and take seconds; a block that does not read them does
+  // not wait for them. The chart waits for the bill and the readings as well, to draw neither as absent; one of those
+  // that failed does not take the chart with it.
+  const cellsLoad = loadState(cells), billedLoad = loadState(billed), readingsLoad = loadState(readings);
+  const chartLoad: Load = metric === "cost" ? loadAll(cellsLoad, settled(billedLoad), settled(readingsLoad)) : cellsLoad;
+  const waiting = !refused && [cellsLoad, billedLoad, readingsLoad, ...runFetches.map(loadState),
+    custom || indicatorsForbidden ? "ready" : loadState(indicators)].includes("loading");
 
   // The credentials' figures over the whole organisation, for the meter card:
   // the same the tiles show without an agent filter.
@@ -393,6 +403,15 @@ export default function Costs({ me }: { me?: Principal }) {
   const split = useMemo(() => (noOutside ? null : outsideSplit(ext)), [ext, noOutside]);
   const realParts = useMemo(() => sourceRealParts(ext), [ext]);
   const included = outside != null ? ext! : null;
+  // The filters outlive a wait and stay where they were: the agents last listed (their figures out of sight, being
+  // another window's) and whether there were sources outside covey. Before the first answer the "covey only" chip
+  // holds its place, locked, so the switches after it do not move under the pointer.
+  const [last, setLast] = useState<{ agents: CellAgent[]; sources: boolean; answer: boolean }>();
+  useEffect(() => {
+    if (cells.data) setLast({ agents: cells.data.agents, sources: sourcesListed.length > 0, answer: answer != null });
+  }, [cells.data, sourcesListed, answer]);
+  const inclusionChip = cells.data ? sourcesListed.length > 0 : coveyOnly || (last?.sources ?? (!refused && cellsLoad === "loading"));
+  const inclusionLocked = filtered || (!cells.data && !last && !coveyOnly);
   // The account-wide blocks (the meters per credential and their marks) keep the outside part under a selection, as
   // orgFigures does: their "everything on this meter" names its outside rows whatever the selection.
   const orgOutside = !coveyOnly && sourcesListed.length > 0 ? ext! : null;
@@ -416,7 +435,7 @@ export default function Costs({ me }: { me?: Principal }) {
   // sessions at their lead price.
   const lead = totals.reported + (outside ? kpiLead(outside).lead ?? 0 : 0);
 
-  const agentList = cells.data?.agents ?? [];
+  const agentList = cells.data?.agents ?? last?.agents ?? [];
   const scopeName =
     selected.size === 0
       ? t("costs.wholeOrg")
@@ -451,10 +470,11 @@ export default function Costs({ me }: { me?: Principal }) {
   // The agent filter and the "covey only" chip. With the answer table they stand under it, next to the chart they
   // drive; its rows name the outside sources, so the inclusion note is only said where there is no table (#204).
   const hasAnswer = !!(answer && head && dent);
+  const filtersFirst = cells.data ? !hasAnswer : last?.answer === false;
   const filters = (
     <>
       <div className="mb-4">
-        <AgentFilter agents={agentList} selected={selected} onChange={setSelected} />
+        <AgentFilter agents={agentList} selected={selected} onChange={setSelected} waiting={!cells.data} />
       </div>
       {/* The sessions outside covey: in every figure below by default, each
           figure naming its parts; "covey only" leaves them out (#120). */}
@@ -469,7 +489,8 @@ export default function Costs({ me }: { me?: Principal }) {
   // Under another basis a token figure says it is one (cost home PR 9).
   const tokenTag = basis !== "token" ? <BasisTag basis="token" /> : undefined;
   // covey's own work no row of the page covers: the headline's, less what the pay-per-token row shows of each credential.
-  const elsewhere = head ? coveyElsewhere(head.coveyElsewhereBy, ppt) : 0;
+  // Until the bill has answered, what it covers is not known: no line rather than a figure that shrinks a moment later.
+  const elsewhere = head && billedLoad !== "loading" ? coveyElsewhere(head.coveyElsewhereBy, ppt) : 0;
   return (
     <div>
       <div className="flex items-baseline gap-3 mb-1">
@@ -482,13 +503,13 @@ export default function Costs({ me }: { me?: Principal }) {
 
       {/* Controls */}
       {/* The filter bar (PR 6): who, covey only, the range and its bucket, and a link that opens this view. */}
-      <CostFilterBar r={r} rangeError={rangeError} trailing={<ShareButton />} leading={<>
+      <CostFilterBar r={r} rangeError={rangeError} waiting={waiting} trailing={<ShareButton />} leading={<>
         <WhoSummary names={agentList.filter((a) => selected.has(a.id)).map((a) => a.label)} count={selected.size} onClear={() => setSelected(new Set())} />
-        {sourcesListed.length > 0 && (
+        {inclusionChip && (
           // The sessions outside covey: in every figure by default, each figure naming its parts; "covey only" leaves them out (#120).
           <span className="flex items-center gap-2" data-inclusion>
             {/* A selection of agents has no outside sessions in it: the chip stands on, and says why it cannot be switched. */}
-            <Chip on={noOutside} locked={filtered} describedBy={filtered ? "who-exact-note" : undefined} onClick={() => { if (!filtered) setCoveyOnly(!coveyOnly); }}
+            <Chip on={noOutside} locked={inclusionLocked} describedBy={filtered && cells.data ? "who-exact-note" : undefined} onClick={() => { if (!inclusionLocked) setCoveyOnly(!coveyOnly); }}
               title={t(filtered ? "costs.who.coveyOnlyLocked" : "costs.incl.coveyOnlyTitle")}>{t("costs.incl.coveyOnly")}</Chip>
             <IncompleteMark checks={outsideMark} part="outside" />
           </span>
@@ -501,7 +522,9 @@ export default function Costs({ me }: { me?: Principal }) {
       <CustomRangeContext.Provider value={custom}>
 
       {/* Without an answer table the filters lead, as before; with one they follow it (#204: the answer first). */}
-      {!(answer && head && dent) && filters}
+      {filtersFirst && filters}
+      {cells.data && cells.isError && <CostLoadError text={t("costs.home.staleError")} />}
+      {!cells.data && <div className="card mb-4" data-answer-wait><CostWait state={cellsLoad} shape="table" /></div>}
 
       {/* The answer, first (#195): one row per consumer of the subscription at
           token prices and its share of the real cost, the total, the multiple
@@ -524,18 +547,24 @@ export default function Costs({ me }: { me?: Principal }) {
           monthly meter — its own headline, never added to the seats'. Where
           the money is per token this is the answer, so it stays directly
           under the answer table (#195). */}
-      {ppt && <PayPerTokenRow h={ppt} filtered={selected.size > 0} />}
+      {ppt && billedLoad !== "loading" && <PayPerTokenRow h={ppt} filtered={selected.size > 0} />}
+      {billedLoad === "loading" && (ppt || orgFigures.some((f) => f.kind === "api_key")) && (
+        <section className="card mb-4" aria-label={t("costs.ppt.title")} data-ppt-wait>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.ppt.title")}</div>
+          <CostLoading />
+        </section>
+      )}
 
-      {incomplete.tokenPrice.length > 0 && !answer && <div className="mb-2" data-kpi-incomplete><IncompleteMark checks={incomplete.tokenPrice} part="tokenPrice" /></div>}
-      {answer && head && dent && filters}
+      {cells.data && incomplete.tokenPrice.length > 0 && !answer && <div className="mb-2" data-kpi-incomplete><IncompleteMark checks={incomplete.tokenPrice} part="tokenPrice" /></div>}
+      {!filtersFirst && filters}
 
       {/* Without a subscription meter there is no answer table: the lead
           figure stands as a tile, as before. One list-price figure leads
           (#120); the toggle shows covey's price table apart. */}
-      {!answer && kpiSupport.state === "locked" && <div className="mb-2" data-kpi-lock><BasisLockChip support={kpiSupport} basis={basis} /></div>}
-      {!answer && (
+      {cells.data && !answer && kpiSupport.state === "locked" && <div className="mb-2" data-kpi-lock><BasisLockChip support={kpiSupport} basis={basis} /></div>}
+      {cells.data && !answer && (
         <div className="flex flex-wrap gap-3 mb-4">
-          {basis !== "token" && kpiSupport.state === "honoured" && <BasisKpi basis={basis} figures={orgFigures} billedQuery={{ loading: billed.isLoading, error: billed.isError }} />}
+          {basis !== "token" && kpiSupport.state === "honoured" && <BasisKpi basis={basis} figures={orgFigures} billedQuery={{ loading: billedLoad === "loading", error: billed.isError || billedLoad === "error" }} />}
           {fullPrices ? <>
             <Kpi label={t("costs.fig.reported")} value={fmtUSD(totals.reported + (outside?.reported ?? 0))} sub={t("costs.kpiAllCredentials")} color={SOURCE_COLOR.reported} tag={tokenTag}
               parts={parts(fmtUSD(totals.reported), (o) => outsideMoney(t, o, "reported"))} />
@@ -563,6 +592,11 @@ export default function Costs({ me }: { me?: Principal }) {
             options={[{ v: "cost", label: t("costs.mCost") }, { v: "tokens", label: t("costs.mTokens") }]}
           />
         </div>
+        <CostWait state={chartLoad} shape="chart" />
+        {chartLoad === "ready" && metric === "cost" && readingsLoad === "error" && <CostLoadError text={t("costs.home.readingsError")} />}
+        {/* Kept mounted through the wait, so its own switches hold over a new range; without height or visibility rather
+            than display none, so a chart that mounts meanwhile measures its real width. */}
+        <div data-chart-body style={chartLoad === "ready" ? undefined : { visibility: "hidden", height: 0, overflow: "hidden" }}>
         {metric === "cost" ? (
           <CostExplorer data={cells.data} billed={billed.data} readings={readings.data ?? []} canSetPlan={canSetPlan(me?.Role ?? "")} selected={selected} bucket={bucket} fmtPeriod={fmtPeriod}
             outside={included} full={fullPrices} onFull={setFullPrices} off={offSources} onToggleSource={toggleSource} answered={answer?.covers}
@@ -570,6 +604,7 @@ export default function Costs({ me }: { me?: Principal }) {
         ) : (
           <TokenExplorer data={cells.data} selected={selected} fmtPeriod={fmtPeriod} outside={included} />
         )}
+        </div>
       </div>
 
       {/* The sessions outside covey (#120): apart or combined, never folded in unannounced; not in a selection of agents. */}
@@ -583,6 +618,7 @@ export default function Costs({ me }: { me?: Principal }) {
           {/* A call booked twice (c4) inflates the token counts: marked where they stand (#179 merge review). */}
           <span data-tokens-incomplete style={{ marginLeft: 8, fontWeight: 400 }}><IncompleteMark checks={incomplete.tokenPrice.filter((c) => c.id === "c4")} part="tokenPrice" /></span>
         </summary>
+        {!cells.data ? <div className="mt-3"><CostWait state={cellsLoad} /></div> : <>
         <div className="flex flex-wrap gap-3 mt-3 mb-4">
           <Kpi
             label={t("costs.inputTokens")}
@@ -596,6 +632,7 @@ export default function Costs({ me }: { me?: Principal }) {
         <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("costs.mix.title")}</div>
         <p className="muted text-xs mb-3" style={{ maxWidth: 620 }}>{t("costs.mix.hint")}</p>
         <TokenMix tokens={tok} split={tokParts((x) => inputOf(x) + (x.output ?? 0))} />
+        </>}
       </details>
 
       {/* Price list + token types + priciest runs: they hold for every scope */}
@@ -608,6 +645,8 @@ export default function Costs({ me }: { me?: Principal }) {
             <p className="muted text-xs" data-indicators-custom>{t("costs.range.indicatorsCustom")}</p>
           ) : indicatorsForbidden ? (
             <p className="muted text-xs">{t("costs.indicators.restricted")}</p>
+          ) : indicators.data === undefined ? (
+            <CostWait state={loadState(indicators)} />
           ) : (
             <PriceList rep={indicators.data} />
           )}
@@ -617,14 +656,14 @@ export default function Costs({ me }: { me?: Principal }) {
           <BasisLockChip support={runsSupport} basis={basis} />
           <p className="muted text-xs mb-3">{t("costs.runs.hint")}</p>
           {runsFailed ? <p className="muted text-sm" data-runs-error role="alert">{t("costs.home.loadError")}</p>
-            : runList ? <ExpensiveRuns runs={runList} /> : <p className="muted text-sm">{t("costs.home.loading")}</p>}
+            : runList ? <ExpensiveRuns runs={runList} /> : <CostLoading shape="table" />}
         </div>
       </div>
 
       {/* Cost insights: per model as Claude Code reported it, and the
           subscription meter per credential. The model lines follow the agent
           filter; what is per credential stays org-wide and says so. */}
-      <CostInsights days={win.days} win={custom ? win : undefined} figures={orgFigures} agents={selected} outside={included} meterOutside={orgOutside} answered={answer?.covers}
+      <CostInsights cellsLoad={cellsLoad} billedLoad={billedLoad} days={win.days} win={custom ? win : undefined} figures={orgFigures} agents={selected} outside={included} meterOutside={orgOutside} answered={answer?.covers}
         incomplete={<IncompleteMark checks={incomplete.tokenPrice} part="tokenPrice" />} marks={credentialMarks} />
       </CustomRangeContext.Provider>
       )}

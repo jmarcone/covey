@@ -5,6 +5,7 @@ import { api, isUnauthorized, setUnauthorizedHandler, type Principal } from "./a
 import { initialLang } from "./i18n";
 import { APP_LINK_PATHS, LANGS, MAIL_LINK_PATHS, PUBLIC_ROUTES, pathOf } from "./public/routes";
 import SignedOut from "./public/SignedOut";
+import { CostBundle, CostBundleError, CostLoading, isCostPath } from "./pages/CostLoading";
 
 /* The signed-in UI comes from its own bundle — it is the larger part of the
    application and none of the business of someone who reads the public
@@ -268,7 +269,9 @@ export default function App() {
   const weiter = weiterZiel(location.search);
   if (weiter) return <Navigate to={weiter} replace />;
   return (
-    <Suspense fallback={null}>
+    // The cost pages say that they load from the first bundle on; the other pages wait without a placeholder.
+    <CostBundle on={isCostPath(location.pathname)} fallback={<div className="cost-loading-app"><CostLoading shape="page" /></div>}
+      failure={<div className="cost-loading-app"><CostBundleError /></div>}>
       {/* Only for an organisation that has turned it on (#328). Otherwise the
           root and /team/* belong to the console, which sends them on. */}
       {me.data!.TeamSurface && imTeam(location.pathname) ? (
@@ -276,7 +279,7 @@ export default function App() {
       ) : (
         <AppShell me={me.data!} onLogout={() => me.refetch()} />
       )}
-    </Suspense>
+    </CostBundle>
   );
 }
 
