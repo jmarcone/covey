@@ -1,0 +1,375 @@
+# Design: the office as a light game
+
+Status: proposal, for the human's approval before any build. Part of #183 (design only, no code). Code references are to `main` @ f8934be3; the open PRs #137 (render on demand) and #142 (fit the viewport) are read as if merged, and `docs/design/office-signals.md` (part D of #122) as the base this builds on. Mockups are static SVG with the light values of covey's tokens and sample data; they are in `docs/design/office-game/` (`stage.svg`, `icons.svg`, `wall.svg`). Every figure in them is made up.
+
+> Wish (2026-11-20): make the 3D office nicer and a little like a game. Integrate the notifications, show a progress bar on active tasks, add other simple things that add value.
+
+![The stage with all six items](office-game/stage.svg)
+
+**The question the game layer answers:** *what is happening in my workforce right now, how far along is it, and what is it asking of me?* It adds no second question. The lists answer *what*, the office (office-signals) answers *where and who*, and this layer adds *how far, what just happened, what is queued, what it costs*. Everything it shows is read from a record; nothing is invented to look lively.
+
+## 0. What exists today (checked in the code)
+
+| Need | Source today | What it gives | Gap |
+|---|---|---|---|
+| Who works, on what, since when, last step kind | `GET /org/running` (`internal/httpapi/running.go`, `LIMIT 20`), polled every 10 s (`Ueberblick.tsx:54-57`) | `task_id`, `title`, agent, `since`, `step` | **no turns used, no limit** (G1) |
+| The turn limit | `Agent.max_turns` (`web/src/api.ts:50`); 0 means the orchestrator's default, `agents.DefaultMaxTurns` = 30 (`internal/agents/lint.go:112`) | the configured limit | the client would have to repeat the default (G1) |
+| Turns used in a run | only the daemon at the end of a run (`num_turns`, `runtime_claudecode.go`); #42 (open) adds a counter for its 50 % / 80 % notices | nothing the UI can read | G1 |
+| Waiting for the human | inbox poll every 30 s (`Ueberblick.tsx:37-40`) → `wartetBei` → state `wartet` (`Buero.tsx` `zustandVon`) | agent ids | none |
+| Live changes | `GET /events` (SSE, `App.tsx:49`) with types `agent_status`, `task`, `recording`, `approval`, `guardrail`, `chat`, `roster` (`orchestrator/broadcast.go:14`). The client only invalidates queries. | agent id; `task` carries `task_id`, and `state` only when the API made the change (`httpapi/liveevents.go:48`), not when a run did (`orchestrator.go` `publishTask`) | the final state of a task, whether a task is new and its `origin` (G3b), PR events (G3) |
+| Notifications | `notify.Emit` writes the `notifications` table (`internal/notify/notify.go:181-209`); classes `decision`, `task` (off by default as noise), `cost`, `ops`; kinds `approval`, `improvement`, `task_done`, `task_failed`, `budget`, `fleet_killed`, `runner_gone`, `credential`, `delegation_refused` | a title and a link per row | **no endpoint lists them** (only the preferences, `server.go:357`) (G3) |
+| Fleet switch | `GET /fleet` → `{fleet_killed}`; `Organization.fleet_killed` (`api.ts:1563`), which `Buero` already reads as `["own-org"]` | the flag | the meter at the time of the pause is not stored; see §2.5 |
+| Meter and spend | cost page: `MeterCoverage` readings (per credential × source × `window_kind`), `cost/subscription`, `cost/org` (`api.ts` 707-850); the line in open PR #170 (the cost naming is moving: #170, #182, #187 and #188, the cost-home design, which renames the headline “token price”, adds a “24 h” preset and a gauge “stop 85 %”, and finds no stop setting either; the strip follows whichever naming merges). The page's ranges are `RANGES` = 1 / 2 / 7 / 30 / 90 days, rolling (`outsideFigures.ts:16`; label `costs.range24h` “24 h”). The lead tile of a range, labelled `costs.lead.label` “At token prices (as reported by Claude Code)”, is `lead = totals.reported + kpiLead(outside).lead` (`Costs.tsx:356`, `:420`), sub “all credentials”: covey's lines at Claude Code's figure plus the outside sessions at their lead price, over every credential. (`headline(cells).list`, `costFigures.ts:1595`, is another figure: the list price on the subscription meters only, shown only in `SubscriptionDent`; the strip does not use it.) | weekly % per seat, dollars over a rolling range | the guard's stop line is not exposed (G4); there is no “today (UTC)” window |
+| Queue per agent | none org-wide | | G2 |
+| Merged PRs | none: covey records an agent's `action` events, not a merge, which only the human does | | G3, decision D1 |
+| Hand-off | a task carries `origin`, which is `"agent:<slug>"` when an agent delegated it (`backlog.go:69`, `:321`; `api.ts:145,154`). (`created_by` at `backlog.go:140` / `api.ts:179` is the **stage's**, not the task's; `parent_task_id` is also set for a continuation, origin `"continuation:<id>"`, so it does not make a hand-off.) | the sender's slug, from one `GET` of the task the SSE `task` event names | the event itself carries neither the origin nor “created” (G3b) |
+| When a task became done | `updated_at` (moves on `set_stage`, notes and other edits), `archived_at`; **no done timestamp** and no org-wide count | the state `done`, not when it became so | **G6**: “Shipped today” and “Done this week” cannot be counted without it |
+| The failed state of an agent's latest task | `/org/running` lists `in_progress` rows only; a final state comes from one `GET` of a task that left the list, which happens during the session only | nothing at load | no seed after a reload (§2.3, G7) |
+
+The gaps become separate backend issues, as #183 asks. They are listed in §7. **Every build PR below says what it does when its data is absent, and the design below says it too: the element is not drawn. It is never drawn with a guessed value.**
+
+## 1. Rules for the whole layer
+
+**One colour, one meaning** (this extends office-signals §5; it adds no colour):
+
+| Token | Means, and only this | Always paired with |
+|---|---|---|
+| `--office-screen-lit` (scene) | a task is running at this desk (unchanged; the token is part D of #122, see the prerequisite in §8) | the desk |
+| `--text-wait` / `--bg-wait` | waiting **for you** (unchanged) | the raised hand, the words “Waiting for you” |
+| `--text-warning` / `--bg-warning` | **a limit is near** (≥ 80 %): turns, the weekly meter; and the paused fleet, because a limit stopped it | a notch at 80 %, or the pause glyph |
+| `--text-danger` | failed, or **a limit is reached**, or a platform fault | the `!` / stop / plug glyph |
+| `--text-success` | finished well: done, approved, done this week | check / shield / cup glyph |
+| `--text-secondary`, `--text-muted` | information with no ask: PR opened, changes requested, hand-off, queued, idle, stopped | the glyph |
+| `--text-accent` | pointed at (unchanged); **never used for an event** | |
+
+No new colour, no new token. (That holds **only with part D of #122 merged**: `--office-screen-lit`, `team.figurAria`, `team.wartenAnzahl` and the merge of waiting bubbles at rank 4 are part D's and are not on `main`; this layer reuses them and adds none of its own, §8.) The amber of `--text-warning` and the glow `--office-screen-lit` are close in hue, and that is accepted because they never share a surface: the glow is scene light, `--text-warning` is overlay chrome, and chrome in warning is always a bar with a notch or a glyph, so shape carries the meaning as well as colour. The scene needs no palette entry either: the cups and the coffee cup are built from `FARBEN.metall`, `holzDunkel` and `weiss`; the paper from `FARBEN.papier`.
+
+**Data or nothing.** `buero/leben.ts` keeps what carries information apart from what is atmosphere, “a movement from which something could be read that no record holds would be a lie with charm”. This layer is all information. It lives in its own module (proposed `buero/signale.ts`, pure, with the time passed in) and does not touch `leben.ts`. No new ambient animation is added.
+
+**Caps, so it never becomes noise** (#183 item 2, and the notify package's own finding that `task` is the class most likely to be noise):
+- at most **6** transient badges visible at once in the whole house. Beyond that, the extra events go only to the feed, and the front-desk sign shows `+n`;
+- a badge shows **6 s**; the timer pauses while the pointer or keyboard focus is on that figure;
+- the feed keeps **50** lines for the session; the same kind of event for the same agent within 60 s is one line with `×n`;
+- a switch “Events in the scene” (stage controls, remembered per browser, **on** by default) turns the badges, papers and sound off. The feed and the state icons stay.
+
+**What it must not contradict** (checked against the two open PRs and office-signals):
+
+| Rule from | Kept how |
+|---|---|
+| #137 B.1/B.3: the loop runs only while something changes; ≤ 30 fps | every new element is static between data changes. A change wakes exactly one frame through `wecken`. Papers ride the loop's `weiter` mode for 0.9 s and then it returns to `ruht` |
+| #137 B.7: no layout read in the frame, writes are `transform` | new boxes (bar, chip, badge, board sign) are measured once through `buero/masse.ts` (the `ResizeObserver` cache) and moved only with `transform`; the bar's fill is `transform: scaleX()`, never `width` |
+| #137 B.4: reduced motion followed live (`useRuhig()`) | §5; the new code reads `useRuhig()`, not `matchMedia` once |
+| #137 B.6: the shadow map is drawn once per rebuild | the two geometry props (cup, trophies) change the scene only through the existing rebuild (`zustandKern`), one shadow pass per change; nothing else is geometry |
+| #137 B.8: the faces' infinite CSS animations are what costs when idle | **no new infinite animation anywhere** (§6) |
+| #142: the stage takes the window's free height; fit with a 6 % margin around the whole building | the feed docks beside the stage and the wall strip sits above it; nothing is laid over the building, so the fit stays valid. The container query holds: `.bu` is the `container-type: inline-size` and the stage's `max-height: max(320px, 115cqw)` is relative to it (#142 `app.css:3264,3286`), so a feed inside `.bu` does not change the cap. Three things the build must do, set out in §2.2 and §2.5: **(a)** the new `[stage | feed]` row wrapper is part of #142's height chain (`.bu` is a flex column; every level down to `.bu-buehne` needs `min-height: 0`), **(b)** the feed is as high as the stage, which can be 320 px, so it scrolls inside itself, **(c)** `.bu` has `gap: 10px`, so the strip takes 54 px of the stage's height, not 44. A width change refits through #142's resize path |
+| office-signals §2: collision priority, `wartet` bubbles never fold, faces never hidden, names yield first | §2.1, §2.2 and §2.3 say where each new item sits in that list: the bar and the two chips (state, queue) are in the **head's box** (rank 3, never hidden); the badge takes the bubble's slot; none is added above rank 3 |
+| office-signals §5: exactly one legend line | the legend line is unchanged. The icon key is a “Key” disclosure in the feed header (§2.2), not a second legend line |
+| office-signals §2 accessible name `team.figurAria` | extended, not replaced (§2.1, §2.3) |
+
+## 2. The six items
+
+### 2.1 A progress bar over every working agent (#183 item 1)
+
+```
+      ┌──────────────────┐
+      │ is using a tool  │   bubble: office-signals rank 7, unchanged
+      └──────────────────┘
+            (face)           head: rank 3
+          ▕██████▏▏▏▏        bar: 30 × 5 px, notches at 50 % and 80 %
+             Ada             name: rank 6
+```
+
+- **Where.** Between the head and the name, inside the figure's box. The bar belongs to the head's item in the collision order: it sits **in the head's box** (rank 3, never hidden, moves only with its figure), as do the two chips of §2.3. The name moves down by the bar's height, and the figure's measured box includes it.
+- **Size.** 30 × 5 px, radius 2.5; 24 px wide where `gesichtGroesse` drops to 24 (more than 40 agents). Track `--surface-2` with a 1 px `--border-strong` (it holds up on light `--surface-0`); two 1 px notches in `--text-muted` at 50 % and 80 %, reaching 1 px above and below the track.
+- **Formula.** `fill = min(1, turns / max_turns)`, where `turns` is the turns used in the current run and `max_turns` the limit of that run, both from the running row (G1: the server resolves the default, the client never repeats `30`). Turns are counted as `--max-turns` counts them, per `claude` invocation, so a resumed run starts at 0 (#42). Two running tasks for one agent: the bar shows the row with the higher fill, and the card lists both.
+- **Colour by state.** `turns < ceil(0.8 × max_turns)`: `--text-secondary` (working is already said by the lit desk and the typing face; a coloured bar for “fine” would spend a colour on nothing). From `ceil(0.8 × max_turns)`: `--text-warning`, the threshold of #42's second notice (turn 24 of 30, 64 of 80). At `max_turns`: `--text-danger`, which only shows until the run is marked failed. For `max_turns` 1 to 4 the threshold `ceil(0.8 × max_turns)` equals `max_turns` itself (1, 2, 3, 4), so the amber state does not occur: **danger wins** at the last turn and there is no E10 line for such an agent. A figure that is `wartet` or `gestoppt` shows the bar frozen at its last value in `--text-muted`, dashed track; a stopped figure is dimmed like today.
+- **Not a progress of the task.** #183 offers “turns, or the task's stage”. Stages are user-defined columns with no order or total, so a stage cannot make a fraction. The stage name goes in the card, not on the bar.
+- **Where the number is.** On the bar nowhere (it is 30 px). In the card and in the “Running now” row as `14 / 30` through `fmtCount` and `fmtNumber` from `format.ts` (it has no percent formatter yet; the first PR that needs one adds it there, not inline). The row gets the same bar, 4 px high and full width of the row's text column, with the same notches.
+- **Absent.** If the row has no `turns` (G1 not landed, or a runtime that does not count, such as sevencode which has no turn limit), no bar is drawn and the row shows only the duration, as today. There is no placeholder bar.
+- **Accessible.** The bar is `aria-hidden` inside the figure's button. The button's label gains the turns: `team.figurAria` becomes `{{name}}, {{zustand}}` plus, for a running agent with a bar, `team.spiel.zuege` = “turn {{n}} of {{max}}”. In the “Running now” row the bar is a `role="progressbar"` with `aria-valuenow`, `aria-valuemax` and `aria-valuetext` = the same sentence, and the amber state adds `team.spiel.zuegeKnapp` = “close to the turn limit” to it, so colour is never the only carrier.
+
+### 2.2 Notifications in the scene (#183 item 2)
+
+```
+ office view, ≥ 1100 px container                  office view, < 1100 px
+┌─ wall strip (§2.5) ──────────────────────────┐  ┌ wall strip ──────────┐
+├──────────────────────────────┬───────────────┤  ├──────────────────────┤
+│                              │ Events   Key  │  │ stage                │
+│  stage     ◔ badge over a    │ ✋ Di waits…  │  │               [Events 3]
+│            desk, 6 s         │ ✓ Max done…   │  │                      │
+│                              │ ⎇ Bo opened…  │  └──────────────────────┘
+│                              │ Show all 23   │   the feed is a drawer over the
+└──────────────────────────────┴───────────────┘   stage, opened by that button
+```
+
+**The badge.** A 24 px round chip with the event's glyph (§4), 1 px border and glyph in the event's token, fill `--surface-2`. It takes the **step bubble's slot** above the head (`.bu-denkt`); while it shows, the step bubble is hidden. It adds no participant to the collision function:
+- ask events (needs you, failed) are not badges but **state** (§2.3): the existing bubble and the chip keep showing for as long as the state holds;
+- transient events (done, PR opened, verdict, hand-off received, budget) take the slot for 6 s, then the step bubble returns;
+- a `wartet` bubble (rank 4) is never replaced by a badge: the badge waits behind it (it is in the feed at once) and shows when the ask is answered.
+Badges are `aria-hidden`; the feed is their accessible form.
+
+**The feed.** A panel `280 px` wide, a flex sibling of the stage inside `.bu`, so the stage's height is untouched (#142) and its width shrinks, which the camera refits like any resize. Three things make that true, and the build keeps them:
+- **The height chain.** The `[stage | feed]` row is a new wrapper between `.bu` and `.bu-buehne`. `.bu` is a flex column and #142's height chain needs `min-height: 0` at every level from `.bu` down to `.bu-buehne`; the wrapper is one more level of it (`display: flex; flex: 1 1 0; min-height: 0`), and so is the feed's own column. Without it the feed's content would stretch the row and the stage would lose the cap of #142.
+- **The feed scrolls inside itself.** Its height is the stage's (`align-self: stretch`), which at a 320 px stage cannot hold 12 rows (≈ 28 px each) + the header (36 px) + “Waiting in line” (24 px) + the key's disclosure. So the panel is a flex column with `min-height: 0` and `max-height: 100%`; the header and the “Waiting in line” strip are fixed, the **rows scroll** (`overflow-y: auto`, `overscroll-behavior: contain`), the open key is an overlay inside the panel, not more height. At a 320 px stage about 8 rows are visible without scrolling; the rest by scroll or “Show all”.
+- **The strip's cost is 54 px.** `.bu` has `gap: 10px` (#142 `app.css`), so the wall strip of §2.5 takes 44 px + 10 px = **54 px** of the stage's free height, not 44. The stage's `max-height` is unchanged (it is a function of the container's width, not of what is above it). Below 1100 px container width the panel is a drawer over the stage, closed, and its button shows the count of lines unread since it was last open. Content, newest first:
+- row: glyph (§4), one line of text, age. The line is ellipsised at one line, the full text in `title`; `×n` when merged. Age is “now”, then whole minutes (“3 min”), refreshed by **one** shared 30 s tick, not one ticker per row (the `Dauer` component of “Running now” ticks every second per row; the feed does not copy that).
+- the first 12 lines; “Show all {{count}}” unfolds to 50.
+- the header's “Key” opens the icon key: the table of §4 with the glyphs and their words, at the feed's width. This is where the icons are explained; the stage keeps its one legend line.
+- **At load** the feed is seeded with what is true now and has a source today, never with history: who is waiting for you (the inbox poll) and the number of tasks running (`/org/running`). **There is no seed for failures**: after a reload nothing on the page says which agent's latest task failed (§0), so a failure from before the reload shows no chip and no line, and a failure a month old can never show a red `!` for ever. A failure that happens during the session is known from the departure lookup (E3) and stays a chip until the agent runs again or the person has seen it. A seed for failures needs G7 (the latest task state per agent); until then the design does not draw one. Everything after load is live. The feed is session-local. (A persisted feed would need the notifications endpoint of G3.)
+- **States.** Loading: three skeleton rows. Empty: “Nothing new since you opened this page.” Error, or the event stream down: a line “Live updates paused, reconnecting” in `--text-muted` (the same visible state the shell's stream gives, lesson 4), cleared when the stream reopens, which also fetches what was missed.
+
+**Click.** A feed row and a badge go to the thing, with the keyboard as well (the row is a link, the badge's figure is a button that opens its card):
+
+| Event | A click goes to |
+|---|---|
+| needs you, blocked on a human | the agent's conversation `/team/<agent_id>` (where the decision card sits, as the “Running now” rows do) |
+| done, failed, budget, hand-off received, PR opened, verdict | the agent's page `/agents/<agent_id>` (its task and recording). The implementer confirms whether the agent page can deep-link to a task; if not, the page is the target |
+| PR opened, verdict | the row also has a trailing `↗` to the PR, opened in a new tab with `rel="noopener noreferrer"`, only when the recorded URL is on the host of the connected target system |
+| platform (runner, credential) | `/inbox` for approvals and decisions; the page named by the notification's own `link` otherwise |
+
+**Sound** is off by default and designed in §2.6.
+
+The full event list, with sources and durations, is §3.
+
+### 2.3 State at a glance, by icon (#183 item 3)
+
+```
+ working          waiting for you     queued behind      idle        failed       stopped      fleet paused
+  (face)         ╭ ✋ Waiting for you╮   (face) ⌛3       (face) ☕    (face) (!)   (face) ⊘     ░░ office dimmed ░░
+ ▕███▏▏▏▏         (face)                                                                       ┌ ⏸ Paused · … ┐
+  Ada               Di                  Rae          Max          Cy          Kit
+```
+
+The state is one of the five `Zustand`s the office already derives (`zustandVon`) plus two facts the office did not show: failed, and what is queued.
+
+- **A chip, in the head's box.** One chip per figure at most, border and glyph in the state's token on `--surface-2`. **Size:** `round(gesichtGroesse × 2/3)`: **20 px** (glyph 16) at `gesichtGroesse` 30 and **16 px** (glyph 12) at 24 (more than 40 agents, `Buero.tsx:572`). **Place:** its centre on the head's circle at 45° to the upper right, so it overhangs the head's box by about 6 px to the right and up at 30 and 4.5 px at 24. The overhang is **part of the head's measured box** (`masse.ts`, rank 3, never hidden, moves only with its figure), so the 4 px gap of office-signals §2 is kept against the neighbour's box including the chip, and the chip never sticks out of a box the collision function does not know. **What yields at a crowd:** nothing of the chip's own is hidden; the things that yield before it are the name (rank 6), the step bubble (rank 7) and, at 24, the **digit** of the queue chip (the glyph stays; the count is in the card, the accessible name and the “Waiting in line” strip). If two head boxes still intersect after that, it is the case of two heads intersecting, which is rank 3 against rank 3 and the layout's today; this layer adds at most 6 px to a box, and the build measures the 70-agent stress org (criterion 11) to show that it does not create the case. **Which chip:** priority failed > waiting for you > stopped > queued, one at most. (Waiting for you also keeps its bubble; the hand in the chip is for when the bubble yields to a merge: `{{count}} waiting for you`, office-signals rank 4.) Working has no chip of its own: its signs are the bar, the typing face and the lit desk; a working figure with a queue wears the queue chip. Idle has none (the cup prop, below). Asleep has none: the face's “z z” says it.
+- **Queued.** The hourglass chip carries the **count of that agent's tasks waiting behind the one it runs** (or the ones it has, if it is not running one): `queued = open tasks assigned to the agent, not running, not parked`. It is its own channel and shows over a working figure's head next to its bar (the bar sits below the head, the chip at its upper right: they do not overlap). Neutral colour on purpose: it says *waiting for others*, which is not *waiting for you* (wait-blue, bubble only). Source: G2. Absent: no chip.
+- **Idle.** A cup on the desk, geometry in the scene, changed through the existing state rebuild. It is the “frei” state's prop, not an icon over the head: idle people already walk to the kitchen (`leben.ts`), and a head chip on all of them would be noise. In the List and the key it is the cup glyph.
+- **Failed.** A red `!` chip on an agent whose **latest task ended `failed`**, as the page learns it **during the session** from the departure lookup (E3; not from the notification kind, which the page cannot read, G3d), until the agent starts another run, or the person opens its card or the feed row (then it is “seen”, session-local). It does not disappear by timer: a failure is something to act on. **No seed at load:** after a reload the page does not know which latest task failed (§0, G7), so there is no chip for a failure from before the reload; a month-old failure never shows a red `!`.
+- **Stopped** (`killed`): the existing dimmed figure (`.gestoppt`, opacity 0.45) plus a muted `⊘` chip, so that “stopped” is also readable on a screenshot where 0.45 opacity looks like a poor render. **While `fleet_killed` the `⊘` chip is not drawn**: `KillFleet` kills every agent (`orchestrator.go:4336`), so every figure is `gestoppt` (`Buero.tsx:183`) and N identical chips would carry nothing on top of the veil and the banner, which already say it. A figure stopped on its own while the fleet runs keeps the chip; the other chips (failed, waiting, queued) are unaffected.
+- **Fleet paused** (`Organization.fleet_killed`): the whole stage is dimmed (a `--scrim-weak` veil over the canvas, below the overlay so bars, chips and the card stay at full contrast) and a banner sits at the top of the stage: `⏸ Fleet paused` and, when the meter has a reading, `· weekly meter at 76 %`. The percent is the **latest reading, not the value at the moment of the pause**, because the platform stores no such value; the banner says “weekly meter at”, never “paused at”, and the number carries its age (§2.5). Without a reading the banner has no number. It is `role="status"` and carries `team.spiel.pausiert`. The banner leaves the camera and the keyboard alone.
+- **Accessible.** `team.figurAria` already holds the state word; it gains `team.spiel.fehlgeschlagen` = “last task failed”, `team.spiel.wartschlange` = “{{count}} waiting behind”, `team.spiel.gestoppt`. The chips are `aria-hidden`.
+- **List view.** §5.
+
+### 2.4 Hand-offs you can see (#183 item 4)
+
+```
+   Ada's desk  ──────╮ paper, 0.9 s, along an arc in screen space
+                     ╰───────▶  Rae's desk   badge: paper, 4 s   queue ⌛ 3 → 4
+```
+
+A hand-off is a **task created for another agent** by an agent: the task's `origin` is `"agent:<slug>"` and that agent is not the receiver. A task made by a person (`origin` `manual:…`, `chat:…`), a continuation of the agent's own task (`continuation:<id>`, which also sets `parent_task_id`) and a task the agent made for itself are not hand-offs. (`created_by` is the *stage's* field, `backlog.go:140`, and says nothing about a task.) The sender is therefore readable from the task the SSE `task` event names, with one `GET` (§0); what the event does not say is whether the task is **new**, so the client treats a task id it has not seen before as the candidate, one lookup per new id under the rate rule of §3.
+- **The paper.** A 14 × 18 px sheet (the paper glyph, `--text-secondary` on `--surface-2`), 0.9 s on a shallow arc from the sender's head to the receiver's head, drawn by the frame loop in its `weiter` mode (a transform per frame, 30 fps cap), then removed. Across floors: the paper flies to the stairwell marker of the floor, and the receiver's floor button gets the accent dot office-signals §4 already defines for an off-floor figure.
+- **Receiving.** The receiver gets the paper badge for 4 s and its queue chip counts up (G2). The feed line reads `Ada → Rae: “<title>”`.
+- **At most 6 papers in flight**; further ones are feed lines only.
+- **Review queues visible** (the bottleneck the team measured): the queue chip of §2.3 is the reading. The feed header gains a one-line strip *under* the events when any queue is ≥ 1: `Waiting in line: Rae 4 · Kit 2` (top three by depth, ties by name), each name a link to its card. This is the sorted answer to “where is the line”, which a scattering of chips is not. Counts through `fmtCount`.
+- **Absent.** Without G3 there is no paper, only the queue chip (G2) if that exists.
+- **A refused hand-off** (notify kind `delegation_refused`: the chain brake closed): no paper reaches the receiver. The sender gets a `--text-danger` `!` badge for 6 s, and the feed line says why in the notification's own title.
+
+### 2.5 The meter on the wall (#183 item 5)
+
+![The wall strip in its six states](office-game/wall.svg)
+
+**Where.** A strip of **44 px** above the stage, full width, in the `.bu` column (a flex block like the blocks above the stage in #142, so the stage's free height is reduced by 44 px + the 10 px `gap` of `.bu` = **54 px** (72 + 10 = 82 px in two rows), and nothing covers the building; the strip is a flex child with `flex: none`, and #142's height chain of §2.2 holds for it). Under 720 px it is two rows (72 px). **Assumption (decision D2):** “on the wall” is read as the wall *of the stage*, not a wall *in the 3D house*. In the house, the walls that face the camera are cut down to a plinth (the cutaway rule at the head of `Buero.tsx`), so a screen on one wall is gone in about half of the four rotations and the implementer would have to move it at every quarter turn; text on a canvas texture is unreadable below zoom 1, cannot be read by a screen reader, and would be redrawn on every data change. The strip is styled as a wall display: `--surface-2`, 1 px `--border`, radius 6.
+
+**What it shows**, in two cells (the “Shipped today” board is the sign at the front desk, §2.6, not a third cell):
+
+| Cell | Content | Formula and source |
+|---|---|---|
+| Weekly meter, one row per subscription seat with a reading, at most 3 (then `+n more` linking to the cost page) | seat name, `76 %`, a bar with a notch at 80 % (`--text-warning`) and, where the guard exposes one, a dashed stop line (`--text-danger`) with its value; `read 12 min ago` | the **latest reading** of the seat's meter, the same value and the same function as the last point of the line in the cost chart (`MeterCoverage`, and `meterPoints` once #170 is merged). The office computes nothing of its own. **Which meter:** the one the cost page reads for the seat's real cost, `pickMeter` (`costFigures.ts:222`): `window_kind` **`seven_day`** (the weekly all-models window), and of the sources that read it the one with the most readings (`usage_cmd` before `manual` before `inband` on a tie), **never two sources of one seat** (lessons 1 and 5). The other windows of the seat (`seven_day_*`, `five_hour*`) are not shown in the strip: it shows the one window the cost chart's line is drawn from, so criterion 6 compares like with like |
+| Monthly limit, for a seat metered monthly (0152) | the same row, label `Month` | the latest reading in % of that month's limit: the coverage of the seat's **`overage`** window (any window that `isWeeklyWindow` says is not weekly, `costFigures.ts:232`), the source with the most readings as `monthlyMeters` takes it, by the same rule |
+| Last 24 h | `$ 41.20`, label “Last 24 h · at token prices”; sub “all credentials”; tooltip “All credentials, including sessions outside covey, at the price Claude Code reported; outside sessions that uploaded only token counts at covey's list price. Tokens without a reported price, covey's own included, are shown apart, not as $0. On subscription seats this is not money paid. The last hours can still rise while outside sessions upload.” (final wording by cost-controller, round 3); after the figure, only when tokens without a price exist, the suffix “+ 120 k tokens without a reported price” | **The cost page's lead tile for its 24 h range** (`RANGES` 1 day, rolling, `costs.range24h`), the figure with the label `costs.lead.label` (`Costs.tsx:354-356`, `:420`): `lead = covey reported + outside lead`, over **every credential**, pay-per-token keys and sessions outside covey included, as the page's default view (whole org, outside sessions in: `selected = ∅`, `coveyOnly = false`). **Decision (cost-controller, round 2, finding 13): (a), the tile's figure, not `headline(cells).list`.** The tile's inline computation (`Costs.tsx:356`) moves into `costFigures.ts` as **one function**, `leadFigure(cells, selected, coveyOnly)`, which returns `coveyReported` (Σ `engine_usd`, unchanged), `outsideLead` (`kpiLead(outside).lead`, **`null`** when the outside calls have a price of neither kind, never `?? 0`), `unpricedTokens` (covey's and the outside tokens that carry no reported price, see “No silent zero” below), `unpricedCoveyLines` (for the test) and `total` (`coveyReported + (outsideLead ?? 0)` when anything is priced; **`null`** when the window has lines or calls but none is priced; $0.00 only when it has no lines and no calls); **the tile and the strip both call it**, and a test compares them on the five hand fixtures below (expected values hand-computed by cost-controller): $19.00 for the first, $5.00 for the second, and the third to fifth for the part without a price. `headline().list` is not used: it is the numerator of the multiple, keeps only the meter credentials and the outside sources linked to them (`costFigures.ts:1601-1607`), so it drops pay-per-token work that is billed and a seat without a reading yet, and the strip shows neither the real cost nor the multiple it belongs next to. **Wording:** the label, the tooltip and the aria text never say “spent”, “spend” or “cost”: on a subscription seat the figure is what the work was worth at token prices, not money paid (that is the plan price). The figure is **not final**: outside sessions upload late, so the last hours can still rise, as on the page. **No silent zero, in both halves.** Two places turned a part with no price into $0. (1) The outside part: `kpiLead(outside).lead ?? 0` (`Costs.tsx:356`); `leadFigure` returns `null` for it. (2) covey's own lines: the server stores a covey line whose result carried no `costUSD` as `engine_usd = 0` (`costinsights.go:109`, `CASE … ELSE 0`), and `cellTotals` adds it as $0 (`StackedCostChart.tsx:2037-2041`); there is **no list-price fallback for covey's own lines**, only for outside sources (`cellLead`, `sourceLead`), and the page says so (“recomputed from tokens only for sources without a reported cost”, `en.json:735`). **Decision (cost-controller, round 3, finding 18): (a).** covey's own lines count at Claude Code's reported figure only; a covey line with tokens and `engine_usd <= 0` goes into no dollar figure and its tokens are counted apart. (b), pricing those lines at covey's list price in the tile and the strip, would change the tile's formula and is its own issue, not #183's. **The unit is tokens, not calls:** a covey `model_usage` row is a run × model, and `kpiLead`'s `unpricedCalls` is 1 whenever unpriced tokens exist (`outsideFigures.ts:440`), so the one unit both halves carry is tokens. **The cells cannot show it:** a cell sums `engine_usd` over models and lines (`SUM(mu.engine_usd)`), so one priced line in the same cell hides an unpriced one; **G8 (§7)** adds a per-cell field `unpriced_tokens` and `leadFigure` sums it, it infers nothing from `engine_usd = 0` on the client. The strip then shows the priced figure with “+ {{tokens}} tokens without a reported price” (tokens through `fmtCount`, the exact number in the `title`), or `–` with “· {{tokens}} tokens without a reported price” when nothing is priced; **the tile shows the same suffix and `–`** (one function, one wording). A true $0.00 only for an organisation with no lines and no calls in 24 h; a failed query is the error state, never $0.00. **The one change to the cost page's tile:** fixture 4 below shows `–` where the tile showed $0.00; in every case where something is priced its figure is unchanged. The partial-sum rule (`SourceTotal` with/of), the dent rule of #182, the methodology spec of #187 and the cost-home design #188 (all open; the strip follows whichever cost naming merges) apply as on the page. **The cell is drawn whenever the cost query answers**, also for an organisation that pays per token only (no meter credential: the weekly cell shows its empty state beside it). If the human wants covey only, `coveyOnly = true` gives it and the label must then say so. A calendar “today (UTC)” would be a window the page does not have and a formula of its own; if the human wants it, it is a **window cost-controller must define first** (a new `RANGES` entry with its own figures), and then this cell takes it. Default: Last 24 h |
+
+**The fixtures of `leadFigure`** (cost-controller, round 3; the tile and the strip give the same in every row; PR 4's tests and the Go test of G8 use them):
+
+| # | Data (24 h) | total | unpriced tokens | unpriced covey lines |
+|---|---|---|---|---|
+| 1 | seat S: covey $10.00, an outside source linked to S $4.00; pay-per-token key K: covey $3.00; a per-use outside source $2.00 | **$19.00** | 0 | 0 |
+| 2 | K and the per-use source only | **$5.00** | 0 | 0 |
+| 3 | fixture 1 **plus**, on seat S, one covey Opus line (input 100 000, output 20 000, no `costUSD`, stored `engine_usd = 0`) **in the same cell** as S's $10.00 line | **$19.00** | **120 000** (“+ 120 k tokens without a reported price”) | **1** |
+| 4 | that one unpriced line only, no other line, no outside call | **`null`, shown `–`** (“– · 120 k tokens without a reported price”) | **120 000** | **1** |
+| 5 | no lines, no calls | **$0.00** | 0 | 0 |
+
+Fixture 3 puts the unpriced line in the same cell as a priced one on purpose: a client that reads `engine_usd = 0` per cell sees $10.00 and 0 unpriced, and the test must fail on that. Unpriced tokens are input, output, cache read, cache write 5 min and 1 h, web searches excluded.
+
+- **One rule for both gauges:** neutral up to 80 %, `--text-warning` from 80 %, `--text-danger` at the stop line or 100 %, so turns and the meter read alike.
+- **Age is part of the number.** A reading older than 2 h (hourly readings are the norm; they only arrive in-band, #153) is drawn grey with a dashed track and says `read 5 h ago`: an old figure never looks current.
+- **States** (all six of the meter, plus two variants of the 24 h cell, in `wall.svg`): normal; limit near; at the stop line (with the “Paused” pill when `fleet_killed`; **the stop line is drawn only when G4 exists**: today no guard exposes one, so the state is “at 100 %” and `wall.svg` draws no stop line in any state); stale; empty (“No meter readings yet”, linking to the cost page; the 24 h cell is still drawn, here $ 5.00 of a pay-per-token-only organisation, as the picture shows); error (“Could not read · Retry”, keeping the last figure greyed). The 24 h cell has two more drawn states, below the six in `wall.svg`: the priced figure with the token suffix (fixture 3) and `–` with the suffix (fixture 4). The suffix is in `--text-secondary`, not a warning colour (a part without a price is not an alarm); in the two-row layout under 720 px it wraps under the figure.
+- **Refresh.** **One request**, every **5 min** while the strip is on screen and on focus, not on every SSE event, and none while the tab is hidden: **`GET /cost/cells?days=1&bucket=hour`** (`RANGES` v = 1, bucket `hour`, `outsideFigures.ts:16`), the page's own request under the **same query key** `["cost", "cells", 1, "hour"]`, so the strip's figures and the page's are one read, not two definitions of the request. **It feeds both cells:** the 24 h figure is computed from the cells of the answer, and the weekly meter is the field **`cells.external.meter`** of the *same* answer (`headline()` reads it there, `costFigures.ts:1597`; the server reads the meter rows from 8 days before `since`, `stacked.go:651`, so a 24 h query still carries a weekly reading that is two days old). There is no second endpoint and no second poll for the meter. `useCostCells` (`StackedCostChart.tsx:99-104`) takes only `(days, bucket)` and hard-codes `refetchInterval: 30000`; the app default for `refetchOnWindowFocus` is `false` (`main.tsx:16`). 30 s is right for the cost page and would be 2 requests a minute on the office page, so PR 4 gives the hook an **options object**, `{ interval, refetchOnWindowFocus }`, with the page's values as defaults (`interval` 30 000, `refetchOnWindowFocus` as the app default, so the cost page is unchanged), and the strip passes `{ interval: 300000, refetchOnWindowFocus: true }`. Only one of the two pages is mounted at a time, so the shorter interval of one key never overrides the other. §6 measures this read.
+- **Numbers:** `fmtUSD`, `fmtCount`, `fmtNumber` (percent, as above), times through `fmtClockUTC`/`fmtDelta`. **A test compares the strip's figures with the cost page's for the same window** (lesson 14: a tile, its chart and its table must sum to one figure). **This item needs cost-controller's formula review before its PR** (charter directive 6).
+- **Accessible.** The strip is a `section` named by `team.spiel.wand`; each gauge is a `role="meter"` with `aria-valuenow/min/max` and `aria-valuetext` = “76 % of the weekly limit, read 12 minutes ago”; the stop line is in the text, not only in the colour.
+
+### 2.6 Light game touches (#183 item 6)
+
+- **Trophies on the author's desk.** A small cup (geometry, `FARBEN.metall` on a `holzDunkel` base) for what the agent **got done this week** (rolling 7 days, UTC): 1, 2 or 3 cups, **capped at 3**; the exact count is in the card and in the List. The cups change the scene only through the existing rebuild: one rebuild per new cup, at most a few a day.
+  - **Decision D1 (the human's):** the wish says *merged PRs*. covey does not know when a PR is merged (the human merges on GitHub; nothing in the platform records it), so this cannot be built on data that exists. **Recommended:** ship the first version as **tasks that reached `done` in the last 7 days**, labelled in every place it is shown “Done this week”, and move to merged PRs when a source exists (G3). **That count needs G6.** The state `done` is known today, the *time it became done* is not: a task has `updated_at` (it moves on `set_stage`, a note or any edit, so a task done on Monday would be “done today” again when it is moved on Friday) and `archived_at` (archived tasks would drop out), and there is no org-wide count. G6 is a `done_at` on the task (set when it reaches `done`) or an org-wide count of tasks that reached `done` since a given time, per agent, in one request. **Until G6 exists the trophies, “Done this week” and “Shipped today” are not drawn** (data or nothing); the design does not count from `updated_at`. The label never says “merged” while it is a task count (charter 4: the number's formula is the label).
+- **“Shipped today” board by the door.** A sign at the front desk (`tresen`), drawn with the department signs' machinery: `🏆 Shipped today 4`. It is a rank-5 item in office-signals' order (moves up only, at most 48 px, ellipsis at 120 px, never hidden). Formula: **tasks that reached `done` today (UTC)** by G6's `done_at`, org-wide, counted from the same rows as the trophies and tested against them. Without G6 the sign is not drawn. When the day has none: `Shipped today 0`, never hidden (a zero is information). Click: the feed filtered to done events.
+- **Sound.** **Off by default** (#183). A speaker button in the stage controls (`aria-pressed`, remembered per browser). Two tones only, synthesised with the Web Audio API (no files, no download): a soft one for *needs you* and a softer one for *done*; at most one per 10 s; none while the tab is hidden; none until the person has clicked something on the page (browsers refuse earlier). **Recommendation: build it last, or drop it** (D3): it is the one item that needs no data and the one with an accessibility and workplace cost.
+
+## 3. The event list
+
+| # | Event | Source today → what the client does | In the scene | Feed line (English) | Click | Shown |
+|---|---|---|---|---|---|---|
+| E1 | **Needs you** (decision waits) | inbox poll (`wartetBei`) and SSE `approval` → state `wartet`; notify kind `approval` | the `wartet` bubble with the hand glyph and “Waiting for you”; merged to `{{count}} waiting for you` by office-signals rank 4; hand chip | `{{name}} is waiting for you` | the agent's conversation | **state**: while it holds |
+| E2 | **Task done** | the row leaves `/org/running` and the task's final state is `done` (one `GET` per departure, ≤ 5 in flight; or the `state` in the event, G3); notify kind `task_done` | badge: check, `--text-success` | `{{name}} finished “{{title}}”` | the agent's page | 6 s |
+| E3 | **Task failed** | same departure, final state `failed`, **during the session only** (no seed at a reload, §2.2, G7); the notify kind `task_failed` is the same fact, not read | red `!` chip (state, §2.3) and a danger badge for 6 s | `{{name}} got stuck on “{{title}}”` | the agent's page | **state**: until it runs again or is seen |
+| E4 | **Blocked on something else** (parked on an external key, not the human) | departure with state `blocked` | no badge; hourglass is the queue chip only if tasks wait; the bar freezes | `{{name}} is waiting for an answer: “{{title}}”` | the agent's page | feed only |
+| E5 | **Pull request opened** | recorded `action` event of the target system's create-PR action with a result; **no event reaches the client today** (G3) | badge: PR glyph, `--text-secondary` | `{{name}} opened a pull request` (+ `↗`) | the agent's page (+ the PR) | 6 s |
+| E6 | **Review verdict** | the same, for an approve or changes-requested action (G3) | badge: shield-check (`--text-success`) or the circular arrow (`--text-secondary`) on the **reviewer** | `{{name}} approved “{{title}}”` / `{{name}} asked for changes on “{{title}}”` | the agent's page (+ the PR) | 6 s |
+| E7 | **Hand-off** | SSE `task` for the receiver, a task id not seen before, + that task's `origin` = `"agent:<other slug>"` (one `GET` until G3b puts `origin` in the event); receiver ≠ that agent | the paper flight and the paper badge on the receiver | `{{from}} → {{to}}: “{{title}}”` | the receiver's page | 0.9 s flight + 4 s |
+| E8 | **Hand-off refused** | notify kind `delegation_refused` (G3 to read it) | `!` badge on the sender | the notification's title | the agent's page | 6 s |
+| E9 | **Budget cap paused an agent** | notify kind `budget`, class `cost` (G3 to read it); the agent turns `gestoppt` | gauge badge, `--text-danger`; the agent's stopped chip | `{{name}} was paused by its budget` | the agent's page | 6 s |
+| E10 | **Turn limit near** | **needs G1** (no turns on any read today): the bar crossing `ceil(0.8 × max_turns)` (§2.1); never for `max_turns` 1 to 4, where danger wins at the last turn | the bar turns amber; no badge | `{{name}}: turn {{n}} of {{max}}` | the agent's page | one line per task id; a `turns` that falls below its last value (a resumed run starts at 0) starts a new run and allows one more line |
+| E11 | **Fleet paused / resumed** | `Organization.fleet_killed` (the `["own-org"]` query: it is refetched on SSE `agent_status` and `roster`, a new invalidation) | dim + banner (§2.3) | `The fleet was paused` / `The fleet is running again` | the fleet control that already exists for the switch (the implementer links it) | **state** |
+| E12 | **Runner gone, credential refused** | notify kinds `runner_gone`, `credential` (G3 to read them) | none: they belong to no desk | the notification's title | its `link` | feed only |
+| E13 | **Open point from a review** (improvement) | notify kind `improvement` | none | the notification's title | `/inbox` | feed only |
+| E14 | **Done this week** (trophy) | derived: tasks whose `done_at` lies in the last 7 days (D1 A; **needs G6**, no cup without it) | a cup on the desk | no line (a count, not an event) | the card | state |
+
+“Same events as the existing notifications” (#183): E2, E3, E1, E8, E9, E12, E13 are the notification kinds of `internal/notify`. The scene shows them from **the data the page already holds plus the SSE stream**, not by reading the `notifications` table: that table is per recipient, filtered by that person's class switches (the `task` class is off by default as noise) and has no endpoint. Reading it would make the scene depend on someone's mail settings. The cost of that choice is that E8, E9, E12 and E13 cannot show until G3 gives the page a way to see them; the design shows them as soon as it can and never earlier.
+
+**Rate rules:** one `GET` per task departure or per new task id, at most 5 in flight (the rest queue). **A departure is a row that left `/org/running` and is not simply pushed out of it:** the list is `ORDER BY updated_at DESC LIMIT 20` (`running.go:49-50`), so with more than 20 running tasks rows rotate out of the list without leaving the state, and each would look like a departure. So (1) when the list has **20 rows** (the cap), a vanished row is a *candidate* only, and (2) a candidate is looked up **at most once a minute per task id and at most 10 candidate lookups a minute for the whole page** (the oldest vanished first, the rest the next minute) (the answer `in_progress` makes no event and starts that minute); with fewer than 20 rows a vanished row is a departure at once. The per-task bound alone is not a bound for the org: at the 70-agent stress org, with the cap of 20 rows rotating, up to about 50 tasks a minute can be candidates, i.e. about **50 `GET`/min**; the page ceiling cuts that to **10 `GET`/min** (and 5 in flight) at worst, and in the usual case it is one per real departure. A real departure that waits a minute for its turn shows its badge a minute late, which is better than 50 requests a minute. A lookup that fails produces no event (an unknown final state is never guessed `done`). The “run” of E10 has no id on the client (`since` is `tasks.updated_at`): it is keyed on the task id and a falling `turns` count.
+
+## 4. The icon set
+
+![The icon set](office-game/icons.svg)
+
+Stroke icons on a 16 × 16 grid, 1.5 px stroke, round caps, `currentColor` so the token is applied by CSS. Drawn as one inline SVG `<symbol>` sheet (proposed `buero/zeichen.tsx`), used at 16 px in chips, 18 px in the feed and 20 px in the key. Shape is never only colour: each state has its own glyph.
+
+| State or event | Glyph | Token | Where |
+|---|---|---|---|
+| working | none (bar + typing face + lit desk) | bar `--text-secondary` | figure |
+| working, turn limit near | the bar's notch + `!` in the card | `--text-warning` | figure, row |
+| waiting for you | raised hand | `--text-wait` | bubble, chip, feed |
+| queued behind (count) | hourglass | `--text-muted` | chip |
+| idle | cup (prop on the desk) | n/a: scene geometry from the palette (`FARBEN.metall`, `holzDunkel`, `weiss`); the cup glyph of the List and the key is `--text-muted` | scene; List, key |
+| asleep | the face's “z z” | n/a | face |
+| failed | `!` in a circle | `--text-danger` | chip, badge, feed |
+| stopped (killed) | circle with a slash | `--text-muted` | chip |
+| fleet paused | pause in a circle | `--text-warning` | banner, strip pill |
+| task done | check in a circle | `--text-success` | badge, feed |
+| PR opened | branch | `--text-secondary` | badge, feed |
+| review approved | shield with check | `--text-success` | badge, feed |
+| changes requested | circular arrow | `--text-secondary` | badge, feed |
+| budget cap | gauge | `--text-danger` | badge, feed |
+| hand-off | paper | `--text-secondary` | paper, badge, feed |
+| done this week | trophy (prop) / glyph | `--text-success` / palette | scene, card, List |
+| runner / credential | plug | `--text-danger` | feed |
+
+Contrast: the tokens are the ones of the rest of the interface in both themes, and every glyph sits on `--surface-2` (the chip's fill), the same surface the tokens' own contrast was chosen against. The implementer checks the 3:1 non-text contrast of every glyph on `--surface-2` in light and dark, and says so in the PR.
+
+## 5. Reduced motion and the List view
+
+**`prefers-reduced-motion: reduce`**, followed live (`useRuhig()`, #137 B.4):
+
+| Item | Motion | Reduced |
+|---|---|---|
+| bar | the fill grows (`scaleX`, 300 ms) | jumps to the new value |
+| badge | scales in (120 ms), fades out | appears and disappears, same 6 s |
+| paper | flies 0.9 s | **no flight.** The receiver's desk gets the paper badge for 4 s, the sender's the same glyph for 2 s, and the feed line says `Ada → Rae` (the arrow is the connection) |
+| fleet dim | fades in (200 ms) | instant |
+| feed | rows slide in | rows appear |
+| trophy, cup, hourglass | static | static |
+| sound | | unchanged and still off by default; under reduced motion the first-use hint does not play a demo tone |
+
+No state is told only by motion in any mode: every animation above repeats information a static element already carries.
+
+**List view.** “Every signal also in the List view” (#183 item 7): both views read from **one hook** (proposed `useBueroSignale()`) that derives the events and states, so they cannot drift (lesson 5: two readers of one thing read it by one rule).
+
+| Office | List (`/agents`) and “Running now” |
+|---|---|
+| bar over the head | the same bar, 4 px, in the “Running now” row and under the agent's name in the list row; `14 / 30` as text |
+| state chip | the same glyph and token before the status word in the agent's row, with the word (“Waiting for you”, “Failed”, “Stopped”, “Idle”) |
+| queue chip | `⌛ 3` in the row, and the feed's “Waiting in line” strip |
+| badge | the feed's line |
+| paper | the feed's `Ada → Rae` line |
+| trophies | `🏆 3` in the row (“Done this week 3”) |
+| fleet banner | the same banner at the top of the list |
+| the strip | the same strip above the list |
+| the feed | the feed panel is a component of the overview page and is mounted under the List view's header as a collapsed “Events” disclosure |
+
+**Screen readers.** The feed is `role="log"` with `aria-live="polite"` and `aria-relevant="additions"`; announcements are coalesced to at most one per 5 s (“3 new events”), so a busy minute does not become a stream of speech. The stage's badges, chips and papers are `aria-hidden`; their content is in the feed, in the figure's `aria-label` and in the card. Every control (feed drawer, key, speaker, “Events in the scene”) is reachable by Tab in reading order, has a visible focus ring (`--text-accent` 2 px outline, as `.bu-wer:focus-visible`) and an accessible name that contains its visible label (lesson 11).
+
+## 6. Performance budget
+
+All figures are measured **the way #137 B.8 measured them** (CDP, headless Chromium, `Performance.getMetrics` TaskDuration delta, rAF frames, `gl.clear` calls, layouts, long tasks; the SwiftShader caveat stated), at 25 and 70 agents, against `main` with #137 and #142 merged. Each build PR carries the table. The targets are budgets to hold, not measurements; no number here has been measured on the new code.
+
+| Budget | Target | How it is held |
+|---|---|---|
+| Idle: nothing changes | **≤ 1 % main-thread busy** (issue #183 and #137's target b); rAF frames 0, `gl.clear` 0, layouts 0, long tasks 0, **on top of** whatever #137 B.8 left for the faces' animations | no new infinite CSS animation anywhere (their finding: 125 infinite animations on 25 agents are what costs); badges and papers are finite and removed; no new `setInterval` per element |
+| Timers | at most **3** new timers of our own in the whole layer: one badge-expiry timer for the soonest expiry, the feed's 30 s age tick, the candidate-lookup minute (§3 rate rules); on top of them the strip's 5 min cost refetch, which is the `refetchInterval` of the existing query (an option of the hook, not a timer of ours) | the badge queue is one sorted list with one `setTimeout`; none runs while the tab is hidden (#137's `sichtWaechter`) |
+| Frames | the loop runs only for a data change (one frame) or a paper in flight (≤ 0.9 s at ≤ 30 fps ≈ 27 frames) and then returns to `ruht`; a test like #137's `Buero.takt.test.tsx` asserts an empty rAF queue after a badge, a paper and a bar update | `wecken` for changes; papers in `weiter` |
+| Layout reads in the frame | **0** | all new boxes measured by the `masse.ts` cache; writes are `transform` only |
+| DOM added | per figure ≤ 3 elements (bar: 2, chip: 1) plus one badge element mounted only while it shows; bars only for running agents (≤ 20, the `LIMIT 20` of `/org/running`) → at 70 agents ≤ 60 + 70 + 6 elements; feed ≤ 50 rows | |
+| Scene geometry | the cup and the trophies only; rebuild only when the 0–3 cup count of an agent or the idle set changes: a few per day; **one shadow-map pass per rebuild** (#137 B.6) | trophies are in the existing state key (`zustandKern`), not a new rebuild trigger |
+| Network | the wall strip's **one** read every 5 min, only while the strip is visible and the tab is shown: **`GET /cost/cells?days=1&bucket=hour`** (the page's own request, same query key, interval passed by the strip; **not** the page's 30 s); the 24 h figure and the weekly meter (`cells.external.meter`) both come from that one answer; PR 4's table measures that read (its size at 70 agents and its time, reported, not promised). No other new polling; the feed adds one `GET` per task departure or new task id, ≤ 5 in flight, and a row that merely rotated out of the capped `/org/running` list is looked up once a minute per task id and at most 10 such lookups a minute in all (§3 rate rules) | events come from the stream the shell already holds (`App.tsx`) |
+| Bundle | the icon sheet + `signale.ts` + the feed ≲ 8 kB gzipped across all PRs, measured in the first and last | no icon library, no animation library, no sound files |
+| Memory | feed ≤ 50 lines; at most 6 badges and 6 papers alive | caps of §1 |
+
+Frame time of the paper flight at 70 agents on a software GPU is measured and reported, not promised.
+
+## 7. Data gaps (to become separate backend issues, as #183 asks)
+
+Not filed with this PR: the human approves the design first, and some gaps vanish with D1 and D3. The frontend PRs degrade as described in §2 (the element is not drawn).
+
+- **G1 — turns used and effective limit on a running row.** `/org/running` gains `turns` and `max_turns` (the effective limit: the agent's value, or the default when it is 0). Needs a live turn count, which #42's counter provides; if #42 lands a counter in the daemon, this is the read of it. Counted per `claude` invocation, as `--max-turns` counts; absent for a runtime without a limit.
+- **G2 — queued tasks per agent.** An org-wide count of open, not-running, not-parked tasks per agent, in one request (not one per agent).
+- **G3 — events the page cannot see.** (a) the final state and the agent's title on the SSE `task` event for a run (today only the API path adds `state`); (b) the SSE `task` event for a **new** task carries `origin` and says it is new (today it carries `task_id`, and `state` only on the API path, and does not tell a creation from an edit), so the client needs no `GET` per candidate; until then the sender is one `GET` of the task, whose `origin` is `"agent:<slug>"` (small: the data exists, only the event is poor); (c) PR opened and review verdict as a signal, from the recorded `action` events, with the PR's URL and its host; (d) read access to the person's notification rows (E8, E9, E12, E13) or the same events in the stream; (e) a merge signal, only if D1 chooses merged PRs.
+- **G4 — the guard's stop line.** The value, and whether the fleet was paused by it, readable by the UI. I found no such guard on `main`. Until it exists the strip draws no stop line, and the banner says what `fleet_killed` says.
+- **G6 — when a task became done.** A `done_at` on the task (set when it reaches `done`), or an org-wide count of tasks that reached `done` since a time, per agent, in one request. Needed by the trophies (“Done this week”), the “Shipped today” board and D1 A; without it none of the three is drawn. `updated_at` is not a substitute (§2.6).
+- **G7 — the latest task state per agent.** One request that says, per agent, the state of its latest task and when it ended, so that a reload can seed the failed chip. Optional: without it there is no failed chip for a failure from before the load (§2.3), which the design allows.
+- **G8 — tokens without a reported price, per cell.** `GET /cost/cells` gains a field `unpriced_tokens` on each cell: Σ of the cell's token types (input, output, cache read, cache write 5 min and 1 h; web searches excluded) over the `model_usage` rows with `engine_usd <= 0` (`<=`, not `=`: a derived delta turns negative when a later line lacks `costUSD` and an earlier one had it; gap rows are only written when `engine_usd > 0.000001`, `costinsights.go:397`, so they are never unpriced). Needed by the 24 h figure's suffix (§2.5, “No silent zero”): the cells alone cannot show it. It is a backend change that PR 4 carries itself (small), with a Go test on the third fixture; without it the strip would have to claim a $0 it cannot know, so it is not optional.
+- **G5 (small, frontend):** `["own-org"]` is refetched on SSE `agent_status` and `roster`, so the banner follows a pause within a second, not within its 60 s `staleTime`.
+
+## 8. Build order: small PRs
+
+The order of #183 (1, 3, 2, 5, 4, 6). Every PR: one item, `Part of #183`, tests that fail without it, every string in all ten locale files with the parity test green and no German in English, numbers through `format.ts`, no new colour, a performance table (§6), screenshots at 1440×900 and 390×844 in light and dark, and a design review by covey-designer (these touch `web/`). The design of this document is the PR 0.
+
+**Prerequisites:** #137 and #142 merged (as #183 says). **Part D of #122** (the implementation of office-signals) is a prerequisite of **PRs 1, 2 and 3**, not only of PR 3: `--office-screen-lit`, `team.figurAria` and `team.wartenAnzahl` and the merge of waiting bubbles at rank 4 are part D's and are not on `main` (no match in `web/src`). PR 1 extends `figurAria` (§2.1); PR 2's chips (§2.3) are measured in the same collision function and its waiting chip uses the rank-4 merge; PR 3's badges take the bubble slot. PRs 4 to 6 do not depend on it. “No new token” (§1) holds only with part D merged. If the human wants the layer before part D, PRs 1 and 2 would have to bring those parts themselves and the design would have to be revised.
+
+| PR | Item | Contents | Needs | Size |
+|---|---|---|---|---|
+| 1 | **Progress bar** (item 1) | `signale.ts` (the fill, the 80 % rule, pure, time not needed), the bar on figures and in “Running now” rows, `figurAria` extension, strings | part D of #122 (`figurAria`); G1 (without it the PR ships the code behind “no turns, no bar”; say so) | S |
+| 2 | **State icons** (item 3) | `zeichen.tsx` sheet, chips (failed, waiting, stopped, queued), the cup prop, the fleet banner and dim, the List row glyphs, `useBueroSignale()` states | part D of #122 (`figurAria`, rank-4 merge); G2 for the count (without: no queue chip), G5 | M |
+| 3 | **Events in the scene** (item 2) | `signale.ts` events, badges in the bubble slot, the feed panel and drawer, the key, the seed, click targets, caps, the “Events in the scene” switch. First slice: E1, E2, E3, E4, E11 (derivable today); **E10 follows with G1** (no turns on any read, §0) | part D of #122 (office-signals implemented); **G1 for E10**; G3 for the rest; no failed seed without G7 | M |
+| 4 | **Wall strip** (item 5) | the strip, gauges, age, six states, refresh, the comparison test with the cost page, **G8** (the per-cell `unpriced_tokens` field and its Go test, a small backend change inside this PR) | cost-controller formula review (the 24 h lead figure through the shared `leadFigure`, no `headline()`, the five fixtures of §2.5, the `seven_day` meter rule, the tile's `–`); G4 for the stop line | M |
+| 5 | **Hand-offs** (item 4) | papers, receiving badge, “Waiting in line” strip, refused hand-off, E5/E6/E8/E9 added to the feed as G3 lands | the sender from one `GET` of the task's `origin` works today; G3b for no `GET`; G3 for the rest | M |
+| 6a | **Trophies and the board** (item 6) | cups, the front-desk sign, D1's label | D1 and **G6** (no cups, no board without it) | S |
+| 6b | **Sound** | the speaker, two tones | D3 | S, optional |
+
+Each PR names, in its description, which of E1–E14 and which states it adds, so a reviewer can tick them against §3.
+
+## 9. Strings
+
+New keys under `team.spiel.*` (in all ten locales, plural forms by each locale's CLDR rules as `team.wartenAnzahl` does): `zuege` “turn {{n}} of {{max}}”, `zuegeKnapp` “close to the turn limit”, `fehlgeschlagen`, `wartschlange`, `gestoppt`, `pausiert` “Fleet paused”, `pausiertMeter` “weekly meter at {{pct}}”, the event lines of §3 (`ereignis.*`), `ereignisse` “Events”, `ereignisseLeer`, `ereignisseAlle` “Show all {{count}}”, `schluessel` “Key”, `lebendAus` “Live updates paused, reconnecting”, `inDerSchlange` “Waiting in line”, `wand` “Meter and usage”, `heute24` “Last 24 h · at token prices” (with `heute24Hinweis`, the tooltip of §2.5, and `ungepreist` “+ {{tokens}} tokens without a reported price” (and `ungepreistLeer` “– · {{tokens}} tokens without a reported price” for the case where nothing is priced)), `ablesung` “read {{age}} ago”, `keineAblesung`, `nichtLesbar`, `schnellFertigDiese` “Done this week”, `heuteGeliefert` “Shipped today”, `ereignisseSzene` “Events in the scene”, `ton`. The exact list is each PR's; this is the families. `team.figurAria` and `team.bueroLegende` (office-signals) are unchanged in meaning. Nothing is hard-coded; the glyphs are SVG with `aria-hidden`.
+
+## 10. Acceptance criteria (a reviewer can check these)
+
+1. **No new colour and no new token**; every glyph, bar and chip uses a token of §1; no `--text-accent` on an event.
+2. **Bar:** the fill is `min(1, turns / max_turns)` with the server's effective limit; amber from `ceil(0.8 × max_turns)`; notches at 50 % and 80 %; no `turns`, no bar; a resumed run starts at 0. A unit test over the fill and the threshold with `max_turns` 30, 80, 5 and 1 (at 1 danger wins; no amber for 1 to 4).
+3. **One chip per figure**, in the head's measured box, 20 px at `gesichtGroesse` 30 and 16 px at 24, with the priority failed > waiting > stopped > queued; no `⊘` chip while `fleet_killed`; a test that two neighbouring heads with chips keep the 4 px gap at both sizes; the hourglass is neutral; the cup is geometry; stopped has a glyph as well as the dimming; the fleet dim does not lower the contrast of the overlay.
+4. **Events:** E1–E14 as §3, each with the stated source, duration and click target; at most 6 badges, `×n` merging, 50 lines; the feed is seeded with the present state only (waiting, running count; no failures); a vanished row is looked up at most once a minute per task id and at most 10 candidate lookups a minute in all when the list is at its cap of 20; a lookup that fails makes no event. A test with the time passed in covers expiry, the pause on hover and the cap.
+5. **Hand-off:** a human-created task makes no paper; a task whose `origin` is `agent:<other slug>` does; a continuation, a task made for the agent itself and a person's task do not; at most 6 in flight; under reduced motion no flight and the glyph on both desks.
+6. **Wall strip:** its weekly % equals the last point of the cost chart's line and its 24 h figure equals the cost page's lead tile for the 24 h range, both from `leadFigure`, read through the page's own hook and query key (a test on the five fixtures of §2.5: $19.00, $5.00, $19.00 with 120 000 unpriced tokens, `–` with 120 000, and $0.00; the third has the unpriced covey line in the same cell as a priced one), labelled “Last 24 h · at token prices” and never “spent”, “spend” or “cost”; tokens without a reported price, covey's own lines and outside calls alike, show “+ {tokens} tokens without a reported price” (the unit is tokens, not calls), never a $0, and a window in which nothing is priced shows `–`, not $0.00 (the one change to the cost page's tile); its weekly % is read from the `seven_day` coverage of the source `pickMeter` picks; an organisation that pays per token only still draws the cell; a reading older than 2 h is greyed with its age; `–` and a reason, never `≈ $0.00`; all six states and the two 24 h cell variants of `wall.svg`; the cost-controller's review is on the PR.
+7. **Idle:** with the layer present and nothing changing, ≤ 1 % busy, 0 rAF frames, 0 `gl.clear`, 0 layouts, and **no new infinite animation** (a test greps the new CSS for `infinite`); after a badge, a paper and a bar change the rAF queue is empty again.
+8. **List view:** every signal of §5's table is there, from the same hook; the “Events” disclosure works on `/agents`.
+9. **Accessible:** the feed is a polite log, coalesced; the figure's name carries the state, the turns and the queue and contains its visible first name; the gauge is a `role="meter"`; every control has a visible focus and a name containing its label.
+10. **Strings:** every key in all ten locales, parity test green, no English in the other nine.
+11. **Screenshots** in each PR at 1440×900 and 390×844, light and dark, with 25 and 70 agents (the stress org of office-signals §2 (b)), and one with the fleet paused.
+
+## 11. Decisions for the human
+
+Only what the design cannot settle by itself. Each has a default, and the PRs are built on the default until the human says otherwise.
+
+- **D1. What the trophies count.** The wish says merged PRs; the platform records no merge. **A:** tasks done in the last 7 days, labelled “Done this week”; it needs **G6** (a done time; `updated_at` would count a moved task again), so A is built when G6 exists, not “now”. **B:** wait for a merge signal (G3e). **C:** drop trophies. **Recommendation and default: A.**
+- **D2. “The meter on the wall.”** **A:** a strip above the stage, always readable, accessible (§2.5). **B:** a screen in the 3D house, which disappears at two of the four rotations and cannot be read below zoom 1. **Recommendation and default: A.**
+- **D3. Sound.** **A:** two synthesised tones, off by default, last in the order. **B:** leave it out of v1. **Recommendation: B; default: A, as the last PR, which can be dropped without touching the others.**
+
+## 12. Not settled here
+
+- Where the stop line comes from (G4): there is no guard on `main` that I found. If the human means the 80 % and 100 % marks of the plan's weekly limit, the strip already has them (the notch and the 100 % end) and no G4 is needed.
+- Whether merged PRs are ever a platform fact (D1).
+- **Which 24 h figure the strip shows (settled with cost-controller, round 2):** the cost page's lead tile (all credentials, at token prices), through one shared function, not `headline().list` (the list price on the subscription meters only). Open for the human only: covey-only instead of the page's default view (§2.5), in which case the label says so. The figure is not final (late uploads), as on the page.
+- **covey's own lines without a reported price (settled with cost-controller, round 3):** they count at Claude Code's figure only and are shown apart as tokens (§2.5, G8); pricing them at covey's list price in the tile and the strip would be a change of the page's formula, its own issue. How often it happens on a live install is not known and the design does not depend on it (only the Claude Code runtime writes `model_usage`).
+- Whether the human wants a calendar “today (UTC)” on the strip instead of the page's 24 h range: it is a window cost-controller would have to define (§2.5); the default is the 24 h range.
+- The “Running now” pill's number is the time since `tasks.updated_at`, not run time (office-signals, not settled there either); the bar does not use it.
+- A persisted feed (days of history) would need G3d and a decision about who may see whose events; out of scope.
