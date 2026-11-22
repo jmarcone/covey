@@ -346,7 +346,6 @@
       "meterLine": "Weekly meter (%, right axis)",
       "meterName": "Weekly meter",
       "meterReset": "new week",
-      "meterUnreadable": "The weekly meter's readings could not be loaded, so they are not shown.",
       "meterBehind": "The weekly meter's readings could not be refreshed, so they may be behind.",
       "nothing": "nothing",
       "agentsTitle": "Per agent, by recomputed list price",

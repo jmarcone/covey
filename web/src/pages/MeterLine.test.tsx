@@ -1267,6 +1267,9 @@ describe("weekly meter: on the Costs page", () => {
     await waitFor(async () => expect((await scroller()).scrollLeft).toBe(180));
   });
 
+  // A failed first load is the chart card's one alert.
+  const chartError = () => document.querySelector("[data-chart-title]")?.closest(".card")?.querySelector("[data-cost-load-error]") ?? null;
+
   it("says so when the readings could not be read, in the chart and in its table", async () => {
     serve();
     const ok = globalThis.fetch;
@@ -1274,14 +1277,12 @@ describe("weekly meter: on the Costs page", () => {
       ? Promise.resolve(new Response('{"error":"boom"}', { status: 500, headers: { "Content-Type": "application/json" } })) : ok(url, init)));
     try {
       renderWithProviders(<Costs />, { route: `/${range(iso(18, 0))}` });
-      await waitFor(() => expect(document.querySelector("[data-meter-error]")).not.toBeNull());
-      const said = document.querySelector("[data-meter-error]")!;
-      expect(said.getAttribute("role")).toBe("status");
-      expect(said.textContent).toBe(i18n.t("costs.fig.meterUnreadable"));
+      await waitFor(() => expect(chartError()).not.toBeNull());
+      expect(chartError()!.textContent).toBe(i18n.t("costs.home.readingsError"));
       expect(document.querySelector("[data-meter-line], [data-meter-legend]")).toBeNull();
       fireEvent.click(screen.getByRole("button", { name: "Show as table" }));
       expect(document.querySelector("table")).not.toBeNull();
-      expect(document.querySelector("[data-meter-error]")).not.toBeNull();
+      expect(chartError()).not.toBeNull();
     } finally {
       vi.unstubAllGlobals();
     }
@@ -1296,14 +1297,14 @@ describe("weekly meter: on the Costs page", () => {
       : Promise.resolve(new Response('{"error":"boom"}', { status: 500, headers: { "Content-Type": "application/json" } }))));
     try {
       const { qc } = renderWithProviders(<Costs />, { route: `/${range(iso(18, 0))}` });
-      await waitFor(() => expect(document.querySelector("[data-meter-error]")).not.toBeNull());
+      await waitFor(() => expect(chartError()).not.toBeNull());
       pending = true;
       await act(async () => {
         void qc.refetchQueries({ queryKey: ["cost", "usage-readings"] });
         await new Promise((r) => setTimeout(r, 20));
       });
       expect(qc.isFetching({ queryKey: ["cost", "usage-readings"] })).toBeGreaterThan(0);
-      expect(document.querySelector("[data-meter-error]")?.textContent).toBe(i18n.t("costs.fig.meterUnreadable"));
+      expect(chartError()?.textContent).toBe(i18n.t("costs.home.readingsError"));
     } finally {
       vi.unstubAllGlobals();
     }

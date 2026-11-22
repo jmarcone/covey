@@ -346,7 +346,6 @@
       "meterLine": "Compteur hebdomadaire (%, axe de droite)",
       "meterName": "Compteur hebdomadaire",
       "meterReset": "nouvelle semaine",
-      "meterUnreadable": "Les relevés du compteur hebdomadaire n'ont pas pu être récupérés ; ils ne sont donc pas affichés.",
       "meterBehind": "Les relevés du compteur hebdomadaire n'ont pas pu être actualisés ; ils peuvent donc être en retard.",
       "nothing": "rien",
       "agentsTitle": "Par agent, selon le prix catalogue recalculé",

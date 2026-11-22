@@ -346,7 +346,6 @@
       "meterLine": "Medidor semanal (%, eixo direito)",
       "meterName": "Medidor semanal",
       "meterReset": "nova semana",
-      "meterUnreadable": "Não foi possível obter as leituras do medidor semanal; por isso, não são mostradas.",
       "meterBehind": "Não foi possível atualizar as leituras do medidor semanal; por isso, podem estar desatualizadas.",
       "nothing": "nada",
       "agentsTitle": "Por agente, pelo preço de tabela recalculado",

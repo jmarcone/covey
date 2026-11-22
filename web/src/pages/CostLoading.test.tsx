@@ -61,6 +61,8 @@ const BASE: CostCells = {
 /** A window without a subscription meter, its work on an API key. */
 const NO_METER = { ...BASE, subscription: [], meter: [], plans: [],
   cells: BASE.cells.map((c) => ({ ...c, secret_key: "example_key", credential_kind: "api_key" })) } as unknown as CostCells;
+const TWO_SEATS = { ...BASE, ...Object.fromEntries((["cells", "subscription", "meter", "plans"] as const).map((k) => [k,
+  [...(BASE[k] ?? []), ...(BASE[k] ?? []).map((x) => ({ ...x, secret_slot: 1 }))]])) };
 const CELLS = { ...BASE, external: { sources: [], cells: [], meter: METER } } as unknown as CostCells;
 
 /** The same with a source outside covey, billed per use. */
@@ -182,6 +184,27 @@ describe("Details while it loads", () => {
     await says(() => t("costs.home.readingsError"), chartCard);
     expect(seen()).not.toContain(t("costs.home.loadError"));
     expect(seen()).not.toContain(t("costs.insights.fiveHourNotReported"));
+  });
+
+  it.each([
+    ["a seat", "", {}],
+    ["a seat as a table", "?table=1", {}],
+    ["two seats", "", { "/cost/cells": TWO_SEATS }],
+    ["a seat at 10 minutes", "?days=1&bucket=10min", {}],
+    ["a seat per agent", "?layout=agents", {}],
+    ["an API key", "", { "/cost/cells": NO_METER }],
+  ])("the chart card says once that the readings failed, also while it asks again: %s", async (_, query, over) => {
+    const s = server(over);
+    s.fail = /usage-readings/;
+    const { qc } = details(query);
+    const said = () => [...chartCard()!.querySelectorAll("[data-cost-load-error], [data-meter-error]")].map((e) => e.textContent);
+    await says(() => t("costs.home.readingsError"), chartCard);
+    expect(said()).toEqual([t("costs.home.readingsError")]);
+    s.hold = /usage-readings/;
+    act(() => { void qc.refetchQueries({ queryKey: ["cost", "usage-readings"] }); });
+    await settle();
+    expect(said()).toEqual([t("costs.home.readingsError")]);
+    expect(el("[data-chart-body]")!.style.visibility).toBe("");
   });
 
   it("the chart waits for the bill instead of calling it unreadable", async () => {

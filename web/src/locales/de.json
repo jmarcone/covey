@@ -346,7 +346,6 @@
       "meterLine": "Wochenzähler (%, rechte Achse)",
       "meterName": "Wochenzähler",
       "meterReset": "neue Woche",
-      "meterUnreadable": "Die Ablesungen des Wochenzählers konnten nicht abgerufen werden und werden daher nicht angezeigt.",
       "meterBehind": "Die Ablesungen des Wochenzählers konnten nicht aktualisiert werden und sind möglicherweise nicht auf dem neuesten Stand.",
       "nothing": "nichts",
       "agentsTitle": "Je Agent, nach nachgerechnetem Listenpreis",

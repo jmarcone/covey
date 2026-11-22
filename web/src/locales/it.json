@@ -346,7 +346,6 @@
       "meterLine": "Contatore settimanale (%, asse destro)",
       "meterName": "Contatore settimanale",
       "meterReset": "nuova settimana",
-      "meterUnreadable": "Non è stato possibile recuperare le letture del contatore settimanale, perciò non sono mostrate.",
       "meterBehind": "Non è stato possibile aggiornare le letture del contatore settimanale, perciò potrebbero non essere aggiornate.",
       "nothing": "niente",
       "agentsTitle": "Per agente, per prezzo di listino ricalcolato",

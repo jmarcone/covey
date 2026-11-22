@@ -346,7 +346,6 @@
       "meterLine": "Licznik tygodniowy (%, prawa oś)",
       "meterName": "Licznik tygodniowy",
       "meterReset": "nowy tydzień",
-      "meterUnreadable": "Nie udało się pobrać odczytów licznika tygodniowego, dlatego nie są pokazane.",
       "meterBehind": "Nie udało się odświeżyć odczytów licznika tygodniowego, dlatego mogą być nieaktualne.",
       "nothing": "nic",
       "agentsTitle": "Na agenta, według przeliczonej ceny katalogowej",

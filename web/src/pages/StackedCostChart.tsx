@@ -1591,9 +1591,9 @@ function NoMultiple({ f, answered = false }: { f: CredentialFigures; answered?: 
 }
 
 /** One credential: its tiles, its chart, its agents. */
-function CredentialBlock({ f, data, billed, readings, readingsFailed, canSetPlan, bucket, scrollKey, fmtPeriod, selected, src, split, types, layout, view, sharedScale, asTable, outside, full, marks, answered,
+function CredentialBlock({ f, data, billed, readings, readingsBehind, canSetPlan, bucket, scrollKey, fmtPeriod, selected, src, split, types, layout, view, sharedScale, asTable, outside, full, marks, answered,
   lead = null, tileBasis = "token", noBars = false }: {
-  f: CredentialFigures; data: CostCells; billed: BilledReport | undefined; readings: readonly UsageReading[]; readingsFailed?: ReadingsFailure; canSetPlan: boolean; bucket: string; scrollKey?: string; fmtPeriod: (p: string, utc?: boolean) => string;
+  f: CredentialFigures; data: CostCells; billed: BilledReport | undefined; readings: readonly UsageReading[]; readingsBehind?: boolean; canSetPlan: boolean; bucket: string; scrollKey?: string; fmtPeriod: (p: string, utc?: boolean) => string;
   selected: Set<string>; src: Record<Source, boolean>; split: Split; types: Set<string>; layout: Layout; view: View; sharedScale: boolean; asTable: boolean;
   /** The full view of covey's price table (the toggle): Reported and Recomputed apart. */
   full: boolean;
@@ -1927,9 +1927,9 @@ function CredentialBlock({ f, data, billed, readings, readingsFailed, canSetPlan
         <div className="muted text-sm" style={{ padding: "20px 0", textAlign: "center" }}>{t("costs.empty")}</div>
       ) : layout === "combined" ? (
         <>
-          {readingsFailed && f.meter && f.kind !== "api_key" && bucket !== "10min" && (
+          {readingsBehind && f.meter && f.kind !== "api_key" && bucket !== "10min" && (
             <p className="muted text-xs mb-1 mt-0" data-meter-error role="status">
-              {t(readingsFailed === "load" ? "costs.fig.meterUnreadable" : "costs.fig.meterBehind")}
+              {t("costs.fig.meterBehind")}
             </p>
           )}
           {/* The line's one explanation, in the branch that draws it. */}
@@ -2198,14 +2198,11 @@ function ColourKey({ split, sources = [], other = [], full = true, list = full }
   );
 }
 
-/** Which request for the readings failed: the first ("load", there are none) or a later one ("refresh", they may be behind). */
-type ReadingsFailure = "load" | "refresh";
-
-export function CostExplorer({ data, billed, readings = [], readingsFailed, canSetPlan = false, selected, bucket, scrollKey, fmtPeriod, outside = null, full: fullProp, onFull,
+export function CostExplorer({ data, billed, readings = [], readingsBehind, canSetPlan = false, selected, bucket, scrollKey, fmtPeriod, outside = null, full: fullProp, onFull,
   off: offProp, onToggleSource, answered, marks, onBucket }: {
   data: CostCells | undefined; billed?: BilledReport; readings?: readonly UsageReading[]; canSetPlan?: boolean;
-  /** The readings' request failed: a seat with a meter says so above its chart. */
-  readingsFailed?: ReadingsFailure;
+  /** The readings' refresh failed: a seat with a meter says above its chart that they may be behind. */
+  readingsBehind?: boolean;
   selected: Set<string>; bucket: string; fmtPeriod: (p: string, utc?: boolean) => string;
   /** The chart's window (windowQuery) and bucket: where it changes, a chart with the meter scrolls to its newest period. */
   scrollKey?: string;
@@ -2396,7 +2393,7 @@ export function CostExplorer({ data, billed, readings = [], readingsFailed, canS
       {figures.length === 0 && loose.length === 0 ? (
         <div className="muted text-sm" style={{ padding: "40px 0", textAlign: "center" }}>{t("costs.empty")}</div>
       ) : figures.map((f) => (
-        <CredentialBlock key={f.id} f={f} data={data!} billed={billed} readings={readings} readingsFailed={readingsFailed} canSetPlan={canSetPlan} bucket={bucket} scrollKey={scrollKey} fmtPeriod={fmtPeriod} selected={selected}
+        <CredentialBlock key={f.id} f={f} data={data!} billed={billed} readings={readings} readingsBehind={readingsBehind} canSetPlan={canSetPlan} bucket={bucket} scrollKey={scrollKey} fmtPeriod={fmtPeriod} selected={selected}
           src={shown} split={split} types={types} layout={layout} view={view} sharedScale={sharedScale} asTable={asTable} outside={onChart} full={full} answered={answered}
           marks={f.secretKey != null ? marks?.(f.secretKey, f.slot!) : undefined} lead={lead} tileBasis={tileBasis} noBars={noBars} />
       ))}
