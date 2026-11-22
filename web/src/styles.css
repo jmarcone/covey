@@ -2290,11 +2290,12 @@ ol.md-list { list-style: decimal; }
 
 /* The cost home: one equation across the room, its trust beside it, its coverage under it, then the parts and the doors. */
 .cost-home-hero { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; padding: 24px; }
-.cost-home-eq { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 28px; }
+/* Top-aligned: a block without a small line under its figure no longer sits lower than its neighbours. */
+.cost-home-eq { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px 28px; }
 .cost-home-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--text-secondary); }
 .cost-home-fig { font-size: 36px; font-weight: 600; line-height: 1.1; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
 .cost-home-capacity { color: var(--cost-real); }
-.cost-home-op { font-size: 28px; color: var(--text-secondary); padding-bottom: 4px; }
+.cost-home-op { font-size: 28px; color: var(--text-secondary); align-self: center; }
 .cost-home-sub { font-size: 13px; color: var(--text-secondary); }
 .cost-home-trust { display: grid; gap: 8px; align-content: start; }
 .cost-home-row { display: flex; justify-content: space-between; gap: 16px; font-size: 13px; color: var(--text-secondary); }
@@ -2324,6 +2325,12 @@ ol.md-list { list-style: decimal; }
 @media (min-width: 1600px) {
   .cost-home-fig { font-size: 64px; }
   .cost-home-op { font-size: 40px; }
+  /* Wide enough for one row: labels, figures and small lines each share a row, and the operators sit on the figures. */
+  .cost-home-eq { display: grid; grid-auto-flow: column; grid-auto-columns: max-content; grid-template-rows: auto auto auto;
+    justify-content: start; align-items: end; gap: 4px 28px; }
+  .cost-home-eq > :not(.cost-home-op) { grid-row: 1 / span 3; display: grid; grid-template-rows: subgrid; }
+  .cost-home-eq > :not(.cost-home-op) > .cost-home-sub { align-self: start; }
+  .cost-home-eq > .cost-home-op { grid-row: 2; align-self: center; line-height: 1; }
   .cost-home-label { font-size: 13px; }
   .cost-home-sub, .cost-home-row, .cost-home-strip-labels { font-size: 14px; }
   .cost-home-split { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); align-items: start; }
